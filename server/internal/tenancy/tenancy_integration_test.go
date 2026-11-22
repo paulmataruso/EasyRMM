@@ -22,6 +22,7 @@ import (
 
 type env struct {
 	svc   *tenancy.Service
+	db    *database.DB
 	audit *audit.Logger
 	sys   access.Caller
 }
@@ -30,7 +31,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	inst := testdb.New(t)
 	al := audit.New(inst.DB, nil)
-	return &env{svc: tenancy.New(inst.DB, al), audit: al, sys: access.System("test")}
+	return &env{svc: tenancy.New(inst.DB, al), db: inst.DB, audit: al, sys: access.System("test")}
 }
 
 func caller(t *testing.T, as ...rbac.Assignment) access.Caller {
@@ -149,14 +150,14 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 		kept.Timezone != "Europe/Paris" {
 		t.Fatalf("time zone left out: %v %+v", err, kept)
 	}
-	for _, bad := range []string{"Local", "Mars/Olympus", strings.Repeat("A", 65)} {
+	for _, bad := range []string{"Local", "Mars/Olympus", strings.Repeat("A", 65), "Europe//Paris"} {
 		_, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Corp", Timezone: bad})
 		wantField(t, err, "timezone", "bad time zone "+bad)
 	}
 	if made, err := e.svc.CreateOrganization(ctx, e.sys, tenancy.OrganizationInput{Name: "Zoned", Timezone: "Asia/Tokyo"}); err != nil ||
 		made.Timezone != "Asia/Tokyo" {
 		t.Fatalf("created with a time zone: %v %+v", err, made)
-	} else if err := e.svc.DeleteOrganization(ctx, e.sys, made.ID); err != nil {
+	} else if err := e.svc.DeleteOrganization(ctx, e.sys, made.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if changes != 4 {
@@ -178,14 +179,14 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 	}
 
 	// Delete: refused while sites exist, allowed when empty, audited.
-	err = e.svc.DeleteOrganization(ctx, e.sys, w.orgA.ID)
+	err = e.svc.DeleteOrganization(ctx, e.sys, w.orgA.ID, nil)
 	if ae := wantKind(t, err, apperr.KindConflict, "delete non-empty"); ae.Code != "organization_not_empty" {
 		t.Fatalf("code %q", ae.Code)
 	}
-	if err := e.svc.DeleteOrganization(ctx, e.sys, long.ID); err != nil {
+	if err := e.svc.DeleteOrganization(ctx, e.sys, long.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.DeleteOrganization(ctx, e.sys, long.ID); !errors.Is(err, apperr.ErrNotFound) {
+	if err := e.svc.DeleteOrganization(ctx, e.sys, long.ID, nil); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
 	entries, err := e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "organization"})
@@ -226,13 +227,12 @@ func TestSitesAndDeviceGroups(t *testing.T) {
 		in    tenancy.SiteInput
 		field string
 	}{
-		"empty name":   {tenancy.SiteInput{Name: ""}, "name"},
-		"bad tz":       {tenancy.SiteInput{Name: "X", Timezone: "Mars/Base"}, "timezone"},
-		"local tz":     {tenancy.SiteInput{Name: "X", Timezone: "Local"}, "timezone"},
-		"long tz":      {tenancy.SiteInput{Name: "X", Timezone: strings.Repeat("a", 65)}, "timezone"},
-		"long address": {tenancy.SiteInput{Name: "X", Address: strings.Repeat("a", 1001)}, "address"},
-		"long notes":   {tenancy.SiteInput{Name: "X", Notes: strings.Repeat("a", 10001)}, "notes"},
-		"duplicate":    {tenancy.SiteInput{Name: "hq"}, "name"},
+		"empty name": {tenancy.SiteInput{Name: ""}, "name"},
+		"bad tz":     {tenancy.SiteInput{Name: "X", Timezone: "Mars/Base"}, "timezone"},
+		"local tz":   {tenancy.SiteInput{Name: "X", Timezone: "Local"}, "timezone"},
+		"long tz":    {tenancy.SiteInput{Name: "X", Timezone: strings.Repeat("a", 65)}, "timezone"},
+		"long notes": {tenancy.SiteInput{Name: "X", Notes: strings.Repeat("a", 10001)}, "notes"},
+		"duplicate":  {tenancy.SiteInput{Name: "hq"}, "name"},
 	} {
 		_, err := e.svc.CreateSite(ctx, e.sys, w.orgA.ID, c.in)
 		wantField(t, err, c.field, name)
@@ -258,8 +258,8 @@ func TestSitesAndDeviceGroups(t *testing.T) {
 		t.Fatalf("query filter: %v %+v", err, q)
 	}
 
-	upd, err := e.svc.UpdateSite(ctx, e.sys, w.siteA.ID, tenancy.SiteInput{Name: "Head Office", Timezone: "America/New_York", Address: "1 Main St", Notes: "n"})
-	if err != nil || upd.Name != "Head Office" || upd.Timezone != "America/New_York" || upd.Address != "1 Main St" {
+	upd, err := e.svc.UpdateSite(ctx, e.sys, w.siteA.ID, tenancy.SiteInput{Name: "Head Office", Timezone: "America/New_York", Notes: "n"})
+	if err != nil || upd.Name != "Head Office" || upd.Timezone != "America/New_York" || upd.Notes != "n" {
 		t.Fatalf("update site: %v %+v", err, upd)
 	}
 	if _, err := e.svc.UpdateSite(ctx, e.sys, w.siteA.ID, tenancy.SiteInput{Name: "X", Timezone: "nope"}); err == nil {
@@ -328,13 +328,13 @@ func TestSitesAndDeviceGroups(t *testing.T) {
 	}
 
 	// Deleting a site removes its groups.
-	if err := e.svc.DeleteSite(ctx, e.sys, w.siteA.ID); err != nil {
+	if err := e.svc.DeleteSite(ctx, e.sys, w.siteA.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.GetSite(ctx, e.sys, w.siteA.ID); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("deleted site still visible: %v", err)
 	}
-	if err := e.svc.DeleteSite(ctx, e.sys, w.siteA.ID); !errors.Is(err, apperr.ErrNotFound) {
+	if err := e.svc.DeleteSite(ctx, e.sys, w.siteA.ID, nil); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("delete missing site: %v", err)
 	}
 	if _, err := e.svc.UpdateDeviceGroup(ctx, e.sys, g.ID, tenancy.DeviceGroupInput{Name: "x"}); !errors.Is(err, apperr.ErrNotFound) {
@@ -394,7 +394,7 @@ func TestScopedCallers(t *testing.T) {
 	if _, err := e.svc.CreateOrganization(ctx, orgAdmin, tenancy.OrganizationInput{Name: "Mine"}); !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("org admin create org: %v", err)
 	}
-	if err := e.svc.DeleteOrganization(ctx, orgAdmin, w.orgA.ID); !errors.Is(err, apperr.ErrForbidden) {
+	if err := e.svc.DeleteOrganization(ctx, orgAdmin, w.orgA.ID, nil); !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("org admin delete org: %v", err)
 	}
 	// Names are unique on the server: an organization administrator edits
@@ -438,7 +438,7 @@ func TestScopedCallers(t *testing.T) {
 	if err := e.svc.DeleteDeviceGroup(ctx, orgAdmin, groupB.ID); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("delete foreign group: %v", err)
 	}
-	if err := e.svc.DeleteSite(ctx, orgAdmin, w.siteB.ID); !errors.Is(err, apperr.ErrNotFound) {
+	if err := e.svc.DeleteSite(ctx, orgAdmin, w.siteB.ID, nil); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("delete foreign site: %v", err)
 	}
 
@@ -468,7 +468,7 @@ func TestScopedCallers(t *testing.T) {
 	if _, err := e.svc.CreateSite(ctx, siteAdmin, w.orgA.ID, tenancy.SiteInput{Name: "Mine"}); !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("site admin create site: %v", err)
 	}
-	if err := e.svc.DeleteSite(ctx, siteAdmin, w.siteA.ID); !errors.Is(err, apperr.ErrForbidden) {
+	if err := e.svc.DeleteSite(ctx, siteAdmin, w.siteA.ID, nil); !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("site admin delete site: %v", err)
 	}
 	if _, err := e.svc.UpdateSite(ctx, siteAdmin, w.siteA.ID, tenancy.SiteInput{Name: "HQ 2"}); err != nil {
@@ -513,10 +513,10 @@ func TestScopedCallers(t *testing.T) {
 	}
 
 	// Super admin may delete an organization once it is empty.
-	if err := e.svc.DeleteSite(ctx, super, w.siteB.ID); err != nil {
+	if err := e.svc.DeleteSite(ctx, super, w.siteB.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.DeleteOrganization(ctx, super, w.orgB.ID); err != nil {
+	if err := e.svc.DeleteOrganization(ctx, super, w.orgB.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Audit entries carry the organization so tenants see their own history.
@@ -528,8 +528,11 @@ func TestScopedCallers(t *testing.T) {
 
 func TestValidTimezone(t *testing.T) {
 	for tz, want := range map[string]bool{
-		"UTC": true, "Europe/London": true, "America/Argentina/Buenos_Aires": true,
+		"UTC": true, "Europe/London": true, "America/Argentina/Buenos_Aires": true, "US/Eastern": true,
 		"": false, "Local": false, "Not/AZone": false, "../../etc/passwd": false,
+		// Spellings the system opens as Europe/London, each of which would
+		// be one more zone to keep.
+		"Europe//London": false, "Europe/./London": false, "./Europe/London": false, ".//Europe//./London": false,
 	} {
 		if got := tenancy.ValidTimezone(tz); got != want {
 			t.Errorf("ValidTimezone(%q) = %v, want %v", tz, got, want)

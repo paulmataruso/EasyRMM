@@ -12,20 +12,23 @@ export const API_BASE = "/api/v1";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export interface ErrorEnvelope {
-  error?: { code?: string; message?: string; fields?: Record<string, string> };
+  error?: { code?: string; message?: string; fields?: Record<string, string>; counts?: Record<string, number> };
 }
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields: Record<string, string>;
+  /** What a refused deletion would delete with it, by kind (ADR-0066): sent back to confirm. */
+  readonly counts: Record<string, number> | null;
 
-  constructor(status: number, code: string, message: string, fields: Record<string, string> = {}) {
+  constructor(status: number, code: string, message: string, fields: Record<string, string> = {}, counts: Record<string, number> | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.counts = counts;
   }
 
   /** The message for one request field, if the server rejected it. */
@@ -159,6 +162,7 @@ async function readError(response: Response): Promise<ApiError> {
     e.code || defaultCode(response.status),
     e.message || defaultMessage(response.status),
     e.fields ?? {},
+    e.counts ?? null,
   );
 }
 
@@ -215,7 +219,7 @@ export const api = {
   post: <T = void>(path: string, body?: unknown) => request<T>("POST", path, { body: body ?? {} }),
   put: <T = void>(path: string, body?: unknown) => request<T>("PUT", path, { body: body ?? {} }),
   patch: <T = void>(path: string, body?: unknown) => request<T>("PATCH", path, { body: body ?? {} }),
-  del: <T = void>(path: string) => request<T>("DELETE", path),
+  del: <T = void>(path: string, params?: QueryParams) => request<T>("DELETE", path, { params }),
   /** POSTs a file as the request body. */
   upload: <T = void>(path: string, file: Blob) => request<T>("POST", path, { file }),
 };

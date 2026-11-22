@@ -140,29 +140,42 @@ func TestParseKey(t *testing.T) {
 	}
 }
 
-func TestDeriveKey(t *testing.T) {
+func TestDeriveKeys(t *testing.T) {
 	k1 := Key{ID: "k1", Raw: bytes.Repeat([]byte{1}, KeySize)}
 	k2 := Key{ID: "k2", Raw: bytes.Repeat([]byte{2}, KeySize)}
 	a, _ := NewSealer(k1, k2)
 	again, _ := NewSealer(k1)
-	other, _ := NewSealer(k2, k1)
-	key := func(s *Sealer, info string) []byte {
+	rotated, _ := NewSealer(k2, k1)
+	keys := func(s *Sealer, info string) []Key {
 		t.Helper()
-		k, err := s.DeriveKey(info)
-		if err != nil || len(k) != KeySize {
-			t.Fatalf("%x %v", k, err)
+		ks, err := s.DeriveKeys(info)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return k
+		for _, k := range ks {
+			if len(k.Raw) != KeySize {
+				t.Fatalf("%x", k.Raw)
+			}
+		}
+		return ks
 	}
-	x := key(a, "easyrmm one use v1")
+	x := keys(a, "easyrmm one use v1")
+	if len(x) != 2 || x[0].ID != "k1" || x[1].ID != "k2" {
+		t.Fatalf("keys %v", x)
+	}
+	r := keys(rotated, "easyrmm one use v1")
 	switch {
-	case !bytes.Equal(x, key(again, "easyrmm one use v1")):
-		t.Fatal("the same primary key and info derive another key")
-	case bytes.Equal(x, key(a, "easyrmm another use v1")):
+	case !bytes.Equal(x[0].Raw, keys(again, "easyrmm one use v1")[0].Raw):
+		t.Fatal("the same key and info derive another key")
+	case bytes.Equal(x[0].Raw, keys(a, "easyrmm another use v1")[0].Raw):
 		t.Fatal("another use derives the same key")
-	case bytes.Equal(x, key(other, "easyrmm one use v1")):
-		t.Fatal("another primary key derives the same key")
-	case bytes.Equal(x, k1.Raw):
-		t.Fatal("the derived key is the primary key")
+	case bytes.Equal(x[0].Raw, x[1].Raw):
+		t.Fatal("two keys derive the same key")
+	case r[0].ID != "k2" || !bytes.Equal(r[0].Raw, x[1].Raw) || !bytes.Equal(r[1].Raw, x[0].Raw):
+		// After a rotation, the key derived from the old primary is still
+		// there, under its ID.
+		t.Fatal("a rotation changes what a key derives")
+	case bytes.Equal(x[0].Raw, k1.Raw):
+		t.Fatal("the derived key is the key")
 	}
 }

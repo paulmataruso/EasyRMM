@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -87,7 +88,7 @@ func TestCleanupAndPurgeAudit(t *testing.T) {
 
 func TestServeHealth(t *testing.T) {
 	inst := testdb.New(t)
-	addr := freeAddr(t)
+	addr := reserveAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- serveHealth(ctx, addr, inst.DB, notHeld(t), discard()) }()
@@ -130,7 +131,7 @@ func runConfig(t *testing.T, inst *testdb.Instance) *config.Config {
 	pub, _ := url.Parse("https://rmm.test")
 	return &config.Config{
 		PublicURL: pub, TLSMode: config.TLSOffload,
-		ListenOffload: freeAddr(t), ListenHealth: freeAddr(t),
+		ListenOffload: reserveAddr(t), ListenHealth: reserveAddr(t),
 		DatabaseURL:          inst.SuperDSN + sep + "role=easyrmm_app",
 		DatabaseMigrationURL: inst.SuperDSN + sep + "role=easyrmm_owner",
 		DatabaseMaxConns:     4,
@@ -140,6 +141,20 @@ func runConfig(t *testing.T, inst *testdb.Instance) *config.Config {
 		PasswordResetTTL: 30 * time.Minute, AuditRetention: 365 * 24 * time.Hour, JobRetention: 90 * 24 * time.Hour, ArgonMaxParallel: 2,
 		Patching: testEngine(t),
 	}
+}
+
+// unusedAddr returns a loopback address nothing is expected to listen on,
+// for a service the test leaves unreachable: its port was free when picked
+// and is closed again. Never for a server under test (reserveAddr).
+func unusedAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
 }
 
 // testEngine is a stand-in for the patching engine every deployment runs
@@ -236,7 +251,7 @@ func TestRunWithRemoteAccess(t *testing.T) {
 	inst := testdb.New(t)
 	cfg := runConfig(t, inst)
 	cfg.MeshPublicURL, _ = url.Parse("https://mesh.rmm.test")
-	internal, _ := url.Parse("http://" + freeAddr(t)) // MeshCentral is not running
+	internal, _ := url.Parse("http://" + unusedAddr(t)) // MeshCentral is not running
 	cfg.Mesh = config.MeshConfig{Enabled: true, InternalURL: internal, ConfigDir: t.TempDir(), CertURL: "https://127.0.0.1:443"}
 
 	ctx, cancel := context.WithCancel(context.Background())

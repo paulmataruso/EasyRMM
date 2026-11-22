@@ -1,25 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Organization } from "./api/types";
 import { safeReturnTo, passwordProblem } from "./pages/auth/AuthPages";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView } from "./test/fakeApi";
+import { org } from "./test/fixtures";
 import { renderApp } from "./test/render";
 
 const location = () => screen.getByTestId("location").textContent;
-
-const org = (id: string, name: string, extra: Partial<Organization> = {}): Organization => ({
-  id,
-  name,
-  timezone: "UTC",
-  notes: "",
-  siteCount: 0,
-  canManage: true,
-  canRename: true,
-  createdAt: "2026-11-01T10:00:00Z",
-  updatedAt: "2026-11-01T10:00:00Z",
-  ...extra,
-});
 
 describe("safeReturnTo", () => {
   it("accepts same-site paths only", () => {

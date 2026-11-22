@@ -15,8 +15,8 @@ enforce that higher roles are strict supersets of lower ones.
 
 | Permission | Read-Only | Technician | Site Admin | Org Admin | Super Admin |
 |---|:-:|:-:|:-:|:-:|:-:|
-| `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files` | | ✓ | ✓ | ✓ | ✓ |
+| `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view`, `doc.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files`, `doc.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
@@ -29,6 +29,13 @@ staff, and a script's output is where a technician's recovery password or
 token ends up. Every read is recorded in the audit log
 ([Scripts and jobs](../operations/scripts-and-jobs.md#who-sees-output-and-arguments),
 [ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arguments.md)).
+
+`doc.view` and `doc.manage` read and change the customer record: an
+organization's contact information and hours, sites' addresses and hours,
+contacts and places. They apply where the role is, and a site-scoped role
+sees its sites' contacts and places, not the organization's own contacts
+([The customer record](../operations/customer-record.md#who-can-see-and-change-what),
+[ADR-0066](../architecture/adr/0066-customer-documentation-and-assets.md)).
 
 ## Granting roles
 

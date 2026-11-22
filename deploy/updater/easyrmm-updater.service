@@ -1,0 +1,28 @@
+# The EasyRMM host updater (ADR-0052; docs/operations/updater.md): one
+# attempt, started by easyrmm-updater.timer every hour. It upgrades only
+# when /etc/easyrmm/updater.conf turns automatic upgrades on, in their
+# hours; `easyrmm-updater upgrade` does the same by hand.
+[Unit]
+Description=EasyRMM updater: one automatic upgrade attempt
+Documentation=https://github.com/paulmataruso/EasyRMM/blob/main/docs/operations/updater.md
+ConditionPathExists=/etc/easyrmm/updater.conf
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easyrmm-updater upgrade --automatic
+# An attempt runs to its end, or to its rollback: a pull, a backup of the
+# data root, a start of up to 20 minutes and the engine's worker's of up to
+# 10. systemd's stop (a reboot, or by hand) sends SIGTERM to the updater
+# alone (KillMode=mixed), never to the cp, docker or setup.sh it runs.
+# Stopped before it stops the deployment, it ends there; after, it runs on
+# to its end, or brings the previous version back, for up to 30 minutes, a
+# held start and the worker's, which is as long as a reboot waits. Then
+# systemd kills what still runs, and the next run finishes the attempt from
+# what it recorded, without counting it against the version
+# (docs/operations/updater.md#stopping-an-attempt).
+KillMode=mixed
+TimeoutStartSec=infinity
+TimeoutStopSec=30min

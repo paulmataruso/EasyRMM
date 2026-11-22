@@ -6,10 +6,16 @@
   server's side, `hold` and the offline rule (both amended 2026-11-21,
   below; the rule only delays openings); and the engine's, its hold on
   automatic agent updates and its presence rule, which ship in its next
-  release. The updater is not built yet; until it exists, the test on
-  `main` verifies each published build as the updater will before `edge`
-  moves, and the upgrade from the previous edge build
-  ([Testing](#testing)) joins it with the updater.
+  release. The updater is implemented (feature 4a): `easyrmm-updater`
+  with its service and timer, installed by `setup.sh`; verification, the
+  backup, the upgrade, the rollback and the status, as amended below
+  (2026-11-21, with the implementation). Not built: requests from the
+  console (feature 4b), the rollback guards ("Rollback guards", due
+  before ADR-0057's slice 2 or ADR-0061's slice 4, whichever comes
+  first), and the test on `main` that upgrades from the
+  previous edge build with the updater ([Testing](#testing)); until it
+  is, that test verifies each published build as the updater does before
+  `edge` moves.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
@@ -94,6 +100,14 @@ What exists, and what it means here:
 * **Commands**: `easyrmm-updater status`, `check` (what the channel
   offers, verified, changing nothing), `upgrade [version]`, `rollback`.
 
+*Amended 2026-11-21, with the implementation:* the updater rewrites one
+line of its configuration, `deployment`, when an upgrade or a rollback
+moves the deployment to another directory; nothing else writes it.
+`setup.sh` installs the updater from `deploy/updater/` (a bundle carries
+it for x86-64 and ARM64; a clone builds it with `make updater`), and
+`--no-updater` is the one option `--upgrade` takes along. No path unit is
+installed until feature 4b.
+
 ### Channels and versions
 * **stable** takes full releases; **pre-release** also release
   candidates; **edge** also builds of `main`. A version outside the
@@ -116,7 +130,11 @@ What exists, and what it means here:
   Versions are written as the server reports them, with the `v`.
 * **Never down**, except a rollback to the version the updater itself
   recorded as the previous one.
-* **No retrying failures**: a version that failed or was rolled back is
+* **No retrying failures** (*amended 2026-11-21, with the
+  implementation:* a failure that a later attempt could get past, such as
+  Sigstore, the network or the registry not answering, or too little room
+  on a disk, ends the attempt before anything stops and is not counted;
+  any other failure is): a version that failed or was rolled back is
   skipped by automatic upgrades until a newer one appears or an operator
   asks for it by name.
 
@@ -227,6 +245,42 @@ and the attempt ends with the reason.
    bundle directories other than the current and the previous are
    removed, with their `.env`, which holds the encryption key.
 
+*Amended 2026-11-21, with the implementation:*
+* **Set up** carries `.env` across with `EASYRMM_IMAGE` set as well as
+  `EASYRMM_VERSION`: the manifest names the server by repository, tag and
+  digest ([the manifest](../edge-manifest.md)), and the two make that
+  reference. After `setup.sh --upgrade` the updater sets both again and
+  checks `docker compose config --images` against the manifest.
+* **Start held** starts the services Compose restarts with
+  `up --wait`, and one-shot services nothing depends on with
+  `up --no-deps` and `compose wait`, since `--wait` fails when such a
+  service exits, even successfully. Then the server must pass its own
+  readiness check (`easyrmm-server healthcheck`, `/readyz` on its loopback
+  health port) and report the new version; nothing goes through its
+  public edge.
+* **The backup** is the data root without `updater/` (the status the
+  updater is writing) and failed data roots kept for diagnosis
+  (`.failed-*`), the deployment's `deploy/` and `docker/` directories, and
+  `updater.conf`, with a `backup.json` written last; one without it is
+  incomplete. A failure before the backup completes starts the previous
+  version again from where it stopped. Every copy, into a backup and back
+  out of one, is checked against its source entry by entry (type, mode,
+  owner, a file's size, a link's target). The data root holds every
+  volume of `deploy/docker-compose.yml` that holds state: PostgreSQL's
+  whole cluster, copied stopped, so every database in it (EasyRMM's, the
+  engine's and, with `--with-authentik`, Authentik's: its users, their
+  second factors, the key pair that signs EasyRMM's ID tokens), and the
+  server's, MeshCentral's, the engine's and Authentik's directories. No
+  database is dumped: a stopped cluster's files are the whole of it,
+  roles included, which a dump of each database is not. `setup.sh` puts
+  `EASYRMM_TLS_DIR`, `manual` TLS mode's certificate, in the data root
+  too. Outside are the updater's own status and `EASYRMM_TLS_DIR` if the
+  operator points it elsewhere: mounted read-only, never changed by an
+  upgrade. A unit test reads the Compose file's volumes and fails on any
+  it does not account for.
+* **The engine's hold** is `agent-updates-held-until` in the status
+  directory: one RFC 3339 time in UTC, root's, mode 644, written atomically.
+
 ### Rollback
 * **During an upgrade** (any failure after step 3): every service
   stopped. If PostgreSQL starts, the failed database's highest audit ID
@@ -256,6 +310,193 @@ and the attempt ends with the reason.
   discarded version keep IDs no later record reuses.
 * Refused across a job key cut-over or a name move, by the rollback
   guards (next section).
+
+*Amended 2026-11-21, with the implementation:* the restore starts
+PostgreSQL alone twice: once from the failed data root, to read its
+highest audit ID and chain head, and once from the restored one, to move
+the sequence and append the record before anything else starts; only
+then does every service start. The ADR's order (the previous version
+started, then the sequence moved) would let a starting server write an
+audit record with an ID the discarded version used. The restore touches
+only the host: it stops, copies, writes the audit record and starts, and
+contacts no agent, so it does not depend on agents being reachable.
+
+*Amended 2026-11-21, after review of the implementation:*
+* **Interrupted attempts.** An attempt records its deployment, data root,
+  new deployment directory and backup as soon as each exists, and each
+  stage of a restore before the next. Every run, under the lock, first
+  finishes an attempt whose process ended before it did (the
+  out-of-memory killer, systemd's stop timeout, a reboot), and does
+  nothing else: before the stop, the attempt ends failed; stopped before
+  the backup was complete, the incomplete backup is removed and the
+  previous version starts; after it, the backup is restored and the
+  version marked failed. A restore cut short is done again, without
+  reading the discarded database's head a second time; one that had put
+  everything back only starts the restored version. The timer also runs
+  five minutes after the host starts. A stop asked for (SIGINT, SIGTERM)
+  ends an attempt that has not stopped the deployment; after that the
+  attempt runs on to its end.
+* **After a failed rollback** the updater does nothing, by the timer or by
+  hand, and removes no backup, until an operator runs it with
+  `--deployment-repaired`, which the automatic run never takes (decided
+  in review).
+* **The confirm** records the new deployment, in `updater.conf` and then
+  the state, before it removes `hold`: a confirm cut short leaves the
+  server held, and the next run restores the previous version; a `hold`
+  left after the record is removed.
+* **The host, at step 1.** The data root Compose mounts must be the one
+  `.env` names. No entry at its top may be a link, and nothing in it, at
+  any depth, a mount point (read from `/proc/self/mountinfo`, which also
+  shows bind mounts within one filesystem); the data root itself may be
+  one. Bundles are unpacked into `/opt/easyrmm`, which, with every
+  directory above it, only root may write (or is sticky), not beside the
+  running deployment, which may be anyone's. Room is added up per
+  filesystem: the backup, a restore's copy of the data root, the images
+  and the bundle. A host not as needed, a disk that fills (`ENOSPC`,
+  `EDQUOT`) and a stop asked for before the stop are tried again at the
+  next attempt, not counted against the version. A backup that fails is
+  removed.
+* **Tidying** removes whole only the bundle directories the updater
+  recorded unpacking; of any other deployment directory only
+  `deploy/.env`; and nothing that holds the data root, the backup
+  directory, the updater's state or its configuration.
+* **The running version** (decided in review). An upgrade never goes below
+  the highest of the server's report, the updater's record and `.env`'s
+  `EASYRMM_VERSION`; `upgradeFrom` is compared with the lowest of those and
+  the updater's own. When the server and `.env` disagree (or, when `.env`
+  names no version, the server and the record), the updater refuses and
+  says why. When the server and `.env` agree on another version than the
+  record, the deployment was changed by hand and the record follows them:
+  refusing then would stop the updater for good after any manual upgrade
+  (proposed in implementation, beyond the review's wording, and accepted
+  in review). A rollback
+  needs all three to name the version the confirmed upgrade installed.
+* **`.env`** is read as `setup.sh` writes it: `KEY=value` lines, comments
+  and blank lines. `export`, quoted values, spaces around a key and
+  Windows line ends are refused, and the settings the updater reads must
+  be set once, to plain values (quoted values amended below, 2026-11-22).
+* **The updater not replacing itself** at the confirm is recorded as the
+  attempt's warning, in `status`; the next run re-installs it from the
+  running version's bundle, when it is older than that version and the
+  bundle is one it unpacked.
+* **`setup.sh`**, run as root, holds the updater's lock for its whole run
+  (amended below, 2026-11-22).
+
+*Amended 2026-11-22, after a second review of the implementation (decided
+in review):*
+* **Stopping.** `easyrmm-updater.service` has `KillMode=mixed`: systemd's
+  stop sends SIGTERM to the updater alone, never to the `cp`, `docker` or
+  `setup.sh` it runs, which run in process groups of their own, so Ctrl-C
+  does not reach them either. The updater records the stop at once
+  (`stop-asked` in its state directory) and runs on as before.
+  `TimeoutStopSec=30min`, what is left of a held start and the engine's
+  worker's, bounds how long a reboot waits; systemd then kills everything,
+  and the next run settles the attempt. A stop recorded during an attempt
+  keeps the next run from counting it against the version. A stop asked
+  for before step 3 ends the attempt, not counted against the version,
+  also when it kills a command the check runs (which then fails with the
+  signal, not with the context's cancellation).
+* **A command killed by a signal** (one the updater's own context did not
+  send: the out-of-memory killer, someone's `kill`) after the stop is not
+  the version failing. The previous version comes back at once, as for a
+  failure: before step 5 where it stopped, from step 5 on from the backup.
+  The attempt is counted as cut short (`cutShort`, in `state.json` and
+  `status.json`), as one cut short by a stop asked for, or by a record not
+  written, is, and as one whose own process ended, unexplained, during
+  steps 3 and 4 (a panic, the out-of-memory killer on a large tree) is,
+  once the next run has started the previous version again and done
+  nothing else. After two at one version, each of which took the server
+  down, automatic runs wait with it until an operator asks for it, and
+  `status` says why: no version takes the server down every night. The attempt stops where it is instead, the server
+  held, its record saying why (`interrupted`), for the next run to finish,
+  only when bringing the previous version back would not be sound or would
+  not end: a step not recorded from step 5 on (below), a command killed
+  once a stop was asked for (the host is going down), and bringing the
+  previous version back itself cut short.
+* **Records before changes.** The updater never changes the data root, by
+  starting the new version or by restoring, unless the step that says so
+  is recorded. Before step 5 a step it cannot record ends the attempt, and
+  the previous version starts again on its own data; from step 5 on the
+  attempt stops where it is, the server held, and `status` says why. The
+  hold is written again then: the attempt may have lifted it to start a
+  version, or not yet written it; it lies in the data root's `updater/`,
+  which no backup holds and no restore replaces. The same holds for a
+  restore's stages: the discarded head, and the restore's end. Every
+  record of the attempt (its steps, the new version's directory, the
+  backup's directory, the discarded head, the restore's end and the
+  attempt's end) is made so: a stage is undone only when `state.json`
+  still says the stage before; once `state.json` records it, it is begun,
+  whether or not `status.json` could say so (at the confirm, the hold is
+  lifted); and one `state.json` was renamed to record but whose directory
+  could not be synced stops the attempt at it.
+* **Durability.** Every file the updater writes is synced, renamed into
+  place and its directory synced. The backup's filesystem is synced
+  (`syncfs`) before `backup.json` marks it complete, and the filesystems a
+  restore copied to before the restore is recorded as done.
+* **Room.** A file counts as the larger of its length and its blocks. The
+  data root's filesystem needs room for a restore's copy of it, and the
+  deployment directory's for a copy of it. A disk
+  that runs out once the deployment has stopped does not mark the version
+  failed; automatic runs skip that version until an operator asks for it,
+  and `status` and `status.json` (`needsRoom`) say how many bytes it was
+  short, and where.
+* **A restore done again** removes the copies the first left in the data
+  root, worth nothing beside the synced backup, before it copies, so a
+  restore needs room for one copy; and the deployment directory's
+  replaced copies once each copy is made.
+* **`--deployment-repaired`** removes the failed version's directory only
+  when no container of the project runs from it; otherwise tidying does,
+  once none does.
+* **Compose reads only what a backup covers.** Refused at step 1, for the
+  running deployment, and once unpacked for the new one: another file
+  Compose reads (`docker-compose.override.yml`, `compose.yaml` and their
+  variants); a Compose setting in `.env` other than `COMPOSE_PROFILES`;
+  and any volume but a `tmpfs` or a bind mount from the data root (not its
+  `updater/` or a failed data root), the deployment's `deploy/` and
+  `docker/`, the status directory and the server's certificates
+  read-only, or `/etc/localtime`, `/etc/timezone` and the Docker socket.
+  Each source but those last is taken where Docker finds it, its links
+  followed: one whose way leads, through a link, out of the data root or
+  the deployment's directory is refused. The updater runs Compose with an
+  environment of its own.
+* **Links in the data root.** A link at any depth that leads out of the
+  data root, where the host follows it, is refused at step 1; links are
+  never followed to copy what they lead to. Links that lead into it are
+  copied as links. The check runs while the services still run: a link a
+  service plants after it and before the stop is backed up, and restored,
+  as a link. Nothing the updater does with the data root after the check
+  follows it (`cp` copies a link as a link; a restore moves entries aside
+  and copies them as they are), and Docker follows a link only on the way
+  to a directory it mounts, while no service mounts a directory on the way
+  to another's (`deploy/docker-compose.yml`); so it reaches nothing a
+  service could not already reach. Left as it is (decided in review).
+* **Paths.** Only root may change the way to the bundle directory: each
+  directory on it is root's and only root writes it (or it is sticky); a
+  link on it is root's, and the way to where it leads is checked the same,
+  element by element. Mount points are compared with the data root by
+  name, and with where a link to it leads, without resolving the host's
+  every mount point.
+* **`.env` by Compose's rules.** The updater and `setup.sh` take a value
+  unquoted (up to a `" #"` comment, blanks trimmed), or in single or double
+  quotes that end on the line with only a comment after them; so a sender
+  with a name may be quoted. Either refuses what Compose would read
+  otherwise (`export`, blanks before the key or around `=`, a quoted value
+  over more lines, text after the closing quote, control characters). What
+  each reads of a value is narrower than Compose's rules: the updater reads
+  only its own settings, which must be plain and set once; `setup.sh`
+  refuses a backslash, `$` or quote in the settings it reads, and, where it
+  reads another (a secret it fills), takes off a backslash
+  before the quote, or before a backslash in double quotes, keeps any other
+  backslash, and refuses the escapes Compose decodes in double quotes
+  (`\n`, `\t` and the others) rather than misread them. Neither reads
+  Compose's `$` substitution. A test runs the same lines through both and
+  through `docker compose config` (compose-go v2.16.2, Compose v5.7.0).
+* **`setup.sh`**, run as root, holds the updater's lock for its whole run,
+  every `.env` edit and the data root's directories included, and changes
+  nothing while an attempt runs. The updater hands its own lock, open, to
+  the `setup.sh --upgrade --no-updater` it runs (`EASYRMM_UPDATER_LOCK_FD`);
+  that `setup.sh` checks that it is the updater's lock and takes it again,
+  which succeeds at once, so neither waits for the other.
 
 ### Rollback guards (amended 2026-11-21)
 *Decided in review, so that ADR-0057 (rotating the job key) and ADR-0061
@@ -547,6 +788,86 @@ none.*
   record. ADR-0057 and ADR-0061 test what their agents do after each.
 * **The updater updating itself**, from the second release that has one.
 * Then the owner's test instance on the edge channel.
+
+*Amended 2026-11-21, with the implementation:* required upgrade stops,
+as ["Required upgrade stops"](#required-upgrade-stops-amended-2026-11-21)
+above has them. A manifest may name in
+`upgradeFrom` the lowest version a deployment must already run before it
+installs that one: a release or a release candidate below it, never an
+edge build. At step 1 the updater compares it with the lowest of the
+running server's version, `.env`'s, the updater's record and its own,
+which came with the bundle the deployment was last set up from (decided
+in review: an image changed by hand can put the server above it, and,
+after review of the implementation, the server's word is not taken
+alone; see the amendments to "Rollback"), in semantic versioning's precedence,
+as `scripts/release/version.sh newer` does. Below it, the version is
+refused before anything stops, naming the version to install first, and
+the refusal does not count as the version failing. That version is the
+lowest the deployment's own channel offers at or above `upgradeFrom` and
+below the version that names it, another channel's (the pre-release
+channel's, a release candidate on the stable channel) only when that
+channel offers none (decided in review), and a stop's own stop is followed
+the same way. Asked for by name, such a stop is taken on any channel.
+Automatic upgrades install it first, as a version of its own; the next
+run, by the stop's own updater, goes on. They never go down to a stop
+below the running server: that deployment is upgraded by hand. A manifest
+of a later `schemaVersion` is read as this one, and fields the updater
+does not know are ignored, so that an updater can always install the
+release that carries its successor. Not built: `setup.sh --upgrade`'s own
+refusal of the same jump, and the version the updater would pass it.
+
+*Amended 2026-11-21, with the implementation:* what is built so far.
+Unit tests drive every step against a fake Docker, and verification
+against sigstore-go's virtual Sigstore, each certificate field refused
+in turn; integration tests run the rollback's SQL against the migrated
+schema, and take a real PostgreSQL cluster holding EasyRMM's, the
+engine's and Authentik's databases, with Authentik's directories, through
+a backup, a change and a restore. Against real artifacts, an integration
+test takes the first edge build main's CI published, kept byte for byte
+with Sigstore's public-good trusted root, through an upgrade's check,
+and refuses seven changes to it before anything stops;
+`make test-updater-published` takes the build ghcr.io's `edge` tag names
+now the same way, the trusted root fetched through TUF. The upgrade runs
+as a machine test
+(`make test-vm-updater`, internal/vmtest): a Debian 12 machine with
+Docker, installed from a bundle with `setup.sh`, upgraded to a second
+bundle, the confirmed upgrade rolled back; `setup.sh` run again while the
+updater's lock is held, which refuses and changes nothing; the updater
+killed (SIGKILL to its whole unit) while the second bundle's server starts
+held, then the machine restarted, and the timer's run after the boot
+restoring the first version; an upgrade to a third bundle that fails at
+the held start and is rolled back; then a fifth bundle whose `upgradeFrom`
+names the fourth, refused by hand with nothing restarted, and installed by
+two automatic runs, the fourth first, its service stopped with
+`systemctl stop` during its backup and running on to the attempt's end;
+and what tidying left. The third bundle's server fails its health check,
+not a held port: a server that cannot bind restarts until the 20-minute
+limit. It has run on an emulated machine only (no KVM on the host). On the
+code as reviewed a third time (commit 0605dba), it passed whole on 22
+November 2026 without Authentik, in 3 hours 57 minutes (run 11), the
+service's stop seen to land during the backup step; run 10, on the same
+commit, failed before the updater ran, the emulated machine's kernel
+stalled at boot (an RCU stall, the host busy). It had passed on the code
+reviewed a second time (run 9, 3 hours 48 minutes) and the first time on
+21 November (run 8, 3 hours 28 minutes). The later fixes (650c925,
+2da4e90) change code the run goes through (`setup.sh`'s `env_value` and
+`fill_secret`, the records the updater writes) but not what it does on
+any path the run takes: they differ only when a value is quoted with
+escapes, a `status.json` write fails, the updater's own process ends
+during the stop or the backup, or a stop kills a command in the check,
+none of which the run does; it was not run again on them. The
+two runs before run 8 with Authentik failed at the test's own
+install, before the updater ran: once the engine's migration crashed
+(exit 139, a segmentation fault) on the emulated processor, once
+Authentik's worker did not turn healthy within the hour the test's
+bundles give every service there. Run 7, without Authentik, was stopped
+at its first error, the test's own: it took a container Compose had not
+needed to recreate for one not running the new version; the test now
+compares configuration hashes. Authentik's data through a backup and a
+restore is covered by the integration test above. Not
+built yet: the CI job, verification against a real release,
+links and named pipes planted through a backup and a restore, requests
+(4b), and the updater updating itself across releases.
 
 ## Consequences
 * An operator upgrades and rolls back from the console (4b), or with one

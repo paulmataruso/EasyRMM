@@ -83,8 +83,9 @@ type Query struct {
 	SiteID         uuid.UUID
 	// Platform is windows, linux, or empty for every platform.
 	Platform string
-	// Search matches device names and host names (devices) or package
-	// names (software), ignoring case.
+	// Search matches device names and host names (devices), package
+	// names (software) or contacts' names and email addresses (contacts),
+	// ignoring case.
 	Search string
 	// Days is how far back alerts go (alerts).
 	Days int
@@ -137,6 +138,12 @@ type definition struct {
 	// patch, instead of run, reads the report from the patching engine
 	// and says whether it had more rows than it gave.
 	patch func(ctx context.Context, src PatchSource, c access.Caller, q Query, out emit) (bool, error)
+	// privateSearch says the search can hold personal data: a contact's
+	// name or email address, or a device's name, which is often its
+	// user's. An export's audit entry then says that a search was used,
+	// never its text, since the audit log cannot be edited and may be
+	// forwarded.
+	privateSearch bool
 }
 
 var definitions = map[string]definition{
@@ -147,11 +154,13 @@ var definitions = map[string]definition{
 
 	"patch-compliance":    patchComplianceReport,
 	"patch-installations": patchInstallationsReport,
+
+	"contacts": contactsReport,
 }
 
 // Names lists the reports there are.
 func Names() []string {
-	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations"}
+	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations", "contacts"}
 }
 
 // Service runs reports.
@@ -235,11 +244,18 @@ func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Qu
 		return nil, err
 	}
 	details := map[string]any{"report": name, "rows": rep.Total, "truncated": rep.Truncated}
-	for k, v := range map[string]string{"platform": q.Platform, "q": q.Search, "severity": q.Severity, "compliance": q.Compliance,
+	for k, v := range map[string]string{"platform": q.Platform, "severity": q.Severity, "compliance": q.Compliance,
 		"category": q.Category, "result": q.Result} {
 		if v != "" {
 			details[k] = v
 		}
+	}
+	switch {
+	case q.Search == "":
+	case definitions[name].privateSearch:
+		details["searched"] = true
+	default:
+		details["q"] = q.Search
 	}
 	if q.OrganizationID != uuid.Nil {
 		details["organizationId"] = q.OrganizationID.String()

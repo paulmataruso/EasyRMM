@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,13 +18,24 @@ import (
 // runs to stop. Without work it waits up to agentproto.PollWait for some to
 // arrive on this instance, and returns early when ctx ends or the service
 // closes.
-func (s *Service) Poll(ctx context.Context, device uuid.UUID) (*agentproto.PollResponse, error) {
+//
+// accepts is the poll's own list of job capabilities (ADR-0064): a run
+// whose job requires one the list lacks stays queued. A list, even an empty
+// one, is kept on the device with the build that sent it, when it changed;
+// nil (a poll without one) leaves what the device keeps.
+func (s *Service) Poll(ctx context.Context, device uuid.UUID, accepts []string) (*agentproto.PollResponse, error) {
+	accepts = cleanAccepts(accepts)
+	if accepts != nil {
+		if err := s.keepAccepts(ctx, device, accepts); err != nil {
+			return nil, err
+		}
+	}
 	timer := time.NewTimer(s.pollWait)
 	defer timer.Stop()
 	for {
 		// Subscribe before looking, so work queued in between still wakes us.
 		wake := s.hub.subscribe(device)
-		resp, err := s.claim(ctx, device)
+		resp, err := s.claim(ctx, device, accepts)
 		if err != nil || len(resp.Jobs) > 0 || len(resp.Cancel) > 0 {
 			s.hub.unsubscribe(device, wake)
 			return resp, err
@@ -44,24 +56,73 @@ func (s *Service) Poll(ctx context.Context, device uuid.UUID) (*agentproto.PollR
 	}
 }
 
+// cleanAccepts keeps the well-formed names of a poll's list, sorted and
+// without repeats, at most agentproto.MaxAccepts; nil stays nil.
+func cleanAccepts(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := []string{}
+	for _, a := range in {
+		if acceptName(a) && !slices.Contains(out, a) && len(out) < agentproto.MaxAccepts {
+			out = append(out, a)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// acceptName reports whether a is a capability name: lower-case letters,
+// digits, '.', '_' and '-', at most agentproto.MaxAcceptLen.
+func acceptName(a string) bool {
+	if a == "" || len(a) > agentproto.MaxAcceptLen {
+		return false
+	}
+	for _, r := range a {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// keepAccepts stores a poll's list on its device with the build the device
+// runs now, writing only when either changed.
+func (s *Service) keepAccepts(ctx context.Context, device uuid.UUID, accepts []string) error {
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE devices SET agent_accepts = $2, agent_accepts_build = coalesce(agent_sha256, agent_version)
+			WHERE id = $1 AND (agent_accepts IS DISTINCT FROM $2
+			  OR agent_accepts_build IS DISTINCT FROM coalesce(agent_sha256, agent_version))`, device, accepts)
+		if err != nil {
+			return fmt.Errorf("jobs: keeping what the agent accepts: %w", err)
+		}
+		return nil
+	})
+}
+
 // claim marks the device's due runs delivered and signs them, and collects
-// cancellations to send.
-func (s *Service) claim(ctx context.Context, device uuid.UUID) (*agentproto.PollResponse, error) {
+// cancellations to send. A run whose job requires a capability the poll's
+// list lacks is left queued.
+func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string) (*agentproto.PollResponse, error) {
 	resp := &agentproto.PollResponse{Jobs: []agentproto.SignedJob{}, Cancel: []string{}}
 	now := s.now().UTC()
+	if accepts == nil {
+		accepts = []string{}
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `WITH due AS (
-				SELECT id FROM job_runs
-				WHERE device_id = $1 AND expires_at > now() AND cancel_requested_at IS NULL
-				  AND (status = 'queued' OR (status = 'sent' AND sent_at < now() - make_interval(secs => $2)))
-				ORDER BY created_at, id LIMIT $3
-				FOR UPDATE SKIP LOCKED
+				SELECT r.id FROM job_runs r JOIN jobs j ON j.id = r.job_id
+				WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
+				  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
+				  AND j.requires <@ $4::text[]
+				ORDER BY r.created_at, r.id LIMIT $3
+				FOR UPDATE OF r SKIP LOCKED
 			)
 			UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1
 			FROM due, jobs j
 			WHERE r.id = due.id AND j.id = r.job_id
-			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds`,
-			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs)
+			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback`,
+			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs, accepts)
 		if err != nil {
 			return err
 		}
@@ -76,7 +137,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID) (*agentproto.Poll
 				expires        time.Time
 				timeoutSeconds int
 			)
-			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds); err != nil {
+			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback); err != nil {
 				rows.Close()
 				return err
 			}
@@ -233,6 +294,7 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		t := in.StartedAt
 		started = &t
 	}
+	p := cleanProgram(in.Interpreter)
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var job uuid.UUID
 		var ran time.Time
@@ -241,10 +303,12 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 				stderr = CASE WHEN output_removed_at IS NULL THEN $6 ELSE '' END,
 				stdout_truncated = output_removed_at IS NULL AND $7, stderr_truncated = output_removed_at IS NULL AND $8,
 				output_stored_at = CASE WHEN output_removed_at IS NULL AND ($5 <> '' OR $6 <> '') THEN now() END,
-				error = $9, started_at = coalesce(started_at, $10), finished_at = now()
+				error = $9, started_at = coalesce(started_at, $10), finished_at = now(),
+				program_edition = $11, program_version = $12, program_arch = $13, program_path = $14, program_fallback = $15
 			WHERE id = $1 AND device_id = $2 AND status IN ('sent', 'running', 'lost')
 			RETURNING job_id, coalesce(started_at, finished_at)`,
-			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started).
+			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started,
+			p.edition, p.version, p.arch, p.path, p.fallback).
 			Scan(&job, &ran)
 		switch {
 		case err == nil && in.Status == StatusSucceeded:
@@ -264,4 +328,38 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		}
 		return nil
 	})
+}
+
+// program is a result's interpreter as a run keeps it: NULL columns for
+// what was not reported or is not one of the known values.
+type program struct {
+	edition, version, arch, path *string
+	fallback                     bool
+}
+
+// cleanProgram bounds what an agent says it started. Without a path there
+// is no program; an unknown edition or architecture is dropped, and only
+// Windows PowerShell can be a fallback.
+func cleanProgram(in *agentproto.Interpreter) program {
+	var p program
+	if in == nil {
+		return p
+	}
+	path := truncateRunes(cleanText(in.Path, false), agentproto.MaxInterpreterPath)
+	if path == "" {
+		return p
+	}
+	p.path = &path
+	if in.Edition == agentproto.EditionDesktop || in.Edition == agentproto.EditionCore {
+		p.edition = &in.Edition
+	}
+	if v := truncateRunes(cleanText(in.Version, false), agentproto.MaxInterpreterVersion); v != "" {
+		p.version = &v
+	}
+	switch in.Arch {
+	case agentproto.ArchX64, agentproto.ArchARM64, agentproto.ArchX86:
+		p.arch = &in.Arch
+	}
+	p.fallback = in.Fallback && in.Edition == agentproto.EditionDesktop
+	return p
 }

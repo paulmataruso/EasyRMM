@@ -8,7 +8,7 @@ import { renderApp } from "../../test/render";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
 const LINUX: Partial<Device> = { platform: "linux", osDescription: "Debian GNU/Linux 13 (trixie)", agent: AGENT, canManageSoftware: true };
 const SERVER = device("d1", "DB-01", LINUX);
 const WINDOWS_PC = device("d2", "FRONT-DESK", { agent: AGENT, canManageSoftware: true });

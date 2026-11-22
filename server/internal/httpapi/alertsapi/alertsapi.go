@@ -27,6 +27,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/alerts/summary", a.summary)
 	r("GET /api/v1/alerts/devices", a.deviceCounts)
 	r("GET /api/v1/alerts/{id}", a.getAlert)
+	r("GET /api/v1/alerts/{id}/metrics", a.alertMetrics)
 	r("POST /api/v1/alerts/{id}/acknowledge", a.acknowledge)
 	r("POST /api/v1/alerts/{id}/resolve", a.resolve)
 	r("GET /api/v1/alert-policies", a.listPolicies)
@@ -49,6 +50,10 @@ func (a *API) listAlerts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	policy, err := httpapi.QueryID(r, "policyId")
+	if err != nil {
+		return err
+	}
 	before, err := httpapi.QueryInt(r, "before", 0, 0, 1<<62)
 	if err != nil {
 		return err
@@ -60,7 +65,7 @@ func (a *API) listAlerts(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
 	items, next, err := a.svc.ListAlerts(r.Context(), httpapi.Caller(r), monitoring.AlertQuery{
 		Status: q.Get("status"), DeviceID: device, OrganizationID: org, SiteID: site, Severity: q.Get("severity"),
-		Before: before, Limit: limit,
+		PolicyID: policy, Subject: q.Get("subject"), Before: before, Limit: limit,
 	})
 	if err != nil {
 		return err
@@ -101,6 +106,19 @@ func (a *API) getAlert(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, al)
+	return nil
+}
+
+func (a *API) alertMetrics(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	m, err := a.svc.AlertMetrics(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, m)
 	return nil
 }
 

@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/m365/m365test"
 	"github.com/paulmataruso/easyrmm/server/internal/testmail"
 )
 
@@ -231,4 +233,63 @@ func TestMailServerFromEnv(t *testing.T) {
 	if got := mp.Wait(to, 1)[0]; got.From.Name != "EasyRMM Env" || got.From.Address != mp.From {
 		t.Fatalf("from %+v", got.From)
 	}
+}
+
+// A Microsoft 365 application through the API (ADR-0053, slice 2): saved
+// with its secret, then its certificate and key, neither of which is ever
+// returned; the view says the patching engine is given no mail server.
+func TestMailServerApplicationAPI(t *testing.T) {
+	h := newHarness(t, false)
+	admin, _ := setUp(t, h)
+	const base = "/api/v1/settings/mail-server"
+	now := time.Now()
+	certPEM, keyPEM := m365test.AppCertificate(t, now.Add(-time.Hour), now.Add(20*24*time.Hour))
+	form := map[string]any{"host": "smtp.office365.com", "port": 587, "security": "starttls", "signIn": "microsoft365",
+		"fromAddress": m365test.Mailbox, "fromName": "EasyRMM", "tenantId": m365test.TenantID, "clientId": m365test.ClientID,
+		"credential": "secret", "clientSecret": m365test.Secret}
+	type view struct {
+		InForce        string `json:"inForce"`
+		EngineWithheld string `json:"engineWithheld"`
+		Console        *struct {
+			SignIn      string `json:"signIn"`
+			Application *struct {
+				TenantID    string `json:"tenantId"`
+				ClientID    string `json:"clientId"`
+				Credential  string `json:"credential"`
+				SecretSet   bool   `json:"secretSet"`
+				Certificate *struct {
+					Thumbprint string    `json:"thumbprint"`
+					NotAfter   time.Time `json:"notAfter"`
+				} `json:"certificate"`
+				CertificateWarning string `json:"certificateWarning"`
+			} `json:"application"`
+		} `json:"console"`
+	}
+	var v view
+	r := admin.expect(http.StatusOK, "PUT", base, form, &v)
+	if v.InForce != "console" || v.Console == nil || v.Console.SignIn != "microsoft365" || v.Console.Application == nil ||
+		v.Console.Application.TenantID != m365test.TenantID || !v.Console.Application.SecretSet || v.Console.Application.Credential != "secret" ||
+		!strings.Contains(v.EngineWithheld, "patching engine") || strings.Contains(string(r.body), m365test.Secret) {
+		t.Fatalf("saved: %s", r.body)
+	}
+	if r := admin.expect(http.StatusOK, "GET", base, nil, nil); strings.Contains(string(r.body), m365test.Secret) {
+		t.Fatal("the settings carry the secret")
+	}
+
+	// The certificate, ending within 30 days: warned of.
+	delete(form, "clientSecret")
+	form["credential"], form["certificate"], form["certificateKey"] = "certificate", certPEM, keyPEM
+	r = admin.expect(http.StatusOK, "PUT", base, form, &v)
+	app := v.Console.Application
+	keyBody := strings.Split(strings.TrimSpace(keyPEM), "\n")[1]
+	if app.Credential != "certificate" || app.SecretSet || app.Certificate == nil || len(app.Certificate.Thumbprint) != 40 ||
+		!strings.Contains(app.CertificateWarning, "expires on") || strings.Contains(string(r.body), keyBody) {
+		t.Fatalf("certificate: %s", r.body)
+	}
+	if r := admin.expect(http.StatusOK, "GET", base, nil, nil); strings.Contains(string(r.body), keyBody) {
+		t.Fatal("the settings carry the key")
+	}
+	// Over no encryption, refused.
+	form["security"] = "none"
+	wantStatus(t, admin.do("PUT", base, form), http.StatusUnprocessableEntity, "validation_failed")
 }

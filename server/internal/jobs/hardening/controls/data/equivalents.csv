@@ -1,0 +1,489 @@
+rule,release,equivalent,matchedBy
+WN11-00-000030,win10-v3r6,WN10-00-000030,read: BitLocker on the operating system and fixed data drives
+WN11-00-000031,win10-v3r6,WN10-00-000031,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\FVE\UseAdvancedStartup; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\FVE\UseTPMPIN; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\FVE\UseTPMKeyPIN
+WN11-00-000032,win10-v3r6,WN10-00-000032,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\FVE\MinimumPIN
+WN11-00-000045,win10-v3r6,WN10-00-000045,read: an antivirus solution installed and in use
+WN11-00-000110,win10-v3r6,WN10-00-000110,read: Simple TCP/IP Services not installed
+WN11-00-000115,win10-v3r6,WN10-00-000115,read: Telnet Client not installed
+WN11-00-000120,win10-v3r6,WN10-00-000120,read: TFTP Client not installed
+WN11-00-000135,win10-v3r6,WN10-00-000135,same check text
+WN11-00-000155,win10-v3r6,WN10-00-000155,Windows feature: PowerShellv2
+WN11-00-000160,win10-v3r6,WN10-00-000160,Windows feature: SMB1Protocol
+WN11-00-000165,win10-v3r6,WN10-00-000165,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters\SMB1
+WN11-00-000170,win10-v3r6,WN10-00-000170,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10\Start
+WN11-AC-000005,win10-v3r6,WN10-AC-000005,security policy: Account lockout duration
+WN11-AC-000010,win10-v3r6,WN10-AC-000010,security policy: Account lockout threshold
+WN11-AC-000015,win10-v3r6,WN10-AC-000015,security policy: Reset account lockout counter after
+WN11-AC-000020,win10-v3r6,WN10-AC-000020,security policy: Enforce password history
+WN11-AC-000025,win10-v3r6,WN10-AC-000025,security policy: Maximum password age
+WN11-AC-000030,win10-v3r6,WN10-AC-000030,security policy: Minimum password age
+WN11-AC-000035,win10-v3r6,WN10-AC-000035,"security policy: Minimum password length,"
+WN11-AC-000040,win10-v3r6,WN10-AC-000040,security policy: Password must meet complexity requirements
+WN11-AC-000045,win10-v3r6,WN10-AC-000045,security policy: Store password using reversible encryption
+WN11-AU-000005,win10-v3r6,WN10-AU-000005,audit policy: Credential Validation - Failure
+WN11-AU-000010,win10-v3r6,WN10-AU-000010,audit policy: Credential Validation - Success
+WN11-AU-000030,win10-v3r6,WN10-AU-000030,audit policy: Security Group Management - Success
+WN11-AU-000035,win10-v3r6,WN10-AU-000035,audit policy: User Account Management - Failure
+WN11-AU-000040,win10-v3r6,WN10-AU-000040,audit policy: User Account Management - Success
+WN11-AU-000045,win10-v3r6,WN10-AU-000045,audit policy: Plug and Play Events - Success
+WN11-AU-000050,win10-v3r6,WN10-AU-000050,audit policy: Process Creation - Success
+WN11-AU-000054,win10-v3r6,WN10-AU-000054,audit policy: Account Lockout - Failure
+WN11-AU-000060,win10-v3r6,WN10-AU-000060,audit policy: Group Membership - Success
+WN11-AU-000065,win10-v3r6,WN10-AU-000065,audit policy: Logoff - Success
+WN11-AU-000070,win10-v3r6,WN10-AU-000070,audit policy: Logon - Failure
+WN11-AU-000075,win10-v3r6,WN10-AU-000075,audit policy: Logon - Success
+WN11-AU-000080,win10-v3r6,WN10-AU-000080,audit policy: Special Logon - Success
+WN11-AU-000081,win10-v3r6,WN10-AU-000081,audit policy: File Share - Failure
+WN11-AU-000082,win10-v3r6,WN10-AU-000082,audit policy: File Share - Success
+WN11-AU-000083,win10-v3r6,WN10-AU-000083,audit policy: Other Object Access Events - Success
+WN11-AU-000084,win10-v3r6,WN10-AU-000084,audit policy: Other Object Access Events - Failure
+WN11-AU-000085,win10-v3r6,WN10-AU-000085,audit policy: Removable Storage - Failure
+WN11-AU-000090,win10-v3r6,WN10-AU-000090,audit policy: Removable Storage - Success
+WN11-AU-000100,win10-v3r6,WN10-AU-000100,audit policy: Audit Policy Change - Success
+WN11-AU-000105,win10-v3r6,WN10-AU-000105,audit policy: Authentication Policy Change - Success
+WN11-AU-000107,win10-v3r6,WN10-AU-000107,audit policy: Authorization Policy Change - Success
+WN11-AU-000110,win10-v3r6,WN10-AU-000110,audit policy: Sensitive Privilege Use - Failure
+WN11-AU-000115,win10-v3r6,WN10-AU-000115,audit policy: Sensitive Privilege Use - Success
+WN11-AU-000120,win10-v3r6,WN10-AU-000120,audit policy: IPsec Driver - Failure
+WN11-AU-000130,win10-v3r6,WN10-AU-000130,audit policy: Other System Events - Success
+WN11-AU-000135,win10-v3r6,WN10-AU-000135,audit policy: Other System Events - Failure
+WN11-AU-000140,win10-v3r6,WN10-AU-000140,audit policy: Security State Change - Success
+WN11-AU-000150,win10-v3r6,WN10-AU-000150,audit policy: Security System Extension - Success
+WN11-AU-000155,win10-v3r6,WN10-AU-000155,audit policy: System Integrity - Failure
+WN11-AU-000160,win10-v3r6,WN10-AU-000160,audit policy: System Integrity - Success
+WN11-AU-000500,win10-v3r6,WN10-AU-000500,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Application\MaxSize
+WN11-AU-000505,win10-v3r6,WN10-AU-000505,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security\MaxSize
+WN11-AU-000510,win10-v3r6,WN10-AU-000510,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\System\MaxSize
+WN11-AU-000515,win10-v3r6,WN10-AU-000515,file: Application.evtx
+WN11-AU-000520,win10-v3r6,WN10-AU-000520,file: Security.evtx
+WN11-AU-000525,win10-v3r6,WN10-AU-000525,file: System.evtx
+WN11-AU-000555,win10-v3r6,WN10-AU-000555,audit policy: Other Policy Change Events - Failure
+WN11-AU-000560,win10-v3r6,WN10-AU-000560,audit policy: Other Logon/Logoff Events - Success
+WN11-AU-000565,win10-v3r6,WN10-AU-000565,audit policy: Other Logon/Logoff Events - Failure
+WN11-AU-000570,win10-v3r6,WN10-AU-000570,audit policy: Detailed File Share - Failure
+WN11-AU-000575,win10-v3r6,WN10-AU-000575,audit policy: MPSSVC Rule-Level Policy Change - Success
+WN11-AU-000580,win10-v3r6,WN10-AU-000580,audit policy: MPSSVC Rule-Level Policy Change - Failure
+WN11-AU-000583,win10-v3r6,WN10-AU-000583,audit policy: Handle Manipulation - Failure
+WN11-AU-000585,win10-v3r6,WN10-AU-000585,audit policy: Process Creation - Failure
+WN11-AU-000586,win10-v3r6,WN10-AU-000586,audit policy: Registry - Success
+WN11-AU-000587,win10-v3r6,WN10-AU-000587,audit policy: Sensitive Privilege Use - Success
+WN11-AU-000588,win10-v3r6,WN10-AU-000588,audit policy: Sensitive Privilege Use - Failure
+WN11-AU-000589,win10-v3r6,WN10-AU-000589,audit policy: Registry - Failure
+WN11-CC-000035,win10-v3r6,WN10-CC-000035,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Netbt\Parameters\NoNameReleaseOnDemand
+WN11-CC-000037,win10-v3r6,WN10-CC-000037,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LocalAccountTokenFilterPolicy
+WN11-CC-000038,win10-v3r6,WN10-CC-000038,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\Wdigest\UseLogonCredential
+WN11-CC-000040,win10-v3r6,WN10-CC-000040,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation\AllowInsecureGuestAuth
+WN11-CC-000066,win10-v3r6,WN10-CC-000066,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit\ProcessCreationIncludeCmdLine_Enabled
+WN11-CC-000070,win10-v3r6,WN10-CC-000070,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\EnableVirtualizationBasedSecurity; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\RequirePlatformSecurityFeatures
+WN11-CC-000075,win10-v3r6,WN10-CC-000075,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\LsaCfgFlags
+WN11-CC-000080,win10-v3r6,WN10-CC-000080,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\HypervisorEnforcedCodeIntegrity
+WN11-CC-000100,win10-v3r6,WN10-CC-000100,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableWebPnPDownload
+WN11-CC-000110,win10-v3r6,WN10-CC-000110,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableHTTPPrinting
+WN11-CC-000155,win10-v3r6,WN10-CC-000155,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fAllowToGetHelp
+WN11-CC-000180,win10-v3r6,WN10-CC-000180,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Explorer\NoAutoplayfornonVolume
+WN11-CC-000185,win10-v3r6,WN10-CC-000185,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoAutorun
+WN11-CC-000190,win10-v3r6,WN10-CC-000190,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\policies\Explorer\NoDriveTypeAutoRun
+WN11-CC-000210,win10-v3r6,WN10-CC-000210,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System\EnableSmartScreen; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System\ShellSmartScreenLevel
+WN11-CC-000270,win10-v3r6,WN10-CC-000270,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\DisablePasswordSaving
+WN11-CC-000275,win10-v3r6,WN10-CC-000275,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fDisableCdm
+WN11-CC-000280,win10-v3r6,WN10-CC-000280,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fPromptForPassword
+WN11-CC-000285,win10-v3r6,WN10-CC-000285,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fEncryptRPCTraffic
+WN11-CC-000290,win10-v3r6,WN10-CC-000290,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MinEncryptionLevel
+WN11-CC-000315,win10-v3r6,WN10-CC-000315,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
+WN11-CC-000326,win10-v3r6,WN10-CC-000326,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging\EnableScriptBlockLogging
+WN11-CC-000327,win10-v3r6,WN10-CC-000327,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription\EnableTranscripting
+WN11-CC-000330,win10-v3r6,WN10-CC-000330,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowBasic
+WN11-CC-000335,win10-v3r6,WN10-CC-000335,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowUnencryptedTraffic
+WN11-CC-000345,win10-v3r6,WN10-CC-000345,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowBasic
+WN11-CC-000350,win10-v3r6,WN10-CC-000350,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencryptedTraffic
+WN11-CC-000355,win10-v3r6,WN10-CC-000355,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\DisableRunAs
+WN11-CC-000360,win10-v3r6,WN10-CC-000360,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowDigest
+WN11-SO-000010,win10-v3r6,WN10-SO-000010,security policy: Accounts: Guest account status
+WN11-SO-000015,win10-v3r6,WN10-SO-000015,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LimitBlankPasswordUse
+WN11-SO-000020,win10-v3r6,WN10-SO-000020,security policy: Accounts: Rename administrator account
+WN11-SO-000030,win10-v3r6,WN10-SO-000030,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\SCENoApplyLegacyAuditPolicy
+WN11-SO-000100,win10-v3r6,WN10-SO-000100,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\RequireSecuritySignature
+WN11-SO-000110,win10-v3r6,WN10-SO-000110,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnablePlainTextPassword
+WN11-SO-000120,win10-v3r6,WN10-SO-000120,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RequireSecuritySignature
+WN11-SO-000140,win10-v3r6,WN10-SO-000140,security policy: Network access: Allow anonymous SID/Name translation
+WN11-SO-000145,win10-v3r6,WN10-SO-000145,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymousSAM
+WN11-SO-000150,win10-v3r6,WN10-SO-000150,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymous
+WN11-SO-000160,win10-v3r6,WN10-SO-000160,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\EveryoneIncludesAnonymous
+WN11-SO-000165,win10-v3r6,WN10-SO-000165,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RestrictNullSessAccess
+WN11-SO-000167,win10-v3r6,WN10-SO-000167,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictRemoteSAM
+WN11-SO-000180,win10-v3r6,WN10-SO-000180,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\LSA\MSV1_0\allownullsessionfallback
+WN11-SO-000195,win10-v3r6,WN10-SO-000195,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\NoLMHash
+WN11-SO-000205,win10-v3r6,WN10-SO-000205,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel
+WN11-SO-000215,win10-v3r6,WN10-SO-000215,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinClientSec
+WN11-SO-000220,win10-v3r6,WN10-SO-000220,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinServerSec
+WN11-SO-000245,win10-v3r6,WN10-SO-000245,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken
+WN11-SO-000250,win10-v3r6,WN10-SO-000250,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorAdmin
+WN11-SO-000255,win10-v3r6,WN10-SO-000255,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorUser
+WN11-SO-000260,win10-v3r6,WN10-SO-000260,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableInstallerDetection
+WN11-SO-000265,win10-v3r6,WN10-SO-000265,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableSecureUIAPaths
+WN11-SO-000270,win10-v3r6,WN10-SO-000270,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
+WN11-SO-000275,win10-v3r6,WN10-SO-000275,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableVirtualization
+WN11-SO-000280,win10-v3r6,WN10-SO-000280,read: age of the local Administrator account's password (the releases ask different ages)
+WN25-00-000020,ws2022-v2r11,WN22-00-000020,read: age of the local Administrator account's password
+WN25-00-000020,ws2019-v3r9,WN19-00-000020,read: age of the local Administrator account's password (the releases ask different ages)
+WN25-00-000020,ws2016-v2r10,WN16-00-000030,read: age of the built-in Administrator account's password (the releases ask different ages)
+WN25-00-000110,ws2022-v2r11,WN22-00-000110,read: an antivirus solution installed
+WN25-00-000110,ws2019-v3r9,WN19-00-000110,read: an antivirus solution installed
+WN25-00-000110,ws2016-v2r10,WN16-00-000120,read: an antivirus solution installed
+WN25-00-000250,ws2022-v2r11,WN22-00-000250,read: data at rest encrypted where the system needs it
+WN25-00-000250,ws2019-v3r9,WN19-00-000250,read: data at rest encrypted where the system needs it
+WN25-00-000250,ws2016-v2r10,WN16-00-000280,read: data at rest encrypted where the system needs it
+WN25-00-000280,ws2022-v2r11,WN22-00-000280,same check text
+WN25-00-000280,ws2019-v3r9,WN19-00-000280,same check text
+WN25-00-000280,ws2016-v2r10,WN16-00-000310,same check text
+WN25-00-000320,ws2022-v2r11,WN22-00-000320,Windows feature: Fax
+WN25-00-000320,ws2019-v3r9,WN19-00-000320,Windows feature: Fax
+WN25-00-000320,ws2016-v2r10,WN16-00-000350,Windows feature: Fax
+WN25-00-000330,ws2022-v2r11,WN22-00-000330,Windows feature: Web-Ftp-Service
+WN25-00-000330,ws2019-v3r9,WN19-00-000330,Windows feature: Web-Ftp-Service
+WN25-00-000330,ws2016-v2r10,WN16-00-000360,Windows feature: Web-Ftp-Service
+WN25-00-000340,ws2022-v2r11,WN22-00-000340,Windows feature: PNRP
+WN25-00-000340,ws2019-v3r9,WN19-00-000340,Windows feature: PNRP
+WN25-00-000340,ws2016-v2r10,WN16-00-000370,Windows feature: PNRP
+WN25-00-000350,ws2022-v2r11,WN22-00-000350,Windows feature: Simple-TCPIP
+WN25-00-000350,ws2019-v3r9,WN19-00-000350,Windows feature: Simple-TCPIP
+WN25-00-000350,ws2016-v2r10,WN16-00-000380,Windows feature: Simple-TCPIP
+WN25-00-000360,ws2022-v2r11,WN22-00-000360,Windows feature: Telnet-Client
+WN25-00-000360,ws2019-v3r9,WN19-00-000360,Windows feature: Telnet-Client
+WN25-00-000360,ws2016-v2r10,WN16-00-000390,Windows feature: Telnet-Client
+WN25-00-000370,ws2022-v2r11,WN22-00-000370,Windows feature: TFTP-Client
+WN25-00-000370,ws2019-v3r9,WN19-00-000370,Windows feature: TFTP-Client
+WN25-00-000370,ws2016-v2r10,WN16-00-000400,Windows feature: TFTP-Client
+WN25-00-000380,ws2022-v2r11,WN22-00-000380,Windows feature: FS-SMB1
+WN25-00-000380,ws2019-v3r9,WN19-00-000380,Windows feature: FS-SMB1
+WN25-00-000380,ws2016-v2r10,WN16-00-000410,Windows feature: FS-SMB1
+WN25-00-000390,ws2022-v2r11,WN22-00-000390,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters\SMB1
+WN25-00-000390,ws2019-v3r9,WN19-00-000390,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters\SMB1
+WN25-00-000390,ws2016-v2r10,WN16-00-000411,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters\SMB1
+WN25-00-000400,ws2022-v2r11,WN22-00-000400,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10\Start
+WN25-00-000400,ws2019-v3r9,WN19-00-000400,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10\Start
+WN25-00-000400,ws2016-v2r10,WN16-00-000412,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\mrxsmb10\Start
+WN25-00-000410,ws2022-v2r11,WN22-00-000410,Windows feature: PowerShell-v2
+WN25-00-000410,ws2019-v3r9,WN19-00-000410,Windows feature: PowerShell-v2
+WN25-00-000410,ws2016-v2r10,WN16-00-000420,Windows feature: PowerShell-v2
+WN25-AC-000010,ws2022-v2r11,WN22-AC-000010,security policy: Account lockout duration
+WN25-AC-000010,ws2019-v3r9,WN19-AC-000010,security policy: Account lockout duration
+WN25-AC-000010,ws2016-v2r10,WN16-AC-000010,security policy: Account lockout duration
+WN25-AC-000020,ws2022-v2r11,WN22-AC-000020,security policy: Account lockout threshold
+WN25-AC-000020,ws2019-v3r9,WN19-AC-000020,security policy: Account lockout threshold
+WN25-AC-000020,ws2016-v2r10,WN16-AC-000020,security policy: Account lockout threshold
+WN25-AC-000030,ws2022-v2r11,WN22-AC-000030,security policy: Reset account lockout counter after
+WN25-AC-000030,ws2019-v3r9,WN19-AC-000030,security policy: Reset account lockout counter after
+WN25-AC-000030,ws2016-v2r10,WN16-AC-000030,security policy: Reset account lockout counter after
+WN25-AC-000040,ws2022-v2r11,WN22-AC-000040,security policy: Enforce password history
+WN25-AC-000040,ws2019-v3r9,WN19-AC-000040,security policy: Enforce password history
+WN25-AC-000040,ws2016-v2r10,WN16-AC-000040,security policy: Enforce password history
+WN25-AC-000050,ws2022-v2r11,WN22-AC-000050,security policy: Maximum password age
+WN25-AC-000050,ws2019-v3r9,WN19-AC-000050,security policy: Maximum password age
+WN25-AC-000050,ws2016-v2r10,WN16-AC-000050,security policy: Maximum password age
+WN25-AC-000060,ws2022-v2r11,WN22-AC-000060,security policy: Minimum password age
+WN25-AC-000060,ws2019-v3r9,WN19-AC-000060,security policy: Minimum password age
+WN25-AC-000060,ws2016-v2r10,WN16-AC-000060,security policy: Minimum password age
+WN25-AC-000080,ws2022-v2r11,WN22-AC-000080,security policy: Password must meet complexity requirements
+WN25-AC-000080,ws2019-v3r9,WN19-AC-000080,security policy: Password must meet complexity requirements
+WN25-AC-000080,ws2016-v2r10,WN16-AC-000080,security policy: Password must meet complexity requirements
+WN25-AC-000090,ws2022-v2r11,WN22-AC-000090,security policy: Store passwords using reversible encryption
+WN25-AC-000090,ws2019-v3r9,WN19-AC-000090,security policy: Store passwords using reversible encryption
+WN25-AC-000090,ws2016-v2r10,WN16-AC-000090,security policy: Store passwords using reversible encryption
+WN25-AU-000010,ws2022-v2r11,WN22-AU-000010,same check text
+WN25-AU-000010,ws2019-v3r9,WN19-AU-000010,same check text
+WN25-AU-000010,ws2016-v2r10,WN16-AU-000010,same check text
+WN25-AU-000020,ws2022-v2r11,WN22-AU-000020,read: audit records off-loaded to another system
+WN25-AU-000020,ws2019-v3r9,WN19-AU-000020,read: audit records off-loaded to another system
+WN25-AU-000020,ws2016-v2r10,WN16-AU-000020,read: audit records off-loaded to another system
+WN25-AU-000030,ws2022-v2r11,WN22-AU-000030,file: Application.evtx
+WN25-AU-000030,ws2019-v3r9,WN19-AU-000030,file: Application.evtx
+WN25-AU-000030,ws2016-v2r10,WN16-AU-000030,file: Application.evtx
+WN25-AU-000040,ws2022-v2r11,WN22-AU-000040,file: Security.evtx
+WN25-AU-000040,ws2019-v3r9,WN19-AU-000040,file: Security.evtx
+WN25-AU-000040,ws2016-v2r10,WN16-AU-000040,file: Security.evtx
+WN25-AU-000050,ws2022-v2r11,WN22-AU-000050,file: System.evtx
+WN25-AU-000050,ws2019-v3r9,WN19-AU-000050,file: System.evtx
+WN25-AU-000050,ws2016-v2r10,WN16-AU-000050,file: System.evtx
+WN25-AU-000060,ws2022-v2r11,WN22-AU-000060,file: Eventvwr.exe
+WN25-AU-000060,ws2019-v3r9,WN19-AU-000060,file: Eventvwr.exe
+WN25-AU-000060,ws2016-v2r10,WN16-AU-000060,file: Eventvwr.exe
+WN25-AU-000070,ws2022-v2r11,WN22-AU-000070,audit policy: Credential Validation - Success
+WN25-AU-000070,ws2019-v3r9,WN19-AU-000070,audit policy: Credential Validation - Success
+WN25-AU-000070,ws2016-v2r10,WN16-AU-000070,audit policy: Credential Validation - Success
+WN25-AU-000080,ws2022-v2r11,WN22-AU-000080,audit policy: Credential Validation - Failure
+WN25-AU-000080,ws2019-v3r9,WN19-AU-000080,audit policy: Credential Validation - Failure
+WN25-AU-000080,ws2016-v2r10,WN16-AU-000080,audit policy: Credential Validation - Failure
+WN25-AU-000090,ws2022-v2r11,WN22-AU-000090,audit policy: Other Account Management Events - Success
+WN25-AU-000090,ws2019-v3r9,WN19-AU-000090,audit policy: Other Account Management Events - Success
+WN25-AU-000090,ws2016-v2r10,WN16-AU-000100,audit policy: Other Account Management Events - Success
+WN25-AU-000100,ws2022-v2r11,WN22-AU-000100,audit policy: Security Group Management - Success
+WN25-AU-000100,ws2019-v3r9,WN19-AU-000100,audit policy: Security Group Management - Success
+WN25-AU-000100,ws2016-v2r10,WN16-AU-000120,audit policy: Security Group Management - Success
+WN25-AU-000110,ws2022-v2r11,WN22-AU-000110,audit policy: User Account Management - Success
+WN25-AU-000110,ws2019-v3r9,WN19-AU-000110,audit policy: User Account Management - Success
+WN25-AU-000110,ws2016-v2r10,WN16-AU-000140,audit policy: User Account Management - Success
+WN25-AU-000120,ws2022-v2r11,WN22-AU-000120,audit policy: User Account Management - Failure
+WN25-AU-000120,ws2019-v3r9,WN19-AU-000120,audit policy: User Account Management - Failure
+WN25-AU-000120,ws2016-v2r10,WN16-AU-000150,audit policy: User Account Management - Failure
+WN25-AU-000130,ws2022-v2r11,WN22-AU-000130,audit policy: Plug and Play Events - Success
+WN25-AU-000130,ws2019-v3r9,WN19-AU-000130,audit policy: Plug and Play Events - Success
+WN25-AU-000130,ws2016-v2r10,WN16-AU-000160,audit policy: Plug and Play Events - Success
+WN25-AU-000140,ws2022-v2r11,WN22-AU-000140,audit policy: Process Creation - Success
+WN25-AU-000140,ws2019-v3r9,WN19-AU-000140,audit policy: Process Creation - Success
+WN25-AU-000140,ws2016-v2r10,WN16-AU-000170,audit policy: Process Creation - Success
+WN25-AU-000150,ws2022-v2r11,,
+WN25-AU-000150,ws2019-v3r9,,
+WN25-AU-000150,ws2016-v2r10,,
+WN25-AU-000160,ws2022-v2r11,WN22-AU-000160,audit policy: Account Lockout - Failure
+WN25-AU-000160,ws2019-v3r9,WN19-AU-000160,audit policy: Account Lockout - Failure
+WN25-AU-000160,ws2016-v2r10,WN16-AU-000230,audit policy: Account Lockout - Failure
+WN25-AU-000170,ws2022-v2r11,WN22-AU-000170,audit policy: Group Membership - Success
+WN25-AU-000170,ws2019-v3r9,WN19-AU-000170,audit policy: Group Membership - Success
+WN25-AU-000170,ws2016-v2r10,WN16-AU-000240,audit policy: Group Membership - Success
+WN25-AU-000180,ws2022-v2r11,WN22-AU-000180,audit policy: Logoff - Success
+WN25-AU-000180,ws2019-v3r9,WN19-AU-000180,audit policy: Logoff - Success
+WN25-AU-000180,ws2016-v2r10,WN16-AU-000250,audit policy: Logoff - Success
+WN25-AU-000190,ws2022-v2r11,WN22-AU-000190,audit policy: Logon - Success
+WN25-AU-000190,ws2019-v3r9,WN19-AU-000190,audit policy: Logon - Success
+WN25-AU-000190,ws2016-v2r10,WN16-AU-000260,audit policy: Logon - Success
+WN25-AU-000200,ws2022-v2r11,WN22-AU-000200,audit policy: Logon - Failure
+WN25-AU-000200,ws2019-v3r9,WN19-AU-000200,audit policy: Logon - Failure
+WN25-AU-000200,ws2016-v2r10,WN16-AU-000270,audit policy: Logon - Failure
+WN25-AU-000210,ws2022-v2r11,WN22-AU-000210,audit policy: Special Logon - Success
+WN25-AU-000210,ws2019-v3r9,WN19-AU-000210,audit policy: Special Logon - Success
+WN25-AU-000210,ws2016-v2r10,WN16-AU-000280,audit policy: Special Logon - Success
+WN25-AU-000220,ws2022-v2r11,WN22-AU-000220,audit policy: Other Object Access Events - Success
+WN25-AU-000220,ws2019-v3r9,WN19-AU-000220,audit policy: Other Object Access Events - Success
+WN25-AU-000220,ws2016-v2r10,WN16-AU-000285,audit policy: Other Object Access Events - Success
+WN25-AU-000230,ws2022-v2r11,WN22-AU-000230,audit policy: Other Object Access Events - Failure
+WN25-AU-000230,ws2019-v3r9,WN19-AU-000230,audit policy: Other Object Access Events - Failure
+WN25-AU-000230,ws2016-v2r10,WN16-AU-000286,audit policy: Other Object Access Events - Failure
+WN25-AU-000240,ws2022-v2r11,WN22-AU-000240,audit policy: Removable Storage - Success
+WN25-AU-000240,ws2019-v3r9,WN19-AU-000240,audit policy: Removable Storage - Success
+WN25-AU-000240,ws2016-v2r10,WN16-AU-000290,audit policy: Removable Storage - Success
+WN25-AU-000250,ws2022-v2r11,WN22-AU-000250,audit policy: Removable Storage - Failure
+WN25-AU-000250,ws2019-v3r9,WN19-AU-000250,audit policy: Removable Storage - Failure
+WN25-AU-000250,ws2016-v2r10,WN16-AU-000300,audit policy: Removable Storage - Failure
+WN25-AU-000260,ws2022-v2r11,WN22-AU-000260,audit policy: Audit Policy Change - Success
+WN25-AU-000260,ws2019-v3r9,WN19-AU-000260,audit policy: Audit Policy Change - Success
+WN25-AU-000260,ws2016-v2r10,WN16-AU-000310,audit policy: Audit Policy Change - Success
+WN25-AU-000270,ws2022-v2r11,WN22-AU-000270,audit policy: Audit Policy Change - Failure
+WN25-AU-000270,ws2019-v3r9,WN19-AU-000270,audit policy: Audit Policy Change - Failure
+WN25-AU-000270,ws2016-v2r10,WN16-AU-000320,audit policy: Audit Policy Change - Failure
+WN25-AU-000280,ws2022-v2r11,WN22-AU-000280,audit policy: Authentication Policy Change - Success
+WN25-AU-000280,ws2019-v3r9,WN19-AU-000280,audit policy: Authentication Policy Change - Success
+WN25-AU-000280,ws2016-v2r10,WN16-AU-000330,audit policy: Authentication Policy Change - Success
+WN25-AU-000281,ws2022-v2r11,WN22-AU-000290,audit policy: Authorization Policy Change - Success
+WN25-AU-000281,ws2019-v3r9,WN19-AU-000290,audit policy: Authorization Policy Change - Success
+WN25-AU-000281,ws2016-v2r10,WN16-AU-000340,audit policy: Authorization Policy Change - Success
+WN25-AU-000300,ws2022-v2r11,WN22-AU-000300,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000300,ws2019-v3r9,WN19-AU-000300,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000300,ws2016-v2r10,WN16-AU-000350,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000310,ws2022-v2r11,WN22-AU-000310,audit policy: Sensitive Privilege Use - Failure
+WN25-AU-000310,ws2019-v3r9,WN19-AU-000310,audit policy: Sensitive Privilege Use - Failure
+WN25-AU-000310,ws2016-v2r10,WN16-AU-000360,audit policy: Sensitive Privilege Use - Failure
+WN25-AU-000320,ws2022-v2r11,WN22-AU-000320,audit policy: IPsec Driver - Success
+WN25-AU-000320,ws2019-v3r9,WN19-AU-000320,audit policy: IPsec Driver - Success
+WN25-AU-000320,ws2016-v2r10,WN16-AU-000370,audit policy: IPsec Driver - Success
+WN25-AU-000330,ws2022-v2r11,WN22-AU-000330,audit policy: IPsec Driver - Failure
+WN25-AU-000330,ws2019-v3r9,WN19-AU-000330,audit policy: IPsec Driver - Failure
+WN25-AU-000330,ws2016-v2r10,WN16-AU-000380,audit policy: IPsec Driver - Failure
+WN25-AU-000340,ws2022-v2r11,WN22-AU-000340,audit policy: Other System Events - Success
+WN25-AU-000340,ws2019-v3r9,WN19-AU-000340,audit policy: Other System Events - Success
+WN25-AU-000340,ws2016-v2r10,WN16-AU-000390,audit policy: Other System Events - Success
+WN25-AU-000350,ws2022-v2r11,WN22-AU-000350,audit policy: Other System Events - Failure
+WN25-AU-000350,ws2019-v3r9,WN19-AU-000350,audit policy: Other System Events - Failure
+WN25-AU-000350,ws2016-v2r10,WN16-AU-000400,audit policy: Other System Events - Failure
+WN25-AU-000360,ws2022-v2r11,WN22-AU-000360,audit policy: Security State Change - Success
+WN25-AU-000360,ws2019-v3r9,WN19-AU-000360,audit policy: Security State Change - Success
+WN25-AU-000360,ws2016-v2r10,WN16-AU-000410,audit policy: Security State Change - Success
+WN25-AU-000370,ws2022-v2r11,WN22-AU-000370,audit policy: Security System Extension - Success
+WN25-AU-000370,ws2019-v3r9,WN19-AU-000370,audit policy: Security System Extension - Success
+WN25-AU-000370,ws2016-v2r10,WN16-AU-000420,audit policy: Security System Extension - Success
+WN25-AU-000380,ws2022-v2r11,WN22-AU-000380,audit policy: System Integrity - Success
+WN25-AU-000380,ws2019-v3r9,WN19-AU-000380,audit policy: System Integrity - Success
+WN25-AU-000380,ws2016-v2r10,WN16-AU-000440,audit policy: System Integrity - Success
+WN25-AU-000390,ws2022-v2r11,WN22-AU-000390,audit policy: System Integrity - Failure
+WN25-AU-000390,ws2019-v3r9,WN19-AU-000390,audit policy: System Integrity - Failure
+WN25-AU-000390,ws2016-v2r10,WN16-AU-000450,audit policy: System Integrity - Failure
+WN25-AU-000583,ws2022-v2r11,WN22-AU-000583,audit policy: Handle Manipulation - Failure
+WN25-AU-000583,ws2019-v3r9,WN19-AU-000583,audit policy: Handle Manipulation - Failure
+WN25-AU-000583,ws2016-v2r10,,
+WN25-AU-000585,ws2022-v2r11,WN22-AU-000585,audit policy: Registry - Failure
+WN25-AU-000585,ws2019-v3r9,WN19-AU-000585,audit policy: Registry - Failure
+WN25-AU-000585,ws2016-v2r10,,
+WN25-AU-000586,ws2022-v2r11,WN22-AU-000586,audit policy: Registry - Success
+WN25-AU-000586,ws2019-v3r9,WN19-AU-000586,audit policy: Registry - Success
+WN25-AU-000586,ws2016-v2r10,,
+WN25-AU-000587,ws2022-v2r11,WN22-AU-000587,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000587,ws2019-v3r9,WN19-AU-000587,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000587,ws2016-v2r10,WN16-AU-000350,audit policy: Sensitive Privilege Use - Success
+WN25-AU-000588,ws2022-v2r11,WN22-AU-000588,audit policy: Sensitive Privilege Use - Failure
+WN25-AU-000588,ws2019-v3r9,WN19-AU-000588,audit policy: Sensitive Privilege Use - Failure
+WN25-AU-000588,ws2016-v2r10,WN16-AU-000360,audit policy: Sensitive Privilege Use - Failure
+WN25-CC-000060,ws2022-v2r11,WN22-CC-000060,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Netbt\Parameters\NoNameReleaseOnDemand
+WN25-CC-000060,ws2019-v3r9,WN19-CC-000060,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Netbt\Parameters\NoNameReleaseOnDemand
+WN25-CC-000060,ws2016-v2r10,WN16-CC-000070,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Netbt\Parameters\NoNameReleaseOnDemand
+WN25-CC-000070,ws2022-v2r11,WN22-CC-000070,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation\AllowInsecureGuestAuth
+WN25-CC-000070,ws2019-v3r9,WN19-CC-000070,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation\AllowInsecureGuestAuth
+WN25-CC-000070,ws2016-v2r10,WN16-CC-000080,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation\AllowInsecureGuestAuth
+WN25-CC-000090,ws2022-v2r11,WN22-CC-000090,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit\ProcessCreationIncludeCmdLine_Enabled
+WN25-CC-000090,ws2019-v3r9,WN19-CC-000090,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit\ProcessCreationIncludeCmdLine_Enabled
+WN25-CC-000090,ws2016-v2r10,WN16-CC-000100,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit\ProcessCreationIncludeCmdLine_Enabled
+WN25-CC-000110,ws2022-v2r11,WN22-CC-000110,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\EnableVirtualizationBasedSecurity; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\RequirePlatformSecurityFeatures
+WN25-CC-000110,ws2019-v3r9,WN19-CC-000110,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\EnableVirtualizationBasedSecurity; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\RequirePlatformSecurityFeatures
+WN25-CC-000110,ws2016-v2r10,WN16-CC-000110,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\EnableVirtualizationBasedSecurity; HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\RequirePlatformSecurityFeatures
+WN25-CC-000150,ws2022-v2r11,WN22-CC-000150,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableWebPnPDownload
+WN25-CC-000150,ws2019-v3r9,WN19-CC-000150,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableWebPnPDownload
+WN25-CC-000150,ws2016-v2r10,WN16-CC-000160,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableWebPnPDownload
+WN25-CC-000160,ws2022-v2r11,WN22-CC-000160,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableHTTPPrinting
+WN25-CC-000160,ws2019-v3r9,WN19-CC-000160,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableHTTPPrinting
+WN25-CC-000160,ws2016-v2r10,WN16-CC-000170,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Printers\DisableHTTPPrinting
+WN25-CC-000210,ws2022-v2r11,WN22-CC-000210,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Explorer\NoAutoplayfornonVolume
+WN25-CC-000210,ws2019-v3r9,WN19-CC-000210,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Explorer\NoAutoplayfornonVolume
+WN25-CC-000210,ws2016-v2r10,WN16-CC-000250,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Explorer\NoAutoplayfornonVolume
+WN25-CC-000220,ws2022-v2r11,WN22-CC-000220,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoAutorun
+WN25-CC-000220,ws2019-v3r9,WN19-CC-000220,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoAutorun
+WN25-CC-000220,ws2016-v2r10,WN16-CC-000260,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\NoAutorun
+WN25-CC-000230,ws2022-v2r11,WN22-CC-000230,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\policies\Explorer\NoDriveTypeAutoRun
+WN25-CC-000230,ws2019-v3r9,WN19-CC-000230,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\policies\Explorer\NoDriveTypeAutoRun
+WN25-CC-000230,ws2016-v2r10,WN16-CC-000270,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\policies\Explorer\NoDriveTypeAutoRun
+WN25-CC-000270,ws2022-v2r11,WN22-CC-000270,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Application\MaxSize
+WN25-CC-000270,ws2019-v3r9,WN19-CC-000270,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Application\MaxSize
+WN25-CC-000270,ws2016-v2r10,WN16-CC-000300,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Application\MaxSize
+WN25-CC-000280,ws2022-v2r11,WN22-CC-000280,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security\MaxSize
+WN25-CC-000280,ws2019-v3r9,WN19-CC-000280,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security\MaxSize
+WN25-CC-000280,ws2016-v2r10,WN16-CC-000310,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security\MaxSize
+WN25-CC-000290,ws2022-v2r11,WN22-CC-000290,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\System\MaxSize
+WN25-CC-000290,ws2019-v3r9,WN19-CC-000290,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\System\MaxSize
+WN25-CC-000290,ws2016-v2r10,WN16-CC-000320,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\EventLog\System\MaxSize
+WN25-CC-000300,ws2022-v2r11,WN22-CC-000300,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System\EnableSmartScreen
+WN25-CC-000300,ws2019-v3r9,WN19-CC-000300,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System\EnableSmartScreen
+WN25-CC-000300,ws2016-v2r10,WN16-CC-000330,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\System\EnableSmartScreen
+WN25-CC-000340,ws2022-v2r11,WN22-CC-000340,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\DisablePasswordSaving
+WN25-CC-000340,ws2019-v3r9,WN19-CC-000340,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\DisablePasswordSaving
+WN25-CC-000340,ws2016-v2r10,WN16-CC-000370,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\DisablePasswordSaving
+WN25-CC-000350,ws2022-v2r11,WN22-CC-000350,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fDisableCdm
+WN25-CC-000350,ws2019-v3r9,WN19-CC-000350,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fDisableCdm
+WN25-CC-000350,ws2016-v2r10,WN16-CC-000380,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fDisableCdm
+WN25-CC-000360,ws2022-v2r11,WN22-CC-000360,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fPromptForPassword
+WN25-CC-000360,ws2019-v3r9,WN19-CC-000360,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fPromptForPassword
+WN25-CC-000360,ws2016-v2r10,WN16-CC-000390,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fPromptForPassword
+WN25-CC-000370,ws2022-v2r11,WN22-CC-000370,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fEncryptRPCTraffic
+WN25-CC-000370,ws2019-v3r9,WN19-CC-000370,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fEncryptRPCTraffic
+WN25-CC-000370,ws2016-v2r10,WN16-CC-000400,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\fEncryptRPCTraffic
+WN25-CC-000380,ws2022-v2r11,WN22-CC-000380,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MinEncryptionLevel
+WN25-CC-000380,ws2019-v3r9,WN19-CC-000380,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MinEncryptionLevel
+WN25-CC-000380,ws2016-v2r10,WN16-CC-000410,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MinEncryptionLevel
+WN25-CC-000430,ws2022-v2r11,WN22-CC-000430,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
+WN25-CC-000430,ws2019-v3r9,WN19-CC-000430,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
+WN25-CC-000430,ws2016-v2r10,WN16-CC-000460,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
+WN25-CC-000460,ws2022-v2r11,WN22-CC-000460,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging\EnableScriptBlockLogging
+WN25-CC-000460,ws2019-v3r9,WN19-CC-000460,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging\EnableScriptBlockLogging
+WN25-CC-000460,ws2016-v2r10,WN16-CC-000490,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging\EnableScriptBlockLogging
+WN25-CC-000470,ws2022-v2r11,WN22-CC-000470,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowBasic
+WN25-CC-000470,ws2019-v3r9,WN19-CC-000470,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowBasic
+WN25-CC-000470,ws2016-v2r10,WN16-CC-000500,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowBasic
+WN25-CC-000480,ws2022-v2r11,WN22-CC-000480,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowUnencryptedTraffic
+WN25-CC-000480,ws2019-v3r9,WN19-CC-000480,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowUnencryptedTraffic
+WN25-CC-000480,ws2016-v2r10,WN16-CC-000510,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowUnencryptedTraffic
+WN25-CC-000490,ws2022-v2r11,WN22-CC-000490,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowDigest
+WN25-CC-000490,ws2019-v3r9,WN19-CC-000490,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowDigest
+WN25-CC-000490,ws2016-v2r10,WN16-CC-000520,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client\AllowDigest
+WN25-CC-000500,ws2022-v2r11,WN22-CC-000500,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowBasic
+WN25-CC-000500,ws2019-v3r9,WN19-CC-000500,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowBasic
+WN25-CC-000500,ws2016-v2r10,WN16-CC-000530,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowBasic
+WN25-CC-000510,ws2022-v2r11,WN22-CC-000510,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencryptedTraffic
+WN25-CC-000510,ws2019-v3r9,WN19-CC-000510,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencryptedTraffic
+WN25-CC-000510,ws2016-v2r10,WN16-CC-000540,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\AllowUnencryptedTraffic
+WN25-CC-000520,ws2022-v2r11,WN22-CC-000520,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\DisableRunAs
+WN25-CC-000520,ws2019-v3r9,WN19-CC-000520,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\DisableRunAs
+WN25-CC-000520,ws2016-v2r10,WN16-CC-000550,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service\DisableRunAs
+WN25-CC-000530,ws2022-v2r11,WN22-CC-000530,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription\EnableTranscripting
+WN25-CC-000530,ws2019-v3r9,WN19-CC-000530,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription\EnableTranscripting
+WN25-CC-000530,ws2016-v2r10,WN16-CC-000555,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription\EnableTranscripting
+WN25-MS-000020,ws2022-v2r11,WN22-MS-000020,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LocalAccountTokenFilterPolicy
+WN25-MS-000020,ws2019-v3r9,WN19-MS-000020,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LocalAccountTokenFilterPolicy
+WN25-MS-000020,ws2016-v2r10,WN16-MS-000020,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LocalAccountTokenFilterPolicy
+WN25-MS-000060,ws2022-v2r11,WN22-MS-000060,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictRemoteSAM
+WN25-MS-000060,ws2019-v3r9,WN19-MS-000060,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictRemoteSAM
+WN25-MS-000060,ws2016-v2r10,WN16-MS-000310,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictRemoteSAM
+WN25-MS-000140,ws2022-v2r11,WN22-MS-000140,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\LsaCfgFlags
+WN25-MS-000140,ws2019-v3r9,WN19-MS-000140,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\LsaCfgFlags
+WN25-MS-000140,ws2016-v2r10,WN16-MS-000120,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\LsaCfgFlags
+WN25-SO-000010,ws2022-v2r11,WN22-SO-000010,security policy: Accounts: Guest account status
+WN25-SO-000010,ws2019-v3r9,WN19-SO-000010,security policy: Accounts: Guest account status
+WN25-SO-000010,ws2016-v2r10,WN16-SO-000010,security policy: Accounts: Guest account status
+WN25-SO-000020,ws2022-v2r11,WN22-SO-000020,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LimitBlankPasswordUse
+WN25-SO-000020,ws2019-v3r9,WN19-SO-000020,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LimitBlankPasswordUse
+WN25-SO-000020,ws2016-v2r10,WN16-SO-000020,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LimitBlankPasswordUse
+WN25-SO-000030,ws2022-v2r11,WN22-SO-000030,security policy: Accounts: Rename administrator account
+WN25-SO-000030,ws2019-v3r9,WN19-SO-000030,security policy: Accounts: Rename administrator account
+WN25-SO-000030,ws2016-v2r10,WN16-SO-000030,security policy: Accounts: Rename administrator account
+WN25-SO-000050,ws2022-v2r11,WN22-SO-000050,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\SCENoApplyLegacyAuditPolicy
+WN25-SO-000050,ws2019-v3r9,WN19-SO-000050,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\SCENoApplyLegacyAuditPolicy
+WN25-SO-000050,ws2016-v2r10,WN16-SO-000050,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\SCENoApplyLegacyAuditPolicy
+WN25-SO-000160,ws2022-v2r11,WN22-SO-000160,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\RequireSecuritySignature
+WN25-SO-000160,ws2019-v3r9,WN19-SO-000160,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\RequireSecuritySignature
+WN25-SO-000160,ws2016-v2r10,WN16-SO-000190,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\RequireSecuritySignature
+WN25-SO-000170,ws2022-v2r11,WN22-SO-000170,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnableSecuritySignature
+WN25-SO-000170,ws2019-v3r9,WN19-SO-000170,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnableSecuritySignature
+WN25-SO-000170,ws2016-v2r10,WN16-SO-000200,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnableSecuritySignature
+WN25-SO-000180,ws2022-v2r11,WN22-SO-000180,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnablePlainTextPassword
+WN25-SO-000180,ws2019-v3r9,WN19-SO-000180,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnablePlainTextPassword
+WN25-SO-000180,ws2016-v2r10,WN16-SO-000210,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\EnablePlainTextPassword
+WN25-SO-000190,ws2022-v2r11,WN22-SO-000190,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RequireSecuritySignature
+WN25-SO-000190,ws2019-v3r9,WN19-SO-000190,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RequireSecuritySignature
+WN25-SO-000190,ws2016-v2r10,WN16-SO-000230,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RequireSecuritySignature
+WN25-SO-000200,ws2022-v2r11,WN22-SO-000200,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\EnableSecuritySignature
+WN25-SO-000200,ws2019-v3r9,WN19-SO-000200,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\EnableSecuritySignature
+WN25-SO-000200,ws2016-v2r10,WN16-SO-000240,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\EnableSecuritySignature
+WN25-SO-000210,ws2022-v2r11,WN22-SO-000210,security policy: Network access: Allow anonymous SID/Name translation
+WN25-SO-000210,ws2019-v3r9,WN19-SO-000210,security policy: Network access: Allow anonymous SID/Name translation
+WN25-SO-000210,ws2016-v2r10,WN16-SO-000250,security policy: Network access: Allow anonymous SID/Name translation
+WN25-SO-000220,ws2022-v2r11,WN22-SO-000220,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymousSAM
+WN25-SO-000220,ws2019-v3r9,WN19-SO-000220,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymousSAM
+WN25-SO-000220,ws2016-v2r10,WN16-SO-000260,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymousSAM
+WN25-SO-000230,ws2022-v2r11,WN22-SO-000230,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymous
+WN25-SO-000230,ws2019-v3r9,WN19-SO-000230,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymous
+WN25-SO-000230,ws2016-v2r10,WN16-SO-000270,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\RestrictAnonymous
+WN25-SO-000240,ws2022-v2r11,WN22-SO-000240,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\EveryoneIncludesAnonymous
+WN25-SO-000240,ws2019-v3r9,WN19-SO-000240,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\EveryoneIncludesAnonymous
+WN25-SO-000240,ws2016-v2r10,WN16-SO-000290,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\EveryoneIncludesAnonymous
+WN25-SO-000250,ws2022-v2r11,WN22-SO-000250,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RestrictNullSessAccess
+WN25-SO-000250,ws2019-v3r9,WN19-SO-000250,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RestrictNullSessAccess
+WN25-SO-000250,ws2016-v2r10,WN16-SO-000300,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters\RestrictNullSessAccess
+WN25-SO-000270,ws2022-v2r11,WN22-SO-000270,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\LSA\MSV1_0\allownullsessionfallback
+WN25-SO-000270,ws2019-v3r9,WN19-SO-000270,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\LSA\MSV1_0\allownullsessionfallback
+WN25-SO-000270,ws2016-v2r10,WN16-SO-000330,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\LSA\MSV1_0\allownullsessionfallback
+WN25-SO-000310,ws2022-v2r11,WN22-SO-000310,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel
+WN25-SO-000310,ws2019-v3r9,WN19-SO-000310,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel
+WN25-SO-000310,ws2016-v2r10,WN16-SO-000380,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\LmCompatibilityLevel
+WN25-SO-000330,ws2022-v2r11,WN22-SO-000330,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinClientSec
+WN25-SO-000330,ws2019-v3r9,WN19-SO-000330,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinClientSec
+WN25-SO-000330,ws2016-v2r10,WN16-SO-000400,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinClientSec
+WN25-SO-000340,ws2022-v2r11,WN22-SO-000340,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinServerSec
+WN25-SO-000340,ws2019-v3r9,WN19-SO-000340,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinServerSec
+WN25-SO-000340,ws2016-v2r10,WN16-SO-000410,registry: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0\NTLMMinServerSec
+WN25-SO-000380,ws2022-v2r11,WN22-SO-000380,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken
+WN25-SO-000380,ws2019-v3r9,WN19-SO-000380,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken
+WN25-SO-000380,ws2016-v2r10,WN16-SO-000460,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\FilterAdministratorToken
+WN25-SO-000400,ws2022-v2r11,WN22-SO-000400,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorAdmin
+WN25-SO-000400,ws2019-v3r9,WN19-SO-000400,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorAdmin
+WN25-SO-000400,ws2016-v2r10,WN16-SO-000480,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorAdmin
+WN25-SO-000410,ws2022-v2r11,WN22-SO-000410,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorUser
+WN25-SO-000410,ws2019-v3r9,WN19-SO-000410,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorUser
+WN25-SO-000410,ws2016-v2r10,WN16-SO-000490,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\ConsentPromptBehaviorUser
+WN25-SO-000420,ws2022-v2r11,WN22-SO-000420,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableInstallerDetection
+WN25-SO-000420,ws2019-v3r9,WN19-SO-000420,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableInstallerDetection
+WN25-SO-000420,ws2016-v2r10,WN16-SO-000500,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableInstallerDetection
+WN25-SO-000430,ws2022-v2r11,WN22-SO-000430,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableSecureUIAPaths
+WN25-SO-000430,ws2019-v3r9,WN19-SO-000430,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableSecureUIAPaths
+WN25-SO-000430,ws2016-v2r10,WN16-SO-000510,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableSecureUIAPaths
+WN25-SO-000440,ws2022-v2r11,WN22-SO-000440,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
+WN25-SO-000440,ws2019-v3r9,WN19-SO-000440,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
+WN25-SO-000440,ws2016-v2r10,WN16-SO-000520,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
+WN25-SO-000450,ws2022-v2r11,WN22-SO-000450,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableVirtualization
+WN25-SO-000450,ws2019-v3r9,WN19-SO-000450,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableVirtualization
+WN25-SO-000450,ws2016-v2r10,WN16-SO-000530,registry: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableVirtualization

@@ -6,7 +6,8 @@
 // system's certificate authorities only, or unencrypted to a relay on
 // loopback; it dials through netguard, as the platform's other
 // integrations do, and signs in with a user name and password (PLAIN) only
-// over TLS or to loopback.
+// over TLS or to loopback, or with a Microsoft 365 application's token
+// (AUTH XOAUTH2, slice 2) only over TLS.
 package mailer
 
 import (
@@ -22,6 +23,7 @@ import (
 	"net/netip"
 	"net/smtp"
 	"net/textproto"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -53,14 +55,34 @@ type Config struct {
 	Port     int
 	Security string
 	// Username and Password sign in with PLAIN; an empty Username does not
-	// sign in.
+	// sign in. With OAuth, Username is the mailbox signed in to and
+	// Password is empty.
 	Username string
 	Password string
+	// OAuth, when set, signs in with AUTH XOAUTH2 and its tokens: a
+	// Microsoft 365 application's (ADR-0053, slice 2). Only over STARTTLS
+	// or TLS, and only to a mail server that offers it.
+	OAuth TokenSource
 	// FromAddress is the sender's address, FromName the name shown with it.
 	FromAddress string
 	FromName    string
 	// Timeout bounds each step; DefaultTimeout when zero.
 	Timeout time.Duration
+	// RateRetry, when set, has a message the mail server refuses for its
+	// rate (ReplyError.RateLimited) tried once more after it, in a new
+	// session, its room under the limits kept: such a refusal is not the
+	// recipient's (ADR-0053). Only mail no request waits for waits so: a
+	// password reset someone asked for.
+	RateRetry time.Duration
+}
+
+// TokenSource gives the tokens XOAUTH2 signs in with.
+type TokenSource interface {
+	// Token is a token to sign in with: the one kept, or a new one.
+	Token(ctx context.Context) (string, error)
+	// Refused drops a token the mail server refused, so that the next
+	// Token is a new one.
+	Refused(token string)
 }
 
 // SMTP sends mail through one mail server.
@@ -107,6 +129,16 @@ func New(cfg Config) (*SMTP, error) {
 	}
 	if strings.ContainsAny(cfg.Username+cfg.Password, "\x00\r\n") {
 		return nil, errors.New("mailer: the user name or password contains a line break or NUL")
+	}
+	if cfg.OAuth != nil {
+		switch {
+		case cfg.Security == None:
+			return nil, errors.New("mailer: XOAUTH2 signs in only over STARTTLS or TLS")
+		case cfg.Password != "":
+			return nil, errors.New("mailer: XOAUTH2 signs in with a token, not a password")
+		case !BareAddress(cfg.Username):
+			return nil, fmt.Errorf("mailer: the mailbox to sign in to, %q, is not an email address", cfg.Username)
+		}
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = DefaultTimeout
@@ -239,10 +271,17 @@ type ReplyError struct {
 	Step string
 	Code int
 	Text string
+	// Hint says what the reply means and what to change, when EasyRMM
+	// knows (Exchange Online's replies, hint).
+	Hint string
 }
 
 func (e *ReplyError) Error() string {
-	return fmt.Sprintf("the mail server refused the %s: %d %s", e.Step, e.Code, clip(e.Text, 300))
+	msg := fmt.Sprintf("the mail server refused the %s: %d %s", e.Step, e.Code, clip(e.Text, 300))
+	if e.Hint != "" {
+		msg += " → " + e.Hint
+	}
+	return msg
 }
 
 // Permanent reports whether the reply is a permanent failure (5xx); a 4xx
@@ -264,7 +303,7 @@ func (e *stepError) Unwrap() error { return e.err }
 func reply(step string, err error) error {
 	var te *textproto.Error
 	if errors.As(err, &te) {
-		return &ReplyError{Step: step, Code: te.Code, Text: te.Msg}
+		return &ReplyError{Step: step, Code: te.Code, Text: te.Msg, Hint: hint(step, te.Code, te.Msg, false)}
 	}
 	return &stepError{step: "mailer: " + step, err: err}
 }
@@ -351,14 +390,25 @@ func (m *SMTP) Send(ctx context.Context, msg Message, to []string, gate Gate) []
 			}
 			release = r
 		}
-		if s == nil {
-			if s, err = m.open(ctx); err != nil {
-				release()
-				failRest(i, err)
-				return outs
+		for retried := false; ; retried = true {
+			if s == nil {
+				if s, err = m.open(ctx); err != nil {
+					release()
+					failRest(i, err)
+					return outs
+				}
 			}
+			outs[i].Reply, err = s.deliver(ctx, m.from.Address, rcpts[i].Address, data)
+			var re *ReplyError
+			if !retried && m.cfg.RateRetry > 0 && errors.As(err, &re) && re.RateLimited() && pause(ctx, m.cfg.RateRetry) == nil {
+				// Refused for the mail server's rate: once more, after the
+				// wait, in a new session, as Exchange counts connections.
+				s.quit()
+				s = nil
+				continue
+			}
+			break
 		}
-		outs[i].Reply, err = s.deliver(ctx, m.from.Address, rcpts[i].Address, data)
 		if err == nil {
 			continue
 		}
@@ -399,6 +449,11 @@ type session struct {
 	stop func() bool
 	// sentData says the current message's content was written.
 	sentData bool
+	// overTLS says the connection is protected: TLS from the first byte, or
+	// after STARTTLS.
+	overTLS bool
+	// signedIn is the mail server's answer to the sign-in, "" without one.
+	signedIn string
 }
 
 // deadline is the end of the next step: the timeout, or ctx's deadline if
@@ -411,8 +466,57 @@ func (m *SMTP) deadline(ctx context.Context) time.Time {
 	return d
 }
 
-// open connects, protects the connection and signs in.
+// open connects, protects the connection and signs in. With XOAUTH2, a
+// token the mail server refuses (535) is dropped, and one more session is
+// tried with a new one, unless the refusal is 5.7.139, which a token does
+// not change (SMTP AUTH off, security defaults).
 func (m *SMTP) open(ctx context.Context) (*session, error) {
+	if m.cfg.OAuth != nil {
+		s, err := m.openWithToken(ctx)
+		var re *ReplyError
+		if errors.As(err, &re) && re.Code == 535 && !strings.Contains(re.Text, "5.7.139") {
+			// The client quits after a refused AUTH: a new session.
+			s, err = m.openWithToken(ctx)
+		}
+		return s, err
+	}
+	s, err := m.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if m.cfg.Username != "" {
+		a := &plainAuth{user: m.cfg.Username, password: m.cfg.Password}
+		if err := s.c.Auth(a); err != nil {
+			s.close()
+			return nil, reply("sign-in", err)
+		}
+		s.signedIn = "235 " + a.answer
+	}
+	return s, nil
+}
+
+// openWithToken gets a token, and only then connects and signs in with it:
+// the identity platform's time does not count against the mail server's
+// steps, nor holds a connection to it idle (Exchange Online takes 3 at once
+// per mailbox).
+func (m *SMTP) openWithToken(ctx context.Context) (*session, error) {
+	token, err := m.cfg.OAuth.Token(ctx)
+	if err != nil {
+		return nil, &stepError{step: "mailer: signing in to " + m.Address() + " with a Microsoft 365 application", err: err}
+	}
+	s, err := m.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.xoauth2(token); err != nil {
+		s.close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// connect connects, protects the connection, and says hello.
+func (m *SMTP) connect(ctx context.Context) (*session, error) {
 	addr := m.Address()
 	dctx, cancel := context.WithDeadline(ctx, m.deadline(ctx))
 	defer cancel()
@@ -429,7 +533,8 @@ func (m *SMTP) open(ctx context.Context) (*session, error) {
 		return nil, err
 	}
 	tlsCfg := &tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}
-	if m.cfg.Security == TLS {
+	overTLS := m.cfg.Security == TLS
+	if overTLS {
 		tc := tls.Client(conn, tlsCfg)
 		if err := tc.HandshakeContext(dctx); err != nil {
 			return fail(&stepError{step: "mailer: TLS with " + addr, err: err})
@@ -450,7 +555,7 @@ func (m *SMTP) open(ctx context.Context) (*session, error) {
 	if err != nil {
 		return fail(greeting(addr, err))
 	}
-	s := &session{m: m, conn: conn, c: c, stop: stop}
+	s := &session{m: m, conn: conn, c: c, stop: stop, overTLS: overTLS}
 	if err := c.Hello(localName); err != nil {
 		s.close()
 		return nil, reply("hello", err)
@@ -464,14 +569,70 @@ func (m *SMTP) open(ctx context.Context) (*session, error) {
 			s.close()
 			return nil, reply("STARTTLS", err)
 		}
-	}
-	if m.cfg.Username != "" {
-		if err := c.Auth(plainAuth{user: m.cfg.Username, password: m.cfg.Password}); err != nil {
-			s.close()
-			return nil, reply("sign-in", err)
-		}
+		s.overTLS = true
 	}
 	return s, nil
+}
+
+// xoauth2 signs in with AUTH XOAUTH2 and token (ADR-0053, slice 2): only
+// over TLS, only when the mail server offers it; a token the mail server
+// refuses is dropped from the source.
+func (s *session) xoauth2(token string) error {
+	if !s.overTLS {
+		return errors.New("mailer: refusing to send a token without TLS")
+	}
+	if !s.offers("XOAUTH2") {
+		return fmt.Errorf("mailer: %s does not offer sign-in with a token (AUTH XOAUTH2), which signing in with a Microsoft 365 application needs; "+
+			"Exchange Online's is smtp.office365.com, port 587, with STARTTLS", s.m.Address())
+	}
+	a := &xoauth2Auth{user: s.m.cfg.Username, token: token}
+	if err := s.c.Auth(a); err != nil {
+		var te *textproto.Error
+		if errors.As(err, &te) && te.Code == 535 {
+			s.m.cfg.OAuth.Refused(token)
+		}
+		return s.reply("sign-in", err)
+	}
+	s.signedIn = "235 " + a.answer
+	return nil
+}
+
+// reply is reply, explained knowing how the session signs in.
+func (s *session) reply(step string, err error) error {
+	err = reply(step, err)
+	var re *ReplyError
+	if s.m.cfg.OAuth != nil && errors.As(err, &re) {
+		re.Hint = hint(step, re.Code, re.Text, true)
+	}
+	return err
+}
+
+// offers reports whether the mail server offers the sign-in mechanism
+// mech.
+func (s *session) offers(mech string) bool {
+	ok, params := s.c.Extension("AUTH")
+	return ok && slices.ContainsFunc(strings.Fields(params), func(p string) bool { return strings.EqualFold(p, mech) })
+}
+
+// Check connects, protects the connection and signs in as a message would,
+// then quits without sending anything: easyrmm-server mail check, and the
+// server's check at start (ADR-0053). It says what the mail server
+// answered.
+func (m *SMTP) Check(ctx context.Context) (string, error) {
+	s, err := m.open(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer s.quit()
+	how := map[string]string{StartTLS: "STARTTLS", TLS: "TLS", None: "no encryption, on loopback"}[m.cfg.Security]
+	switch {
+	case m.cfg.OAuth != nil:
+		return fmt.Sprintf("Connected to %s (%s) and signed in to %s with a Microsoft 365 application's token: %s", m.Address(), how, m.cfg.Username,
+			clip(s.signedIn, 300)), nil
+	case m.cfg.Username != "":
+		return fmt.Sprintf("Connected to %s (%s) and signed in as %s with a password: %s", m.Address(), how, m.cfg.Username, clip(s.signedIn, 300)), nil
+	}
+	return fmt.Sprintf("Connected to %s (%s); it was not asked to sign in.", m.Address(), how), nil
 }
 
 // deliver sends one message to one recipient and returns the mail server's
@@ -480,22 +641,22 @@ func (s *session) deliver(ctx context.Context, from, to string, data []byte) (st
 	s.sentData = false
 	_ = s.conn.SetDeadline(s.m.deadline(ctx))
 	if err := s.c.Mail(from); err != nil {
-		return "", reply("sender", err)
+		return "", s.reply("sender", err)
 	}
 	if err := s.c.Rcpt(to); err != nil {
-		return "", reply("recipient", err)
+		return "", s.reply("recipient", err)
 	}
 	// DATA by hand, rather than smtp.Client.Data, to keep the final reply.
 	t := s.c.Text
 	id, err := t.Cmd("DATA")
 	if err != nil {
-		return "", reply("message", err)
+		return "", s.reply("message", err)
 	}
 	t.StartResponse(id)
 	_, _, err = t.ReadResponse(354)
 	t.EndResponse(id)
 	if err != nil {
-		return "", reply("message", err)
+		return "", s.reply("message", err)
 	}
 	w := t.DotWriter()
 	_, err = w.Write(data)
@@ -508,7 +669,7 @@ func (s *session) deliver(ctx context.Context, from, to string, data []byte) (st
 	}
 	code, text, err := t.ReadResponse(250)
 	if err != nil {
-		return "", reply("message", err)
+		return "", s.reply("message", err)
 	}
 	return strconv.Itoa(code) + " " + clip(text, 300), nil
 }
@@ -527,20 +688,59 @@ func (s *session) close() {
 	_ = s.c.Close()
 }
 
+// pause waits d, or until ctx ends.
+func pause(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
 // plainAuth is PLAIN (RFC 4616). New allows a session without TLS only to
 // loopback, so, unlike smtp.PlainAuth, it does not check again, which would
-// refuse loopback addresses other than 127.0.0.1 and ::1.
-type plainAuth struct{ user, password string }
+// refuse loopback addresses other than 127.0.0.1 and ::1. answer is the
+// mail server's answer once it signed in.
+type plainAuth struct{ user, password, answer string }
 
-func (a plainAuth) Start(*smtp.ServerInfo) (string, []byte, error) {
+func (a *plainAuth) Start(*smtp.ServerInfo) (string, []byte, error) {
 	return "PLAIN", []byte("\x00" + a.user + "\x00" + a.password), nil
 }
 
-func (a plainAuth) Next(_ []byte, more bool) ([]byte, error) {
+func (a *plainAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	if more {
 		return nil, errors.New("mailer: unexpected challenge during PLAIN sign-in")
 	}
+	a.answer = string(fromServer)
 	return nil, nil
+}
+
+// xoauth2Auth is XOAUTH2, as Microsoft documents it ("Authenticate an
+// IMAP, POP or SMTP connection using OAuth"): the initial response
+// "user=" mailbox ^A "auth=Bearer " token ^A ^A, base64. A mail server that
+// refuses it may first send a challenge (an error in JSON), answered with
+// an empty line so that it gives its refusal. answer is the mail server's
+// answer once it signed in.
+type xoauth2Auth struct{ user, token, answer string }
+
+func (a *xoauth2Auth) Start(*smtp.ServerInfo) (string, []byte, error) {
+	return "XOAUTH2", xoauth2Response(a.user, a.token), nil
+}
+
+func (a *xoauth2Auth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if more {
+		return []byte{}, nil
+	}
+	a.answer = string(fromServer)
+	return nil, nil
+}
+
+// xoauth2Response is XOAUTH2's initial response, before base64.
+func xoauth2Response(user, token string) []byte {
+	return []byte("user=" + user + "\x01auth=Bearer " + token + "\x01\x01")
 }
 
 // localName is the name given in EHLO.

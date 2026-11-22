@@ -3,8 +3,10 @@
 # layout so docker-compose.yml's relative mounts resolve and the install
 # commands are the same as from a clone (cd deploy):
 #
-#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh and
-#                           scripts/import-easypatch.sh
+#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh (with
+#                           scripts/setup-mail.sh, which it reads),
+#                           scripts/import-easypatch.sh, and the host updater's
+#                           systemd units in updater/ (bundle.sh adds the updater)
 #   docker/                 the PostgreSQL, MeshCentral and Authentik files it mounts
 #   docs/                   the deployment, agent, backup and upgrade guides
 #   LICENSE.md, LICENSING.md, CHANGELOG.md
@@ -23,11 +25,12 @@ if [ -e "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
   exit 1
 fi
 
-mkdir -p "$dir/deploy/scripts" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
+mkdir -p "$dir/deploy/scripts" "$dir/deploy/updater" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
   "$dir/docker/authentik/blueprints" "$dir/docs/deployment" "$dir/docs/operations"
 cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$root/deploy/.env.example" "$dir/deploy/"
-cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
+cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/setup-mail.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
+cp "$root/deploy/updater/easyrmm-updater.service" "$root/deploy/updater/easyrmm-updater.timer" "$dir/deploy/updater/"
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
 cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
@@ -37,7 +40,7 @@ cp "$root/docker/authentik/start.sh" "$root/docker/authentik/setup.py" "$dir/doc
 cp "$root/docker/authentik/blueprints/easyrmm.yaml" "$dir/docker/authentik/blueprints/"
 cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$dir/docs/deployment/"
 cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$root/docs/operations/import-easypatch.md" \
-  "$dir/docs/operations/"
+  "$root/docs/operations/updater.md" "$dir/docs/operations/"
 
 # Everything the Compose file mounts from beside it must be in the tree.
 missing=$(sed -n 's|^ *- \(\.\./[^:]*\):.*|\1|p' "$dir/deploy/docker-compose.yml" |

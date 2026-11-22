@@ -23,9 +23,9 @@ import {
   TextField,
 } from "../../components/ui";
 import { SelfPatchingWarning, TimeoutField } from "./parts";
-import { formatBytes, LIMITS, PLATFORM_NAMES, scriptScope, SHELL_NAMES, SHELL_PLATFORM, SHELLS, utf8Length } from "./scriptText";
+import { fallbackText, formatBytes, LIMITS, PLATFORM_NAMES, scriptScope, SHELL_NAMES, SHELL_PLATFORM, SHELLS, utf8Length } from "./scriptText";
 
-const FIELDS = ["name", "description", "shell", "body", "timeoutSeconds", "organizationId", "siteId"];
+const FIELDS = ["name", "description", "shell", "pwshFallback", "body", "timeoutSeconds", "organizationId", "siteId"];
 
 /** /scripts/new and /scripts/:id/edit. */
 export function ScriptFormPage() {
@@ -85,12 +85,20 @@ function ScriptForm({ script }: { script?: Script }) {
   const [name, setName] = useState(script?.name ?? "");
   const [description, setDescription] = useState(script?.description ?? "");
   const [shell, setShell] = useState<Shell>(script?.shell ?? "powershell");
+  const [fallback, setFallback] = useState(script?.pwshFallback ?? false);
+  // Only a PowerShell 7 script can fall back; the setting is kept while the shell is changed back and forth.
+  const pwshFallback = shell === "pwsh" && fallback;
   const [body, setBody] = useState(script?.body ?? "");
   const [timeoutSeconds, setTimeoutSeconds] = useState(script?.timeoutSeconds ?? LIMITS.defaultTimeout);
   const sites = useSites(level === "site" && organizationId ? organizationId : null);
 
   const dirty = script
-    ? name !== script.name || description !== script.description || shell !== script.shell || body !== (script.body ?? "") || timeoutSeconds !== script.timeoutSeconds
+    ? name !== script.name ||
+      description !== script.description ||
+      shell !== script.shell ||
+      pwshFallback !== script.pwshFallback ||
+      body !== (script.body ?? "") ||
+      timeoutSeconds !== script.timeoutSeconds
     : name !== "" || description !== "" || body !== "";
   useEffect(() => {
     if (!dirty) return;
@@ -112,6 +120,7 @@ function ScriptForm({ script }: { script?: Script }) {
             name: input.name,
             description: input.description,
             shell: input.shell,
+            pwshFallback: input.pwshFallback,
             body: input.body,
             timeoutSeconds: input.timeoutSeconds,
           })
@@ -152,6 +161,7 @@ function ScriptForm({ script }: { script?: Script }) {
       name,
       description,
       shell,
+      pwshFallback,
       body,
       timeoutSeconds,
     });
@@ -282,6 +292,23 @@ function ScriptForm({ script }: { script?: Script }) {
               error={err("timeoutSeconds")}
               hint="Stopped if still running after this. Up to 4 hours; each run can override it."
             />
+            {shell === "pwsh" && (
+              <SelectField
+                label="Where PowerShell 7 is missing"
+                value={fallback ? "fallback" : "fail"}
+                onChange={(e) => setFallback(e.target.value === "fallback")}
+                error={err("pwshFallback")}
+                hint={
+                  fallback
+                    ? "Only for a script written to run in both: some commands, such as Out-File, Set-Content and ConvertFrom-Json, behave differently in 5.1 without an error. Each run records which one it used."
+                    : "The run fails without running the script, so a script written for PowerShell 7 never runs in 5.1."
+                }
+                className="md:col-span-2"
+              >
+                <option value="fail">{fallbackText(false)}</option>
+                <option value="fallback">{fallbackText(true)}</option>
+              </SelectField>
+            )}
           </div>
         </Card>
 
@@ -347,6 +374,15 @@ const HOW_IT_RUNS: Record<Shell, ReactNode> = {
       exit code.
     </>
   ),
+  pwsh: (
+    <>
+      The agent runs the script with PowerShell 7 as Local System, {TEMP_FOLDER}, without a profile and with the execution policy bypassed. It uses the newest
+      PowerShell 7 or later installed in Program Files for the device&rsquo;s processor, from Microsoft&rsquo;s MSI or ZIP, never a preview, a 32-bit build or a
+      Microsoft Store install (winget installs the Store package unless given <code className="font-mono">--installer-type wix</code>). Modules load from the
+      system&rsquo;s folders only. Arguments arrive in <code className="font-mono">$args</code> or a <code className="font-mono">param()</code> block;{" "}
+      <code className="font-mono">exit</code> sets the exit code.
+    </>
+  ),
   cmd: (
     <>
       The agent runs the script as a batch file with cmd.exe as Local System, {TEMP_FOLDER}. Arguments arrive in quotes as <code className="font-mono">%1</code>,{" "}
@@ -370,6 +406,7 @@ function LinuxHow({ shell }: { shell: Shell }) {
 
 const PLACEHOLDERS: Record<Shell, string> = {
   powershell: "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |\n  Select-Object DeviceID, @{ n = 'FreeGB'; e = { [math]::Round($_.FreeSpace / 1GB, 1) } }",
+  pwsh: "$PSVersionTable.PSVersion.ToString()\nGet-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, LastBootUpTime",
   cmd: "@echo off\nsysteminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\"",
   bash: 'set -euo pipefail\necho "Disk usage on $(hostname):"\ndf -h /',
   sh: "set -eu\nuptime",

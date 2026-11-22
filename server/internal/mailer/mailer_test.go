@@ -604,7 +604,7 @@ func TestReplyErrorAndClip(t *testing.T) {
 	if got := reply("hello", errors.New("EOF")); !strings.Contains(got.Error(), "mailer: hello: EOF") || errors.Unwrap(got) == nil {
 		t.Fatalf("reply %v", got)
 	}
-	if _, err := (plainAuth{}).Next(nil, true); err == nil {
+	if _, err := (&plainAuth{}).Next(nil, true); err == nil {
 		t.Fatal("PLAIN accepted a challenge")
 	}
 }

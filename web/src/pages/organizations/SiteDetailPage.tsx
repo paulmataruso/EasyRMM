@@ -28,6 +28,9 @@ import { useUrlState } from "../../lib/urlState";
 import { PatchAllButton } from "../patching/PatchAllButton";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
+import { ContactsPanel } from "./Contacts";
+import { addressLines, confirmedCounts, OpenNowBadge, SiteDetailsDialog, SiteRecord } from "./CustomerRecord";
+import { PlacesCard } from "./Places";
 import { SiteFormDialog } from "./SiteFormDialog";
 
 export function SiteDetailPage() {
@@ -39,7 +42,9 @@ export function SiteDetailPage() {
   const org = useApi<Organization>(site.data ? `/organizations/${site.data.organizationId}` : null);
   const groups = useList<DeviceGroup>(`/sites/${id}/device-groups`);
   const [editing, setEditing] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const documented = can("doc.view");
   const [groupForm, setGroupForm] = useState<{ open: boolean; group?: DeviceGroup }>({ open: false });
   const [groupToDelete, setGroupToDelete] = useState<DeviceGroup | null>(null);
   const url = useUrlState();
@@ -48,7 +53,7 @@ export function SiteDetailPage() {
   const patched = patching.data?.configured === true;
   const tab = patched && url.get("tab") === "patch-policy" ? "patch-policy" : "overview";
 
-  const removeSite = useApiMutation(() => api.del(`/sites/${id}`), {
+  const removeSite = useApiMutation((confirmed: Record<string, number> | undefined) => api.del(`/sites/${id}`, confirmed), {
     invalidate: ["/organizations", "/sites", "/audit"],
     onSuccess: () => {
       toast.success(`Site “${site.data?.name}” deleted.`);
@@ -85,7 +90,7 @@ export function SiteDetailPage() {
           </>
         }
         title={s.name}
-        subtitle={[s.timezone, s.address].filter(Boolean).join(" · ")}
+        subtitle={[s.timezone, addressLines(s).join(", ")].filter(Boolean).join(" · ")}
         actions={
           <>
             {patched && <PatchAllButton organizationId={s.organizationId} siteId={s.id} preset="update-now" />}
@@ -128,9 +133,9 @@ export function SiteDetailPage() {
 
       {tab === "overview" && (
         <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
+          <div className="flex flex-col gap-5 xl:col-span-2">
           <Card
             title="Device groups"
-            className="xl:col-span-2"
             padded={false}
             actions={
               s.canManage && (
@@ -196,14 +201,37 @@ export function SiteDetailPage() {
               </TableWrap>
             )}
           </Card>
+          {documented && <PlacesCard site={s} />}
+          {documented && (
+            <ContactsPanel organizationId={s.organizationId} site={s} levels={s.canManageDocumentation ? [{ id: s.id, name: s.name }] : []} />
+          )}
+          </div>
 
+          <div className="flex flex-col gap-5">
+          {documented && (
+            <Card
+              title={
+                <span className="flex items-center gap-2">
+                  Address and hours <OpenNowBadge openNow={s.openNow} />
+                </span>
+              }
+              actions={
+                s.canManageDocumentation && (
+                  <Button size="sm" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditingDetails(true)}>
+                    Edit
+                  </Button>
+                )
+              }
+            >
+              <SiteRecord site={s} organizationHours={org.data?.businessHours ?? null} />
+            </Card>
+          )}
           <Card title="Details">
             <KeyValueList
               narrow
               items={[
                 ["Organization", <Link to={`/organizations/${s.organizationId}`} className="text-accent hover:underline">{s.organizationName}</Link>],
                 ["Time zone", s.timezone],
-                ["Address", s.address || <span className="text-muted">None</span>],
                 ["Notes", s.notes ? <span className="whitespace-pre-wrap">{s.notes}</span> : <span className="text-muted">None</span>],
                 ["Created", formatDateTime(s.createdAt)],
                 ["Updated", formatDateTime(s.updatedAt)],
@@ -211,10 +239,12 @@ export function SiteDetailPage() {
               ]}
             />
           </Card>
+          </div>
         </div>
       )}
 
       <SiteFormDialog open={editing} organizationId={s.organizationId} site={s} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />
+      {s.canManageDocumentation && <SiteDetailsDialog open={editingDetails} site={s} onClose={() => setEditingDetails(false)} />}
       <DeviceGroupDialog
         open={groupForm.open}
         siteId={s.id}
@@ -227,17 +257,17 @@ export function SiteDetailPage() {
           setDeleting(false);
           removeSite.reset();
         }}
-        onConfirm={() => removeSite.mutate(undefined)}
+        onConfirm={() => removeSite.mutate(confirmedCounts(removeSite.error))}
         title="Delete site"
-        confirmLabel="Delete site"
+        confirmLabel={confirmedCounts(removeSite.error) ? "Delete site and its documentation" : "Delete site"}
         tone="danger"
         loading={removeSite.isPending}
         error={removeSite.error}
         confirmText={s.name}
       >
         <p>
-          This permanently deletes <strong>{s.name}</strong> from {s.organizationName}. A site must have no device groups before it can be
-          deleted.
+          This permanently deletes <strong>{s.name}</strong> from {s.organizationName}. A site must have no devices before it can be
+          deleted. Its contacts and places are deleted with it once you confirm them.
         </p>
       </ConfirmDialog>
       <ConfirmDialog

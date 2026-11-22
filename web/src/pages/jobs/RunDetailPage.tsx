@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { CircleStop, Trash2 } from "lucide-react";
-import { api } from "../../api/client";
+import { CircleStop, Download, Trash2 } from "lucide-react";
+import { api, API_BASE } from "../../api/client";
 import { auditedRead, useApi, useApiMutation } from "../../api/hooks";
 import type { JobRun, JobRunOutput, RunStatus } from "../../api/types";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Button, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
+import { Alert, Button, buttonClasses, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { OutputView, RunStatusBadge } from "../scripts/parts";
-import { formatElapsed, isOpen, runElapsed } from "../scripts/scriptText";
+import { formatElapsed, HELD_SENT_TEXT, HELD_TEXT, isOpen, programNote, programText, runElapsed } from "../scripts/scriptText";
 
 const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
   failed: "danger",
@@ -22,7 +22,9 @@ const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
 
 /** What is happening with a run, in a sentence, while it has not finished. */
 function waitingFor(r: JobRun): string | null {
+  if (r.status === "queued" && r.held) return `${HELD_TEXT[r.held]} It is waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "queued") return `Waiting for ${r.deviceName} to pick it up. Offline devices are waited for until ${formatDateTime(r.expiresAt)}.`;
+  if (r.status === "sent" && r.held) return `${HELD_SENT_TEXT[r.held]} It is waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "sent") return `${r.deviceName} has the script and is about to start it.`;
   if (r.status === "running") {
     return r.cancelRequested
@@ -30,6 +32,21 @@ function waitingFor(r: JobRun): string | null {
       : "Running. Output is sent when the script ends; this page updates on its own.";
   }
   return null;
+}
+
+/** The program the agent started, with its path, as the agent reported it (ADR-0064). */
+function RunProgramText({ run }: { run: JobRun }) {
+  const text = programText(run);
+  if (!text) return <>—</>;
+  const p = run.program;
+  const note = programNote(p);
+  return (
+    <>
+      <span className={p ? undefined : "text-muted"}>{text}</span>
+      {note && <span className="block text-xs text-warn">{note}</span>}
+      {p && <span className="block font-mono text-xs break-all text-muted">{p.path}</span>}
+    </>
+  );
 }
 
 /** Whether a finished run has output the caller may read: then the page asks for it, once. */
@@ -69,6 +86,8 @@ export function RunDetailPage() {
   const waiting = waitingFor(r);
   // The server says whether this caller may remove output at the run's site.
   const removable = hasOutput(r) && Boolean(r.canRemoveOutput);
+  // The run as JSON, with both streams: for a finished run whose output the caller may read and was not removed (ADR-0064).
+  const downloadable = Boolean(r.canViewOutput) && !open && !r.outputRemovedAt;
 
   return (
     <>
@@ -102,7 +121,7 @@ export function RunDetailPage() {
       />
 
       {waiting && (
-        <Alert tone="info" className="mb-5">
+        <Alert tone={r.held ? "warn" : "info"} className="mb-5">
           <span role="status">{waiting}</span>
         </Alert>
       )}
@@ -117,10 +136,20 @@ export function RunDetailPage() {
           title="Output"
           className="min-w-0 xl:col-span-2"
           actions={
-            removable && (
-              <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
-                Remove output
-              </Button>
+            (downloadable || removable) && (
+              <div className="flex items-center gap-1.5">
+                {downloadable && (
+                  <a href={outputDownload(r.id, "json")} download className={buttonClasses("secondary", "sm")}>
+                    <Download className="size-3.5" aria-hidden />
+                    Download run
+                  </a>
+                )}
+                {removable && (
+                  <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
+                    Remove output
+                  </Button>
+                )}
+              </div>
             )
           }
         >
@@ -132,6 +161,7 @@ export function RunDetailPage() {
             items={[
               ["Status", <RunStatusBadge key="s" status={r.status} cancelRequested={r.cancelRequested} />],
               ["Exit code", r.exitCode === null ? "—" : <span className="font-mono text-xs tabular-nums">{r.exitCode}</span>],
+              ["Program", <RunProgramText key="p" run={r} />],
               [
                 "Device",
                 <Link key="d" to={`/devices/${r.deviceId}`} className="text-accent hover:underline">
@@ -215,9 +245,26 @@ function RunOutput({ run: r, open, output }: { run: JobRun; open: boolean; outpu
   const o = output.data;
   return (
     <div className="flex flex-col gap-4">
-      <OutputView title="Standard output" text={o.stdout} truncated={o.stdoutTruncated} emptyLabel="Nothing was written to standard output." />
-      <OutputView title="Standard error" text={o.stderr} truncated={o.stderrTruncated} emptyLabel="Nothing was written to standard error." />
-      <p className="text-xs text-muted">Opening a run&rsquo;s output is recorded in the audit log.</p>
+      <OutputView
+        title="Standard output"
+        text={o.stdout}
+        truncated={o.stdoutTruncated}
+        emptyLabel="Nothing was written to standard output."
+        download={outputDownload(r.id, "stdout")}
+      />
+      <OutputView
+        title="Standard error"
+        text={o.stderr}
+        truncated={o.stderrTruncated}
+        emptyLabel="Nothing was written to standard error."
+        download={outputDownload(r.id, "stderr")}
+      />
+      <p className="text-xs text-muted">Opening or downloading a run&rsquo;s output is recorded in the audit log, each time.</p>
     </div>
   );
+}
+
+/** Where the server sends a run's stream, or the run as JSON, as a file (ADR-0064). */
+function outputDownload(runId: string, what: "stdout" | "stderr" | "json"): string {
+  return `${API_BASE}/job-runs/${encodeURIComponent(runId)}/output?download=${what}`;
 }

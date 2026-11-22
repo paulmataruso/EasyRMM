@@ -170,6 +170,15 @@ services:
       EASYRMM_SMTP_PASSWORD: ${EASYRMM_SMTP_PASSWORD:-}
       EASYRMM_SMTP_FROM: ${EASYRMM_SMTP_FROM:-}
       EASYRMM_SMTP_TLS: ${EASYRMM_SMTP_TLS:-starttls}
+      # Microsoft 365 (ADR-0053): an Entra application's sign-in, its secret
+      # or certificate and key in files under the data root's secrets/,
+      # named here by their paths in the container (/run/secrets/easyrmm).
+      EASYRMM_SMTP_AUTH: ${EASYRMM_SMTP_AUTH:-}
+      EASYRMM_SMTP_TENANT_ID: ${EASYRMM_SMTP_TENANT_ID:-}
+      EASYRMM_SMTP_CLIENT_ID: ${EASYRMM_SMTP_CLIENT_ID:-}
+      EASYRMM_SMTP_CLIENT_SECRET_FILE: ${EASYRMM_SMTP_CLIENT_SECRET_FILE:-}
+      EASYRMM_SMTP_CLIENT_CERT_FILE: ${EASYRMM_SMTP_CLIENT_CERT_FILE:-}
+      EASYRMM_SMTP_CLIENT_KEY_FILE: ${EASYRMM_SMTP_CLIENT_KEY_FILE:-}
       EASYRMM_LOG_LEVEL: ${EASYRMM_LOG_LEVEL:-info}
       EASYRMM_MESH_ENABLED: ${EASYRMM_MESH_ENABLED:-true}
       EASYRMM_MESH_CERT_URL: ${EASYRMM_MESH_CERT_URL:-}
@@ -200,6 +209,8 @@ services:
       # The updater's status (ADR-0052), root's: while its hold file exists
       # the server answers its health check and nothing else.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/updater/status:/run/easyrmm-updater:ro
+      # Secrets setup.sh keeps out of .env (root:65532, 0750, files 0440).
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/secrets:/run/secrets/easyrmm:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

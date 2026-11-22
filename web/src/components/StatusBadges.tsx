@@ -68,9 +68,17 @@ const ACTIONS: Record<string, string> = {
   "organization.create": "Created organization",
   "organization.update": "Updated organization",
   "organization.delete": "Deleted organization",
+  "organization.details_update": "Changed contact information",
   "site.create": "Created site",
   "site.update": "Updated site",
   "site.delete": "Deleted site",
+  "site.details_update": "Changed address and hours",
+  "contact.create": "Added contact",
+  "contact.update": "Changed contact",
+  "contact.delete": "Deleted contact",
+  "site_place.create": "Added place",
+  "site_place.update": "Changed place",
+  "site_place.delete": "Deleted place",
   "device_group.create": "Created device group",
   "device_group.update": "Updated device group",
   "device_group.delete": "Deleted device group",
@@ -116,6 +124,7 @@ const ACTIONS: Record<string, string> = {
   "job.cancel": "Stopped script run",
   "job_run.output_view": "Viewed job output",
   "job.arguments_view": "Viewed job arguments",
+  "job.results_export": "Downloaded job results",
   "job_run.output_remove": "Removed job output",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
@@ -178,7 +187,9 @@ const ACTIONS: Record<string, string> = {
   "patch.notifications_update": "Changed patching notification settings",
 };
 
-export function actionLabel(action: string): string {
+/** An action's name; with the entry's details, a read of job output that was a download says so (ADR-0064). */
+export function actionLabel(action: string, details?: Record<string, unknown> | null): string {
+  if (action === "job_run.output_view" && typeof details?.download === "string") return "Downloaded job output";
   return ACTIONS[action] ?? action;
 }
 
@@ -187,6 +198,8 @@ export const ACTION_GROUPS: [string, string][] = [
   ["auth", "Sign-in and security"],
   ["organization", "Organizations"],
   ["site", "Sites"],
+  ["contact", "Contacts"],
+  ["site_place", "Places"],
   ["device_group", "Device groups"],
   ["device", "Devices"],
   ["enrollment_token", "Deployment tokens"],
@@ -226,6 +239,9 @@ export function auditTarget(e: AuditEntry): string {
   }
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
+  // A contact's name is personal data and stays out of the audit log (ADR-0066); a place's kind is all it records.
+  if (e.targetType === "contact") return "Contact";
+  if (e.targetType === "site_place") return typeof d.kind === "string" ? `Place (${d.kind})` : "Place";
   if (e.targetType === "report") return REPORT_TITLES[e.targetId ?? ""] ?? "Report";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
   if (e.targetType === "mail_server") {
@@ -251,6 +267,7 @@ const REPORT_TITLES: Record<string, string> = {
   software: "Installed software",
   health: "Device health",
   alerts: "Alert history",
+  contacts: "Contacts",
 };
 
 const SOFTWARE_VERBS: Record<string, string> = { install: "Install", upgrade: "Update", uninstall: "Uninstall" };

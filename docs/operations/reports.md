@@ -12,6 +12,7 @@ CSV for a spreadsheet. The design is in
 | Installed software | Package or program on a device | Which devices have a program, and which version (search for its name) |
 | Device health | Device | Which devices have not checked in for a while, or are running out of disk space |
 | Alert history | Alert | What went wrong over a period, how long it lasted, and how it ended |
+| Contacts | Contact of an organization or a site | Who to call at each customer, how, and who is primary or for emergencies ([The customer record](customer-record.md#contacts)) |
 | Patch compliance | Device | Which devices are up to date, and which miss required, exploited or failed updates, wait for a restart or run an unsupported operating system; why a device is not patched |
 | Patch installations | Update a job finished with on a device | What was installed over a period, what failed and why, and who asked for it |
 | Monthly patch reports | PDF, per organization and month | A report to keep or send to a client (see [Patch reports](#patch-reports)) |
@@ -30,6 +31,9 @@ inventory, installed software and device health narrow to a **platform**
   full or more).
 * **Alert history**: **Opened in** (the last 7, 30 or 90 days, or the last
   year) and **Severity**.
+* **Contacts**: a contact's name or email contains the search. With a
+  site chosen, the site's contacts; with only an organization, the
+  organization's own and every site's.
 * **Patch compliance**: **Platform**, **Compliance** (up to date, updates
   missing or failed, restart needed, scan out of date, never scanned) and a
   device's name or host name.
@@ -45,7 +49,9 @@ or shared with someone who can see the same devices.
 Every built-in role holds `report.view`. A report lists only devices in
 organizations and sites you can see, and needs the permission for what it
 lists there: `device.view` for inventory and health, `software.view` for
-software, `alert.view` for alerts, `patch.view` for the patch reports. The
+software, `alert.view` for alerts, `doc.view` for contacts, `patch.view`
+for the patch reports. A role over one site lists that site's contacts,
+not the organization's own. The
 compliance trend and monthly reports describe whole organizations, so they
 need `report.view` and `patch.view` over the organization: a role over one
 site sees its devices in the compliance and installations reports only.
@@ -61,13 +67,22 @@ so; narrow it with the filters.
 * Numbers are in the unit the header names: GiB, %, days, hours.
 * A cell that would start with `=`, `+`, `-` or `@` begins with an
   apostrophe, so that a name chosen on a managed computer cannot run as a
-  formula when the file is opened.
+  formula when the file is opened. That includes a phone number written
+  with its country code, such as `'+1 555 0100`: phone numbers are free
+  text, so one can hold a formula too, and a spreadsheet would read even a
+  real one as a sum or drop its `+`. Some spreadsheets show the
+  apostrophe; remove it before dialling or importing the number elsewhere.
 
 Each download is recorded in the audit log as *Downloaded report*, with the
-report, its filters and the number of rows.
+report, its filters and the number of rows. The search is recorded as
+`q` for **Installed software**, where it is a program's name. Where it can
+be a person's name or email address (**Device inventory**, whose names are
+often their users', the two patch reports, and **Contacts**), the record
+says only that there was one (`searched`), since the audit log cannot be
+edited.
 
 The console reads them from
-`GET /api/v1/reports/{devices|software|health|alerts|patch-compliance|patch-installations}`
+`GET /api/v1/reports/{devices|software|health|alerts|patch-compliance|patch-installations|contacts}`
 (JSON) and `…/csv`, with `organizationId`, `siteId`, `platform`, `q`,
 `offlineDays`, `diskPercent`, `days`, `severity`, `compliance`, `category`
 and `result` as query parameters.
@@ -106,4 +121,9 @@ and `/api/v1/patching/reports/monthly` (`POST` with `organizationId`,
 `year`, `month` and `includeEndpointList` to make one; `…/{id}/pdf`,
 `POST …/{id}/send` with `recipients`, `DELETE …/{id}`); schedules from
 `GET /api/v1/patching/report-schedules` and `PUT …/{organizationId}`.
+`GET /api/v1/patching/reports/mail` says, as `withheld`, why the engine
+emails no reports while a Microsoft 365 application signs in to EasyRMM's
+mail server ([Mail](mail.md#microsoft-365)); sending one then answers
+`409 mail_withheld` with that reason, and a report whose email failed for
+it says so in its `lastError`.
 

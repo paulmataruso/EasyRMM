@@ -6,8 +6,9 @@
   four by a fourth reviewer, who found 37 of 60 findings fully answered
   and some new problems; this draft answers the rest. Feature 9 was added
   the same day, after those reviews; its ADR (ADR-0054) was accepted on
-  2026-11-22 after independent reviews; its W1, the check, is in review
-  as PR #92.
+  2026-11-22 after independent reviews; its W1, the check, is PR #92,
+  built but for what needs real computers (the MDM reader's proof waits
+  for an Intune tenant).
 * Scope: the work the owner asked for on 2026-11-20 and 2026-11-21:
   1. Operators sign the Windows agent (ADR-0049).
   2. Hardening Linux computers (ADR-0051).
@@ -624,7 +625,8 @@ host of the owner's instance, which `soak.sh` would have to stop).
 
 ### 9. Hardening Windows computers and servers (ADR-0054)
 The ADR was accepted on 2026-11-22 after independent reviews; its W1,
-the check, is in review as PR #92. It reuses feature 2's job kind, modes,
+the check, is PR #92, built but for what needs real computers (the MDM
+reader's proof waits for an Intune tenant). It reuses feature 2's job kind, modes,
 results, permission and console; the agent does not change.
 
 * **Basis**: values from Microsoft's security baselines for the
@@ -737,7 +739,7 @@ another antivirus and firewall, and a common EDR.
 | 2 | The fixes the reviews found | Holes in shipped code |
 | 3 | Hardening (2), H1 with the machine harness | Asked for first; ADR revised |
 | 4 | Updater 4a with the edge channel | The test instance follows `main` from then on |
-| 5 | Windows hardening (9): its ADR, revised after review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs CI's Windows runners, the KVM decision with its domain, and a real Intune-enrolled Windows 11; it builds the ownership reader step 11 reuses |
+| 5 | Windows hardening (9): its ADR, revised after review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs CI's Windows runners and the KVM decision with its domain (the proof on a real Intune-enrolled Windows 11 moved out of W1 and waits for a tenant); it builds the ownership reader step 11 reuses |
 | 6 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
 | 7 | Updater 4b: the console | Needs F2 |
 | 8 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |

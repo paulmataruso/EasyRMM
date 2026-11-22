@@ -151,6 +151,64 @@ In the console:
 * The dashboard counts active alerts and lists the most pressing ones,
   critical first, under **Needs attention**.
 
+### An alert's card
+
+Select an alert's name, on the **Alerts** page, in a device's **Alerts**
+card, under **Needs attention** or in a disk's panel, for everything
+EasyRMM recorded about it. The card has its own address (`?alert=` and
+the alert's ID on the page you were on), so you can send it to someone
+who can see the alert. **Close** and Escape close it, however you
+reached it, as does the browser's **Back** when you opened it from a
+list.
+
+| Section | Shows |
+|---|---|
+| **Summary** | Severity, state and kind; the device (and whether it is online now), its site and organization, each linked; for disk health, the disk and what holds |
+| **Why it opened** | The condition the alert opened under, its policy by name (with its scope and description, and the condition it has now if it changed since; the **Policies** tab lists every policy), the value when it opened and the latest. For an offline alert, when the device was last seen |
+| **Measurements** | Processor, memory and disk use alerts: the measurement from the policy's minutes before the alert opened until it resolved (or now), with the threshold as a dashed line and the time it was open shaded. **Show as a table** lists the points. Measurements are kept for `EASYRMM_METRICS_RETENTION` (7 days by default): for an alert older than that, the chart starts at the oldest measurement kept and says that earlier ones are no longer kept |
+| **The disk** and **Facts** | Disk health alerts: the disk's state now and its facts, as its panel on the **Hardware** tab shows them |
+| **Times** | When it opened, how long it has been or was open, when it was acknowledged and by whom, and when and how it resolved |
+| **What it means** and **What to do next** | What holds while it is active, what to check, and links to the device's tabs that show more |
+| **History** | The policy's other alerts on the device (for disk health, on the same disk), newest first, up to 20, each opening its own card: an alert resolved by hand that opened again shows here as a new one |
+| **Raw details** | The alert as the API returns it, folded, with **Copy** |
+
+Alerts hold no notes, and record no change between opening and resolving
+other than the acknowledgement and the latest value, so the card shows
+none. Patching alerts have a card of their own under **Patching →
+Alerts** (see [Patching alerts](patching.md#alerts)).
+
+### What pulses in red
+
+So that what needs attention stands out while the console is open all
+day, these pulse slowly between their normal colour and red:
+
+* On a device's page, every **active** alert (open or acknowledged) in its
+  **Alerts** card, and the number of active alerts beside the card's
+  title; and the same in a disk's panel on the **Hardware** tab, under
+  **Open alerts**. Each alert keeps its severity badge, so the pulse means
+  *active*, not *critical*.
+* On the **Alerts** page, the name of a device that has an active
+  **critical** alert, in every row of that device, whatever the page is
+  showing. The name carries the critical icon beside it.
+* In the menu's **Alerts** tree, the name of a device that has an active
+  critical alert, beside its red count.
+
+The pulse takes 1.8 seconds, well under the three flashes a second that
+can trigger seizures, and changes only text colour and a soft tint, never
+a large area. Red is never the only sign: the severity badge, the critical
+icon and the counts say the same in words, and screen readers hear them
+once, not on every pulse. With **reduce motion** turned on in the
+operating system or browser, nothing pulses: the same places show a
+steady red instead.
+
+The pulse lasts as long as the alert, so anyone can stop it: **Stop
+flashing** at the top of the **Alerts** page, or beside **History** on a
+device's **Alerts** card, holds every pulse in the same steady red, and
+**Flash active alerts** starts it again. The choice applies everywhere in
+the console and is kept in this browser, as the theme is (the console has
+no per-user preferences yet); another browser, or a cleared one, flashes
+again.
+
 ## Who can do what
 
 | Permission | Allows | Roles |
@@ -165,6 +223,22 @@ policies by organization administrators, and site policies by site
 administrators. Adding, changing and deleting policies and acknowledging
 and resolving alerts are audited. Alerts the server opens and resolves on
 its own are not; the alert itself is the record.
+
+## API
+
+Every route answers only for devices the caller may see: an alert on
+another organization's or site's device is `404`, as is one that does
+not exist.
+
+| Route | Needs | Does |
+|---|---|---|
+| `GET /api/v1/alerts` | `alert.view` | Alerts newest first. `status` (`active`, the default, `resolved` or `all`), `organizationId`, `siteId`, `deviceId`, `severity`, `policyId` (one policy's alerts), `subject` (a disk's identity, for disk health), `limit` (1 to 500) and `before` (the `next` of the page before) |
+| `GET /api/v1/alerts/summary` | `alert.view` | Active, critical, warning and acknowledged counts, and how many devices have an active alert |
+| `GET /api/v1/alerts/devices` | `alert.view` | Each device with an active alert: its active and critical counts |
+| `GET /api/v1/alerts/{id}` | `alert.view` | One alert, with `canManage` |
+| `GET /api/v1/alerts/{id}/metrics` | `alert.view` and `device.view` on the device | A processor, memory or disk use alert's measurement: `metric`, `threshold`, `from` and `to` (the policy's minutes before it opened until it resolved or now, with a quarter of that either side, at least 15 minutes and at most 6 hours; never before the oldest measurement kept, `EASYRMM_METRICS_RETENTION` ago, and never past now), `trimmed` (`true` when `from` is later than that window's start because earlier measurements are no longer kept), `bucketSeconds` (the narrowest width from 1 minute to 1 day, or whole days past that, that gives at most 240 points for any window) and `samples` (`at`, the average `value`). `409 alert_has_no_metrics` for offline and disk health alerts |
+| `POST /api/v1/alerts/{id}/acknowledge`, `…/resolve` | `alert.manage` | Acknowledges or resolves it; `409 alert_resolved` once resolved |
+| `GET`, `POST /api/v1/alert-policies`; `GET`, `PATCH`, `DELETE …/{id}` | `monitoring.view`; `monitoring.manage` to change | The policies that apply to the caller |
 
 ## Retention
 

@@ -8,7 +8,7 @@ import { Button, Field, InlineError, Input, TextareaField, TextField } from "../
 import { browserTimeZone, timeZones } from "../../lib/format";
 
 function blankSite(): SiteInput {
-  return { name: "", timezone: browserTimeZone(), address: "", notes: "" };
+  return { name: "", timezone: browserTimeZone(), notes: "" };
 }
 
 /** Creates a site in an organization, or edits an existing site. */
@@ -22,7 +22,7 @@ export function SiteFormDialog({ open, onClose, onSaved, organizationId, site }:
   const toast = useToast();
   const [form, setForm] = useState<SiteInput>(blankSite);
   useEffect(() => {
-    if (open) setForm(site ? { name: site.name, timezone: site.timezone, address: site.address, notes: site.notes } : blankSite());
+    if (open) setForm(site ? { name: site.name, timezone: site.timezone, notes: site.notes } : blankSite());
   }, [open, site]);
 
   const save = useApiMutation(
@@ -44,7 +44,7 @@ export function SiteFormDialog({ open, onClose, onSaved, organizationId, site }:
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    save.mutate({ name: form.name.trim(), timezone: form.timezone.trim(), address: form.address.trim(), notes: form.notes.trim() });
+    save.mutate({ name: form.name.trim(), timezone: form.timezone.trim(), notes: form.notes.trim() });
   }
 
   return (
@@ -52,9 +52,8 @@ export function SiteFormDialog({ open, onClose, onSaved, organizationId, site }:
       <form onSubmit={submit} className="flex flex-col gap-3.5">
         <TextField label="Name" value={form.name} onChange={(e) => set("name", e.target.value)} error={fieldError(save.error, "name")} required maxLength={200} autoFocus />
         <TimeZoneField value={form.timezone} onChange={(v) => set("timezone", v)} error={fieldError(save.error, "timezone")} />
-        <TextField label="Address" value={form.address} onChange={(e) => set("address", e.target.value)} error={fieldError(save.error, "address")} maxLength={500} />
         <TextareaField label="Notes" value={form.notes} onChange={(e) => set("notes", e.target.value)} error={fieldError(save.error, "notes")} maxLength={4000} />
-        <InlineError error={save.error} fields={["name", "timezone", "address", "notes"]} />
+        <InlineError error={save.error} fields={["name", "timezone", "notes"]} />
         <div className="flex justify-end gap-2 pt-1">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={save.isPending} disabled={!form.name.trim() || !form.timezone.trim()}>

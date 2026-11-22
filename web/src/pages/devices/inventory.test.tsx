@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Package } from "../../api/types";
+import type { Package, PowerShellInstall } from "../../api/types";
 import { baseRoutes, installFakeApi, ok, sessionView, unreportedRoutes } from "../../test/fakeApi";
 import { device, history, inventory, metrics } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
@@ -9,7 +9,7 @@ import { SHOWN_PACKAGES } from "./DeviceSoftware";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
 const SERVER = device("d1", "DB-01", { platform: "linux", osDescription: "Debian GNU/Linux 13 (trixie)", agent: AGENT });
 
 const TECHNICIAN = sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "software.view"] });
@@ -173,6 +173,74 @@ describe("device hardware", () => {
     installFakeApi({ ...routes(), ...unreportedRoutes() });
     renderApp("/devices/d1?tab=hardware");
     expect(await screen.findByText("No inventory yet")).toBeInTheDocument();
+  });
+
+  it("lists a Windows device's PowerShell installs, which one runs PowerShell 7 scripts, and why others are not used", async () => {
+    const windows = { ...inventory().os, name: "Windows 11 Pro", id: "windows" };
+    const desktop: PowerShellInstall = { edition: "Desktop", version: "5.1.26100.7019", arch: "x64", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", usable: true };
+    const store = "C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.10.0_x64__8wekyb3d8bbwe\\pwsh.exe";
+    const found: PowerShellInstall[] = [
+      desktop,
+      { edition: "Core", version: "7.6.10", arch: "x64", path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", usable: true },
+      { edition: "Core", version: "7.4.6", arch: "x86", path: "C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe", usable: false, reason: "A 32-bit (x86) build: never used for scripts, since it sees the 32-bit registry and System32." },
+      { edition: "Core", version: "7.6.10", arch: "x64", path: store, store: true, usable: false, reason: "A Microsoft Store install: reported, never run. Install PowerShell 7 from its MSI (winget install --id Microsoft.PowerShell --installer-type wix) for scripts to use it." },
+    ];
+    const at = (powerShell?: PowerShellInstall[]) => routes({ "GET /devices/:id": ok(WINDOWS_PC), "GET /devices/:id/inventory": ok({ inventory: inventory({ os: windows, powerShell }), metrics: null }) });
+    installFakeApi(at(found));
+    const { unmount } = renderApp("/devices/d1?tab=hardware");
+    const card = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    const rows = within(card.querySelector("tbody") as HTMLElement).getAllByRole("row");
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toHaveTextContent(/Windows PowerShell 5\.1\.26100\.7019, 64-bit.*Runs Windows PowerShell 5\.1 scripts/);
+    expect(rows[1]).toHaveTextContent(/PowerShell 7\.6\.10, 64-bit.*Runs PowerShell 7 scripts.*C:\\Program Files\\PowerShell\\7\\pwsh\.exe/);
+    expect(rows[2]).toHaveTextContent(/PowerShell 7\.4\.6, 32-bit.*Not used.*A 32-bit \(x86\) build: never used for scripts/);
+    expect(rows[3]).toHaveTextContent(/Microsoft Store.*Not used.*A Microsoft Store install: reported, never run\./);
+    expect(within(card).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
+    unmount();
+
+    // Only a Store install: none is used, and the card says how to install one that is.
+    installFakeApi(at([desktop, found[3]!]));
+    const second = renderApp("/devices/d1?tab=hardware");
+    expect(await screen.findByText(/No usable PowerShell 7 was found, so PowerShell 7 scripts fail here/)).toBeInTheDocument();
+    expect(screen.getByText("winget install --id Microsoft.PowerShell --installer-type wix")).toBeInTheDocument();
+    second.unmount();
+
+    // Found, but what it loads fails the agent's check: blocked, and no fallback.
+    const why =
+      "PowerShell 7 would load modules from C:\\Program Files\\WindowsPowerShell\\Modules, and C:\\Program Files\\WindowsPowerShell\\Modules\\Tools can be changed by BUILTIN\\Users: not used, since what it loads must be changeable by administrators only. Scripts that allow Windows PowerShell 5.1 do not run in it instead.";
+    installFakeApi(at([desktop, { ...found[1]!, usable: false, blocked: true, reason: why }, found[3]!]));
+    const third = renderApp("/devices/d1?tab=hardware");
+    const blockedCard = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    const blockedRows = within(blockedCard.querySelector("tbody") as HTMLElement).getAllByRole("row");
+    expect(blockedRows[1]).toHaveTextContent(/PowerShell 7\.6\.10, 64-bit.*Found, not usable.*Modules\\Tools can be changed by BUILTIN\\Users/);
+    expect(within(blockedCard).getByText(/PowerShell 7 scripts fail here, and do not run in Windows PowerShell 5\.1 instead/)).toBeInTheDocument();
+    expect(within(blockedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
+    third.unmount();
+
+    // The folder installs are in could not be listed: could not be checked, blocked, not "not installed".
+    const unlisted =
+      "Could not be checked: open C:\\Program Files\\PowerShell: The process cannot access the file because it is being used by another process. Not used until it can be, since anyone who may read a file can keep the agent from reading it. Scripts that allow Windows PowerShell 5.1 do not run in it instead.";
+    installFakeApi(at([desktop, { edition: "Core", version: "", arch: "", path: "C:\\Program Files\\PowerShell", usable: false, blocked: true, reason: unlisted }]));
+    const fourth = renderApp("/devices/d1?tab=hardware");
+    const unlistedCard = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    const unlistedRows = within(unlistedCard.querySelector("tbody") as HTMLElement).getAllByRole("row");
+    expect(unlistedRows[1]).toHaveTextContent(/^PowerShellFound, not usableCould not be checked: open C:\\Program Files\\PowerShell: /);
+    expect(within(unlistedCard).getByText(/a file of it is open in another program, has more than one hard link or could not be checked/)).toBeInTheDocument();
+    expect(within(unlistedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
+    fourth.unmount();
+
+    // An agent too old to report them.
+    installFakeApi(at(undefined));
+    renderApp("/devices/d1?tab=hardware");
+    const old = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    expect(within(old).getByText(/Not reported by this agent's version/)).toBeInTheDocument();
+  });
+
+  it("shows no PowerShell for a Linux device", async () => {
+    installFakeApi(routes());
+    renderApp("/devices/d1?tab=hardware");
+    expect(await screen.findByRole("heading", { name: "System" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "PowerShell" })).not.toBeInTheDocument();
   });
 });
 

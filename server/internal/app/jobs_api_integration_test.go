@@ -45,6 +45,7 @@ type jobView struct {
 	ID               string         `json:"id"`
 	ArgCount         int            `json:"argCount"`
 	CanViewArguments bool           `json:"canViewArguments"`
+	CanDownload      bool           `json:"canDownloadOutput"`
 	Counts           map[string]int `json:"counts"`
 	Total            int            `json:"total"`
 	Finished         bool           `json:"finished"`
@@ -136,7 +137,7 @@ func TestJobsAPI(t *testing.T) {
 	run := job.Runs[0].ID
 
 	wantStatus(t, h.raw("POST", agentproto.PathJobsPoll, []byte("{}"), ""), http.StatusUnauthorized, "")
-	poll, err := ac.Poll(ctx)
+	poll, err := ac.Poll(ctx, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}
