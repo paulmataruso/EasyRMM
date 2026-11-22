@@ -696,14 +696,14 @@ export interface AccountMailLimits {
   adminPerHour: number;
   /** Invitations and password links administrators other than super administrators may email to one organization's accounts a day. */
   organizationPerDay: number;
-  /** Password emails, resets people ask for and administrators' links together, to one account. */
-  accountPerHour: number;
-  accountPerDay: number;
+  /** Password emails, resets people ask for and administrators' links together, to one account: this many at once, */
+  accountBurst: number;
+  /** then one every this many minutes. */
+  accountEveryMinutes: number;
   /** Password resets people ask for, on the whole platform, an hour. */
   resetsPerHour: number;
-  /** Password resets people ask for, to one organization's accounts. */
+  /** Password resets people ask for, to one organization's accounts, an hour. No limit a day holds resets. */
   organizationResetsPerHour: number;
-  organizationResetsPerDay: number;
 }
 
 export interface MailServerInput {

@@ -452,10 +452,10 @@ function Limits({ view }: { view: MailServerView }) {
         </p>
         <p>
           Invitations and password resets go first, and wait up to a minute for room. Password resets people ask for may use the whole day, at most{" "}
-          {formatNumber(account.resetsPerHour)} an hour, and to one organization&apos;s accounts {formatNumber(account.organizationResetsPerHour)} an hour and{" "}
-          {formatNumber(account.organizationResetsPerDay)} a day. Invitations and password links administrators send stop at {formatNumber(usage.adminDayLimit)}, 90% of the
-          day&apos;s limit, at {formatNumber(account.adminPerHour)} an hour per administrator, and at {formatNumber(account.organizationPerDay)} a day per organization. One
-          account gets at most {formatNumber(account.accountPerHour)} password emails an hour and {formatNumber(account.accountPerDay)} a day. Other mail stops at{" "}
+          {formatNumber(account.resetsPerHour)} an hour, and to one organization&apos;s accounts {formatNumber(account.organizationResetsPerHour)} an hour; nothing holds
+          them for a day. Invitations and password links administrators send stop at {formatNumber(usage.adminDayLimit)}, 90% of the day&apos;s limit, at{" "}
+          {formatNumber(account.adminPerHour)} an hour per administrator, and at {formatNumber(account.organizationPerDay)} a day per organization. One account gets at most{" "}
+          {formatNumber(account.accountBurst)} password emails at once, then one every {formatNumber(account.accountEveryMinutes)} minutes. Other mail stops at{" "}
           {formatNumber(usage.otherDayLimit)}, 80%.
         </p>
         <p>The limits on invitations and password emails follow the day&apos;s limit: each is the smaller of a fixed number and a share of the day.</p>

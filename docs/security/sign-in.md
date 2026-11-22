@@ -127,18 +127,22 @@ started before EasyRMM recorded this have none.
 **Forgot password** answers the same way whether or not the address has an
 account, and answers before looking it up; the e-mail goes out afterwards,
 so the time taken reveals nothing either. Each account gets at most three
-password e-mails an hour and ten a day, however many addresses ask and on
-whichever of EasyRMM's servers; password links administrators email count
-against the same limit, and past it come back to the administrator
-unsent, with the reason. Resets people ask for are also limited per
-organization, by the hour and the day, and on the whole platform by the
-hour, so that someone who knows, or made, many addresses cannot use up
-the mail server's day; the limits are counted in the database and follow
-the day's limit ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)).
+password e-mails at once, then one every 20 minutes, however many
+addresses ask and on whichever of EasyRMM's servers; password links
+administrators email count against the same limit, and past it come back
+to the administrator unsent, with the reason. Resets people ask for are
+also limited by the hour, per organization and on the whole platform, so
+that someone who knows, or made, many addresses cannot use up the mail
+server's day; no limit a day holds them, so that no one can keep them
+refused for a day. The limits are counted in the database and follow the
+day's limit ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)).
+Room under them is taken before the link is made, so a reset refused
+under a limit makes no new link, and the last one sent still works.
 Administrators' invitations and password links are limited per
 administrator and per organization, and stop before the last 10% of the
-mail server's day, which is kept for resets people ask for. A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
-and only the newest link works. Someone invited who has not chosen a
+mail server's day, which is kept for resets people ask for. A reset link
+works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`), and only the
+newest link works. Someone invited who has not chosen a
 password yet is sent a new invitation link instead, valid for 72 hours.
 
 **Forgot password** is offered only while EasyRMM has a mail server

@@ -99,8 +99,8 @@ a minute and stops a mailbox that sends to more than 10,000 recipients in
   for room under the minute's limit, and other mail on every server
   stands back while one waits.
 * **Password resets people ask for** may use the whole day's limit, but
-  are limited by the hour and per organization (below), so that they
-  cannot use it up.
+  are limited by the hour, on the whole platform and per organization
+  (below), so that they cannot use it up.
 * **Invitations and password links administrators send** stop at 90% of
   the day's limit, so that the last 10% is kept for resets people ask for
   whatever administrators send.
@@ -124,10 +124,13 @@ them are counted in the database, across all of EasyRMM's servers.
 |-------|----------------|------------------------------|--------------|
 | One administrator's invitations and password links, an hour | 60, a 150th of the day | 60 | 3 |
 | Invitations and password links to one organization's accounts, a day | 500, an 18th of the day | 500 | 27 |
-| Password emails to one account, of any kind | 3 an hour and 10 a day | 3 and 10 | 3 and 10 |
+| Password emails to one account, of any kind | 3 at once, then one every 20 minutes | 3, then 1 every 20 minutes | 3, then 1 every 20 minutes |
 | Password resets people ask for, on the whole platform, an hour | 60, a 300th of the day | 30 | 1 |
 | Password resets people ask for to one organization's accounts, an hour | a third of the platform's hour | 10 | 1 |
-| Password resets people ask for to one organization's accounts, a day | 100, a 100th of the day | 90 | 5 |
+
+Apart from the day's limit on all mail, no limit a day holds password
+resets people ask for, only these limits by the hour, so that no one can
+keep them refused for a day (decided in review of #82).
 
 Why these numbers (decided in review of #82):
 
@@ -141,24 +144,44 @@ Why these numbers (decided in review of #82):
   invitations and links are not counted against an organization, only
   against their own hourly limit.
 * **One account**: a person who has forgotten their password needs one
-  email, and a few more if one goes astray; ten a day is far beyond
-  that. Resets the person asks for and links administrators email count
-  together.
-* **Resets, platform-wide**: kept up all day, 24 hours × a 300th is 8% of
-  the day, less than the 10% kept for resets, so resets, however many
-  addresses someone knows or made, never use up the day, or the room kept
-  for them.
+  email, and a few more if one goes astray. Three at once, then one every
+  20 minutes (a token bucket, worked out from the account's emails in the
+  database), is at most 75 a day. Resets the person asks for and links
+  administrators email count together.
+* **Resets, platform-wide**: kept up all day, resets are at most 24 hours
+  × the hour's limit. At a day's limit of 300 or more, that is
+  24 × a 300th, 8% of the day, less than the 10% kept for resets, so
+  resets, however many addresses someone knows or made, never use up the
+  day, or the room kept for them. Below 300 a day, the hour's limit is 1,
+  so resets are at most 24 a day: a larger share of a day that small.
 * **Resets, per organization**: a third of the platform's hour, so that
-  the rest is there for the others, and at most 1% of the day. An
-  organization admin who invites a hundred addresses they control and
-  has each of them reset, or someone who knows a customer's addresses,
-  spends at most that. Accounts in no organization, or in several, count
-  together as one organization here.
+  the rest is there for the others. An organization admin who invites a
+  hundred addresses they control and has each of them reset, or someone
+  who knows a customer's addresses, spends at most that. Accounts in no
+  organization, or in several, count together as one organization here.
 
-Someone who knows addresses in three or more organizations can still use
-up the platform's hour of resets, and so hold up other people's resets
-until the hour has passed; they cannot use up the day. Resets are also
-limited per client address on each server.
+What holds against someone who asks for resets to addresses they know,
+and what does not:
+
+* **They can delay resets by the hour, never by the day.** Asking for an
+  organization's hour of resets (10 at the default day's limit) to a
+  customer's accounts, or to accounts in no organization, they keep that
+  organization's resets refused while they go on, and for at most an
+  hour after they stop. Knowing addresses in three or more
+  organizations, they can use up the platform's hour the same way. No
+  count by the day is theirs to use up.
+* **One account**: asking every 20 minutes, they keep its owner's own
+  requests refused while they go on, but each reset they ask for is sent
+  to the owner, whose newest link works. 20 minutes after they stop, the
+  owner can ask again.
+* **The day**: resets never use more than the hour's limits allow
+  (above). At a day's limit of 300 or more, they cannot use up the day,
+  or the 10% kept for them, or keep administrators' invitations and
+  links from going. Below 300 a day, they can use 24 of it.
+* An administrator's links to an account past its limit still come back
+  to the administrator, to pass on (below).
+
+Resets are also limited per client address on each server.
 
 How each is refused:
 
@@ -195,25 +218,39 @@ so **a mail server set in the engine itself is overwritten** within a
 minute. The engine's switch for webhooks to private networks carries the
 mail server with it, and EasyRMM sends its own mail server in force with
 that switch, never the engine's copy back. When EasyRMM cannot read its
-own mail server then, the switch still changes, the engine is given no
-mail server with it, and Settings → Patching → Notifications says why,
-until a pass can give it again. Each call to the engine for its mail
-settings gives up after 10 seconds, so an engine that hangs does not hold
-up the switch or the passes.
+own mail server then, the switch still changes, the engine keeps the mail
+server it has, and Settings → Patching → Notifications says why, until a
+pass can give it again. Each call to the engine for its mail settings
+gives up after 10 seconds, so an engine that hangs does not hold up the
+switch or the passes.
 
 With several EasyRMM servers, **one at a time gives the engine its mail
 server**: whichever holds a PostgreSQL advisory lock, on a connection of
 its own. When it stops, or its connection drops, another takes over at
-its next pass. It records a salted Argon2id digest of the mail server it
-gives in the database, never the mail server or its password. Each other
-server compares its own mail server with that digest, and when they
-differ (for example, `.env` set differently on one server), it logs an
-error once per change, and its Settings → Patching → Notifications says
-so; the engine keeps the one it was given. Give every server the same
-`EASYRMM_SMTP_*` settings. The webhook switch, changed on a server that
-does not give the engine its mail server, keeps the engine's mail
-settings as they are, its password included, and changes only the
-switch.
+its next pass. A connection that dies without a word (a server lost, the
+network cut) is noticed within about 30 seconds, by TCP keepalives on
+both ends of it. The lock needs a session that stays on one connection to
+PostgreSQL: a pooler in transaction mode, such as PgBouncer's
+`pool_mode = transaction`, is not supported
+([Docker deployment](../deployment/docker.md#operations)).
+
+The server that gives the engine its mail server records, in the
+database, an HMAC-SHA-256 of it, keyed by a key derived from
+`EASYRMM_SECRET_KEY`, never the mail server or its password; someone who
+can read the database cannot guess the password from it. Each other
+server compares its own mail server with it, and when they differ (for
+example, `.env` set differently on one server), it logs an error once per
+change, and its Settings → Patching → Notifications says so; the engine
+keeps the one it was given. Give every server the same `EASYRMM_SMTP_*`
+settings, and the same secret key, as they need anyway: while the key is
+being rotated, a server on the other key says its mail server differs
+until every server has been restarted with the new one. The webhook
+switch, changed on a server that does not give the engine its mail
+server, keeps the engine's mail settings as they are, its password
+included, and changes only the switch. Each server reads and changes the
+engine's mail settings (a pass, the removal below, the webhook switch)
+holding one advisory lock shared by all of them, so that one server's
+change never falls between another's reading and writing them.
 
 When EasyRMM cannot give the engine its mail server three passes in a row
 (a pass runs every minute, and at once after a change), because it cannot

@@ -419,13 +419,23 @@ What exists, and what it means here:
   one administrator's mail, `min(60, per_day/150)` an hour (kept up all
   day, 16% of the day); one organization's administrators' mail,
   `min(500, per_day/18)` a day (5.6%), not counting super
-  administrators'; one account's password emails of any kind, 3 an hour
-  and 10 a day; resets people ask for, `min(60, per_day/300)` an hour on
-  the whole platform (kept up all day, 8%, under the 10% kept for them),
-  and to one organization's accounts a third of that hour and
-  `min(100, per_day/100)` a day (1%), accounts in no organization or
-  several counting together. All are counted in `mail_sends`, across
-  servers. Only the administrator's own limit refuses an administrator's
+  administrators'; one account's password emails of any kind, 3 at
+  once, then one every 20 minutes (a token bucket worked out from the
+  account's emails in `mail_sends`); resets people ask for,
+  `min(60, per_day/300)` an hour on the whole platform (kept up all day,
+  8% at 300 a day or more, under the 10% kept for them), and to one
+  organization's accounts a third of that hour, accounts in no
+  organization or several counting together. No limit a day holds
+  resets people ask for (decided in review of #82, which found that day
+  caps let anyone who knew a few addresses keep an organization's
+  resets, or one account's, refused for a day): someone who asks for
+  resets to addresses they know can delay an organization's by the
+  hour, never by the day. All are counted in `mail_sends`, across
+  servers. A reset takes its room under the limits before its link is
+  made, in a step of its own, and never holds a database connection
+  while it waits for another (decided in review of #82, which found
+  that a reset held a row lock while the limits' read waited for a
+  second connection, so that concurrent resets drained the pool). Only the administrator's own limit refuses an administrator's
   link (`429`, with `Retry-After`, as every `429`); past the account's or
   the organization's, it is made and comes back unsent, with the reason,
   so that no one who can ask for resets can keep an administrator from
@@ -737,17 +747,25 @@ channels now, its syslog destinations with log forwarding later.
   row the engine's mail server is removed, and Settings → Patching says
   why. One of EasyRMM's servers at a time runs `syncMail`, chosen by a
   session advisory lock on a connection of its own, so that servers whose
-  mail servers differ do not give the engine theirs in turn; it records
-  a salted Argon2id digest of the mail server it gives
-  (`mail_engine_given`), never the password, and each other server logs
-  an error once per change, and says so on Settings → Patching, when its
-  own differs. The webhook switch changed on another server keeps the
-  engine's mail settings, sending no password, so that the engine keeps
-  the one it has; anything a concurrent change mixes is in what the
-  engine shows, which the next pass repairs. The lock is taken with the
-  request's context, each engine call under it is bounded at 10 seconds,
-  and the webhook switch goes ahead when EasyRMM's mail server cannot be
-  read, giving the engine none with it (decided in review of #82). The engine signs in with a password
+  mail servers differ do not give the engine theirs in turn. Its ping is
+  bounded at 5 seconds, and its connection has TCP keepalives and a TCP
+  user timeout on both ends, so that a leader whose connection died
+  without a word is noticed in about 30 seconds; a pooler in transaction
+  mode is not supported. It records an HMAC-SHA-256 of the mail server
+  it gives (`mail_engine_given`), keyed by a key derived from the secret
+  key with HKDF (its own label), never the mail server, so that someone
+  who reads the database cannot guess the password from it; each other
+  server logs an error once per change, and says so on Settings →
+  Patching, when its own differs. The webhook switch changed on another
+  server keeps the engine's mail settings, sending no password, so that
+  the engine keeps the one it has. Each server reads and then changes the
+  engine's mail settings (a pass, the removal after failures, the
+  webhook switch) holding one transaction-level advisory lock shared by
+  all servers, so that no two such changes interleave. The lock is taken
+  with the request's context, each engine call under it is bounded at 10
+  seconds, and the webhook switch goes ahead when EasyRMM's mail server
+  cannot be read, leaving the engine's as it is, never removing it
+  (decided in review of #82). The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
   patching's email and monthly reports stop until slice 6. While an
