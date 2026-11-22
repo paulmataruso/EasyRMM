@@ -65,11 +65,15 @@ that boot from USB. This version answers each of those.
   (decided in review):* a check keeps 30 minutes; apply and undo get 60,
   because one module's package steps may take 10 minutes to refresh the
   package lists and 25 to install, and its rollback 15 more to remove what
-  it installed, which 30 minutes cannot hold. CI's machine jobs, under
-  KVM, each of which applies, applies again and undoes every module of a
-  release, with two restarts and fail2ban's bans, took 7 to 10 minutes a
-  release, whole (run 44979766470); the machine test logs how long each run
-  takes against its limit, and fails one that takes longer.
+  it installed, which 30 minutes cannot hold. On CI's machines, under KVM
+  with the distributions' mirrors, no apply or undo of one module took more
+  than 35 seconds (AIDE's or the firewall's installation; run 44987598440),
+  and a whole release's machine job, every module applied, applied again
+  and undone with two restarts, took 7 to 10 minutes; emulated on a loaded
+  host, one purge of AIDE's configuration took more than 15. The limit is
+  set by the package steps' own limits, not by the fast case. The machine
+  test logs how long each run takes against its limit, and fails one that
+  takes longer.
   The server gives the script its job's limit (`time-limit=SECONDS`), and
   the script works to a deadline 20 seconds short of it, kept for its
   result: changes stop a sixth of the limit before that (at most 5
@@ -312,7 +316,17 @@ or Kubernetes installed later.
   for fail2ban from EPEL) is recorded, and undo removes its file before
   the packages; and a link `systemctl enable` made for a unit that came
   with a package undo removed goes too, where removing the package leaves
-  it pointing nowhere (Ubuntu 22.04's fail2ban). *Amended 2026-11-22
+  it pointing nowhere (Ubuntu 22.04's fail2ban). *Amended 2026-11-22,* as
+  CI's machines found on the releases added to them: dracut (Ubuntu 26.04,
+  RHEL and Fedora) takes the kernel module's `/etc/sysctl.d` file into an
+  initramfs rebuilt after apply and applies it at boot, so undo of `kernel`
+  rebuilds an initramfs that holds it, as `kernel-modules`' undo does; audit
+  4 (RHEL 10 and its rebuilds, Fedora) keeps `auditctl`, `augenrules` and
+  `/etc/audit/rules.d` in `audit-rules`, which AlmaLinux 10's image leaves
+  out, so the audit module installs it with `audit`; and the time module
+  reads a running service by its own name, not an alias's
+  (`chronyd.service` is `chrony.service`'s on Ubuntu 26.04, and
+  `systemctl is-enabled` answers `alias` for it). *Amended 2026-11-22
   (decided in review):* the stream's file goes after the packages, not
   before, and only when all of them went; a stream file that was there
   before and that the installation changed is put back as it was.
@@ -395,9 +409,9 @@ or Kubernetes installed later.
   as a container's, is another file), and once they are removed,
   `rpm --rebuilddb` rebuilds the indexes a killed rpm may have left half
   written. It ends by renaming the database's directory, which an overlay
-  filesystem (a Docker container's) refuses; rpm then keeps the database
-  it had, and the recovery stands when rpm reads it, the result saying
-  that the rebuild failed. Each module's result records it in a
+  filesystem (a Docker container's) may refuse; rpm then keeps the
+  database it had, and the recovery stands when rpm reads it, the result
+  saying that the rebuild failed. Each module's result records it in a
   field of its own, `packageRecovery` (recovered or failed, and why), and a
   recovery that fails fails the module with its reason, once: later
   package steps of the run fail with it. An undo that fails this way puts

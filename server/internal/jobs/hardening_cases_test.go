@@ -148,6 +148,25 @@ var machineReleaseCases = map[string]map[string]map[string]machineCase{
 			HardeningUndo:  {Want: []string{HardeningNothingToUndo}},
 		},
 	},
+	// RHEL 10 keeps every one of those modules from loading already.
+	"rocky-10": {"kernel-modules": alreadyInPlace},
+	"alma-10": {
+		"kernel-modules": alreadyInPlace,
+		// AlmaLinux 10's image runs auditd without audit-rules, which has
+		// auditctl, augenrules and the rules directory.
+		"audit": {
+			HardeningCheck: {Want: []string{HardeningNotInPlace}},
+			HardeningApply: {Want: []string{HardeningApplied}, After: []string{HardeningInPlace}},
+			HardeningUndo:  {Want: []string{HardeningUndone}},
+		},
+	},
+}
+
+// alreadyInPlace: a module the image has in place before apply.
+var alreadyInPlace = map[string]machineCase{
+	HardeningCheck: {Want: []string{HardeningInPlace}},
+	HardeningApply: {Want: []string{HardeningUnchanged}, After: []string{HardeningInPlace}},
+	HardeningUndo:  {Want: []string{HardeningNothingToUndo}},
 }
 
 // machineCaseFor is the case for a module in MODE on IMAGE, of FAMILY.

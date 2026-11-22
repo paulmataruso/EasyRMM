@@ -813,9 +813,9 @@ func scriptDpkgRecovery(t *testing.T, c *scriptContainer) {
 func scriptRpmRecovery(t *testing.T, c *scriptContainer) {
 	rpmRecovery(t, c)
 	// rpm --rebuilddb, after the environment goes, ends by renaming the
-	// database's directory, which the container's overlay filesystem
-	// refuses: with /var/lib on a volume, as on a computer's own
-	// filesystem, it rebuilds the database.
+	// database's directory, which the container's overlay filesystem may
+	// refuse: with /var/lib on a volume, as on a computer's own filesystem,
+	// it rebuilds the database.
 	rpmRebuild(t, startScriptContainer(t, c.image, c.scriptFile, "--mount", "type=volume,dst=/var/lib"))
 }
 
@@ -844,6 +844,21 @@ func rpmRecovery(t *testing.T, c *scriptContainer) {
 	const pkg = "rootfiles.noarch"
 	c.sh(t, "rpm -q rootfiles >/dev/null && rpm -e --test rootfiles")
 	token := c.token(t, "rootfiles")
+	// Whether rpm --rebuilddb can end by renaming the database's directory,
+	// which an overlay filesystem refuses unless the kernel lets it
+	// (redirect_dir): renamed there and back, as rename(2) does it.
+	const what = "rpm's database needed recovering (DB_RUNRECOVERY)"
+	rebuildWhy := what + ": removing /var/lib/rpm/__db.* and rpm --rebuilddb put it right before the package step"
+	if strings.TrimSpace(c.sh(t, `/usr/libexec/platform-python -c "import os
+try:
+    os.rename('/var/lib/rpm', '/var/lib/easyrmm-rename-probe')
+except OSError:
+    print('refused')
+else:
+    os.rename('/var/lib/easyrmm-rename-probe', '/var/lib/rpm')"`)) == "refused" {
+		rebuildWhy = what + ": removing /var/lib/rpm/__db.* put it right before the package step " +
+			"(rpm --rebuilddb then failed: error: failed to replace old database with new database!; rpm reads the database without it)"
+	}
 	// An rpm removing tzdata (some 1,900 files) is killed as soon as it
 	// has its database open, as a time limit does: every rpm and dnf
 	// command fails after it. A kill that came too soon (rpm still works,
@@ -866,7 +881,6 @@ func rpmRecovery(t *testing.T, c *scriptContainer) {
 	c.waitUntil(t, "grep -qs '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be mapped")
 	pid := strings.TrimSpace(c.sh(t, "grep -l '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps | cut -d/ -f3"))
 	c.writeShortWait(t)
-	const what = "rpm's database needed recovering (DB_RUNRECOVERY)"
 	wantRefused(t, c.recoveryUndo(t, shortWait, token), pkg, what, "platform-python", pid, "had it open")
 	c.sh(t, "kill -9 "+pid)
 	c.waitUntil(t, "! grep -qs ' /var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be let go")
@@ -876,12 +890,7 @@ func rpmRecovery(t *testing.T, c *scriptContainer) {
 	docker(t, "exec", "-d", c.name, "/usr/libexec/platform-python", "-c",
 		"import mmap, time; f = open('/var/tmp/easyrmm-other/var/lib/rpm/__db.001', 'rb'); m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ); time.sleep(600)")
 	c.waitUntil(t, "grep -qs '/var/tmp/easyrmm-other/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the other file to be mapped")
-	why := what + ": removing /var/lib/rpm/__db.* and rpm --rebuilddb put it right before the package step"
-	if strings.TrimSpace(c.sh(t, "stat -f -c %T /var/lib")) == "overlayfs" {
-		why = what + ": removing /var/lib/rpm/__db.* put it right before the package step " +
-			"(rpm --rebuilddb then failed: error: failed to replace old database with new database!; rpm reads the database without it)"
-	}
-	wantRecovered(t, c.recoveryUndo(t, shortWait, token), pkg, why)
+	wantRecovered(t, c.recoveryUndo(t, shortWait, token), pkg, rebuildWhy)
 	c.sh(t, "for p in $(grep -l '/var/tmp/easyrmm-other' /proc/[0-9]*/maps | cut -d/ -f3); do kill -9 $p; done; rm -rf /var/tmp/easyrmm-other")
 	c.sh(t, "! rpm -q rootfiles >/dev/null && rpm -q tzdata >/dev/null && dnf -q -C check && rm -f "+shortWait)
 	c.wantGone(t, stateDir)

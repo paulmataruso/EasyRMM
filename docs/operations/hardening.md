@@ -137,7 +137,9 @@ that fails part way is put back as it was, but for packages it installed
 that cannot be removed (others need them, or the package manager fails):
 the result names those and says why. Packages a module needs
 (nftables, fail2ban, auditd, AIDE, chrony or systemd-timesyncd) come from
-the computer's own repositories, without recommended packages; on Ubuntu
+the computer's own repositories, without recommended packages; on Red Hat
+Enterprise Linux 10, its rebuilds and Fedora, auditd comes with
+audit-rules, which holds `auditctl` and `augenrules`; on Ubuntu
 22.04, AIDE comes with mailutils, which its configuration package needs in
 place of a mail server. An installation never removes a package: one that
 would (a conflict) fails, and the module is put back. AIDE's first
@@ -170,9 +172,10 @@ files. A package an installation upgraded as a dependency stays upgraded.
 Files that a program apply started made (AIDE's database, the audit rules'
 backup) go only as they were made. Undo of the firewall alone is refused
 while fail2ban, which bans with it, is applied: the result names fail2ban
-(`undoWith`); undo both. It rebuilds the initramfs after taking out usb-storage's file,
-and after taking out kernel-modules' file when a rebuild since apply
-(usb-storage's, or a kernel update's) took that file in. A successful undo
+(`undoWith`); undo both. It rebuilds the initramfs after taking out
+usb-storage's file, and after taking out kernel-modules' or the kernel
+module's file when a rebuild since apply (usb-storage's, or a kernel
+update's) took that file in. A successful undo
 removes the record, so a second one finds nothing to undo. Undo takes no
 options. Without the agent, undo runs on the computer itself, as root:
 `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`.
@@ -222,8 +225,8 @@ they recover the database: `dpkg --configure -a`, non-interactive, keeping
 changed configuration files, for at most ten minutes; on RHEL 8, removing
 the database's environment files, `/var/lib/rpm/__db.*`, which rpm makes
 again (the database itself is in other files), then `rpm --rebuilddb`
-(which a Docker container's filesystem refuses; the finding says so, and
-the database rpm had is used).
+(which a Docker container's filesystem may refuse; the finding then says
+so, and the database rpm had is used).
 `dpkg --configure -a` finishes every package dpkg left half installed, by
 whichever run or person, running their maintainer scripts: the finding
 names them. The module's finding records it

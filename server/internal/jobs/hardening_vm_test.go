@@ -386,21 +386,32 @@ func (m *hardeningMachine) wantAfter(r HardeningModuleResult, mode string) {
 // to finish: emulated, it can take an hour.
 func (m *hardeningMachine) waitAIDE() {
 	m.t.Helper()
-	m.run(`n=0
+	// Under KVM a baseline takes minutes: one that takes 30 is reported
+	// with what the unit was doing, inside the machine job's own limit.
+	if out := m.run(`n=0
 while systemctl is-active --quiet easyrmm-aide-init.service; do
-	n=$((n + 1)); [ "$n" -le 1800 ] || { echo 'the baseline did not finish in 90 minutes' >&2; exit 1; }
+	n=$((n + 1)); [ "$n" -le 600 ] || break
 	sleep 3
 done
-systemctl show -p Result --value easyrmm-aide-init.service | grep -qx success`, 95*time.Minute)
+if systemctl is-active --quiet easyrmm-aide-init.service || ! systemctl show -p Result --value easyrmm-aide-init.service | grep -qx success; then
+	systemctl status --no-pager -n 0 easyrmm-aide-init.service 2>&1
+	journalctl --no-pager -n 40 -u easyrmm-aide-init.service 2>&1
+	ps -eo pid,etime,time,stat,args | grep -i '[a]ide'
+	df -h / 2>&1
+fi`, 35*time.Minute); out != "" {
+		m.t.Errorf("AIDE's baseline did not finish within 30 minutes, or failed:\n%s", out)
+	}
 }
 
 // The marker the audit module writes when it installs auditd, shared with
 // log collection (ADR-0060).
 const auditdMarker = "/var/lib/easyrmm/auditd-installed"
 
+// hasAuditd: auditd and auditctl, which the audit module needs and
+// installs where either is missing (audit 4 keeps auditctl in audit-rules).
 func (m *hardeningMachine) hasAuditd() bool {
 	m.t.Helper()
-	return m.run(`if [ -x /usr/sbin/auditd ] || [ -x /sbin/auditd ]; then echo yes; fi`, time.Minute) == "yes"
+	return m.run(`if { [ -x /usr/sbin/auditd ] || [ -x /sbin/auditd ]; } && command -v auditctl >/dev/null; then echo yes; fi`, time.Minute) == "yes"
 }
 
 func (m *hardeningMachine) marked() bool {
@@ -419,12 +430,11 @@ func (m *hardeningMachine) keepsAuditd(before bool) {
 	m.run("echo '-w /etc/hosts -p wa -k machine-test' >"+foreign+" && augenrules --load >/dev/null", time.Minute)
 	r := scriptModule(m.t, m.script(HardeningUndo, []string{"audit"}), "audit")
 	m.t.Logf("undo  audit with %s: %s %q", foreign, r.Outcome, r.Done)
-	want := HardeningUndone
-	if !before {
-		want = HardeningPartlyUndone
-	}
-	if r.Outcome != want || r.Recorded {
-		m.t.Errorf("audit undone with %s: %s %q, want %s", foreign, r.Outcome, r.Done, want)
+	// The test's own augenrules --load made audit.rules.prev again, which
+	// undo leaves (changed since apply made it).
+	const prevLeft = "Left as it is: /etc/audit/audit.rules.prev, changed since apply made it"
+	if r.Outcome != HardeningPartlyUndone || r.Recorded || !slices.Contains(r.Done, prevLeft) {
+		m.t.Errorf("audit undone with %s: %s %q, want %s with %q", foreign, r.Outcome, r.Done, HardeningPartlyUndone, prevLeft)
 	}
 	active := m.run("systemctl is-active auditd.service || true", time.Minute)
 	if has, marked := m.hasAuditd(), m.marked(); !has || marked == before || active != "active" {

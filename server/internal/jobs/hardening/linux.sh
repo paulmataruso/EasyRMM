@@ -2270,7 +2270,11 @@ check_time() {
 	ct_installed=
 	for ct_u in $TIME_UNITS; do
 		if unit_active "$ct_u"; then
-			ct_running=$ct_u
+			# By its own name, not an alias's (chronyd.service is
+			# chrony.service's on Debian and Ubuntu), which is-enabled
+			# reports as "alias".
+			ct_running=$(t 20 systemctl show -p Id --value "$ct_u" 2>/dev/null | head -n 1)
+			case $ct_running in *.service) ;; *) ct_running=$ct_u ;; esac
 			break
 		fi
 		[ -n "$ct_installed" ] || ! unit_exists "$ct_u" || ct_installed=$ct_u
@@ -4244,8 +4248,16 @@ audit_load() { t 120 augenrules --load >/dev/null 2>&1; }
 apply_audit() {
 	[ -n "$M_TODO" ] || return 0
 	if text_has "$M_TODO" -x install; then
-		case $FAMILY in debian) aa_p=auditd ;; *) aa_p=audit ;; esac
-		if ! rec_unit auditd.service || ! pkg_install "$aa_p"; then
+		# audit 4 (RHEL 10 and its rebuilds, Fedora) keeps auditctl,
+		# augenrules and /etc/audit/rules.d in audit-rules, which an image
+		# may leave out.
+		case $FAMILY:${OS_VERSION%%.*} in
+		debian:*) aa_p=auditd ;;
+		fedora:* | rhel:1[0-9]) aa_p='audit audit-rules' ;;
+		*) aa_p=audit ;;
+		esac
+		# shellcheck disable=SC2086 # package names, one word each
+		if ! rec_unit auditd.service || ! pkg_install $aa_p; then
 			abort "$aa_p could not be installed$(pkg_why)"
 			return
 		fi
@@ -4472,6 +4484,18 @@ apply_kernel_modules() {
 		fi
 	done
 	did "Kept from loading:$M_TODO ($MODULES_FILE)"
+}
+# undo_kernel_after: an initramfs rebuilt since apply (by usb-storage's
+# apply, or a kernel's update) may hold the kernel parameters' file, which
+# dracut takes in and applies at boot before /etc is read.
+undo_kernel_after() {
+	text_has "$M_DONE" -xF "Removed $SYSCTL_FILE" || return 0
+	initramfs_holds "$SYSCTL_FILE" || return 0
+	if initramfs_update; then
+		did "Rebuilt the initramfs, which held $SYSCTL_FILE"
+	else
+		left "the initramfs, which holds $SYSCTL_FILE and could not be rebuilt ($IU_ERR): run $iu_cmd"
+	fi
 }
 undo_kernel_modules_after() {
 	# Apply leaves the initramfs alone, but one rebuilt since (by
@@ -5012,6 +5036,7 @@ undo_module() {
 		ssh) undo_ssh_after ;;
 		firewall) undo_firewall_after ;;
 		fail2ban) undo_fail2ban_after ;;
+		kernel) undo_kernel_after ;;
 		audit) undo_audit_after ;;
 		services) undo_services_after ;;
 		kernel-modules) undo_kernel_modules_after ;;
