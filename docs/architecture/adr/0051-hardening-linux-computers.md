@@ -1,9 +1,9 @@
 # ADR-0051: Hardening Linux computers
 
 * Status: Accepted (2026-11-21), revised twice after review the same day.
-  Check (H1) and the console for it (H3: a device's **Hardening** tab,
-  and the column and filter in **Devices**) are implemented; apply and
-  undo (H2) are not yet.
+  Check (H1), apply and undo (H2), and the console for check (H3: a
+  device's **Hardening** tab, and the column and filter in **Devices**)
+  are implemented; the console does not yet start apply or undo.
 * Builds on: [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs) and
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into
   the server, its input as arguments).
@@ -61,7 +61,29 @@ that boot from USB. This version answers each of those.
   of a fixed form (port numbers, CIDR ranges, a few named switches). Each
   job keeps a copy of the script it ran and its hash. The agent does not
   change. The job's timeout is 30 minutes; AIDE's baseline, which can take
-  longer, runs outside the job (see `integrity`).
+  longer, runs outside the job (see `integrity`). *Amended 2026-11-22
+  (decided in review):* a check keeps 30 minutes; apply and undo get 60,
+  because one module's package steps may take 10 minutes to refresh the
+  package lists and 25 to install, and its rollback 15 more to remove what
+  it installed, which 30 minutes cannot hold. On CI's machines, under KVM
+  with the distributions' mirrors, no apply or undo of one module took more
+  than 35 seconds (AIDE's or the firewall's installation; run 44987598440),
+  and a whole release's machine job, every module applied, applied again
+  and undone with two restarts, took 7 to 10 minutes; emulated on a loaded
+  host, one purge of AIDE's configuration took more than 15. The limit is
+  set by the package steps' own limits, not by the fast case. The machine
+  test logs how long each run takes against its limit, and fails one that
+  takes longer.
+  The server gives the script its job's limit (`time-limit=SECONDS`), and
+  the script works to a deadline 20 seconds short of it, kept for its
+  result: changes stop a sixth of the limit before that (at most 5
+  minutes), which is kept for a rollback; every step it runs is cut to
+  the time left; a module does not start with less than a minute left,
+  nor a package step with less than its minimum (5 minutes to install, 2
+  to remove or to recover the package database, 3 to rebuild an
+  initramfs), and the module then fails with *not enough of the job's
+  time was left*, and is put back. The modules after it are not run:
+  their outcome is `not_run`, and the server keeps what it knew of them.
 * **Three modes:**
   * **Check** changes nothing. For each module it reports *in place*,
     *partly in place* (which settings are missing), *not in place*, *not
@@ -135,12 +157,31 @@ log collection feature will).
 * **Root with a password.** If the authentication log or journal shows
   `Accepted password for root` in the last 30 days (backup software often
   signs in that way), apply leaves `PermitRootLogin` as it is and says
-  why, unless the option `root-password-off` is given.
+  why, unless the option `root-password-off` is given. *Amended
+  2026-11-22 (decided in review):* of the journal, only entries that
+  sshd's processes (`sshd`, `sshd-session`) wrote as root count
+  (`_UID=0` and `_COMM`, fields journald takes from the sending process):
+  a user's `logger -t sshd`, or a copy of logger named `sshd`, writes
+  neither. The log files (`auth.log`, `secure`) are still read, for what
+  a journal kept in memory does not reach back to, and there anyone can
+  write such a line with `logger`. That only keeps root's password
+  sign-in on, the safe direction, and is left so.
 * **Password sign-in off** is a separate option, off by default. It sets
   `PasswordAuthentication no` and `KbdInteractiveAuthentication no` (or
   passwords still work through PAM), and is refused unless at least one
   account that may sign in has a key in its `AuthorizedKeysFile`, or sshd
-  has an `AuthorizedKeysCommand`.
+  has an `AuthorizedKeysCommand`. *Amended 2026-11-22 (decided in
+  review):* any line of any user's file that was not a comment counted,
+  so a user without sudo could make password-off go through with a stray
+  word. Now sshd must take keys (`PubkeyAuthentication`), and the account
+  must be root (where `PermitRootLogin` lets it in with a key) or an
+  administrator (in `sudo`, `wheel` or `admin`), with a login shell, not
+  expired, not locked where sshd does not use PAM (with PAM, a key gets
+  into an account whose password is locked), and allowed by sshd
+  (`AllowUsers` and the like). The key must be a line that parses as one:
+  options without a forced command (`command=`), a known key type
+  (Ed25519, RSA, ECDSA, and their security-key forms), and that type's key
+  in valid base64, whose blob names the same type.
 * **Checking and reloading.** `/run/sshd` is created if missing before
   any `sshd -T` or `sshd -t`, in every mode and module that runs them (on
   Ubuntu with socket activation both fail without it). The configuration
@@ -192,7 +233,14 @@ log collection feature will).
   and its rebuilds it is only in EPEL: the module adds EPEL only with the
   option `epel` (adding a repository is the customer's decision, and it
   widens what the patching engine updates); without it the module is *not
-  applicable*. Package lists are refreshed first.
+  applicable*. Package lists are refreshed first. *Amended 2026-11-21:*
+  EPEL is added (`epel-release`) on Rocky Linux and AlmaLinux only. On
+  RHEL itself `epel-release` is not in the distribution's repositories
+  and EPEL also needs the CodeReady Builder repository from the
+  subscription, so apply refuses there and says that EPEL is added by
+  hand. Packages are installed without the packages they only recommend:
+  fail2ban's and AIDE's would bring a mail server, a new service
+  listening.
 * **The jail**: sshd, 5 failures in 10 minutes, banned for an hour, longer
   for repeat offenders; loopback and the ranges the operator lists are
   never banned. The log source is the journal (`backend = systemd`) where
@@ -204,6 +252,14 @@ log collection feature will).
   matches this distribution's sshd messages (OpenSSH 9.8 and later logs
   as `sshd-session`, which needs fail2ban 1.1) is proved by the tests,
   which sign in wrongly on every tested release until banned.
+  *Amended 2026-11-21:* check and apply also ask for the jail's ban
+  actions (`fail2ban-client get sshd actions`). A jail without one lists
+  the addresses it bans and blocks none of them; fail2ban 1.1 (Debian 13)
+  leaves the jail so when a reload changes its ban action, as apply's did
+  where installing the package had started fail2ban with the
+  distribution's own action. Apply and undo therefore restart fail2ban
+  instead of reloading it, and apply fails, and is put back, when the
+  jail still has no action.
 
 ### Kernel parameters
 `/etc/sysctl.d/60-easyrmm-hardening.conf`, applied with `sysctl -p` on that
@@ -235,7 +291,10 @@ or Kubernetes installed later.
   file's original (or that it did not exist) and its hash after apply;
   each mode and owner before and after; each live kernel value before;
   each service's enabled and running state before; the firewall table's
-  hash after; the packages it installed.
+  hash after; the packages it installed. *Amended 2026-11-21:* and,
+  outside the record because log collection (ADR-0060) shares it,
+  `/var/lib/easyrmm/auditd-installed`, written when the audit module
+  installs auditd and only then: the packages that installation added.
 * **Undo** puts every one back if it is still as apply left it: files it
   created are removed, files it changed are restored, modes, owners and
   kernel values reset, services enabled and started again, the firewall
@@ -244,15 +303,192 @@ or Kubernetes installed later.
   Packages it installed are removed only if removing them would remove
   nothing else (simulated first with `apt-get -s` or `dnf --assumeno`), and
   auditd is kept, running, while another EasyRMM rules file (log
-  collection's) is in `/etc/audit/rules.d/`.
+  collection's) is in `/etc/audit/rules.d/`. *Amended 2026-11-21:* on
+  RHEL and Fedora the simulation is `rpm -e --test` and the removal
+  `rpm -e`, because `dnf remove` also removes dependencies it judges
+  unused, which this rule forbids. On Debian and Ubuntu the packages are
+  purged, so that their configuration files go too, except a package
+  whose configuration files were left from an earlier removal, which is
+  only removed. A package an installation upgraded as a dependency stays
+  upgraded: it was there before. A removal the package manager fails
+  leaves the packages, and the result gives its reason. *Amended
+  2026-11-22:* a module that fails after installing packages removes them
+  by the same rule as it is put back, and its failure names the packages
+  that stay and why, rather than saying that everything was put back.
+  *Amended 2026-11-22 (decided in review):* the record names each package
+  an installation added with its version and install time, and a package
+  counts as there before in any installed state (half configured,
+  unpacked), so that one an installation only finished is never taken for
+  one it added. Undo removes a package only while it has the version and
+  install time apply recorded: one upgraded or installed again since is
+  left, and the result says so. On Debian and Ubuntu, the configuration
+  files of each package apply installed are recorded with their MD5 sums
+  as installed; undo purges a package only while they are unchanged, and
+  otherwise removes it, keeping them, and says which were kept. An
+  installation never removes a package: `apt-get` runs with `--no-remove`
+  and `dnf` without `--allowerasing`, so one that would (a conflict) fails,
+  and is put back. *Amended 2026-11-22 (decided in review):* undo, and the
+  rollback of a failed apply, remove packages and never purge them, on
+  every module and family; this replaces the purges above. A purge runs
+  the package's own scripts, which delete what is the computer's, not the
+  installation's: auditd's deletes `/var/log/audit`, the audit trail;
+  fail2ban's its logs and its ban database; aide-common's every
+  configuration file, edited or not, which `ucf` manages, not dpkg (Debian
+  12's aide-common has no dpkg configuration files at all, so recording
+  those could not guard them). On Debian and Ubuntu, a removed package's
+  configuration files (dpkg's and `ucf`'s), logs and data stay; dpkg lists
+  it as removed with its configuration kept (`rc`), and the result names
+  those packages with the command that purges them (`apt-get purge`). A
+  package that dpkg forgets when it removes it (no configuration files and
+  no `postrm` script) leaves nothing of dpkg's to purge, and the result
+  says nothing more of it. On RHEL and Fedora, `rpm -e` leaves the files a
+  package did not ship (its logs, its data) and keeps a configuration file
+  changed since installation as `.rpmsave`, and the result says so. The
+  record and the marker no longer list configuration files. As CI's
+  machines then found on Ubuntu 22.04, a package removed, not purged, can
+  keep an init script (a configuration file) from which systemd still
+  makes its unit, so a link `systemctl enable` made for the unit, which
+  points at the unit file the package took away, now goes whether or not
+  the unit is still there. What a removal keeps is a line of the result
+  of its own, since a line holds 300 characters.
+  *Amended 2026-11-22,* as CI's machines found: on Ubuntu 22.04,
+  aide-common depends on a mailx, and bsd-mailx, apt's choice, on a mail
+  server, which would listen, so AIDE comes with mailutils, which needs
+  none; a dnf module stream an installation enabled (RHEL 8's python36,
+  for fail2ban from EPEL) is recorded, and undo removes its file before
+  the packages; and a link `systemctl enable` made for a unit that came
+  with a package undo removed goes too, where removing the package leaves
+  it pointing nowhere (Ubuntu 22.04's fail2ban). *Amended 2026-11-22,* as
+  CI's machines found on the releases added to them: dracut (Ubuntu 26.04,
+  RHEL and Fedora) takes the kernel module's `/etc/sysctl.d` file into an
+  initramfs rebuilt after apply and applies it at boot, so undo of `kernel`
+  rebuilds an initramfs that holds it, as `kernel-modules`' undo does; audit
+  4 (RHEL 10 and its rebuilds, Fedora) keeps `auditctl`, `augenrules` and
+  `/etc/audit/rules.d` in `audit-rules`, which AlmaLinux 10's image leaves
+  out, so the audit module installs it with `audit`; and the time module
+  reads a running service by its own name, not an alias's
+  (`chronyd.service` is `chrony.service`'s on Ubuntu 26.04, and
+  `systemctl is-enabled` answers `alias` for it). And on AlmaLinux 10,
+  whose image has `audit` without `audit-rules`: `audit-rules` makes
+  `/etc/audit/rules.d/audit.rules` when it is installed, a copy of the base
+  rules it ships (the package lists the file without contents), so that
+  copy, unchanged, counts as shipped and does not keep auditd; a marker
+  that names `audit-rules` alone leaves auditd's unit to go back as any
+  other unit does; and rpm gives a directory a package ships the
+  package's mode and owner though it was there before (`audit-rules` made
+  `/etc/audit` 0750) and leaves them when it removes the package, so an
+  installation records each directory under `/etc`, two levels down, that
+  was there before and that it changed, and the directory gets its mode
+  and owner back once all of that installation's packages are gone (by
+  undo, or by the rollback of a failed apply), if they are still as the
+  installation left them; otherwise the result says it was left. rpm
+  also leaves the files a package lists without contents (its ghosts,
+  which its scriptlets make: `audit-rules`' two `audit.rules`), so an
+  installation records each one under `/etc`, three levels down, that it
+  made, and it goes once that installation's packages are gone, with the
+  directory the installation made it in, if it is still as made. *Amended 2026-11-22
+  (decided in review):* the stream's file goes after the packages, not
+  before, and only when all of them went; a stream file that was there
+  before and that the installation changed is put back as it was.
+  Undo removes auditd only where `/var/lib/easyrmm/auditd-installed` says
+  EasyRMM installed it, and only when no rules file is left in
+  `/etc/audit/rules.d/` but those the audit package shipped, unchanged:
+  then its packages and the marker go. A rules file from anyone else (log
+  collection's among them) keeps auditd installed and running, and the
+  marker stays, so that whoever removes the last of those files can
+  remove auditd; without the marker, hardening's own record alone would
+  forget it. An auditd that was installed before apply gets no marker and
+  is never removed. *Amended 2026-11-22 (decided in review):* the marker
+  is written and read only in a directory that is not a link, is root's,
+  and only root may write; the marker also records the packages'
+  configuration files, as the record does. Its package names are read as
+  words, never patterns, and only in the record's form: otherwise auditd
+  is left, and the result says why. Hardening's rules carry keys starting
+  `easyrmm-hardening-`, and its check does not count loaded rules whose
+  keys start `easyrmm-` otherwise, since those come and go with another
+  feature.
   A successful undo consumes the record; the next apply takes fresh
   copies, so a later undo never brings back a file older than the
   administrator's last edit. Applying a module twice changes nothing the
-  second time.
+  second time. *Amended 2026-11-22 (decided in review):* files a program
+  that apply started made (AIDE's baseline, built after the job ends, and
+  `audit.rules.prev`, which `augenrules` makes) are recorded with their
+  SHA-256 (the baseline's by the command that builds it, beside the
+  record), and undo removes one only while it is as made; otherwise it is
+  left, and the result says so. A file apply changes that is a symbolic
+  link stays one: apply and undo write the file it points to. Where
+  SELinux labels files, apply keeps a file's label (`chcon --reference`),
+  the record keeps the label it had, and undo sets that label again with
+  `chcon`, not `restorecon`, which would give the policy's label in place
+  of one set by hand.
+* **Firewall and fail2ban.** *Added 2026-11-22 (decided in review):*
+  fail2ban bans with the firewall in use, which may be EasyRMM's table
+  and the nftables the firewall module installed. Undo therefore refuses
+  the firewall alone while fail2ban's applied record remains: undone
+  alone, fail2ban's bans could silently do nothing. The result names
+  fail2ban (`undoWith`) for the console to choose with it; undo of both
+  runs fail2ban's first (the modules run last first).
 * **Interruptions.** The job can be killed (timeout, cancel). Each module
   writes its intent to its manifest before changing anything and marks it
   done after; a later check reports a module left half-applied, and undo
-  reverses what was recorded.
+  reverses what was recorded. *Amended 2026-11-22 (decided in review):* a
+  cancel or the job's time limit sends SIGTERM to the script's process
+  group, then SIGKILL 10 seconds later; the steps the script runs through
+  `timeout` are in process groups of their own, which neither reaches. The
+  script therefore runs each step in the background and waits for it,
+  and on SIGTERM, SIGINT or SIGHUP stops every step's group (SIGTERM, up to
+  5 seconds, then SIGKILL) and releases its lock before it exits. Each
+  step is registered in the lock with its process group and start time: a
+  run killed outright (SIGKILL) leaves its steps running, and the lock
+  counts as held while any of them runs, so that no later run starts a
+  package step beside one left over. The lock also names the boot it was
+  taken in: nothing from before a restart runs. *Amended 2026-11-22
+  (decided in review):* a cancel or the time limit (SIGTERM) during an
+  installation records, once the step is stopped and before the lock is
+  released, the packages the installation had added (against the list
+  taken before it, each package query cut to 3 seconds, inside the 10
+  seconds before SIGKILL), with what else it changed and, for the audit
+  module, the marker, in place of the note that an installation was under
+  way: undo removes them as any others. A run killed outright (SIGKILL)
+  leaves only the note, and undo says to remove that installation's
+  packages by hand. *Amended 2026-11-22 (decided in review):* a
+  package step cut short leaves the package database unusable, and every
+  later package step then fails: dpkg is left interrupted, on which apt
+  refuses everything until `dpkg --configure -a` runs; and on RHEL 8, an
+  rpm killed while it writes leaves its Berkeley DB environment failing
+  every rpm and dnf command (`DB_RUNRECOVERY`). So before each package step
+  of apply and undo the script checks the database. While a process still
+  uses it (holds `/var/lib/dpkg/lock-frontend` or `lock`, or has rpm's
+  environment mapped), it waits as apt waits for its lock, 5 minutes, and
+  never touches it; then the module fails, naming the process. Otherwise it
+  recovers the database: `dpkg --configure -a`, with
+  `DEBIAN_FRONTEND=noninteractive`, keeping changed configuration files,
+  for at most 10 minutes (what one step left, inside a job of 30 minutes
+  that the step it guards needs too; a recovery stopped there is resumed by
+  the next run); on RHEL 8, removing the environment, `/var/lib/rpm/__db.*`,
+  which rpm makes again (the database is in other files; `rpm --rebuilddb`
+  fails on such a database too). *Amended 2026-11-22 (decided in review):*
+  `dpkg --configure -a` configures every package dpkg left half installed,
+  whichever run or administrator left it, running their maintainer
+  scripts: the result names them (`dpkg --audit`'s list, read before the
+  recovery, at most 50 names and 2,000 characters) in `packageRecovery`'s
+  `packages`, which the server accepts only as package names and audits.
+  On RHEL 8, a process uses the environment when it maps those files
+  themselves, by device and inode (a file of the same name elsewhere, such
+  as a container's, is another file), and once they are removed,
+  `rpm --rebuilddb` rebuilds the indexes a killed rpm may have left half
+  written. It ends by renaming the database's directory, which an overlay
+  filesystem (a Docker container's) may refuse; rpm then keeps the
+  database it had, and the recovery stands when rpm reads it, the result
+  saying that the rebuild failed. Each module's result records it in a
+  field of its own, `packageRecovery` (recovered or failed, and why), and a
+  recovery that fails fails the module with its reason, once: later
+  package steps of the run fail with it. An undo that fails this way puts
+  back what it changed and keeps the record. RHEL 9 and Fedora keep rpm's
+  database in SQLite, which a killed rpm leaves usable (the next command
+  finds a package it was removing still installed), and need nothing;
+  `yum-complete-transaction` is yum 3's (RHEL 7), and dnf has no
+  transaction to finish.
 * **Without the agent.** Apply and undo (not check, which writes nothing)
   copy the script to `/var/lib/easyrmm-hardening/easyrmm-hardening.sh`,
   so that undo can be
@@ -269,6 +505,13 @@ with the SSH and listening ports, are loaded. Settings that act at boot
 the computer from booting or sshd from starting. If access is lost anyway,
 EasyRMM's terminal (MeshCentral, connecting out) still reaches the
 computer, and **Undo** works through the agent or on the computer itself.
+*Amended 2026-11-22 (decided in review):* `usb-storage` is refused also
+where `/etc/fstab` mounts a filesystem or swap on a USB disk at boot
+without `nofail`, mounted now or not (found with `blkid` and
+`lsblk -s -o TRAN`). fail2ban's longer bans for repeat offenders stop at a
+day (`bantime.maxtime`, or the jail's own longer `bantime` or maximum),
+where fail2ban sets no limit: a technician's office banned by mistake is
+banned for a day at most.
 
 ### Containers
 In a container (LXC or Docker, as `systemd-detect-virt --container` says)
@@ -276,6 +519,9 @@ the kernel, its modules, the audit subsystem, mandatory access control,
 `/dev/shm` and the clock belong to the host: `kernel` (except the network
 settings, which are the container's own), `kernel-modules`, `usb-storage`,
 `time`, `audit`, `mac` and `shared-memory` report *not applicable*.
+*Amended 2026-11-22:* where `systemd-detect-virt` does not know Docker and
+says `none` (systemd 239, RHEL 8), the files Docker and Podman leave
+(`/.dockerenv`, `/run/.containerenv`) say.
 
 ### Platforms
 Apply and undo run on the versions this script has been tested on, listed
@@ -287,7 +533,14 @@ it is tested and added. Releases out of their standard support (Debian
 11, Ubuntu 20.04) are check only: a computer that no longer gets security
 updates needs upgrading before hardening. Oracle Linux and other
 distributions are reported as not supported. Windows is not covered: a
-later ADR.
+later ADR. *Amended 2026-11-22 (decided in review):* "tested" means CI's
+machine tests apply and undo every module on that release: Debian 12 and
+13, Ubuntu 22.04, 24.04 and 26.04, Rocky Linux 8, 9 and 10, AlmaLinux 9 and
+10, and Fedora 45, exactly. A unit test fails when the script's table and
+the machine images differ. The other releases in their support (AlmaLinux
+8, RHEL 8 to 10, Fedora 43 and 44) are check only, with the reason *apply
+and undo are not tested on this release*, until a machine image tests
+them.
 
 ### Who
 * **Check** changes nothing: it needs `script.run` (Technicians and above),
@@ -301,7 +554,10 @@ later ADR.
 
 ### The rest
 * **Audit**: `device.hardening` for each device, with the mode, modules,
-  options and job.
+  options and job. *Amended 2026-11-22 (decided in review):* and
+  `device.package_recovery`, by the device's agent, when a run's result
+  reports a package database recovery: each module's outcome and reason,
+  the mode and the job; a failure when one failed.
 * **API**: `POST /api/v1/jobs/hardening`; `GET /api/v1/devices/{id}/hardening`.
   Devices report `canHarden` and `canCheckHardening`.
 * **Benchmarks.** Settings name the DISA STIG rule they follow, by its ID,
@@ -322,6 +578,20 @@ later ADR.
   no notice is owed. If any is taken later, its MIT notice goes in
   THIRD_PARTY_NOTICES.md. Features of its commercial tiers are not
   reproduced from their descriptions.
+
+### What this does not fix
+*Added 2026-11-22 (decided in review):* there is no dead-man's switch: no
+change that reverts itself unless the server confirms, within some
+minutes, that it can still reach the computer. The guards above make one
+unneeded. The firewall leaves open every port sshd listens on and every
+port in use when it runs, and filters input only; the agent, MeshAgent
+and the EasyPatch agent connect out, so the channel that confirms a job
+and carries an undo never depends on a port apply closes; sshd is
+reloaded only after `sshd -t`; settings that act at boot are refused
+where they could stop it; and undo also runs on the computer, from
+MeshCentral's terminal or a console. A dead-man's switch would add its
+own failure: a server outage, or an agent that polls late, would revert
+hardening the operator wanted, unseen.
 
 ## Testing
 * **Virtual machines are the main test**, from the first module on, because
@@ -349,11 +619,35 @@ later ADR.
   it.
 * **Containers** (`--network none`, so firewall rules stay in their own
   namespace) for what applies in containers and for the *not applicable*
-  reports.
+  reports. *Amended 2026-11-22 (decided in review):* and for the guards
+  above, each with a test that fails without it: a cancel stopping the
+  step it interrupts, the job's time limit, package versions and
+  configuration files, a package already half installed, an installation
+  that would remove one, the marker's directory, generated files, links,
+  the firewall undone without fail2ban, and a USB disk in `/etc/fstab`.
+  *Amended 2026-11-22 (decided in review):* and undo leaving what a
+  package's purge would delete (its configuration files, files its
+  scripts made, a log directory, its data), a cancel during an
+  installation and a run killed during one, the keys and accounts that
+  let password sign-in go off, and which journal entries tell that root
+  signed in with a password (with stand-ins for `sshd -T` and the
+  journal). The machines check that the audit trail, and fail2ban's log
+  where it writes one, are still there after undo; on Debian and Ubuntu they then purge the
+  packages undo left as `rc`, each of which its result must name, before
+  comparing the machine with its state before apply.
 * **Packages** that modules install come from a local package repository
   baked into each test image, as the bundle test's host image does.
+  *Amended 2026-11-21:* that repository is not built yet. Until it is, the
+  machine test installs from each distribution's own mirrors through
+  QEMU's user networking: it needs the internet, and a mirror that is down
+  fails it.
 * **Static checks**: `shellcheck -s sh` on the script in CI, and a test that
   fails when a module, mode and distribution family has no case.
+  *Amended 2026-11-22 (decided in review):* CI checked only the machine
+  harness's runner; it now runs ShellCheck 0.11.0, pinned by digest, on
+  both, as releases before 0.10 report the functions a trap runs as
+  unreachable. A test fails when CI's machine jobs (`ci.yml`'s matrix)
+  are not the pinned images, in their order.
 * Before it is called complete it is run on a real server.
 
 ## Consequences

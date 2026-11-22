@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs/hardening/controls"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -32,12 +34,32 @@ import (
 // KindHardening is the kind of a hardening job.
 const KindHardening = "hardening"
 
-// HardeningCheck is the mode that reports what is in place and what apply
-// would change, and changes nothing.
-const HardeningCheck = "check"
+// The modes: check reports what is in place and what apply would change,
+// and changes nothing; apply applies the modules and undo reverses them from
+// the record apply kept on the computer, each then checking them.
+const (
+	HardeningCheck = "check"
+	HardeningApply = "apply"
+	HardeningUndo  = "undo"
+)
 
-// HardeningTimeout is how long a hardening job may run (ADR-0051).
-const HardeningTimeout = 30 * 60
+// hardeningModes are the modes, with the words a job's label and refusals
+// use for them.
+var hardeningModes = map[string]struct{ label, verb string }{
+	HardeningCheck: {"Check hardening", "check hardening"},
+	HardeningApply: {"Apply hardening", "apply hardening"},
+	HardeningUndo:  {"Undo hardening", "undo hardening"},
+}
+
+// hardeningTimeouts is how long a hardening job may run, in seconds, by
+// mode (ADR-0051): a check only reads; apply and undo install and remove
+// packages, whose steps alone may take up to 35 minutes (a refresh of 10,
+// an installation of 25) on a slow mirror, and keep time for a rollback.
+// The script gets the limit (time-limit) and keeps every step within it.
+var hardeningTimeouts = map[string]int{HardeningCheck: 30 * 60, HardeningApply: 60 * 60, HardeningUndo: 60 * 60}
+
+// timeout is the job's time limit.
+func (h Hardening) timeout() int { return hardeningTimeouts[h.Mode] }
 
 // MaxJobBody is the largest script a job may carry: the jobs table's limit,
 // above a library script's MaxBody, for EasyRMM's own scripts.
@@ -101,7 +123,8 @@ type HardeningInput struct {
 // check validates the input and puts its modules and options in their
 // canonical form.
 func (h *Hardening) check(f apperr.Fields) {
-	f.Check(h.Mode == HardeningCheck, "mode", "Choose check.")
+	_, known := hardeningModes[h.Mode]
+	f.Check(known, "mode", "Choose check, apply or undo.")
 	chosen := map[string]bool{}
 	for _, m := range h.Modules {
 		if !slices.Contains(HardeningModules, m) {
@@ -135,6 +158,12 @@ func (h *Hardening) check(f apperr.Fields) {
 	needs(o.EPEL, "options.epel", "fail2ban", "fail2ban")
 	needs(o.RootPasswordOff, "options.rootPasswordOff", "ssh", "SSH")
 	needs(o.PasswordOff, "options.passwordOff", "ssh", "SSH")
+	// Undo reverses what the record says, whatever the options were.
+	f.Check(h.Mode != HardeningUndo || o.empty(), "options", "Undo takes no options.")
+}
+
+func (o HardeningOptions) empty() bool {
+	return len(o.AllowTCP) == 0 && len(o.AllowUDP) == 0 && len(o.Trusted) == 0 && !o.RootPasswordOff && !o.PasswordOff && !o.EPEL
 }
 
 // ports checks and normalizes port numbers and ranges; bad is true when one
@@ -197,7 +226,8 @@ func prefixes(in []string) (out []string, bad bool) {
 	return out, false
 }
 
-// args are the script's arguments: the mode, the modules, then each option.
+// args are the script's arguments: the mode, the modules, each option, then
+// the job's time limit, which every mode takes.
 func (h Hardening) args() []string {
 	a := []string{h.Mode, strings.Join(h.Modules, ",")}
 	list := func(name string, v []string) {
@@ -216,21 +246,22 @@ func (h Hardening) args() []string {
 			a = append(a, sw.name)
 		}
 	}
-	return a
+	return append(a, "time-limit="+strconv.Itoa(h.timeout()))
 }
 
 // label names the job for job lists: "Check hardening: ssh, firewall".
 func (h Hardening) label() string {
+	l := hardeningModes[h.Mode].label
 	if len(h.Modules) == len(HardeningModules) {
-		return "Check hardening (every module)"
+		return l + " (every module)"
 	}
-	return "Check hardening: " + strings.Join(h.Modules, ", ")
+	return l + ": " + strings.Join(h.Modules, ", ")
 }
 
 // CreateHardeningJob runs EasyRMM's hardening script on Linux devices
 // (ADR-0051). A check changes nothing, and needs script.run on every
-// device, as any script does. Every device must pass every check, or
-// nothing runs.
+// device, as any script does; apply and undo need device.harden. Every
+// device must pass every check, or nothing runs.
 func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in HardeningInput) (*Job, error) {
 	f := apperr.Fields{}
 	ids := checkDevices(f, in.DeviceIDs)
@@ -242,10 +273,13 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 	h := in.Hardening
 	sp := &spec{
 		kind: KindHardening, hardening: &h, name: h.label(), shell: agentproto.ShellSh, body: hardeningScript, args: h.args(),
-		timeout: HardeningTimeout, auditAction: "device.hardening",
+		timeout: h.timeout(), auditAction: "device.hardening",
 		details: map[string]any{"platform": h.platform(), "mode": h.Mode, "modules": h.Modules, "options": h.Options},
 	}
-	r := rule{perm: rbac.PermScriptRun, verb: "check hardening", platforms: []string{"linux"}, runsOn: "Hardening runs on"}
+	r := rule{perm: rbac.PermDeviceHarden, verb: hardeningModes[h.Mode].verb, platforms: []string{"linux"}, runsOn: "Hardening runs on"}
+	if h.Mode == HardeningCheck {
+		r.perm = rbac.PermScriptRun
+	}
 	if h.platform() == HardeningWindows {
 		sp.name, sp.shell, sp.body, sp.args = h.windowsLabel(), agentproto.ShellPowerShell, windowsHardeningScript, h.windowsArgs()
 		r.platforms, r.runsOn = []string{"windows"}, "Windows hardening runs on"
@@ -295,14 +329,87 @@ type HardeningPorts struct {
 	Unknown []string `json:"unknown,omitempty"`
 }
 
-// HardeningFinding is what a module's check found besides its state.
+// HardeningFinding is what a module's check found besides its state, and
+// what an apply or undo did before it checked.
 type HardeningFinding struct {
 	Reason string `json:"reason,omitempty"`
 	// Missing lists what is not in place; Changes what apply would change.
 	Missing []string        `json:"missing,omitempty"`
 	Changes []string        `json:"changes,omitempty"`
 	Ports   *HardeningPorts `json:"ports,omitempty"`
+	// Outcome is what an apply or undo did (empty for a check), with why
+	// when it did nothing or failed; Done lists what it changed, and for
+	// undo what it left as it was and why.
+	Outcome       string   `json:"outcome,omitempty"`
+	OutcomeReason string   `json:"outcomeReason,omitempty"`
+	Done          []string `json:"done,omitempty"`
+	// Recorded: EasyRMM's record of applying the module is on the
+	// computer, so undo can reverse it.
+	Recorded bool `json:"recorded,omitempty"`
+	// PackageRecovery: before a package step, the apply or undo found the
+	// package database left unusable by a step stopped part way, and
+	// recovered it (ADR-0051).
+	PackageRecovery *HardeningPackageRecovery `json:"packageRecovery,omitempty"`
+	// UndoWith names the modules an undo refused without: undone together
+	// (the console selects them with this one), it runs.
+	UndoWith []string `json:"undoWith,omitempty"`
 	WindowsFinding
+}
+
+// HardeningPackageRecovery is a package database recovered before a
+// package step: dpkg --configure -a after an interrupted dpkg, or on RHEL 8
+// rpm's database environment removed after an rpm killed while it wrote.
+type HardeningPackageRecovery struct {
+	// Outcome is recovered or failed; Reason says what was found and done.
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason"`
+	// Packages are those dpkg had left half installed, which dpkg
+	// --configure -a configured, running their maintainer scripts: whatever
+	// run left them (at most 50).
+	Packages []string `json:"packages,omitempty"`
+}
+
+// maxRecoveryPackages bounds a recovery's packages: as many names, and as
+// many bytes of them, as the script reports at most.
+const (
+	maxRecoveryPackages     = 50
+	maxRecoveryPackageBytes = 2000
+)
+
+// debianPackage is a Debian package's name, with its architecture where
+// dpkg gives one.
+var debianPackage = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$`)
+
+// Outcomes of a package database recovery.
+const (
+	HardeningRecovered      = "recovered"
+	HardeningRecoveryFailed = "failed"
+)
+
+// Outcomes of apply and undo. NotRun is a module the job's time ran out
+// before: nothing was checked, and the device keeps the state it had.
+const (
+	HardeningNotRun        = "not_run"
+	HardeningApplied       = "applied"
+	HardeningUnchanged     = "unchanged"
+	HardeningUndone        = "undone"
+	HardeningPartlyUndone  = "partly_undone"
+	HardeningNothingToUndo = "nothing_to_undo"
+	HardeningRefused       = "refused"
+	HardeningSkipped       = "skipped"
+	HardeningOutcomeFailed = "failed"
+)
+
+// hardeningOutcomes are the outcomes each mode may report.
+var hardeningOutcomes = map[string][]string{
+	HardeningCheck: {""},
+	HardeningApply: {
+		HardeningApplied, HardeningUnchanged, HardeningRefused, HardeningSkipped, HardeningOutcomeFailed, HardeningNotRun,
+	},
+	HardeningUndo: {
+		HardeningUndone, HardeningPartlyUndone, HardeningNothingToUndo, HardeningRefused, HardeningSkipped,
+		HardeningOutcomeFailed, HardeningNotRun,
+	},
 }
 
 // HardeningModuleResult is one module's state.
@@ -330,7 +437,8 @@ var errHardeningResult = errors.New("the hardening script's result could not be 
 
 // parseHardeningResult reads the result line that ends a hardening job's
 // output and checks it against the job: the same mode, every module the job
-// named and no other, known states, text within its limits.
+// named and no other, known states, the outcomes of that mode (none for a
+// check), text within its limits.
 func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) {
 	fail := func(why string) (*hardeningResult, error) {
 		return nil, fmt.Errorf("%w: %s", errHardeningResult, why)
@@ -379,9 +487,16 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 			return fail("module " + m.Module + " is reported twice")
 		case !slices.Contains(hardeningStates, m.State):
 			return fail("module " + m.Module + " has an unknown state")
+		case !slices.Contains(hardeningOutcomes[r.Mode], m.Outcome):
+			return fail("module " + m.Module + " has no outcome of " + r.Mode)
 		case !m.valid(!windows && m.Module == "firewall"),
 			windows && !m.validWindows(m.Module), !windows && m.hasWindowsFields():
 			return fail("module " + m.Module + "'s findings are not within their limits")
+		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
+			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):
+			return fail("module " + m.Module + " reports a package recovery that is not described as expected")
+		case len(m.UndoWith) > 0 && (r.Mode != HardeningUndo || m.Outcome != HardeningRefused || !undoWithValid(m.Module, m.UndoWith)):
+			return fail("module " + m.Module + " names modules to undo it with that are not described as expected")
 		}
 		seen[m.Module] = true
 	}
@@ -394,14 +509,17 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 // valid says whether a finding's text is within its limits, and ports are
 // only the firewall's.
 func (f HardeningFinding) valid(firewall bool) bool {
-	lists := [][]string{f.Missing, f.Changes}
+	lists := [][]string{f.Missing, f.Changes, f.Done}
 	if f.Ports != nil {
 		if !firewall {
 			return false
 		}
 		lists = append(lists, f.Ports.TCP, f.Ports.UDP, f.Ports.Docker, f.Ports.Unknown)
 	}
-	if !shortText(f.Reason, maxFindingText) {
+	if !shortText(f.Reason, maxFindingText) || !shortText(f.OutcomeReason, maxFindingText) {
+		return false
+	}
+	if p := f.PackageRecovery; p != nil && (p.Reason == "" || !shortText(p.Reason, maxFindingText) || !recoveryPackagesValid(p.Packages)) {
 		return false
 	}
 	for _, l := range lists {
@@ -413,6 +531,34 @@ func (f HardeningFinding) valid(firewall bool) bool {
 				return false
 			}
 		}
+	}
+	return true
+}
+
+// recoveryPackagesValid: package names, within their limits, each once.
+func recoveryPackagesValid(names []string) bool {
+	if len(names) > maxRecoveryPackages {
+		return false
+	}
+	n, seen := 0, map[string]bool{}
+	for _, p := range names {
+		if !debianPackage.MatchString(p) || seen[p] {
+			return false
+		}
+		seen[p] = true
+		n += len(p) + 1
+	}
+	return n <= maxRecoveryPackageBytes
+}
+
+// undoWithValid: other modules, each once.
+func undoWithValid(module string, with []string) bool {
+	seen := map[string]bool{module: true}
+	for _, w := range with {
+		if !slices.Contains(HardeningModules, w) || seen[w] {
+			return false
+		}
+		seen[w] = true
 	}
 	return true
 }
@@ -450,6 +596,10 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 		return err
 	}
 	for _, m := range r.Modules {
+		// Not run: not checked either, so what the device had stands.
+		if m.Outcome == HardeningNotRun {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_hardening (device_id, module, state, detail, job_id, checked_at)
 				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (device_id, module) DO UPDATE SET state = EXCLUDED.state, detail = EXCLUDED.detail,
@@ -459,7 +609,41 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 			return err
 		}
 	}
-	return nil
+	return s.auditPackageRecovery(ctx, tx, device, run, job, r)
+}
+
+// auditPackageRecovery records, as the device's agent, a package database
+// that an apply or undo recovered, or failed to, before a package step
+// (ADR-0051): a change the job did not name.
+func (s *Service) auditPackageRecovery(ctx context.Context, tx pgx.Tx, device, run, job uuid.UUID, r *hardeningResult) error {
+	var modules []map[string]any
+	outcome := audit.Success
+	for _, m := range r.Modules {
+		if p := m.PackageRecovery; p != nil {
+			e := map[string]any{"module": m.Module, "outcome": p.Outcome, "reason": p.Reason}
+			if len(p.Packages) > 0 {
+				e["packages"] = p.Packages
+			}
+			modules = append(modules, e)
+			if p.Outcome == HardeningRecoveryFailed {
+				outcome = audit.Failure
+			}
+		}
+	}
+	if len(modules) == 0 {
+		return nil
+	}
+	var org, site uuid.UUID
+	var name string
+	if err := tx.QueryRow(ctx, `SELECT organization_id, site_id, name FROM devices WHERE id = $1`, device).
+		Scan(&org, &site, &name); err != nil {
+		return err
+	}
+	return s.audit.Write(ctx, tx, audit.Event{
+		Actor: audit.Actor{Type: audit.ActorAgent, ID: device, Label: name}, Action: "device.package_recovery",
+		Outcome: outcome, OrganizationID: org, SiteID: site, DeviceID: device, TargetType: "job_run", TargetID: run.String(),
+		Details: map[string]any{"jobId": job.String(), "mode": r.Mode, "family": r.Platform.Family, "modules": modules},
+	})
 }
 
 // DeviceHardening is what the last hardening jobs found on a device.

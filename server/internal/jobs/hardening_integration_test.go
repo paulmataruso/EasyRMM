@@ -33,10 +33,11 @@ func TestHardeningJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"check", "ssh,firewall", "allow-tcp=8443"}
+	// The job's time limit goes to the script too.
+	wantArgs := []string{"check", "ssh,firewall", "allow-tcp=8443", "time-limit=1800"}
 	if job.Kind != KindHardening || job.Hardening == nil || !slices.Equal(job.Hardening.Modules, []string{"ssh", "firewall"}) ||
 		job.Software != nil || job.ScriptID != nil || job.ScriptName != "Check hardening: ssh, firewall" || job.Shell != agentproto.ShellSh ||
-		job.Body != hardeningScript || job.ArgCount != len(wantArgs) || job.TimeoutSeconds != HardeningTimeout || job.Total != 2 {
+		job.Body != hardeningScript || job.ArgCount != len(wantArgs) || job.TimeoutSeconds != 30*60 || job.Total != 2 {
 		t.Errorf("job %+v", job)
 	}
 	if args, err := f.svc.ReadArguments(f.ctx, tech, job.ID); err != nil || !slices.Equal(args.Args, wantArgs) {
@@ -53,7 +54,7 @@ func TestHardeningJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Script != hardeningScript || p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, wantArgs) || p.TimeoutSeconds != HardeningTimeout {
+	if p.Script != hardeningScript || p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, wantArgs) || p.TimeoutSeconds != 30*60 {
 		t.Errorf("payload %+v", p)
 	}
 	audited := f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND device_id = $1`, lnx)
@@ -203,8 +204,13 @@ func TestHardeningJobs(t *testing.T) {
 	}
 	_, err = f.svc.CreateHardeningJob(f.ctx, viewer, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}}})
 	fieldErr(t, err, "deviceIds", "You cannot check hardening on HQ-LNX.")
-	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: "apply", Modules: []string{"ssh"}}})
-	fieldErr(t, err, "mode", "check")
+	// Apply and undo need device.harden: Site Administrators and above.
+	for _, mode := range []string{HardeningApply, HardeningUndo} {
+		_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: mode, Modules: []string{"ssh"}}})
+		fieldErr(t, err, "deviceIds", "You cannot "+mode+" hardening on HQ-LNX.")
+	}
+	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: "harden", Modules: []string{"ssh"}}})
+	fieldErr(t, err, "mode", "check, apply or undo")
 	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}}, WaitHours: 1000})
 	fieldErr(t, err, "waitHours", "")
 
@@ -218,6 +224,95 @@ func TestHardeningJobs(t *testing.T) {
 	}
 	if !slices.Equal(ids, []uuid.UUID{failing.ID, later.ID, job.ID}) {
 		t.Errorf("hardening jobs %v", ids)
+	}
+
+	// A Site Administrator applies and undoes; what each run did is kept
+	// with the check that followed it.
+	siteAdmin := f.user("siteadmin@example.com", rbac.Assignment{Role: rbac.RoleSiteAdmin, OrganizationID: f.acme, SiteID: f.hq})
+	_, err = f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{meshOnly}, Hardening: Hardening{Mode: HardeningApply, Modules: []string{"ssh"}}})
+	fieldErr(t, err, "deviceIds", "HQ-MESH has no EasyRMM agent to apply hardening.")
+	applied, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{
+		Mode: HardeningApply, Modules: []string{"firewall", "ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Apply and undo may run an hour: package steps.
+	if applied.ScriptName != "Apply hardening: ssh, firewall" || applied.ArgCount != 4 || applied.TimeoutSeconds != 60*60 {
+		t.Errorf("apply job %+v", applied)
+	}
+	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, applied.ID); err != nil ||
+		!slices.Equal(args.Args, []string{"apply", "ssh,firewall", "allow-tcp=443", "time-limit=3600"}) {
+		t.Errorf("apply job's arguments %+v, %v", args, err)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	finish(lnx, runOf(applied, lnx), HardeningResultPrefix+`{"version":1,"mode":"apply","platform":`+platform+`,"modules":[`+
+		`{"module":"ssh","state":"in_place","outcome":"applied","done":["Wrote 00-easyrmm-hardening.conf","Reloaded ssh.service"],"recorded":true},`+
+		`{"module":"firewall","state":"managed_elsewhere","reason":"ufw is active.","outcome":"skipped","outcomeReason":"ufw is active."}]}`)
+	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
+	if len(h.Modules) != 2 || h.Modules[0].State != HardeningInPlace || h.Modules[0].Outcome != HardeningApplied || !h.Modules[0].Recorded ||
+		!slices.Equal(h.Modules[0].Done, []string{"Wrote 00-easyrmm-hardening.conf", "Reloaded ssh.service"}) ||
+		h.Modules[1].Outcome != HardeningSkipped || h.Modules[1].OutcomeReason != "ufw is active." || *h.JobID != applied.ID {
+		t.Errorf("after apply: %+v", h)
+	}
+	_, err = f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{
+		Mode: HardeningUndo, Modules: []string{"ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}},
+	}})
+	fieldErr(t, err, "options", "no options")
+	undone, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningUndo, Modules: []string{"ssh", "firewall"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, undone.ID); err != nil ||
+		!slices.Equal(args.Args, []string{"undo", "ssh,firewall", "time-limit=3600"}) || undone.TimeoutSeconds != 60*60 {
+		t.Errorf("undo job's arguments %+v, %v; job %+v", args, err, undone)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	// The undo found dpkg interrupted, and recovered it first, configuring
+	// a package another run had left half installed: kept with the module,
+	// and audited as the agent's. Then the job's time ran out before the
+	// firewall, which keeps what was known of it.
+	const recovery = "dpkg was interrupted: dpkg --configure -a put it right before the package step; it configured the packages dpkg had left half installed, running their maintainer scripts: nginx-common"
+	finish(lnx, runOf(undone, lnx), HardeningResultPrefix+`{"version":1,"mode":"undo","platform":`+platform+`,"modules":[`+
+		`{"module":"ssh","state":"partly","missing":["LoginGraceTime 30"],"outcome":"undone","done":["Removed 00-easyrmm-hardening.conf"],`+
+		`"packageRecovery":{"outcome":"recovered","reason":"`+recovery+`","packages":["nginx-common"]}},`+
+		`{"module":"firewall","state":"failed","reason":"Not checked: the job's time ran out before this module.","outcome":"not_run",`+
+		`"outcomeReason":"Not run: the job's time ran out before this module; run undo again for it."}]}`)
+	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
+	if len(h.Modules) != 2 || h.Modules[0].Outcome != HardeningUndone || h.Modules[0].Recorded || h.Modules[0].State != HardeningPartly ||
+		h.Modules[1].Outcome != HardeningSkipped || h.Modules[1].State != HardeningManagedElsewhere || *h.Modules[1].JobID != applied.ID ||
+		h.Modules[0].PackageRecovery == nil || h.Modules[0].PackageRecovery.Reason != recovery ||
+		!slices.Equal(h.Modules[0].PackageRecovery.Packages, []string{"nginx-common"}) {
+		t.Errorf("after undo: %+v", h)
+	}
+	audited = f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND details->>'jobId' = $1`, undone.ID.String())
+	if !strings.Contains(audited, `"mode": "undo"`) {
+		t.Errorf("undo audit %s", audited)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'device.package_recovery'`); n != "1" {
+		t.Errorf("%s package recovery audit records, want the undo's alone", n)
+	}
+	audited = f.str(`SELECT concat_ws(' ', actor_type, actor_id, actor_label, outcome, target_type, target_id = $2, details->>'jobId' = $3,
+			details->>'mode', details->>'family', details->'modules'->0->>'module', details->'modules'->0->>'outcome',
+			details->'modules'->0->>'reason' = $4, details->'modules'->0->'packages'->>0)
+		FROM audit_log WHERE action = 'device.package_recovery' AND device_id = $1`, lnx, runOf(undone, lnx).String(), undone.ID.String(), recovery)
+	if want := "agent " + lnx.String() + " HQ-LNX success job_run t t undo debian ssh recovered t nginx-common"; audited != want {
+		t.Errorf("package recovery audit %q, want %q", audited, want)
+	}
+
+	// A recovery that failed fails the module, and its audit record.
+	stuck, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningApply, Modules: []string{"fail2ban"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(4 * time.Minute) }
+	const why = "dpkg was interrupted, and dpkg --configure -a did not put it right: it did not finish in 600 seconds and was stopped"
+	finish(lnx, runOf(stuck, lnx), HardeningResultPrefix+`{"version":1,"mode":"apply","platform":`+platform+`,"modules":[`+
+		`{"module":"fail2ban","state":"not_in_place","outcome":"failed","outcomeReason":"fail2ban could not be installed: `+why+`.",`+
+		`"packageRecovery":{"outcome":"failed","reason":"`+why+`"}}]}`)
+	if got := f.str(`SELECT outcome || ' ' || (details->'modules'->0->>'reason' = $2) FROM audit_log
+			WHERE action = 'device.package_recovery' AND details->>'jobId' = $1`, stuck.ID.String(), why); got != "failure true" {
+		t.Errorf("a failed package recovery's audit record: %q", got)
 	}
 
 	// Removing a device removes what was found on it.

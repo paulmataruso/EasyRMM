@@ -166,6 +166,28 @@ describe("jobs", () => {
     expect(screen.queryByRole("button", { name: "Run again" })).not.toBeInTheDocument();
   });
 
+  it("says that an apply changes the device", async () => {
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /jobs/:id": ok(
+        job("j8", "Apply hardening: kernel", {
+          kind: "hardening",
+          scriptId: null,
+          shell: "sh",
+          argCount: 2,
+          hardening: { mode: "apply", modules: ["kernel"], options: {} },
+          body: "#!/bin/sh\n",
+          runs: [jobRun("r1", "d1", "SRV-01", "succeeded")],
+        }),
+      ),
+    });
+    renderApp("/jobs/j8");
+    expect(await screen.findByRole("heading", { name: "Apply hardening: kernel" })).toBeInTheDocument();
+    expect(screen.getByText(/keeping a record on it that undo reverses/)).toBeInTheDocument();
+    expect(screen.getByText("Apply")).toBeInTheDocument();
+    expect(screen.queryByText(/A check changes nothing/)).not.toBeInTheDocument();
+  });
+
   it("runs a job again with the same devices and arguments", async () => {
     const user = userEvent.setup();
     const linux = { platform: "linux" as const, agent: AGENT, canRunScripts: true };

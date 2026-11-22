@@ -70,6 +70,14 @@ var images = []Image{
 		Seed:   "nocloud",
 	},
 	{
+		// https://cloud-images.ubuntu.com/releases/resolute/release-20261108/SHA256SUMS,
+		// signed as above (cloud-init 26.2). Its sudo is sudo-rs.
+		Name:   "ubuntu-26.04",
+		URLs:   []string{"https://cloud-images.ubuntu.com/releases/resolute/release-20261108/ubuntu-26.04-server-cloudimg-amd64.img"},
+		Digest: "sha256:7b90593f5532b49b7e3fe3d2743f0d1f0d822e5b07cebcd8e00c0df8069ecab9",
+		Seed:   "nocloud",
+	},
+	{
 		// https://dl.rockylinux.org/pub/rocky/8.10/images/x86_64/Rocky-8-GenericCloud-Base-8.10-20240528.0.x86_64.qcow2.CHECKSUM
 		// (not signed). 8.10 is Rocky 8's last release. Its cloud-init,
 		// 23.4, detects NoCloud over HTTP from the kernel command line
@@ -95,6 +103,19 @@ var images = []Image{
 		Seed:   "nocloud",
 	},
 	{
+		// https://dl.rockylinux.org/pub/rocky/10.3/images/x86_64/Rocky-10-GenericCloud-Base-10.3-20261112.0.x86_64.qcow2.CHECKSUM,
+		// signed by the Rocky Linux 10 release key (.CHECKSUM.asc)
+		// (cloud-init 24.4). Rocky 10 needs an x86-64-v3 processor, which
+		// KVM's -cpu host passes on.
+		Name: "rocky-10",
+		URLs: []string{
+			"https://dl.rockylinux.org/pub/rocky/10.3/images/x86_64/Rocky-10-GenericCloud-Base-10.3-20261112.0.x86_64.qcow2",
+			"https://dl.rockylinux.org/vault/rocky/10.3/images/x86_64/Rocky-10-GenericCloud-Base-10.3-20261112.0.x86_64.qcow2",
+		},
+		Digest: "sha256:68eae06d402c8b19e7dca06e85bdc43a3476089afa3ee20d93d0d43cf9871e9e",
+		Seed:   "nocloud",
+	},
+	{
 		// https://repo.almalinux.org/almalinux/9.9/cloud/x86_64/images/CHECKSUM,
 		// signed by the AlmaLinux OS 9 key (CHECKSUM.asc) (cloud-init 24.4).
 		Name: "alma-9",
@@ -103,6 +124,18 @@ var images = []Image{
 			"https://vault.almalinux.org/9.9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.9-20261116.x86_64.qcow2",
 		},
 		Digest: "sha256:50e428e36083531995df84302268b95f0bf30db1d5e6b931f73dc40642dd77bb",
+		Seed:   "nocloud",
+	},
+	{
+		// https://repo.almalinux.org/almalinux/10.3/cloud/x86_64/images/CHECKSUM,
+		// signed by the AlmaLinux OS 10 key (CHECKSUM.asc) (cloud-init 24.4).
+		// An x86-64-v3 processor, as Rocky 10.
+		Name: "alma-10",
+		URLs: []string{
+			"https://repo.almalinux.org/almalinux/10.3/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.3-20261116.0.x86_64.qcow2",
+			"https://vault.almalinux.org/10.3/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.3-20261116.0.x86_64.qcow2",
+		},
+		Digest: "sha256:845d3a4e41fde973bdbf9763b62a88538c1a1fadc2332a89f6ea01e2c17c78ee",
 		Seed:   "nocloud",
 	},
 	{

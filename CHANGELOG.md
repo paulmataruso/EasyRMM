@@ -419,6 +419,57 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **Applying and undoing hardening on Linux computers** (ADR-0051, its
+  second part). A Site Administrator or above (the new `device.harden`
+  permission) can apply each of the 14 areas through the API
+  (`POST /api/v1/jobs/hardening`, modes `apply` and `undo`); Technicians
+  keep checking. Apply changes only what the check found missing, and only
+  to make it stricter, then checks again: a second apply changes nothing.
+  Before changing anything, each area records on the computer (in
+  `/var/lib/easyrmm-hardening/`) the files, modes, kernel values,
+  services, packages and rules it changes; undo puts back what is still as
+  apply left it, says what it left and why, and removes the record. Undo
+  removes auditd, where apply installed it, only when no other rules file
+  needs it; `/var/lib/easyrmm/auditd-installed` remembers that EasyRMM
+  installed it, for log collection to share. An area that fails part way
+  is put back as it was, but for packages it installed that cannot be
+  removed, which it names; a job that is killed leaves the area half
+  applied, which a later apply finishes and undo reverses. A package step
+  cut short no longer fails every later one: before each, apply and undo
+  finish an interrupted dpkg (`dpkg --configure -a`) or, on RHEL 8, an rpm
+  database a killed rpm left needing recovery, once no other package
+  manager is using it; the area's result and the audit log record it, and
+  an area whose recovery fails, or that waited five minutes for another
+  package manager, fails and says why, naming the packages the recovery
+  finished. Apply and undo run for up to an hour (a check, 30 minutes),
+  and the script works to that limit: it stops a step that would run past
+  it, fails an area whose package step lacks the time it needs, and does
+  not run the areas after it (*Not run*). Canceling a run stops the step it
+  is in, and records the packages an installation it stopped had added, so
+  that undo removes them. Undo removes only packages still at the version
+  apply installed, and never purges them: their configuration files, logs
+  (the audit trail among them) and data stay, and on Debian and Ubuntu the
+  result names the packages `apt-get purge` would clear. It gives a
+  directory an installation changed its mode and owner back, and removes
+  the files the installation made that its packages leave, once those
+  packages are gone, removes
+  generated files only as they were made, keeps symbolic links and SELinux
+  labels, and refuses the firewall alone while fail2ban bans with it; an
+  installation never removes a package; fail2ban's bans stop growing at a
+  day; USB storage is refused where `/etc/fstab` needs a USB disk to boot.
+  Password sign-in goes off only where root or an administrator who may
+  sign in has a key that parses as one, and root's password sign-ins are
+  read from what sshd itself wrote to the journal.
+  Apply and undo run on the releases CI's machine tests cover (Debian 12
+  and 13, Ubuntu 22.04, 24.04 and 26.04, Rocky Linux 8, 9 and 10, AlmaLinux
+  9 and 10, Fedora 45); other supported releases are checked only. Undo also runs
+  on the computer without the agent:
+  `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`. Each
+  device's latest result now carries, per area, what apply or undo did and
+  whether a record is kept. The console's job page names the mode, and the
+  device's **Hardening** tab shows the state each leaves; starting them
+  from the console comes next. See
+  [Hardening Linux computers](docs/operations/hardening.md).
 - **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
   root, `setup.sh` installs it with a systemd service and a timer (hourly,
   and five minutes after the host starts),
