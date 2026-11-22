@@ -266,6 +266,31 @@ func TestMonthlyReports(t *testing.T) {
 	if _, err := f.svc.SendMonthlyReport(ctx, f.reader, rep.ID, []string{"cfo@example.com"}); !isKind(err, apperr.KindForbidden) {
 		t.Fatalf("a reader sends: %v", err)
 	}
+	// A report the engine could not email for want of a mail server says so
+	// in EasyRMM's terms; while a Microsoft 365 application signs in, the
+	// engine is given none, and the refusal, the failure and the pages that
+	// email reports say why.
+	f.engine.FailDelivery(rep.ID, "SMTP is not configured (Settings → Notifications).")
+	if list, err := f.svc.MonthlyReports(ctx, f.reader, uuid.Nil); err != nil || list.Items[0].LastError != noMailServer {
+		t.Fatalf("failed for want of a mail server: %+v, %v", list.Items, err)
+	}
+	if m, err := f.svc.ReportsMail(ctx, f.reader); err != nil || m.Withheld != "" {
+		t.Fatalf("reports' mail: %+v, %v", m, err)
+	}
+	why := "EasyRMM's mail server signs in with a Microsoft 365 application (withheld, in this test)."
+	withheld := f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return MailConfig{Withheld: why}, nil }, mailKey))
+	if _, err := withheld.SendMonthlyReport(ctx, f.tech, rep.ID, []string{"cfo@example.com"}); !isCode(err, "mail_withheld") || !strings.Contains(err.Error(), why) {
+		t.Fatalf("withheld, sent: %v", err)
+	}
+	if list, err := withheld.MonthlyReports(ctx, f.reader, uuid.Nil); err != nil || list.Items[0].LastError != why {
+		t.Fatalf("withheld, failed: %+v, %v", list.Items, err)
+	}
+	if m, err := withheld.ReportsMail(ctx, f.reader); err != nil || m.Withheld != why {
+		t.Fatalf("withheld, reports' mail: %+v, %v", m, err)
+	}
+	if _, err := withheld.ReportsMail(ctx, f.user("nora@example.com")); !isKind(err, apperr.KindForbidden) {
+		t.Fatalf("reports' mail for someone without reports: %v", err)
+	}
 	for name, to := range map[string][]string{"not an address": {"cfo"}, "a name": {"CFO <cfo@example.com>"}, "too many": manyAddresses(21)} {
 		if _, err := f.svc.SendMonthlyReport(ctx, f.tech, rep.ID, to); !isKind(err, apperr.KindInvalid) {
 			t.Errorf("%s: %v", name, err)

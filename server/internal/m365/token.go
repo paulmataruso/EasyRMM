@@ -88,6 +88,13 @@ func (e *TokenError) hint() string {
 	return ""
 }
 
+// logText is what the identity platform, or the way to it, said, for the
+// log: its line breaks made spaces, so that an answer cannot add lines of
+// its own to the log, whatever the log's handler escapes.
+func logText(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", " ")
+}
+
 // oneLine keeps s on one line and to at most n bytes, on a rune boundary.
 func oneLine(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
@@ -157,9 +164,9 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 		var te *TokenError
 		if errors.As(err, &te) {
 			s.log.Warn("mail server: Microsoft's identity platform refused the token request", "tenant", s.cred.TenantID,
-				"client", s.cred.ClientID, "status", te.Status, "error", te.Code, "description", oneLine(te.Description, 600))
+				"client", s.cred.ClientID, "answer", logText(fmt.Sprintf("HTTP %d, %s: %s", te.Status, te.Code, oneLine(te.Description, 600))))
 		} else {
-			s.log.Warn("mail server: could not get a token from Microsoft's identity platform", "tenant", s.cred.TenantID, "error", err)
+			s.log.Warn("mail server: could not get a token from Microsoft's identity platform", "tenant", s.cred.TenantID, "error", logText(err.Error()))
 		}
 		return "", err
 	}

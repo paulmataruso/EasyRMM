@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -98,8 +99,33 @@ func TestParseCertificate(t *testing.T) {
 	k, _ := x509.ParsePKCS8PrivateKey(b.Bytes)
 	pkcs1 := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k.(*rsa.PrivateKey))}))
 	other, _ := m365test.AppCertificate(t, now.Add(-time.Hour), now.Add(time.Hour))
-	if c, err := ParseCertificate(certPEM+other, "comment\n"+pkcs1); err != nil || !strings.Contains(c.PEM, strings.TrimSpace(other)) {
+	if c, err := ParseCertificate(certPEM+other, "comment\n"+pkcs1); err != nil || c.PEM != certPEM+other {
 		t.Fatalf("PKCS #1 with a chain: %v", err)
+	}
+	// What is kept is the CERTIFICATE blocks encoded anew: not the line
+	// endings, the headers or the blank lines given.
+	cb, _ := pem.Decode([]byte(certPEM))
+	withHeaders := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{"Note": "kept out"}, Bytes: cb.Bytes}))
+	given := "\r\n" + strings.ReplaceAll(withHeaders, "\n", "\r\n") + "\n\n"
+	if c, err := ParseCertificate(given, keyPEM); err != nil || c.PEM != certPEM {
+		t.Fatalf("encoded anew: %v", err)
+	}
+	// Anything but CERTIFICATE blocks is refused, not stored.
+	for name, tc := range map[string]struct{ cert, want string }{
+		"OpenSSH key":       {certPEM + junkPEM("OPENSSH PRIVATE KEY", nil), "holds a private key"},
+		"another block":     {certPEM + junkPEM("X509 CRL", nil), "block that is not a certificate"},
+		"text before":       {"Bag Attributes\n    localKeyID: 01\n" + certPEM, "text outside its PEM blocks"},
+		"text after":        {certPEM + "subject=CN = EasyRMM\n", "text outside its PEM blocks"},
+		"between":           {certPEM + "issuer=CN = EasyRMM\n" + other, "text outside its PEM blocks"},
+		"unreadable first":  {"-----BEGIN CERTIFICATE-----\n!!\n" + certPEM, "does not parse"},
+		"a block, unclosed": {certPEM + "-----BEGIN CERTIFICATE-----\nAAAA\n", "does not parse"},
+	} {
+		if _, err := ParseCertificate(tc.cert, keyPEM); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want %q", name, err, tc.want)
+		}
+		if _, err := ParseCertificateOnly(tc.cert); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s, alone: %v, want %q", name, err, tc.want)
+		}
 	}
 	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	ecb, _ := x509.MarshalECPrivateKey(ec)
@@ -336,6 +362,15 @@ func TestTokenRefused(t *testing.T) {
 		}
 		if !strings.Contains(lb.String(), "AADSTS") || !strings.Contains(lb.String(), "level=WARN") {
 			t.Errorf("%s: not logged: %s", name, lb.String())
+		}
+		// One attribute, on one line: the description's line breaks (its
+		// Trace ID and Timestamp) are spaces.
+		if !strings.Contains(lb.String(), `answer="HTTP `+strconv.Itoa(te.Status)+", "+te.Code+": AADSTS") ||
+			strings.Contains(lb.String(), `\r`) || strings.Contains(lb.String(), `\n`) || strings.Count(lb.String(), "\n") != 1 {
+			t.Errorf("%s: logged as %q", name, lb.String())
+		}
+		if logText("a\r\nb\nc") != "a  b c" {
+			t.Error("logText")
 		}
 	}
 	ep.Set(func() { ep.Refuse = &m365test.BadSecret })

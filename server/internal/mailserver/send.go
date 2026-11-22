@@ -448,7 +448,9 @@ func (s *Service) Room(ctx context.Context, by mailer.AccountMail) error {
 // counted against by, as SendAccountMail would, before the message is
 // made: a password reset's link is made only when it can be sent, since
 // each new one ends the last. A limit that stops it is a *LimitError. The
-// reservation is sent, or released, once.
+// reservation is sent, or released, once. Its message, sent after the
+// request for it has been answered, is tried once more a minute later
+// when the mail server refuses it for its rate.
 func (s *Service) Reserve(ctx context.Context, by mailer.AccountMail) (mailer.Reservation, error) {
 	id, err := s.take(ctx, accountCharge(by))
 	if err != nil {
@@ -567,7 +569,9 @@ func (s *Service) SendAccountMail(ctx context.Context, to string, msg mailer.Mes
 	if cfg == nil {
 		return ErrNoMailServer
 	}
-	cfg.RateRetry = s.rateRetry
+	// Not tried again for the mail server's rate: an administrator's
+	// request waits for this, and the link comes back to them with the
+	// reason at once (decided in review).
 	m, err := mailer.New(*cfg)
 	if err != nil {
 		return err

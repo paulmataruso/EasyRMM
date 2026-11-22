@@ -92,10 +92,22 @@ super administrators on the test message and in the server's log, with
 what it means when it is one of Exchange Online's EasyRMM knows (see
 [Troubleshooting](#troubleshooting)).
 
-A mail server that refuses a message for its rate (Exchange Online's
+When a mail server refuses a message for its rate (Exchange Online's
 `432 4.3.2` thread limit, `554 5.2.0 SubmissionQuotaExceeded`, or a reply
-that says it throttles) is tried once more a minute later, in a new
-session, before the message counts as not sent.
+that says it throttles), what happens depends on who is waiting:
+
+* A **password reset someone asked for** is sent after the sign-in page
+  has answered, so it is tried once more a minute later, in a new session,
+  before it counts as not sent. Nothing waits across a restart of the
+  server.
+* An **invitation or a password link** an administrator sends is not tried
+  again: the administrator is waiting for the answer, so the link comes
+  back at once with the mail server's reason, to send by hand or to try
+  again later.
+
+EasyRMM knows Exchange Online's replies from Microsoft's documentation;
+they have not yet been checked against a real tenant, so a reply worded
+differently is shown as the mail server gave it, without what it means.
 
 ## Microsoft 365
 Microsoft turns password sign-in to Exchange Online's SMTP off by default
@@ -113,9 +125,10 @@ OAuth](https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protoc
 signs in to the mail server in force, from `.env` or the console, the
 engine is given no mail server: **patching sends no email and no monthly
 reports** until a later release moves them to EasyRMM (ADR-0053's slice
-6). The mail server page and Settings → Patching → Notifications say so,
-the server logs it at every start, and the form says so before the choice
-is saved. For patching's email meanwhile, send through a relay, or sign in
+6). The mail server page, Settings → Patching → Notifications and →
+Reports, and Reports → Monthly patch reports (with *Email this report*)
+say so; a report that could not be emailed says why; the server logs it
+at every start, and the form says so before the choice is saved. For patching's email meanwhile, send through a relay, or sign in
 with a password where the tenant still takes one.
 
 ### In Microsoft Entra
@@ -198,8 +211,11 @@ Online's: `smtp.office365.com`, port 587, STARTTLS. Enter the **Directory
 **Credential** (the client secret's Value, or the certificate and its
 private key, PEM), and **Send from**: the mailbox above. The secret and the
 key are stored encrypted with the server's secret key, each with its own
-purpose, and never shown or returned again; the certificate is stored as
-given and shown by its subject, thumbprint and dates. As with a password,
+purpose, and never shown or returned again; the certificate is shown by
+its subject, thumbprint and dates. It must be PEM certificates alone, the
+application's first: text around them (such as the `Bag Attributes` lines
+`openssl pkcs12` writes), a private key or any other block is refused, and
+only the certificates are stored, written out anew. As with a password,
 leaving the secret (or the certificate and key) empty keeps the stored one
 while the server, the port, the security, the tenant, the application and
 the kind of credential stay the same. A renewed certificate on the same key
@@ -207,7 +223,9 @@ needs no key. An expired certificate is refused. Without encryption (None)
 an application is refused: a token goes only over STARTTLS or TLS.
 
 Send a test message, then **Save**. EasyRMM asks Microsoft's identity
-platform for a token when it first connects, keeps it in memory (never in
+platform for a token before it first connects to the mail server, so a
+slow answer from Microsoft holds no connection to Exchange open and is not
+taken for the mail server's; it keeps the token in memory (never in
 the database, a log or an error) until 5 minutes before it expires, and
 asks again then; a sign-in refused (`535`) drops it and tries once more with
 a new one. The token endpoint is reached as the mail server is, through the
@@ -230,14 +248,21 @@ with `--hostname` and the others. `--smtp-host` (by default
 secret file or a certificate, on a terminal, `setup.sh` asks for the secret
 without showing it. It refuses a tenant that is neither a GUID nor a domain
 name, a client ID that is not a GUID, an empty or multi-line secret, and,
-with `openssl`, a certificate or key that does not parse, a key that is not
-the certificate's or is encrypted, a certificate that is not RSA or has
+with `openssl`, a certificate or key that does not parse, a certificate
+file with anything but certificates in it, a key that is not the
+certificate's or is encrypted, a certificate that is not RSA or has
 expired; it warns within 30 days of the certificate's end. It needs root:
 it copies the secret, or the certificate and key, into
 `${EASYRMM_DATA_ROOT}/secrets` (the directory `root:65532` `0750`, the
 files `root:65532` `0440`, as `tls/` is), which the server mounts
 read-only at `/run/secrets/easyrmm`, and `.env` names them by their paths
-there, never holding them:
+there, never holding them. So that root changes nothing outside the data
+root, `setup.sh` refuses a data root that is not root's or that others can
+write to, a `secrets` that is a symbolic link, and a file in it with
+another link (a hard link to a file elsewhere). It changes only the mail
+settings that differ: a setting kept from `.env` stays as it is written
+there, quotes and comments included, and `.env` is written whole beside
+the old one and renamed over it, never half written:
 
 ```sh
 EASYRMM_SMTP_HOST=smtp.office365.com
@@ -519,10 +544,13 @@ server the patching engine cannot be given. An invitation
 | `535 5.7.139` with security defaults | Entra's security defaults turn SMTP AUTH off, OAuth included: turn them off, or send through a relay |
 | `535 5.7.3` with an application | The `SMTP.SendAsApp` permission and its consent, `New-ServicePrincipal` with the **Enterprise application's** Object ID, `Add-MailboxPermission` for the mailbox, and SMTP AUTH on for it |
 | `5.7.60 SendAsDenied` | `Add-RecipientPermission` with `-AccessRights SendAs` for the application's service principal on the Send from mailbox |
-| `432 4.3.2` with a thread limit | Exchange takes 3 connections at once per mailbox: another program, or another EasyRMM server, sends as it. EasyRMM tries again a minute later |
+| `432 4.3.2` with a thread limit | Exchange takes 3 connections at once per mailbox: another program, or another EasyRMM server, sends as it. A password reset is tried again a minute later; an invitation or password link comes back to the administrator at once |
 | `SubmissionQuotaExceeded` | The mailbox sent to 10,000 recipients in 24 hours; keep the day's limit under it |
 | "does not offer sign-in with a token (AUTH XOAUTH2)" | The mail server is not Exchange Online's: `smtp.office365.com`, port 587, STARTTLS |
 | Patching's email stopped after choosing a Microsoft 365 application | The engine cannot sign in that way, so it has no mail server until a later release; send through a relay, or sign in with a password, for patching's email |
+| A monthly report shows "Email failed" with "EasyRMM's mail server signs in with a Microsoft 365 application…" | The same: Reports → Monthly patch reports, *Email this report* and Settings → Patching → Reports say so while it lasts |
+| `setup.sh` says the certificate "must hold PEM certificates alone" | The file has text or a key beside the certificate: `openssl x509 -in <file> -out plain.crt` writes the certificate alone |
+| `setup.sh` says the data root "must be a directory of root's that only root can write to" | `sudo chown root <data root>; sudo chmod go-w <data root>`, then run it again |
 | `Not sent: the limit of … messages a day is reached` | Raise the limit, or wait until the oldest of them is 24 hours old |
 | An invitation or a password link is refused with "the most one administrator may" | The administrator's own hourly limit (see [Limits on invitations and password emails](#limits-on-invitations-and-password-emails)); the message says when to try again |
 | An invitation or a password link comes back with "It was not emailed:" and a limit | The account's or the organization's limit; send the link yourself, or wait as the message says |

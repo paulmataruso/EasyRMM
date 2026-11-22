@@ -398,7 +398,7 @@ function Delivery({ view }: { view: PatchNotifications }) {
         )}
         {mail.withheld ? (
           <Alert tone="warn" title="Patching sends no email: the engine has no mail server">
-            {mail.withheld} Email channels and monthly reports do not send meanwhile. Microsoft 365 application sign-in for the patching engine comes in a later release.
+            {mail.withheld}
           </Alert>
         ) : mail.host ? (
           <p className="max-w-3xl">

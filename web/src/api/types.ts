@@ -1924,6 +1924,11 @@ export interface PatchMonthlyReportList {
   canGenerate: string[];
 }
 
+/** Whether the patching engine can email reports: withheld says why not while a Microsoft 365 application signs in. */
+export interface PatchReportsMail {
+  withheld?: string;
+}
+
 export interface PatchReportSchedule {
   organizationId: string;
   organizationName: string;

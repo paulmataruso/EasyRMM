@@ -35,6 +35,9 @@ smtp_cert_file=""
 smtp_key_file=""
 # mail_args counts the words of the --smtp-* options given.
 mail_args=0
+# The settings mail_set has mail_write_env write to .env.
+mail_keys=()
+mail_values=()
 
 # The files in secrets/, and their paths in the server's container.
 mail_secret_name=smtp-client-secret
@@ -71,13 +74,54 @@ mail_env_value() {
   fi
 }
 
-# mail_set KEY VALUE sets KEY in .env, replacing any value it has.
+# mail_set KEY VALUE has mail_write_env set KEY to VALUE in .env, unless
+# .env has it so already. A setting kept from .env is left as it is written
+# there, quotes, comment and all: Compose reads it as it did. Every value
+# that changes was checked first: a host name, a port, an address, a GUID,
+# a keyword or a path, none of which needs quotes in .env.
 mail_set() {
-  if grep -q "^$1=" .env; then
-    sed -i "s|^$1=.*|$1=$2|" .env
-  else
-    printf '%s=%s\n' "$1" "$2" >> .env
+  if grep -q "^$1=" .env && [[ "$(env_value "$1")" == "$2" ]]; then
+    return 0
   fi
+  mail_keys+=("$1")
+  mail_values+=("$2")
+}
+
+# mail_write_env writes mail_set's settings into .env at once: each
+# replaces its key's line, and any repeat of it, or is added at the end.
+# The values reach awk through its environment, never its program, so no
+# character in them means anything to it; the new .env is written beside
+# the old, given its owner and mode, and renamed over it, so .env is never
+# left half written.
+mail_write_env() {
+  [[ ${#mail_keys[@]} -gt 0 ]] || return 0
+  local tmp
+  tmp=$(mktemp .env.mail.XXXXXX) || die "could not write a new .env beside the old"
+  if ! (
+    for i in "${!mail_keys[@]}"; do
+      export "MAIL_K$i=${mail_keys[$i]}" "MAIL_V$i=${mail_values[$i]}"
+    done
+    export MAIL_N=${#mail_keys[@]}
+    chmod --reference=.env "$tmp" && chown --reference=.env "$tmp" &&
+      awk '
+        BEGIN { n = ENVIRON["MAIL_N"]; for (i = 0; i < n; i++) { k[i] = ENVIRON["MAIL_K" i]; v[i] = ENVIRON["MAIL_V" i] } }
+        {
+          for (i = 0; i < n; i++) {
+            if (index($0, k[i] "=") == 1) {
+              if (!(i in done)) { print k[i] "=" v[i]; done[i] = 1 }
+              next
+            }
+          }
+          print
+        }
+        END { for (i = 0; i < n; i++) if (!(i in done)) print k[i] "=" v[i] }
+      ' .env > "$tmp" && mv -f "$tmp" .env
+  ); then
+    rm -f "$tmp"
+    die "could not write the mail settings to .env; it is as it was"
+  fi
+  mail_keys=()
+  mail_values=()
 }
 
 # mail_kept KEY NAME: whether .env names secrets/NAME for its setting, and the
@@ -105,6 +149,13 @@ mail_check_certificate() {
   [[ -f "$cert" ]] || die "--smtp-client-cert-file: ${cert} is not a file"
   [[ -f "$key" ]] || die "--smtp-client-key-file: ${key} is not a file"
   openssl x509 -in "$cert" -noout 2>/dev/null || die "--smtp-client-cert-file: ${cert} is not a certificate in PEM"
+  # As the server takes it: CERTIFICATE blocks alone, nothing around them.
+  awk '/^-----BEGIN CERTIFICATE-----\r?$/ { if (inside) exit 1; inside = 1; n++; next }
+    /^-----END CERTIFICATE-----\r?$/ { if (!inside) exit 1; inside = 0; next }
+    inside || /^[[:space:]]*$/ { next }
+    { exit 1 }
+    END { if (inside || n == 0) exit 1 }' "$cert" ||
+    die "--smtp-client-cert-file: ${cert} must hold PEM certificates alone (-----BEGIN CERTIFICATE----- blocks), with no other text or keys: openssl x509 -in ${cert} -out plain.crt writes the certificate alone"
   openssl x509 -in "$cert" -noout -text 2>/dev/null | grep -q 'Public Key Algorithm: rsaEncryption' ||
     die "--smtp-client-cert-file: the certificate's key is not RSA: Entra signs in applications with RSA certificates"
   openssl pkey -in "$key" -passin pass: -noout 2>/dev/null ||
@@ -149,6 +200,7 @@ mail_validate() {
   [[ "$mail_app" == true ]] || return 0
 
   [[ $(id -u) -eq 0 ]] || die "a Microsoft 365 application needs root (sudo): its secret or key goes into ${data_root}/secrets"
+  mail_secrets_safe
   smtp_tenant_id=${smtp_tenant_id:-$(mail_env_value EASYRMM_SMTP_TENANT_ID)}
   smtp_client_id=${smtp_client_id:-$(mail_env_value EASYRMM_SMTP_CLIENT_ID)}
   [[ -n "$smtp_tenant_id" ]] || die "--smtp-tenant-id is required: the Directory (tenant) ID from the application's Overview page in Entra"
@@ -188,7 +240,10 @@ mail_env() {
   mail_set EASYRMM_SMTP_HOST "$smtp_host"
   mail_set EASYRMM_SMTP_PORT "$smtp_port"
   mail_set EASYRMM_SMTP_FROM "$smtp_from"
-  [[ "$mail_app" == true ]] || return 0
+  if [[ "$mail_app" != true ]]; then
+    mail_write_env
+    return 0
+  fi
   mail_set EASYRMM_SMTP_TLS "$mail_tls"
   mail_set EASYRMM_SMTP_AUTH microsoft365
   mail_set EASYRMM_SMTP_TENANT_ID "$smtp_tenant_id"
@@ -207,13 +262,37 @@ mail_env() {
       mail_set EASYRMM_SMTP_CLIENT_KEY_FILE "$mail_container_dir/$mail_key_name"
       ;;
   esac
+  mail_write_env
   echo "Mail: EasyRMM signs in to ${smtp_host}:${smtp_port} as ${smtp_from} with the Microsoft 365 application ${smtp_client_id}."
+}
+
+# mail_secrets_safe dies unless root can give secrets/ and its files their
+# owner and modes without changing anything outside them: the data root
+# root's and writable by root alone, so no one else can swap what is in it;
+# secrets/ not a symbolic link; no file in it with another link, as a hard
+# link to a file elsewhere has. What is not there yet, root makes.
+mail_secrets_safe() {
+  local dir="$data_root/secrets" owner mode f
+  if [[ -e "$data_root" ]]; then
+    read -r owner mode < <(stat -L -c '%u %a' "$data_root")
+    [[ -d "$data_root" && "$owner" == 0 && $((8#$mode & 8#022)) -eq 0 ]] ||
+      die "${data_root} must be a directory of root's that only root can write to (sudo chown root ${data_root}; sudo chmod go-w ${data_root})"
+  fi
+  [[ ! -L "$dir" ]] || die "${dir} is a symbolic link: it must be a directory of its own"
+  for f in "$dir"/*; do
+    if [[ -f "$f" && ! -L "$f" && "$(stat -c %h "$f")" != 1 ]]; then
+      die "${f} has other links, as a hard link to a file elsewhere has: remove it, and run setup.sh again"
+    fi
+  done
 }
 
 # mail_secrets_dir makes secrets/, as tls/ is: root's, readable by the
 # server's group (65532), and gives what is in it its owner and modes.
 mail_secrets_dir() {
+  mail_secrets_safe
   install -d -m 0750 -o root -g 65532 "$data_root/secrets"
+  # Only root can put a file in it now: one put there before is checked again.
+  mail_secrets_safe
   local f
   for f in "$data_root/secrets"/*; do
     if [[ -f "$f" && ! -L "$f" ]]; then

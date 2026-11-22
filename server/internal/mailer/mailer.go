@@ -71,8 +71,8 @@ type Config struct {
 	// RateRetry, when set, has a message the mail server refuses for its
 	// rate (ReplyError.RateLimited) tried once more after it, in a new
 	// session, its room under the limits kept: such a refusal is not the
-	// recipient's (ADR-0053). Account mail waits so; a test message does
-	// not.
+	// recipient's (ADR-0053). Only mail no request waits for waits so: a
+	// password reset someone asked for.
 	RateRetry time.Duration
 }
 
@@ -471,31 +471,44 @@ func (m *SMTP) deadline(ctx context.Context) time.Time {
 // tried with a new one, unless the refusal is 5.7.139, which a token does
 // not change (SMTP AUTH off, security defaults).
 func (m *SMTP) open(ctx context.Context) (*session, error) {
+	if m.cfg.OAuth != nil {
+		s, err := m.openWithToken(ctx)
+		var re *ReplyError
+		if errors.As(err, &re) && re.Code == 535 && !strings.Contains(re.Text, "5.7.139") {
+			// The client quits after a refused AUTH: a new session.
+			s, err = m.openWithToken(ctx)
+		}
+		return s, err
+	}
 	s, err := m.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case m.cfg.OAuth != nil:
-		err = s.xoauth2(ctx)
-		var re *ReplyError
-		if errors.As(err, &re) && re.Code == 535 && !strings.Contains(re.Text, "5.7.139") {
-			// The client quits after a refused AUTH: a new session.
-			s.close()
-			if s, err = m.connect(ctx); err != nil {
-				return nil, err
-			}
-			err = s.xoauth2(ctx)
-		}
-	case m.cfg.Username != "":
+	if m.cfg.Username != "" {
 		a := &plainAuth{user: m.cfg.Username, password: m.cfg.Password}
-		if err = s.c.Auth(a); err != nil {
-			err = reply("sign-in", err)
-		} else {
-			s.signedIn = "235 " + a.answer
+		if err := s.c.Auth(a); err != nil {
+			s.close()
+			return nil, reply("sign-in", err)
 		}
+		s.signedIn = "235 " + a.answer
 	}
+	return s, nil
+}
+
+// openWithToken gets a token, and only then connects and signs in with it:
+// the identity platform's time does not count against the mail server's
+// steps, nor holds a connection to it idle (Exchange Online takes 3 at once
+// per mailbox).
+func (m *SMTP) openWithToken(ctx context.Context) (*session, error) {
+	token, err := m.cfg.OAuth.Token(ctx)
 	if err != nil {
+		return nil, &stepError{step: "mailer: signing in to " + m.Address() + " with a Microsoft 365 application", err: err}
+	}
+	s, err := m.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.xoauth2(token); err != nil {
 		s.close()
 		return nil, err
 	}
@@ -561,21 +574,16 @@ func (m *SMTP) connect(ctx context.Context) (*session, error) {
 	return s, nil
 }
 
-// xoauth2 signs in with AUTH XOAUTH2 (ADR-0053, slice 2): only over TLS,
-// only when the mail server offers it, with a token from the source; one
-// the mail server refuses is dropped.
-func (s *session) xoauth2(ctx context.Context) error {
-	addr := s.m.Address()
+// xoauth2 signs in with AUTH XOAUTH2 and token (ADR-0053, slice 2): only
+// over TLS, only when the mail server offers it; a token the mail server
+// refuses is dropped from the source.
+func (s *session) xoauth2(token string) error {
 	if !s.overTLS {
 		return errors.New("mailer: refusing to send a token without TLS")
 	}
 	if !s.offers("XOAUTH2") {
 		return fmt.Errorf("mailer: %s does not offer sign-in with a token (AUTH XOAUTH2), which signing in with a Microsoft 365 application needs; "+
-			"Exchange Online's is smtp.office365.com, port 587, with STARTTLS", addr)
-	}
-	token, err := s.m.cfg.OAuth.Token(ctx)
-	if err != nil {
-		return &stepError{step: "mailer: signing in to " + addr + " with a Microsoft 365 application", err: err}
+			"Exchange Online's is smtp.office365.com, port 587, with STARTTLS", s.m.Address())
 	}
 	a := &xoauth2Auth{user: s.m.cfg.Username, token: token}
 	if err := s.c.Auth(a); err != nil {

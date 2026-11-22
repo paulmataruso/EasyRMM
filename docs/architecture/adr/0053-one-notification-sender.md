@@ -399,7 +399,13 @@ What exists, and what it means here:
   will be rejected and the client will need to retry", so the sender
   treats a refusal for rate as transient (retried after the minute, never
   the recipient's failure), and the reply Exchange gives is recorded in
-  slice 2's check on a real tenant. 9,000 a day is under its 10,000
+  slice 2's check on a real tenant. In slice 2 only mail no request waits
+  for is retried so: a password reset someone asked for, sent after the
+  sign-in page has answered, is tried once more a minute later, in memory,
+  so not across a restart. An invitation or password link an
+  administrator sends is not retried inside the request: its link comes
+  back to them at once with the mail server's reason, rather than holding
+  the request a minute (decided in review of #97). 9,000 a day is under its 10,000
   recipients in 24 hours (past which the mailbox cannot send until its
   count of the last 24 hours drops below), per Microsoft's published
   limits (Exchange Online limits, Microsoft Learn, read 2026-11-21).
@@ -637,7 +643,11 @@ channels now, its syslog destinations with log forwarding later.
 * **Signing in** is one of: none, a password (`PLAIN`, as now), or **a
   Microsoft 365 application** (slice 2): the tenant ID, the application
   (client) ID, and a client secret or a certificate with its private key
-  (PEM), sealed. The mailbox it sends as is the sender's address.
+  (PEM), sealed. The mailbox it sends as is the sender's address. The
+  certificate is PEM `CERTIFICATE` blocks alone, the application's first:
+  text around them, a key of any kind or another block is refused, and
+  only the blocks are stored, written out anew (decided in review of
+  #97).
   * The server asks the Microsoft identity platform for the tenant's token
     with the client credentials grant and the scope above, signing the
     client assertion itself when it has a certificate. It keeps the token
@@ -648,8 +658,11 @@ channels now, its syslog destinations with log forwarding later.
   * The mailer sends `AUTH XOAUTH2` only after STARTTLS or over TLS, and
     only when the server offers it; the token never reaches a log, an error
     or the audit log.
-  * The token request is made by the server as the mail server is dialed
-    (set by super administrators only); a request that fails shows
+  * The token request is made by the server before the mail server is
+    dialed (set by super administrators only), so that a slow identity
+    platform neither holds a connection to Exchange open (it takes 3 at
+    once per mailbox) nor counts against the mail server's deadline
+    (decided in review of #97); a request that fails shows
     Microsoft's `error` and `error_description` on the mail server page
     and in the log, from slice 2, and in the mail notice once notices come
     (slice 3).
@@ -774,7 +787,12 @@ channels now, its syslog destinations with log forwarding later.
   application signs in, **from `.env` or the console**, a standing warning
   says so on the mail server page and on Settings → Patching, the server
   logs it at every start, and the console's form says so before the
-  choice is saved.
+  choice is saved. Where reports are emailed, Reports → Monthly patch
+  reports (with *Email this report*) and Settings → Patching → Reports,
+  the same reason shows (`GET /api/v1/patching/reports/mail`); the
+  engine's "SMTP is not configured" becomes that reason, on a send
+  (`409 mail_withheld`) and on a report whose email failed (decided in
+  review of #97).
 * **A certificate authority to trust** is shown only once the engine no
   longer sends email (slice 6): the engine cannot trust a named
   authority, only skip verification, which EasyRMM never asks of it.
@@ -1548,8 +1566,10 @@ nothing to apply to.
   `syncMail` giving the engine no mail server while an application signs in,
   and the standing warning shown and logged whether the application comes
   from `.env` or the console; `535 5.7.139` with "SmtpClientAuthentication
-  is disabled" shown as the mailbox's setting; a refusal for rate retried,
-  not failed. `.env`: an application read from its variables and files, the
+  is disabled" shown as the mailbox's setting; a refusal for rate retried
+  for a reserved password reset, and returned at once for an
+  administrator's link; the token fetched before the mail server is
+  dialed, a slow one not taken from the mail server's deadline. `.env`: an application read from its variables and files, the
   server refusing to start with an ID missing, both a secret and a
   certificate, a secret given other than by file, or a file it cannot read;
   `.env` still winning over the console; `easyrmm-server mail check` against
@@ -1563,7 +1583,12 @@ nothing to apply to.
   client ID, an empty or multi-line secret, a certificate that does not
   parse, a key that does not match it, a certificate expired; a warning
   within 30 days of expiry; an existing `.env` keeping everything but its
-  mail settings.
+  mail settings, and those kept left as written, with `&`, `|`, `\`,
+  quotes and spaces, as Compose reads them; `.env` written whole and
+  renamed into place, with its owner and mode; a certificate file with a
+  key or text beside the certificate refused; a data root others can
+  change, a linked `secrets/` and a hard-linked file in it refused, with
+  nothing outside changed (decided in review of #97).
 * **HTTP API and console**: permissions for each route; the console's
   tests for every view.
 * **Agent**: the notices' reasons from systemd's state (Linux), from the

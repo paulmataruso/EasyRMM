@@ -13,6 +13,7 @@
 package m365
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -103,7 +104,8 @@ type Certificate struct {
 	// Leaf is the application's certificate, the first in the PEM.
 	Leaf *x509.Certificate
 	key  *rsa.PrivateKey
-	// PEM is the certificate as given, its chain included.
+	// PEM is the certificate and its chain as given, encoded anew: CERTIFICATE
+	// blocks alone, which is what is stored.
 	PEM string
 }
 
@@ -155,37 +157,56 @@ func (c *Certificate) x5tS256() string {
 // ParseCertificateOnly reads the certificates in certPEM, the
 // application's first.
 func ParseCertificateOnly(certPEM string) (*x509.Certificate, error) {
+	leaf, _, err := certificates(certPEM)
+	return leaf, err
+}
+
+// certificates reads certPEM, which must hold CERTIFICATE blocks alone, the
+// application's first and then any chain: text outside the blocks, and
+// blocks of any other kind, are refused rather than skipped, so that what
+// is stored is certificates and nothing else. It returns the first and the
+// blocks encoded anew, without headers.
+func certificates(certPEM string) (*x509.Certificate, string, error) {
 	if len(certPEM) > MaxCertificate {
-		return nil, fmt.Errorf("the certificate is larger than %d KiB", MaxCertificate>>10)
+		return nil, "", fmt.Errorf("the certificate is larger than %d KiB", MaxCertificate>>10)
+	}
+	if !strings.Contains(certPEM, "-----BEGIN") {
+		return nil, "", errors.New("no PEM certificate (-----BEGIN CERTIFICATE-----) found")
 	}
 	var leaf *x509.Certificate
+	var out []byte
 	rest := []byte(certPEM)
-	for {
-		var b *pem.Block
-		b, rest = pem.Decode(rest)
-		if b == nil {
-			break
+	for len(bytes.TrimSpace(rest)) > 0 {
+		rest = bytes.TrimSpace(rest)
+		if !bytes.HasPrefix(rest, []byte("-----BEGIN ")) {
+			return nil, "", errors.New("the certificate holds text outside its PEM blocks: give the -----BEGIN CERTIFICATE----- blocks alone")
 		}
-		switch b.Type {
-		case "CERTIFICATE":
-			c, err := x509.ParseCertificate(b.Bytes)
-			if err != nil {
-				return nil, errors.New("the certificate does not parse")
-			}
-			if leaf == nil {
-				leaf = c
-			}
-		case "PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY":
-			return nil, errors.New("the certificate's PEM holds a private key: give the key on its own")
+		b, after := pem.Decode(rest)
+		// Decode skips a block it cannot read and goes on to the next: the
+		// block read must be the first.
+		if b == nil || bytes.Count(rest[:len(rest)-len(after)], []byte("-----BEGIN")) != 1 {
+			return nil, "", errors.New("the certificate's PEM does not parse")
 		}
-	}
-	if leaf == nil {
-		return nil, errors.New("no PEM certificate (-----BEGIN CERTIFICATE-----) found")
+		rest = after
+		switch {
+		case strings.Contains(b.Type, "PRIVATE KEY"):
+			return nil, "", errors.New("the certificate's PEM holds a private key: give the key on its own")
+		case b.Type != "CERTIFICATE":
+			return nil, "", errors.New("the certificate's PEM holds a block that is not a certificate: give the -----BEGIN CERTIFICATE----- blocks alone")
+		}
+		c, err := x509.ParseCertificate(b.Bytes)
+		if err != nil {
+			return nil, "", errors.New("the certificate does not parse")
+		}
+		if leaf == nil {
+			leaf = c
+		}
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: b.Bytes})...)
 	}
 	if _, ok := leaf.PublicKey.(*rsa.PublicKey); !ok {
-		return nil, errors.New("the certificate's key is not RSA: Entra signs in applications with RSA certificates")
+		return nil, "", errors.New("the certificate's key is not RSA: Entra signs in applications with RSA certificates")
 	}
-	return leaf, nil
+	return leaf, string(out), nil
 }
 
 // ParseCertificate reads an application's certificate and its private key,
@@ -193,7 +214,7 @@ func ParseCertificateOnly(certPEM string) (*x509.Certificate, error) {
 // PKCS #8, and the certificate's. It does not check the dates: Expired
 // does.
 func ParseCertificate(certPEM, keyPEM string) (*Certificate, error) {
-	leaf, err := ParseCertificateOnly(certPEM)
+	leaf, blocks, err := certificates(certPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +225,7 @@ func ParseCertificate(certPEM, keyPEM string) (*Certificate, error) {
 	if !key.PublicKey.Equal(leaf.PublicKey) {
 		return nil, errors.New("the private key is not the certificate's")
 	}
-	return &Certificate{Leaf: leaf, key: key, PEM: strings.TrimSpace(certPEM) + "\n"}, nil
+	return &Certificate{Leaf: leaf, key: key, PEM: blocks}, nil
 }
 
 func parseKey(keyPEM string) (*rsa.PrivateKey, error) {

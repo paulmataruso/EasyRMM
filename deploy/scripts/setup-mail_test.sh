@@ -3,9 +3,11 @@
 # under a temporary directory, as a release unpacks it: .env's mail settings
 # (paths in the container), the files under secrets/ (root:65532, 0750 and
 # 0440), the secret in neither .env nor any command's arguments, the mail
-# options alone on an existing .env, refusals that leave .env as it was,
-# root required, --upgrade's owners and modes, and the secret asked for
-# without echo on a terminal. The credentials are stand-ins made here.
+# options alone on an existing .env, settings kept from it left as written
+# (and read so by Compose, where docker compose is here), refusals that
+# leave .env as it was, root required, nothing changed outside the data
+# root, --upgrade's owners and modes, and the secret asked for without echo
+# on a terminal. The credentials are stand-ins made here.
 #
 #   sudo deploy/scripts/setup-mail_test.sh
 set -euo pipefail
@@ -46,6 +48,10 @@ printf 'not a certificate\n' > "$creds/garbage.crt"
   openssl req -new -key app.key -subj /CN=easyrmm-mail-test -out expired.csr 2> /dev/null
   openssl ca -batch -config ca.cnf -selfsign -keyfile app.key -in expired.csr -out expired.crt \
     -startdate 20200101000000Z -enddate 20200102000000Z -notext > /dev/null 2>&1
+  # The certificate with its key in the same file, and with the text
+  # openssl pkcs12 writes before it.
+  cat app.crt app.key > with-key.crt
+  { printf 'Bag Attributes\n    friendlyName: easyrmm-mail-test\nsubject=CN=easyrmm-mail-test\n'; cat app.crt; } > with-text.crt
 )
 
 # Every command setup.sh runs logs its arguments here, to show the secret is
@@ -135,6 +141,38 @@ cmp -s "$creds/app.key" "$data/secrets/smtp-client.key" || fail "the sender alon
 setup "$d" --smtp-client-cert-file "$creds/soon.crt" --smtp-client-key-file "$creds/app.key" || fail "ending soon: $(cat "$d/err")"
 grep -qF "ends within 30 days" "$d/err" || fail "ending soon: no warning: $(cat "$d/err")"
 
+# Settings kept from .env are left as they are written there: a sender's
+# name with &, |, \, quotes and spaces, in double quotes as .env.example
+# shows it, and a comment after the host. Only the port changes, in its
+# line; .env is written whole beside the old and renamed over it, with
+# the old one's owner and mode.
+from_line='EASYRMM_SMTP_FROM="Smith & Jones | IT \\ \"Ops\" O'\''Brien <third@m365.example.com>"'
+host_line='EASYRMM_SMTP_HOST=smtp.office365.com # Exchange Online'
+grep -v -e '^EASYRMM_SMTP_FROM=' -e '^EASYRMM_SMTP_HOST=' "$d/deploy/.env" > "$work/env.odd"
+printf '%s\n' "$host_line" "$from_line" >> "$work/env.odd"
+install -m 0640 -o 0 -g 65532 "$work/env.odd" "$d/deploy/.env"
+setup "$d" --smtp-port 2525 || fail "kept as written: $(cat "$d/err")"
+expect "kept as written: the port" 2525 "$(env_of "$d" EASYRMM_SMTP_PORT)"
+grep -qxF -- "$from_line" "$d/deploy/.env" || fail "kept as written: the sender is now $(grep '^EASYRMM_SMTP_FROM=' "$d/deploy/.env")"
+grep -qxF -- "$host_line" "$d/deploy/.env" || fail "kept as written: the host is now $(grep '^EASYRMM_SMTP_HOST=' "$d/deploy/.env")"
+diff <(grep -v '^EASYRMM_SMTP_PORT=' "$work/env.odd") <(grep -v '^EASYRMM_SMTP_PORT=' "$d/deploy/.env") > /dev/null ||
+  fail "kept as written: lines other than the port's changed"
+expect "kept as written: .env's owner and mode" "0:65532 640" "$(owner_mode "$d/deploy/.env")"
+compgen -G "$d/deploy/.env.mail.*" > /dev/null && fail "kept as written: a new .env was left beside it"
+# Compose reads them as they were meant, where it is here to ask.
+if docker compose version > /dev/null 2>&1; then
+  # shellcheck disable=SC2016 # Compose expands it, not the shell.
+  printf 'services:\n  server:\n    image: scratch\n    environment:\n      FROM: ${EASYRMM_SMTP_FROM}\n' > "$work/compose.yml"
+  composed=$(cd "$d/deploy" && docker compose -p setup-mail-test -f "$work/compose.yml" --env-file .env config --environment) ||
+    fail "kept as written: Compose cannot read .env"
+  for kv in "EASYRMM_SMTP_FROM=Smith & Jones | IT \\ \"Ops\" O'Brien <third@m365.example.com>" \
+    EASYRMM_SMTP_HOST=smtp.office365.com EASYRMM_SMTP_PORT=2525; do
+    grep -qxF -- "$kv" <<< "$composed" || fail "kept as written: Compose does not read $kv"
+  done
+else
+  echo "Note: docker compose is not here, so how Compose reads .env was not checked." >&2
+fi
+
 # --- Refused, leaving .env as it was ------------------------------------------
 cp "$d/deploy/.env" "$work/env.before"
 refused "$d" "--smtp-tenant-id must be" --smtp-tenant-id "not a tenant"
@@ -144,6 +182,8 @@ refused "$d" "is empty" --smtp-client-secret-file "$creds/empty"
 refused "$d" "more than one line" --smtp-client-secret-file "$creds/two-lines"
 refused "$d" "is not a file" --smtp-client-secret-file "$creds/missing"
 refused "$d" "is not a certificate in PEM" --smtp-client-cert-file "$creds/garbage.crt" --smtp-client-key-file "$creds/app.key"
+refused "$d" "must hold PEM certificates alone" --smtp-client-cert-file "$creds/with-key.crt" --smtp-client-key-file "$creds/app.key"
+refused "$d" "must hold PEM certificates alone" --smtp-client-cert-file "$creds/with-text.crt" --smtp-client-key-file "$creds/app.key"
 refused "$d" "is not the certificate's" --smtp-client-cert-file "$creds/app.crt" --smtp-client-key-file "$creds/other.key"
 refused "$d" "the certificate expired" --smtp-client-cert-file "$creds/expired.crt" --smtp-client-key-file "$creds/app.key"
 refused "$d" "is not RSA" --smtp-client-cert-file "$creds/ec.crt" --smtp-client-key-file "$creds/ec.key"
@@ -167,6 +207,39 @@ if (cd "$d/deploy" && setpriv --reuid=65534 --regid=65534 --clear-groups ./scrip
 fi
 grep -qF "run setup.sh with sudo" "$d/err" || fail "root's .env without root: $(cat "$d/err")"
 cmp -s "$work/env.before" "$d/deploy/.env" || fail "without root, .env changed"
+
+# --- Root changes nothing outside the data root -------------------------------
+# A data root someone else can change, secrets/ as a link, a file in it
+# linked to one elsewhere: refused, before anything is written, and the
+# file elsewhere keeps its owner and mode.
+outside="$work/outside"
+mkdir -m 0755 "$outside"
+printf 'not EasyRMM'\''s\n' > "$outside/file"
+chmod 0644 "$outside/file"
+chmod 0600 "$d/deploy/.env"
+cp "$d/deploy/.env" "$work/env.before"
+chown 65534 "$data"
+refused "$d" "only root can write to" --smtp-client-secret-file "$creds/secret"
+refused "$d" "only root can write to" --upgrade
+chown 0 "$data"
+chmod 0775 "$data"
+refused "$d" "only root can write to" --smtp-client-secret-file "$creds/secret"
+chmod 0755 "$data"
+mv "$data/secrets" "$work/secrets.kept"
+ln -s "$outside" "$data/secrets"
+refused "$d" "is a symbolic link" --smtp-client-secret-file "$creds/secret"
+refused "$d" "is a symbolic link" --upgrade
+expect "secrets/ as a link: the directory it names" "0:0 755" "$(owner_mode "$outside")"
+rm "$data/secrets"
+mv "$work/secrets.kept" "$data/secrets"
+ln "$outside/file" "$data/secrets/planted"
+refused "$d" "has other links" --smtp-client-secret-file "$creds/secret"
+refused "$d" "has other links" --upgrade
+rm "$data/secrets/planted"
+expect "the file elsewhere" "0:0 644" "$(owner_mode "$outside/file")"
+cmp -s "$creds/soon.crt" "$data/secrets/smtp-client.crt" || fail "refusals outside the data root changed the certificate"
+diff <(grep '^EASYRMM_SMTP_' "$work/env.before") <(grep '^EASYRMM_SMTP_' "$d/deploy/.env") > /dev/null ||
+  fail "refusals outside the data root changed .env's mail settings"
 
 chown 0:0 "$data/secrets" "$data/secrets/smtp-client.key"
 chmod 0755 "$data/secrets"

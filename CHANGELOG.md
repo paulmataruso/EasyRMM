@@ -270,11 +270,19 @@ All notable changes to this project are documented here. The format follows
   expire and never logged. Microsoft's and Exchange's refusals are
   explained: SMTP AUTH off for the tenant or the mailbox, security
   defaults, a missing permission or service principal, a wrong secret, and
-  sending over the rate, which is tried again a minute later. **While an
+  sending over the rate: a password reset someone asked for is tried again
+  a minute later, and an invitation or password link comes back to the
+  administrator at once (the replies' texts come from Microsoft's
+  documentation, not yet checked against a real tenant). The certificate
+  must be PEM certificates alone, and only they are stored. `setup.sh`
+  leaves the settings it keeps as `.env` has them, writes `.env` whole and
+  renames it into place, and refuses a data root others can change, a
+  linked `secrets` directory, and hard-linked files in it. **While an
   application signs in, the patching engine is given no mail server, so
   patching sends no email or monthly reports** until a later release; the
-  mail server page, Settings → Patching and the log say so. For patching's
-  email meanwhile, use a relay or a password. See
+  mail server page, Settings → Patching (Notifications and Reports),
+  Reports → Monthly patch reports, a report's failed email and the log say
+  so. For patching's email meanwhile, use a relay or a password. See
   [Mail](docs/operations/mail.md#microsoft-365).
 - **`easyrmm-server mail check`** connects to the mail server in force
   and signs in, getting a token first with an application, and quits

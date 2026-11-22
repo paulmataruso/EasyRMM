@@ -89,8 +89,8 @@ type Service struct {
 	// empty. tokens keeps their tokens, one per application.
 	authority string
 	tokens    *m365.Cache
-	// rateRetry is how long account mail refused for the mail server's
-	// rate waits before it is tried once more.
+	// rateRetry is how long a reserved password reset refused for the mail
+	// server's rate waits before it is tried once more.
 	rateRetry time.Duration
 	// checked is Run's last check; kick wakes Run after a change.
 	checked lastCheck
@@ -112,9 +112,11 @@ type Service struct {
 // another server is seen within it.
 const availableFor = 5 * time.Second
 
-// rateRetry is how long account mail refused for the mail server's rate
-// waits before it is tried once more: Exchange Online counts its rate by
-// the minute.
+// rateRetry is how long a password reset someone asked for, refused for
+// the mail server's rate, waits before it is tried once more: Exchange
+// Online counts its rate by the minute. It is sent after their request is
+// answered, within the 2 minutes the reset has; nothing sent while a
+// request waits is tried again, and nothing waits across a restart.
 const rateRetry = time.Minute
 
 // New builds the service. env is .env's mail server, or nil; it is checked

@@ -221,7 +221,7 @@ func TestXOAUTH2AuthOff(t *testing.T) {
 	}
 }
 
-// Without XOAUTH2 offered, or without TLS, no token is asked for or sent.
+// Without XOAUTH2 offered, or without TLS, no token is sent.
 func TestXOAUTH2NotOffered(t *testing.T) {
 	s := newStandIn(t, false)
 	s.smtp.Set(func() { s.smtp.OfferXOAUTH2 = false })
@@ -230,8 +230,12 @@ func TestXOAUTH2NotOffered(t *testing.T) {
 		!strings.Contains(outs[0].Err.Error(), "smtp.office365.com, port 587") {
 		t.Fatalf("not offered: %v", outs[0].Err)
 	}
-	if len(s.ep.Requests()) != 0 {
-		t.Fatal("a token was asked for")
+	for _, ss := range s.smtp.Sessions() {
+		for _, c := range ss.Commands {
+			if strings.HasPrefix(c, "AUTH") {
+				t.Fatalf("sent %q", c)
+			}
+		}
 	}
 	// None is refused outright.
 	if _, err := New(Config{Host: "127.0.0.1", Port: 25, Security: None, Username: m365test.Mailbox, FromAddress: m365test.Mailbox, OAuth: s.source}); err == nil ||
@@ -248,16 +252,13 @@ func TestXOAUTH2NotOffered(t *testing.T) {
 	}
 	// A session that is somehow not over TLS never sends one.
 	sess := &session{m: &SMTP{cfg: Config{OAuth: s.source}}}
-	if err := sess.xoauth2(context.Background()); err == nil || !strings.Contains(err.Error(), "without TLS") {
+	if err := sess.xoauth2("a-token"); err == nil || !strings.Contains(err.Error(), "without TLS") {
 		t.Fatalf("without TLS: %v", err)
-	}
-	if len(s.ep.Requests()) != 0 {
-		t.Fatal("a token was asked for")
 	}
 }
 
 // The identity platform's refusal is the sending's error, named as such,
-// and nothing is sent to the mail server after its hello.
+// and the mail server is not connected to: the token comes first.
 func TestXOAUTH2TokenRefused(t *testing.T) {
 	s := newStandIn(t, false)
 	s.ep.Set(func() { s.ep.Refuse = &m365test.BadSecret })
@@ -267,12 +268,26 @@ func TestXOAUTH2TokenRefused(t *testing.T) {
 	if !errors.As(err, &te) || !strings.Contains(err.Error(), "with a Microsoft 365 application") || !strings.Contains(err.Error(), "AADSTS7000215") {
 		t.Fatalf("token refused: %v", err)
 	}
-	for _, c := range s.smtp.Sessions()[0].Commands {
-		if strings.HasPrefix(c, "AUTH") || strings.HasPrefix(c, "MAIL") {
-			t.Fatalf("sent %q", c)
-		}
+	if n := len(s.smtp.Sessions()); n != 0 {
+		t.Fatalf("%d sessions with the mail server", n)
 	}
 	s.secretsKept(t, err)
+}
+
+// A slow identity platform does not count against the mail server's time:
+// the token is got before connecting, so a token that takes longer than a
+// step may still sign in, and no connection to Exchange waits idle for it.
+func TestXOAUTH2TokenFirst(t *testing.T) {
+	s := newStandIn(t, false)
+	s.ep.Set(func() { s.ep.Delay = 1500 * time.Millisecond })
+	m := s.mailer(t, StartTLS, func(c *Config) { c.Timeout = 500 * time.Millisecond })
+	answer, err := m.Check(context.Background())
+	if err != nil || !strings.Contains(answer, "235") {
+		t.Fatalf("check after a slow token: %q, %v", answer, err)
+	}
+	if ss := s.smtp.Sessions(); len(ss) != 1 || !s.ep.Valid(ss[0].Token) {
+		t.Fatalf("sessions %+v", ss)
+	}
 }
 
 // Exchange's refusals for rate are told apart from the recipient's, and

@@ -58,6 +58,14 @@ func TestMailMicrosoft365Migration(t *testing.T) {
 		return s
 	}
 	const tenant, client = "00000000-0000-4000-8000-00000000a001", "00000000-0000-4000-8000-00000000c001"
+	// The migration just before 00035, whichever changes number theirs
+	// below it, so that down undoes 00035 alone.
+	var before int64
+	for _, src := range provider.ListSources() {
+		if src.Version < 35 && src.Version > before {
+			before = src.Version
+		}
+	}
 	app := `UPDATE mail_server SET host = 'smtp.office365.com', port = 587, security = $1, sign_in = 'microsoft365', from_address = 'rmm@example.com',
 		tenant_id = $2, client_id = $3, client_credential = $4, client_secret_sealed = $5, client_certificate = $6, client_key_sealed = $7`
 
@@ -95,7 +103,7 @@ func TestMailMicrosoft365Migration(t *testing.T) {
 
 	// Down: the application's mail server goes, the limits stay.
 	must(`UPDATE mail_server SET per_minute = 7`)
-	if _, err := provider.DownTo(ctx, 31); err != nil {
+	if _, err := provider.DownTo(ctx, before); err != nil {
 		t.Fatal(err)
 	}
 	if s := str(`SELECT host || '|' || sign_in || '|' || per_minute FROM mail_server`); s != "|none|7" {
@@ -115,7 +123,7 @@ func TestMailMicrosoft365Migration(t *testing.T) {
 	if s := str(`SELECT host || '|' || sign_in || '|' || tenant_id || '|' || client_credential FROM mail_server`); s != "smtp.example.com|password||" {
 		t.Fatalf("up again: %s", s)
 	}
-	if _, err := provider.DownTo(ctx, 31); err != nil {
+	if _, err := provider.DownTo(ctx, before); err != nil {
 		t.Fatal(err)
 	}
 	if s := str(`SELECT host || '|' || sign_in FROM mail_server`); s != "smtp.example.com|password" {

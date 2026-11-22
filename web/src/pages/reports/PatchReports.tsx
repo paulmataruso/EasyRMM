@@ -9,6 +9,7 @@ import { TimeChart, type TimeSeries } from "../../components/TimeChart";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, buttonClasses, Card, EmptyState, ErrorState, InlineError, SelectField, Segmented, Spinner, TableWrap, TextareaField, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize } from "../../lib/format";
+import { ReportMailAlert } from "./ReportMailAlert";
 import { useUrlState } from "../../lib/urlState";
 
 // The patch reports EasyRMM takes from EasyPatch: the compliance trend above the compliance
@@ -108,9 +109,12 @@ function Delivery({ report }: { report: PatchMonthlyReport }) {
       );
     case "Failed":
       return (
-        <Badge tone="danger" title={report.lastError || to}>
-          Email failed
-        </Badge>
+        <span className="flex flex-col items-start gap-1">
+          <Badge tone="danger" title={to}>
+            Email failed
+          </Badge>
+          {report.lastError && <span className="max-w-sm text-xs text-muted">{report.lastError}</span>}
+        </span>
       );
     case "Pending":
     case "Sending":
@@ -151,6 +155,7 @@ export function MonthlyReports() {
           </Button>
         )}
       </Toolbar>
+      <ReportMailAlert className="mb-4" />
       {list.isPending ? (
         <Spinner />
       ) : list.isError ? (
@@ -367,6 +372,7 @@ function EmailDialog({ report, onClose }: { report: PatchMonthlyReport | null; o
       }
     >
       <div className="flex flex-col gap-3">
+        <ReportMailAlert />
         <TextareaField
           label="Recipients"
           hint="One address per line, up to 20. Leave it empty to send to the organization's report schedule's recipients."

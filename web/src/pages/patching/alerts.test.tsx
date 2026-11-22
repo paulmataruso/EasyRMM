@@ -567,8 +567,9 @@ describe("Settings → Patching → Notifications", () => {
     );
     await open("/settings?tab=patching&view=notifications");
     const alert = (await main().findByText("Patching sends no email: the engine has no mail server")).closest<HTMLElement>(".rounded-md")!;
-    expect(within(alert).getByText(new RegExp(withheld))).toBeInTheDocument();
-    expect(within(alert).getByText(/Email channels and monthly reports do not send meanwhile/)).toBeInTheDocument();
+    // The server's reason, as it is, without a promise of its own.
+    expect(alert).toHaveTextContent(new RegExp(`^Patching sends no email: the engine has no mail server${withheld.replace(/[.]/g, "\\.")}$`));
+    expect(within(alert).queryByText(/sign-in for the patching engine/)).not.toBeInTheDocument();
     // Instead of the warning that there is no mail server at all; the email channel's badge stays.
     expect(main().getAllByText("No mail server")).toHaveLength(1);
   });

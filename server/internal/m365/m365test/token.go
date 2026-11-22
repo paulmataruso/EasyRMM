@@ -54,11 +54,13 @@ type TokenEndpoint struct {
 	Refuse *Refusal
 	// ExpiresAsString answers expires_in as a string of digits.
 	ExpiresAsString bool
-	cert            *x509.Certificate
-	issued          []string
-	requests        []url.Values
-	jtis            map[string]bool
-	n               int
+	// Delay is how long each answer takes: a slow identity platform.
+	Delay    time.Duration
+	cert     *x509.Certificate
+	issued   []string
+	requests []url.Values
+	jtis     map[string]bool
+	n        int
 }
 
 // NewTokenEndpoint starts a stand-in token endpoint over HTTPS, on
@@ -120,6 +122,14 @@ func (e *TokenEndpoint) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": rf.Error,
 			"error_description": desc + "\r\nTrace ID: 00000000-0000-0000-0000-000000000000\r\nTimestamp: 2026-11-22 00:00:00Z",
 			"error_codes":       []int{rf.Code}, "trace_id": "00000000-0000-0000-0000-000000000000"})
+	}
+	e.mu.Lock()
+	delay := e.Delay
+	e.mu.Unlock()
+	select {
+	case <-time.After(delay):
+	case <-r.Context().Done():
+		return
 	}
 	tenant, ok := strings.CutSuffix(r.URL.Path, "/oauth2/v2.0/token")
 	tenant = strings.TrimPrefix(tenant, "/")

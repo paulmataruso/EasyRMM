@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/m365"
 	"github.com/paulmataruso/easyrmm/server/internal/m365/m365test"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
@@ -212,11 +214,29 @@ func TestApplicationSends(t *testing.T) {
 	if secretRequests != 1 || len(ms.smtp.Messages()) != 3 {
 		t.Fatalf("%d token requests with the secret, %d messages", secretRequests, len(ms.smtp.Messages()))
 	}
-	// Refused for the rate: account mail is tried again after the wait.
+	// Refused for the rate: a reserved password reset, sent after its
+	// request was answered, is tried again after the wait.
 	f.svc.rateRetry = 50 * time.Millisecond
 	ms.smtp.Set(func() { ms.smtp.DataReply, ms.smtp.DataReplyTimes = m365test.ThreadLimit, 1 })
-	if err := f.svc.SendAccountMail(f.ctx, "bob@example.org", msg, mailer.AccountMail{Self: true}); err != nil {
+	room, err := f.svc.Reserve(f.ctx, mailer.AccountMail{Self: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := room.Send(f.ctx, "bob@example.org", msg); err != nil {
 		t.Fatalf("after a refusal for rate: %v", err)
+	}
+	// Account mail a request waits for (an invitation, an administrator's
+	// password link) is not: the refusal comes back at once, explained,
+	// whatever the wait.
+	f.svc.rateRetry = time.Hour
+	ms.smtp.Set(func() { ms.smtp.DataReply, ms.smtp.DataReplyTimes = m365test.ThreadLimit, 1 })
+	quick, cancel := context.WithTimeout(f.ctx, 20*time.Second)
+	defer cancel()
+	start := time.Now()
+	err = f.svc.SendAccountMail(quick, "carol@example.org", msg, mailer.AccountMail{Account: uuid.New()})
+	var re *mailer.ReplyError
+	if !errors.As(err, &re) || !re.RateLimited() || !strings.Contains(err.Error(), "at most 3 connections") || time.Since(start) > 15*time.Second {
+		t.Fatalf("an invitation refused for rate: %v after %s", err, time.Since(start))
 	}
 	// The test message is not: it shows the refusal, explained.
 	ms.smtp.Set(func() { ms.smtp.DataReply, ms.smtp.DataReplyTimes = m365test.ThreadLimit, 1 })
