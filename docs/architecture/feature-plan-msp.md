@@ -162,7 +162,7 @@ Used by features 7, 9, 12 and 8's actions. Built by feature 7.
   * **kept out of the Jobs list** by default.
 * **On ADR-0054's amendments.** ADR-0054 amends ADR-0017 with its W2:
   a batch ID, retention per kind, one audit row per organization per
-  batch, and runs the server can cancel. ADR-0054 is proposed and not
+  batch, and runs the server can cancel. ADR-0054 is accepted and not
   started: no W1 code is on `main`. W2 comes before feature 7 in the
   [order](#order), so F2 extends those per kind and does not add a
   second set; if the order changes, whichever is built first builds
@@ -979,7 +979,7 @@ review).
 ### 8. BitLocker management
 
 **What exists.**
-* Nothing reads BitLocker. ADR-0054 (proposed, not started) plans a
+* Nothing reads BitLocker. ADR-0054 (accepted, not started) plans a
   report-only `bitlocker` module for the **system volume only**: whether it
   is protected, by which protectors, the PIN policy, and whether a recovery
   password exists. No percentage, method, other volumes or suspension.
@@ -1873,8 +1873,8 @@ Let's Encrypt, the name move behind log collection).
 has H1 (#49) and H3 (#55) merged, and **H2, ADR-0051's apply and undo, is
 being built now** on `feat/linux-hardening-h2`; step 4's updater 4a is
 open as pull request #70; **step 5, Windows hardening (ADR-0054), is not
-started**: the ADR is proposed and no W1 code is on `main`. Its W1, W2
-and W3 are placed below by their dependencies.
+started**: the ADR is accepted (2026-11-22) and no W1 code is on
+`main`. Its W1, W2 and W3 are placed below by their dependencies.
 
 **ADR-0053's slices 1 and 2 are built now, beside steps 3 to 9**
 (decided in review, 2026-11-21): Microsoft turns password sign-in to
@@ -2017,7 +2017,7 @@ the same order, and only the dependencies above still hold.
   decided, with the on-host protection the keystore's ADR chooses; the
   server sees a key's plaintext in memory at escrow's check and at a
   read; script and terminal rights still reach online devices' keys.
-* **Proposed ADRs this plan builds on** (0053, 0054, 0055, 0058, 0060)
+* **Proposed ADRs this plan builds on** (0053, 0055, 0058, 0060)
   may change in review; each feature's ADR follows them, and the
   amendments above are made in those ADRs, not around them.
 * **Windows unverified** until the Windows harnesses exist: every Windows
