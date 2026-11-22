@@ -293,7 +293,9 @@ standard user can change:
   `Program Files\PowerShell\Modules` must be changeable only by
   Administrators, SYSTEM and TrustedInstaller, and none may be a link,
   junction or other reparse point. So must the module folders and
-  configuration files the run reads (below). An install that fails is not
+  configuration files the run reads (below), except that in Windows
+  PowerShell's two module folders a file may have more than one hard link,
+  as Windows keeps its own modules there. An install that fails is not
   used, and the device says which file and why.
 
 A device's **Hardware** tab lists Windows PowerShell and every PowerShell 7

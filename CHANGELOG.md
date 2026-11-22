@@ -166,7 +166,9 @@ All notable changes to this project are documented here. The format follows
   newest stable 7 or later built for the processor, and before each run
   checks that the install, the folders above it, the module folders and
   configuration files the run reads can be changed only by Administrators,
-  SYSTEM and TrustedInstaller and hold no links or junctions. Previews,
+  SYSTEM and TrustedInstaller and hold no links or junctions (except the
+  hard links Windows keeps in Windows PowerShell's own module folders). A
+  module an installer left open to users fails the run, naming it. Previews,
   32-bit builds, PowerShell 6 and Microsoft Store installs (winget's
   default since PowerShell 7.6) are listed and never run. Runs get the
   system's module folders only, and PowerShell 7's telemetry and update
