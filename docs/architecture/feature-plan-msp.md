@@ -1759,10 +1759,14 @@ from *Jobs*, with a package ID typed by hand.
       and `regsvr32`. So is `msiexec` with anything but `/x` and a GUID.
       The ADR decides between a list of refusals and a list of allowed
       forms.
-    * The uninstaller, the files beside it and its folders up to the
-      root must each pass the test ADR-0064 uses for PowerShell 7
-      (`trustedEntry` in `agent/host/system_windows.go`): the owner, who
-      may write, reparse points and hard links.
+    * The uninstaller, the files beside it and its folders up to, but
+      not including, the drive's root must each pass the test ADR-0064
+      uses for PowerShell 7 (`trustedEntry` in
+      `agent/host/system_windows.go`): the owner, who may write, reparse
+      points and hard links. The root is left out because its default
+      access list lets users add folders, though not rename or delete
+      the ones below it. A folder a user made there gives that user
+      Modify, so it fails the test itself.
   * **Only machine-wide entries (`HKLM`).** A user can write their own
     per-user entry (`HKCU`), and running its command as SYSTEM would let
     that user run anything as SYSTEM.
@@ -1840,8 +1844,9 @@ catalog and the inventory are still searched.
 * **supply chain**: community winget and Chocolatey sources; versions
   pinned where chosen;
 * **the public indexes are written by anyone**: names are shown only as
-  text, an ID is checked by the `software` kind's patterns, and an
-  index's signature is checked before it is used;
+  text, an ID is checked by the `software` kind's patterns, and each
+  index is checked before it is used, as the ADR decides: its signature
+  where it has one, and for dnf, the metalink's checksums over HTTPS;
 * **uninstall commands from the registry run as SYSTEM**: only
   machine-wide entries; the key, the uninstaller, the files beside it and
   its folders checked; interpreters and script hosts refused; the path
