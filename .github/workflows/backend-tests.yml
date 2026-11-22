@@ -231,12 +231,13 @@ jobs:
           icacls $modules /setowner '*S-1-5-32-544' /T /C /Q
           if ($LASTEXITCODE) { throw "icacls /setowner ended with $LASTEXITCODE" }
       # Both measure agent/powershell, whose Windows half only these tests
-      # reach: see its floor below.
+      # reach: see its floor below. Windows PowerShell splits an unquoted
+      # -flag=./path at its period, so the flag is quoted.
       - name: Build the tests
         run: |
-          go test -c -cover -coverpkg=./agent/powershell -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
+          go test -c -cover "-coverpkg=./agent/powershell" -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          go test -c -cover -coverpkg=./agent/powershell -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
+          go test -c -cover "-coverpkg=./agent/powershell" -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Discovery and the whole install's check, as LocalSystem
         run: |
