@@ -132,7 +132,9 @@ changes nothing. It refuses what would lock you out or stop the computer
 from starting, and says why: password sign-in off where no account that may
 sign in has an SSH key, say, or USB storage off where a mounted filesystem is
 on a USB disk. It leaves alone a firewall the computer already has. A module
-that fails part way is put back as it was. Packages a module needs
+that fails part way is put back as it was, but for packages it installed
+that cannot be removed (others need them, or the package manager fails):
+the result names those and says why. Packages a module needs
 (nftables, fail2ban, auditd, AIDE, chrony or systemd-timesyncd) come from
 the computer's own repositories, without recommended packages. AIDE's first
 database is built after the job ends, in `easyrmm-aide-init.service`; the
@@ -178,7 +180,7 @@ What each module's apply or undo did:
 | Unchanged | Everything was in place already |
 | Refused | It changed nothing, and says why |
 | Skipped | The module does not apply here, or something else manages it |
-| Failed | It could not finish, and put back what it had changed |
+| Failed | It could not finish, and put back what it had changed, but for packages it names |
 | Undone | Everything apply recorded is as it was before |
 | Partly undone | **Done** lists what was put back, and what was left and why |
 | Nothing to undo | EasyRMM has no record of applying the module on the computer |

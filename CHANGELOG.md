@@ -190,7 +190,8 @@ All notable changes to this project are documented here. The format follows
   removes auditd, where apply installed it, only when no other rules file
   needs it; `/var/lib/easyrmm/auditd-installed` remembers that EasyRMM
   installed it, for log collection to share. An area that fails part way
-  is put back as it was; a job that is killed leaves the area half
+  is put back as it was, but for packages it installed that cannot be
+  removed, which it names; a job that is killed leaves the area half
   applied, which a later apply finishes and undo reverses. Undo also runs
   on the computer without the agent:
   `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`. Each

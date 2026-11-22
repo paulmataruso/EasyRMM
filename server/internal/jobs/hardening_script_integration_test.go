@@ -56,6 +56,7 @@ func TestCheckInContainers(t *testing.T) {
 			scriptInterrupted(t, c)
 			scriptFailures(t, c)
 			scriptPackagesLeft(t, c)
+			scriptRollbackLeaves(t, c)
 			scriptPlatforms(t, c)
 		})
 	}
@@ -594,6 +595,38 @@ func scriptPackagesLeft(t *testing.T, c *scriptContainer) {
 		}
 		c.wantGone(t, stateDir)
 	}
+}
+
+// scriptRollbackLeaves: a module that fails after installing a package,
+// whose rollback cannot remove it, says the package stays and why rather
+// than that everything was put back. A stand-in apt-get, first in the
+// script's PATH, installs a package built in the container in place of
+// AIDE, fails, and refuses to remove it. Only where dpkg-deb can build one
+// offline (Debian and Ubuntu).
+func scriptRollbackLeaves(t *testing.T, c *scriptContainer) {
+	if !c.has(t, "dpkg-deb") {
+		return
+	}
+	c.sh(t, "rm -rf "+stateDir+" /tmp/easyrmm-test-pkg && mkdir -p /tmp/easyrmm-test-pkg/DEBIAN && "+
+		"printf 'Package: easyrmm-test-pkg\\nVersion: 1\\nArchitecture: all\\nMaintainer: EasyRMM tests <tests@example.invalid>\\nDescription: a stand-in\\n' "+
+		">/tmp/easyrmm-test-pkg/DEBIAN/control && dpkg-deb --build /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb >/dev/null && "+
+		"printf '%s\\n' '#!/bin/sh' 'case \" $* \" in' "+
+		`'*" -s "*) exec /usr/bin/apt-get "$@" ;;' `+
+		`'*" update "*) exit 0 ;;' `+
+		`'*" install "*) dpkg -i /tmp/easyrmm-test-pkg.deb >/dev/null; echo "E: stopped by the test" >&2; exit 100 ;;' `+
+		`'*" remove "*) echo "E: refused by the test" >&2; exit 100 ;;' `+
+		"'esac' 'exec /usr/bin/apt-get \"$@\"' >/usr/local/sbin/apt-get && chmod 0755 /usr/local/sbin/apt-get")
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "integrity"), HardeningApply, []string{"integrity"}), "integrity")
+	c.sh(t, "rm -f /usr/local/sbin/apt-get")
+	const want = "AIDE could not be installed: E: stopped by the test; what this run changed was put back, but the packages it installed " +
+		"(easyrmm-test-pkg) stay: the package manager could not remove them: E: refused by the test."
+	if m.Outcome != HardeningOutcomeFailed || m.OutcomeReason != want || m.Recorded {
+		t.Errorf("a failed apply whose package stays: %+v, want %q", m, want)
+	}
+	if got := strings.TrimSpace(c.sh(t, "dpkg-query -W -f='${Status}' easyrmm-test-pkg")); got != "install ok installed" {
+		t.Errorf("the package the stand-in installed: %q", got)
+	}
+	c.sh(t, "dpkg --purge easyrmm-test-pkg >/dev/null && rm -rf "+stateDir+" /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb")
 }
 
 type scriptContainer struct {

@@ -270,9 +270,12 @@ or Kubernetes installed later.
   whose configuration files were left from an earlier removal, which is
   only removed. A package an installation upgraded as a dependency stays
   upgraded: it was there before. A removal the package manager fails
-  leaves the packages, and the result gives its reason. Undo removes
-  auditd only where `/var/lib/easyrmm/auditd-installed` says EasyRMM
-  installed it, and only when no rules file is left in
+  leaves the packages, and the result gives its reason. *Amended
+  2026-11-22:* a module that fails after installing packages removes them
+  by the same rule as it is put back, and its failure names the packages
+  that stay and why, rather than saying that everything was put back.
+  Undo removes auditd only where `/var/lib/easyrmm/auditd-installed` says
+  EasyRMM installed it, and only when no rules file is left in
   `/etc/audit/rules.d/` but those the audit package shipped, unchanged:
   then its packages and the marker go. A rules file from anyone else (log
   collection's among them) keeps auditd installed and running, and the

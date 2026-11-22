@@ -2412,14 +2412,28 @@ tx_save() {
 	fi
 }
 # tx_rollback: puts back what this run changed, and the record as it was.
+# TX_LEFT names the packages this run installed that stay, and why:
+# removing them would remove others, or the package manager failed (one
+# this run stopped part way leaves dpkg interrupted).
 tx_rollback() {
+	TX_LEFT=
 	tr_oifs=$IFS
 	IFS=$nl
 	set -f
 	for tr_c in $TX_STACK; do
 		IFS=$tr_oifs
 		set +f
-		eval "$tr_c" >/dev/null 2>&1
+		PKG_ERR=
+		eval "$tr_c" >/dev/null 2>&1 && tr_rc=0 || tr_rc=$?
+		case $tr_c in 'pkg_remove_alone '*)
+			tr_p=$(printf '%s' "${tr_c#pkg_remove_alone }" | sed 's/=rc//g')
+			case $tr_rc in
+			0) ;;
+			1) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay, because removing them would remove other packages too" ;;
+			*) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay: the package manager could not remove them$(pkg_why)" ;;
+			esac
+			;;
+		esac
 		IFS=$nl
 		set -f
 	done
@@ -2439,6 +2453,10 @@ tx_rollback() {
 	fi
 	INTENT=no
 }
+# sentence TEXT: TEXT ending in one full stop.
+sentence() { printf '%s' "$1" | sed 's/[[:space:].]*$/./'; }
+# tx_left_note: after a rollback that left packages, says so.
+tx_left_note() { [ -z "$TX_LEFT" ] || sentence " What this run changed was put back, but $TX_LEFT"; }
 
 # abort REASON [COMMAND]: the module failed; what this run changed is put
 # back (then COMMAND runs, to reload what reads the files put back).
@@ -2447,14 +2465,15 @@ abort() {
 	[ $# -lt 2 ] || eval "$2" >/dev/null 2>&1
 	M_DONE=
 	M_OUTCOME=failed
-	M_WHY="$1; what this run changed was put back."
+	M_WHY=$(sentence "$1; what this run changed was put back${TX_LEFT:+, but $TX_LEFT}")
 }
-# refuse REASON: a guard refused the module; nothing is left changed.
+# refuse REASON: a guard refused the module; nothing is left changed but
+# packages its rollback could not remove.
 refuse() {
 	tx_rollback
 	M_DONE=
 	M_OUTCOME=refused
-	M_WHY=$1
+	M_WHY=$1$(tx_left_note)
 }
 
 # put_copy COPY PATH: puts a kept copy back, with its mode and owner.
@@ -3101,7 +3120,7 @@ apply_firewall() {
 		tx_rollback
 		M_DONE=
 		M_OUTCOME=skipped
-		M_WHY="EasyRMM leaves this computer's firewall alone: $(printf '%s\n' "$af_else" | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')."
+		M_WHY="EasyRMM leaves this computer's firewall alone: $(printf '%s\n' "$af_else" | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g').$(tx_left_note)"
 		return
 	fi
 	if have sshd && [ -z "$(sshd_ports)" ]; then
