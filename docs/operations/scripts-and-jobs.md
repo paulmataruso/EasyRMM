@@ -128,6 +128,55 @@ runs themselves ([ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arg
   the output.
 * **Output is kept for less time than the job**: see [Retention](#retention).
 
+### Downloading output and results
+
+Output and results can be downloaded as files
+([ADR-0064](../architecture/adr/0064-remote-powershell-management.md)).
+Each output download is a read like opening the run's page: it needs
+`job.view_sensitive` at the run's site and is recorded, each time, as
+*Downloaded job output*, with what was downloaded.
+
+| Where | Button | What you get | Needs |
+| --- | --- | --- | --- |
+| A run's page, beside **Copy** on a stream | **Download** | That stream as a text file | `job.view_sensitive` at the run's site |
+| A run's page, on the Output card | **Download run** | The run as JSON: device, organization, site, script, SHA-256, shell, status, exit code, error, times, and both streams | `job.view_sensitive` at the run's site |
+| A job's page, on the Devices card | **Download output (ZIP)** | A folder for each finished run you may read (`stdout.txt`, `stderr.txt`, `result.json`), and `runs.csv` listing every run you see and whether its output is in the archive | `job.view_sensitive` at the site of at least one finished run |
+| A job's page, on the Devices card | **Download results (CSV)** | One row per run you see: device, organization, site, status, exit code, error, times and run ID. **No output** | `job.view` |
+
+* **The archive records before it sends.** Opening the archive records one
+  *Downloaded job output* for each run whose output goes in, and commits
+  those records before the first byte is sent; if they cannot be written,
+  nothing is sent. Runs at sites where you lack `job.view_sensitive` are
+  listed in `runs.csv` as *Hidden: needs permission to see job output*,
+  without their files. A run whose output is removed between the records
+  and its turn in the archive, or that is purged or moved to a site where
+  you may not read it meanwhile, is listed as *Removed*, without its
+  files. A run that printed nothing has empty files and no record. The
+  records let the archive read the output for a day; the database's clock
+  dates them and decides.
+* **Six archives at once, then one every 10 seconds.** Each person may
+  download six jobs' archives at once, then one every 10 seconds: up to 11
+  in the first minute, and six a minute after that. Another is answered
+  *429 Too Many Requests* with `Retry-After: 10` before anything is read
+  or recorded; the browser shows that download as failed, and it works
+  again a few seconds later. Each archive writes up to 500 audit records,
+  which is what the limit bounds. Each server process keeps the limit in
+  memory: restarting the server starts it again, and with several servers
+  each allows that much.
+* **Refusals.** Someone without `job.view_sensitive` anywhere in the job is
+  refused the archive, recorded as *Denied* on the job under each
+  organization of the runs they see, within the bound above.
+* **The results are an export**, recorded as *Downloaded job results* once
+  for each organization whose runs they hold, under the site when those
+  runs share one. Cells that a spreadsheet would read as a formula start
+  with an apostrophe, as in [reports](reports.md).
+* **File names** are made of the device name (letters, digits, `.`, `_`
+  and `-`; anything else becomes `_`) and the run's ID, so two devices of
+  the same name never collide.
+* **A downloaded file is outside EasyRMM.** Removing a run's output or
+  retention emptying it does not reach copies already downloaded; treat a
+  secret in a download as you would one in the output.
+
 **Never print secrets** (passwords, tokens, keys, recovery passwords) in a
 script's output if you can avoid it. Everyone who holds `job.view_sensitive`
 in the site can read them until the output is removed, backups keep them,

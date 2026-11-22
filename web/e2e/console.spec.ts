@@ -5,7 +5,9 @@
 // The suite is one ordered story because each step builds on the server state of the last.
 
 import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { inflateRawSync } from "node:zlib";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { Agent, deviceKey } from "./agent";
 import { enrollAuthenticator, nextCode } from "./authenticator";
 
@@ -374,6 +376,31 @@ test("a hardening check runs through the device's agent; its findings show on th
 /** A secret a script is given and prints back: only those who may see job output and arguments ever receive it. */
 const MARKER = `e2e-secret-${Date.now().toString(36)}`;
 
+/** Clicks a download link and returns the file the browser saved. */
+async function download(page: Page, link: Locator): Promise<{ name: string; body: Buffer }> {
+  const [file] = await Promise.all([page.waitForEvent("download"), link.click()]);
+  return { name: file.suggestedFilename(), body: await readFile(await file.path()) };
+}
+
+/** The files of a ZIP archive, by name: enough of the format for the server's archives (stored or deflated, no ZIP64). */
+function unzip(zip: Buffer): Record<string, string> {
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = zip.readUInt16LE(end + 10);
+  let at = zip.readUInt32LE(end + 16);
+  const files: Record<string, string> = {};
+  for (let i = 0; i < count; i++) {
+    const method = zip.readUInt16LE(at + 10);
+    const size = zip.readUInt32LE(at + 20);
+    const [nameLen, extraLen, commentLen] = [zip.readUInt16LE(at + 28), zip.readUInt16LE(at + 30), zip.readUInt16LE(at + 32)];
+    const local = zip.readUInt32LE(at + 42);
+    const data = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    const raw = zip.subarray(data, data + size);
+    files[zip.subarray(at + 46, at + 46 + nameLen).toString("utf8")] = (method === 8 ? inflateRawSync(raw) : raw).toString("utf8");
+    at += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+
 /** Accepts an invitation, sets the password, signs in and enrolls an authenticator. */
 async function acceptInvitation(page: Page, link: string, who: { email: string; password: string }) {
   await page.goto(`/welcome${new URL(link).hash}`);
@@ -446,15 +473,22 @@ test("a script's output and arguments reach only those who may see them, and eve
   await reader.goto(jobPath);
   await expect(reader.getByRole("heading", { name: "Print the token" })).toBeVisible();
   await expect(reader.getByText("1 argument. Hidden: needs permission to see job arguments")).toBeVisible();
+  // The results hold no output, so they are offered; the output archive is not.
+  await expect(reader.getByRole("link", { name: "Download results (CSV)" })).toBeVisible();
+  await expect(reader.getByRole("link", { name: "Download output (ZIP)" })).toHaveCount(0);
   await reader.getByRole("table").getByRole("link", { name: "dt-reception-01" }).click();
   await expect(reader).toHaveURL(new RegExp(`${runPath}$`));
   await expect(reader.getByText("Hidden: needs permission to see job output")).toBeVisible();
   await expect(reader.getByText("Succeeded").first()).toBeVisible();
+  await expect(reader.getByRole("link", { name: /^Download/ })).toHaveCount(0);
   // Asking the API directly is refused, and the refusal is recorded. (The body is read, so the browser finishes the
   // response and the listener above gets it.)
   const status = (path: string) => reader.evaluate(async (p) => { const r = await fetch(p); await r.text(); return r.status; }, path);
   expect(await status(`/api/v1/job-runs/${job!.runId}/output`)).toBe(403);
   expect(await status(`/api/v1/jobs/${job!.jobId}/arguments`)).toBe(403);
+  expect(await status(`/api/v1/job-runs/${job!.runId}/output?download=json`)).toBe(403);
+  expect(await status(`/api/v1/jobs/${job!.jobId}/output.zip`)).toBe(403);
+  expect(await status(`/api/v1/jobs/${job!.jobId}/runs.csv`)).toBe(200);
   reader.removeAllListeners("response");
   const received = await Promise.all(answers);
   expect(received.length).toBeGreaterThan(5);
@@ -463,9 +497,23 @@ test("a script's output and arguments reach only those who may see them, and eve
 
   // The technician holds job.view_sensitive at the site: the job's page shows the argument, the run's page the output.
   await expect(tech.getByText(MARKER)).toBeVisible();
+  // The job's output as an archive holds what the run printed; its results do not (ADR-0064).
+  const archive = await download(tech, tech.getByRole("link", { name: "Download output (ZIP)" }));
+  expect(archive.name).toBe(`Print_the_token_${job!.jobId}_output.zip`);
+  const files = unzip(archive.body);
+  expect(files[`dt-reception-01_${job!.runId}/stdout.txt`]).toBe(`token=${MARKER}\n`);
+  expect(files["runs.csv"]).toContain(`Succeeded,0,,`);
+  const results = await download(tech, tech.getByRole("link", { name: "Download results (CSV)" }));
+  expect(results.name).toBe(`Print_the_token_${job!.jobId}_results.csv`);
+  expect(results.body.toString("utf8")).toContain(job!.runId);
+  expect(results.body.toString("utf8")).not.toContain(MARKER);
   await tech.getByRole("table").getByRole("link", { name: "dt-reception-01" }).click();
   await expect(tech.getByText(`token=${MARKER}`)).toBeVisible();
-  await expect(tech.getByText("Opening a run’s output is recorded in the audit log.")).toBeVisible();
+  await expect(tech.getByText("Opening or downloading a run’s output is recorded in the audit log, each time.")).toBeVisible();
+  // The run as a file, with both streams.
+  const runFile = await download(tech, tech.getByRole("link", { name: "Download run" }));
+  expect(runFile.name).toBe(`dt-reception-01_${job!.runId}.json`);
+  expect(JSON.parse(runFile.body.toString("utf8"))).toMatchObject({ runId: job!.runId, status: "succeeded", stdout: `token=${MARKER}\n`, stderr: "" });
   // Once the secret is used, the technician removes it.
   await tech.getByRole("button", { name: "Remove output" }).click();
   const remove = tech.getByRole("dialog", { name: "Remove this run's output?" });
@@ -482,11 +530,16 @@ test("a script's output and arguments reach only those who may see them, and eve
   await expect(viewed.filter({ hasText: TECH.email })).toHaveCount(1);
   await expect(viewed.filter({ hasText: READER.email })).toContainText("Denied");
   await expect(viewed.first()).toContainText("Print the token on dt-reception-01");
+  // Each download is a read of its own: the archive's and the run's.
+  await expect(page.getByRole("row", { name: /Downloaded job output/ }).filter({ hasText: TECH.email })).toHaveCount(2);
   await expect(page.getByRole("row", { name: /Removed job output/ }).filter({ hasText: TECH.email })).toHaveCount(1);
   await page.getByLabel("Area").selectOption({ label: "Jobs" });
   const args = page.getByRole("row", { name: /Viewed job arguments/ });
   await expect(args.filter({ hasText: TECH.email })).toHaveCount(1);
   await expect(args.filter({ hasText: READER.email })).toContainText("Denied");
+  const exported = page.getByRole("row", { name: /Downloaded job results/ });
+  await expect(exported.filter({ hasText: TECH.email })).toHaveCount(1);
+  await expect(exported.filter({ hasText: READER.email })).toHaveCount(1);
   await expect(page.getByText(MARKER)).toHaveCount(0);
 });
 

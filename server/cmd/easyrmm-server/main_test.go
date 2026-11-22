@@ -8,7 +8,11 @@ import (
 	"testing"
 )
 
-func freeAddr(t *testing.T) string {
+// unusedAddr returns a loopback address nothing is expected to listen on,
+// for a service the test leaves unreachable: its port was free when picked
+// and is closed again. Never for the server under test, which picks its
+// own ports (serverListeners).
+func unusedAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -59,7 +63,7 @@ func TestHealthcheck(t *testing.T) {
 	if got := run([]string{"healthcheck"}); got != 1 {
 		t.Fatalf("unready server: %d", got)
 	}
-	for _, addr := range []string{"10.1.2.3:18081", "example.com:18081", "nonsense", freeAddr(t)} {
+	for _, addr := range []string{"10.1.2.3:18081", "example.com:18081", "nonsense", unusedAddr(t)} {
 		t.Setenv("EASYRMM_LISTEN_HEALTH", addr)
 		if got := run([]string{"healthcheck"}); got != 1 {
 			t.Errorf("healthcheck against %q = %d, want 1", addr, got)

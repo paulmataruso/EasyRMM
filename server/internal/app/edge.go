@@ -39,6 +39,13 @@ type edge struct {
 	servers []*http.Server
 }
 
+// listen opens every listener the server serves on: the edge's and the
+// health endpoint's. This package's tests replace it once, at start-up, to
+// hand the server listeners they opened beforehand (listen_test.go).
+var listen = func(ctx context.Context, addr string) (net.Listener, error) {
+	return (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+}
+
 // knownHost reports whether host (without port) is one we serve.
 func knownHost(cfg *config.Config, host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
@@ -155,7 +162,7 @@ func (e *edge) run(ctx context.Context) error {
 
 	errc := make(chan error, len(e.servers))
 	for _, s := range e.servers {
-		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.Addr)
+		ln, err := listen(ctx, s.Addr)
 		if err != nil {
 			e.shutdown()
 			return fmt.Errorf("listening on %s: %w", s.Addr, err)
