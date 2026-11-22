@@ -225,7 +225,7 @@ describe("device hardware", () => {
     const unlistedCard = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
     const unlistedRows = within(unlistedCard.querySelector("tbody") as HTMLElement).getAllByRole("row");
     expect(unlistedRows[1]).toHaveTextContent(/^PowerShellFound, not usableCould not be checked: open C:\\Program Files\\PowerShell: /);
-    expect(within(unlistedCard).getByText(/a file of it is open in another program or could not be checked/)).toBeInTheDocument();
+    expect(within(unlistedCard).getByText(/a file of it is open in another program, has more than one hard link or could not be checked/)).toBeInTheDocument();
     expect(within(unlistedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
     fourth.unmount();
 

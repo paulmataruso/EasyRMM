@@ -172,17 +172,20 @@ func system32() string {
 // candidates lists the PowerShell 7 installs in roots with what their files
 // say of them, those a run may choose marked usable before anything is
 // checked (assess), in the order a run prefers them. What could not be
-// read is listed blocked (unread), and the first such error is returned.
-func candidates(roots []string, native string) (list []agentproto.PowerShellInstall, blocked error) {
+// read, a version that is not one included, is listed blocked (unread,
+// assess), and the error a run fails with is put in blocked by its path.
+func candidates(roots []string, native string) (list []agentproto.PowerShellInstall, blocked map[string]error) {
+	blocked = map[string]error{}
 	for _, root := range roots {
-		found, err := installsIn(root)
-		list = append(list, found...)
-		blocked = cmp.Or(blocked, err)
+		list = append(list, installsIn(root, blocked)...)
 		list = append(list, storeInstallsIn(root)...)
 	}
 	for i := range list {
-		if list[i].Reason == "" {
-			assess(&list[i], native)
+		if list[i].Reason != "" {
+			continue
+		}
+		if err := assess(&list[i], native); err != nil {
+			blocked[list[i].Path] = err
 		}
 	}
 	order(list, native)
@@ -193,24 +196,22 @@ func candidates(roots []string, native string) (list []agentproto.PowerShellInst
 // say of them. Only a folder that is not there is not looked in, and only
 // an install folder without pwsh.exe is not listed (notThere). A folder
 // that cannot be listed, or a pwsh.exe that cannot be read, is listed
-// blocked (unread), and the first such error is returned: anyone who may
-// read a file can keep the agent from reading it, holding it open or
-// locking it, and would otherwise choose where pwsh scripts run (ADR-0064).
-func installsIn(root string) ([]agentproto.PowerShellInstall, error) {
+// blocked (unread), with the error a run fails with put in blocked by its
+// path: anyone who may read a file can keep the agent from reading it,
+// holding it open or locking it, and would otherwise choose where pwsh
+// scripts run (ADR-0064).
+func installsIn(root string, blocked map[string]error) []agentproto.PowerShellInstall {
 	folder := filepath.Join(root, "PowerShell")
 	entries, err := os.ReadDir(folder)
 	if notThere(err) {
-		return nil, nil
+		return nil
 	}
 	if err != nil {
 		p := agentproto.PowerShellInstall{Edition: agentproto.EditionCore, Path: folder}
-		err = unread(&p, err)
-		return []agentproto.PowerShellInstall{p}, err
+		blocked[folder] = unread(&p, err)
+		return []agentproto.PowerShellInstall{p}
 	}
-	var (
-		out     []agentproto.PowerShellInstall
-		blocked error
-	)
+	var out []agentproto.PowerShellInstall
 	for _, e := range entries {
 		preview, ok := installFolder(e.Name())
 		if !ok {
@@ -222,11 +223,11 @@ func installsIn(root string) ([]agentproto.PowerShellInstall, error) {
 		}
 		p, err := read(path, preview, false)
 		if err != nil {
-			blocked = cmp.Or(blocked, unread(&p, err))
+			blocked[path] = unread(&p, err)
 		}
 		out = append(out, p)
 	}
-	return out, blocked
+	return out
 }
 
 // notThere reports whether err says that a file or folder is not there,
@@ -381,23 +382,29 @@ func (c *checked) release() {
 // check checks an install a run could choose, as a run does (ADR-0064):
 // the install itself (checkInstall), then what a run of it loads from
 // outside it (checkModules). An install whose own check finds an entry that
-// others may change, or that is a link, is marked not used (a definite
-// host.Untrusted), and nil is returned: a run tries the next one, or falls
-// back to Windows PowerShell where the script allows it. Every other
-// failure marks it blocked, not usable, and is returned: a run tries the
-// next install, and fails, without the fallback, where none passes. That is
-// a file of the install open in another program (host.Untrusted.Busy), or
-// an install that could not be checked, both of which anyone who may read
-// its files can cause and would otherwise choose where scripts run; and
-// module folders or a configuration that fail, since Windows PowerShell
-// loads from Windows PowerShell's folders too. hold keeps the install's
-// program and libraries open while the result is used (checkInstall).
+// others may change, that no trusted account owns, that is a link, or whose
+// access list keeps the agent out is marked not used (host.Untrusted), and
+// nil is returned: a run tries the next one, or falls back to Windows
+// PowerShell where the script allows it. Every other failure marks it
+// blocked, not usable, and is returned: a run tries the next install, and
+// fails, without the fallback, where none passes. That is a file of the
+// install open in another program (host.Untrusted.Busy), which anyone who
+// may read it can cause; one with a second hard link
+// (host.Untrusted.Linked), which some Windows builds may let them make; an
+// install that could not be checked, which they can cause too: each would
+// otherwise let them choose where scripts run. So are module folders or a
+// configuration that fail, since Windows PowerShell loads from Windows
+// PowerShell's folders too. hold keeps the install's program and libraries
+// open while the result is used (checkInstall).
 func check(p *agentproto.PowerShellInstall, hold bool) (*checked, error) {
 	held, err := checkInstall(p.Path, hold)
 	var u *host.Untrusted
 	switch {
 	case errors.As(err, &u) && u.Busy:
 		p.Usable, p.Blocked, p.Reason = false, true, u.Path+" "+u.Reason+busySuffix
+		return nil, err
+	case errors.As(err, &u) && u.Linked:
+		p.Usable, p.Blocked, p.Reason = false, true, u.Path+" "+u.Reason+linkedSuffix
 		return nil, err
 	case errors.As(err, &u):
 		p.Usable, p.Reason = false, u.Path+" "+u.Reason+": not used, since what it runs and loads must be changeable by administrators only."
@@ -604,6 +611,10 @@ func notChecked(path string, err error) error {
 // program.
 const busySuffix = ": not used while it is, since anyone who may read the file can hold it so. Close that program or restart the computer. Scripts that allow Windows PowerShell 5.1 do not run in it instead."
 
+// linkedSuffix ends the reason of an install with a file that has more
+// than one hard link.
+const linkedSuffix = ": not used while it has, since some Windows builds may let anyone who may read the file link to it. List its links with fsutil hardlink list and delete the others. Scripts that allow Windows PowerShell 5.1 do not run in it instead."
+
 // blockedReason says why an install whose own files pass is not used:
 // what a run of it would load does not.
 func blockedReason(err error) string {
@@ -638,19 +649,21 @@ func (r *Run) Release() { r.held.Close() }
 // ForRun chooses the PowerShell 7 a pwsh run uses from roots: the first, in
 // the order a run prefers them, that passes check, its program and
 // libraries held open until Release. An install that is blocked (check,
-// installsIn) is passed over for the next one that passes every check;
-// where none does, the run fails with the first blocked one's error, which
-// a script may not fall back from. Where none is blocked either, it returns
-// a *NotFound, which a script may fall back from (ForFallback).
+// candidates) is passed over for the next one that passes every check;
+// where none does, the run fails with the error of the blocked install the
+// inventory lists first (order: by path), which a script may not fall back
+// from. Where none is blocked either, it returns a *NotFound, which a
+// script may fall back from (ForFallback).
 func ForRun(roots []string) (*Run, error) {
-	list, blocked := candidates(roots, nativeArch())
+	native := nativeArch()
+	list, blocked := candidates(roots, native)
 	for i := range list {
 		if !list[i].Usable {
 			continue
 		}
 		c, err := check(&list[i], true)
 		if err != nil {
-			blocked = cmp.Or(blocked, err)
+			blocked[list[i].Path] = err
 			continue
 		}
 		if c == nil {
@@ -663,8 +676,11 @@ func ForRun(roots []string) (*Run, error) {
 			held:        c.held,
 		}, nil
 	}
-	if blocked != nil {
-		return nil, fmt.Errorf("%w; the script was not run", blocked)
+	order(list, native)
+	for _, p := range list {
+		if err := blocked[p.Path]; err != nil {
+			return nil, fmt.Errorf("%w; the script was not run", err)
+		}
 	}
 	looked := make([]string, len(roots))
 	for i, r := range roots {
@@ -738,8 +754,10 @@ func configured(file, def string, lookup func(string) (string, bool)) ([]string,
 		if err := host.CheckEntry(dir, false); err != nil {
 			return nil, fail(err)
 		}
+	} else if !notThere(err) {
+		return nil, fail(err)
 	}
-	if _, err := os.Lstat(file); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(file); notThere(err) {
 		return []string{def}, nil
 	} else if err != nil {
 		return nil, err

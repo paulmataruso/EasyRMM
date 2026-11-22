@@ -127,14 +127,21 @@ func TestAssess(t *testing.T) {
 		{"a preview folder", agentproto.PowerShellInstall{Edition: agentproto.EditionCore, Version: "7.6.10", Arch: "x64", Preview: true}, "x64", reasonPreview},
 	} {
 		in := c.in
-		in.Usable, in.Reason = !c.in.Usable, "left over"
-		assess(&in, c.native)
-		if in.Usable != (c.reason == "") || in.Reason != c.reason {
-			t.Errorf("%s: usable %v, reason %q", c.name, in.Usable, in.Reason)
+		in.Usable, in.Blocked, in.Reason = !c.in.Usable, true, "left over"
+		err := assess(&in, c.native)
+		blocked := c.reason == reasonVersion
+		if in.Usable != (c.reason == "") || in.Blocked != blocked || in.Reason != c.reason || (err != nil) != blocked {
+			t.Errorf("%s: usable %v, blocked %v, reason %q, error %v", c.name, in.Usable, in.Blocked, in.Reason, err)
 		}
 	}
+	// A version that is not one blocks, as what could not be read does: a
+	// run fails, naming it, and does not fall back (ADR-0064).
+	bad := core("7.x", "x64")
+	if err := assess(&bad, "x64"); err == nil || err.Error() != `the version of C:\Program Files\PowerShell\7\pwsh.exe, "7.x", could not be read` {
+		t.Errorf("a version that is not one: %v", err)
+	}
 	pre := agentproto.PowerShellInstall{Edition: agentproto.EditionCore, Version: "7.7.0-preview.5", Arch: "x64"}
-	if assess(&pre, "x64"); !pre.Preview {
+	if err := assess(&pre, "x64"); err != nil || !pre.Preview {
 		t.Error("a prerelease label does not make a preview")
 	}
 }
@@ -178,7 +185,9 @@ func TestOrder(t *testing.T) {
 		l := list()
 		for i := range l {
 			if l[i].Edition == agentproto.EditionCore && l[i].Reason == "" {
-				assess(&l[i], native)
+				if err := assess(&l[i], native); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		order(l, native)

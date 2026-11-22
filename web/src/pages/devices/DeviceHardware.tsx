@@ -133,9 +133,10 @@ function PowerShellCard({ installs }: { installs: PowerShellInstall[] | undefine
       {blocked && (
         <p className="border-t border-line px-4 py-3 text-xs text-muted">
           PowerShell 7 was found, not usable, as its reason says: what it would load fails the agent&rsquo;s check, or a file of it is open in
-          another program or could not be checked. PowerShell 7 scripts fail here, and do not run in Windows PowerShell 5.1 instead: Windows
-          PowerShell loads from the same module folders, and anyone who may read a file can hold it open. Make what the reason names changeable by
-          administrators only, or close the program that holds it (restarting the computer does); the next inventory shows the result.
+          another program, has more than one hard link or could not be checked. PowerShell 7 scripts fail here, and do not run in Windows
+          PowerShell 5.1 instead: Windows PowerShell loads from the same module folders, and anyone who may read a file can hold it open. Make
+          what the reason names changeable by administrators only, close the program that holds it (restarting the computer does), or delete the
+          other links; the next inventory shows the result.
         </p>
       )}
       {!chosen && !blocked && (

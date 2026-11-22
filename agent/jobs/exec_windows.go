@@ -42,14 +42,19 @@ func Accepts() []string { return []string{agentproto.CapJobPwsh} }
 var pwshRoots = powershell.Roots
 
 // interpreter finds a shell's program: Windows PowerShell 5.1 and cmd.exe,
-// both part of Windows, or for pwsh the PowerShell 7 chosen at this moment,
-// its install and module folders checked, and its program and libraries
-// held open until the run's process is created (ADR-0064). Where none is
-// usable a pwsh script runs in Windows PowerShell 5.1 if it allows that,
+// both part of Windows, or for pwsh the PowerShell 7 chosen at this moment:
+// the first, in the order a run prefers them, that passes every check of
+// its install and module folders, its program and libraries held open until
+// the run's process is created (ADR-0064). A blocked install is passed over
+// for the next one that passes, which only administrators can change, as
+// any install a run uses: one that could not be listed or read, whose
+// version is not one, with a file open in another program or with a second
+// hard link, or whose own files pass but what it would load fails. Where
+// none passes and one is blocked, the script fails, naming the blocked one
+// the inventory lists first, whatever it allows. Where none is blocked
+// either, a pwsh script runs in Windows PowerShell 5.1 if it allows that,
 // recorded as a fallback, with a module path of checked folders only
-// (fallback), and fails if not; where an install is blocked, its own files
-// passing but what it would load failing, or a file of it open in another
-// program, the script fails either way.
+// (fallback), and fails if not.
 func interpreter(p agentproto.JobPayload) (program, error) {
 	switch p.Shell {
 	case agentproto.ShellPowerShell:

@@ -69,7 +69,8 @@ type PowerShellInstall struct {
 	// Blocked says it is not usable, and that a run does not fall back
 	// from it: what a run of it would load from outside it, its module
 	// folders or its configuration, fails the agent's check, or a file of
-	// it is open in another program, or it could not be read or checked;
+	// it is open in another program or has more than one hard link, or its
+	// version is not a version, or it could not be read or checked;
 	// Path is then the folder installs are in where that folder could not
 	// be listed. A run moves to another install only where one passes
 	// every check; otherwise it fails, and a script that allows Windows

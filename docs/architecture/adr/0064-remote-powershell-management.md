@@ -399,12 +399,13 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     * nothing there: `Program Files\PowerShell` does not exist
       (`ERROR_FILE_NOT_FOUND` or `ERROR_PATH_NOT_FOUND`), or a folder in
       it has no `pwsh.exe`;
-    * a definite reason not to use an install that was read: a Store
-      install, a preview, version 6, an x86 build or one for another
-      architecture, or an entry of the install that others may change,
-      that no trusted account owns, that is a link, junction or other
-      reparse point, that has more than one hard link, or whose access
-      list keeps the agent out, which only its owner can have set.
+    * a definite reason not to use an install that was read, one that a
+      user who is not an administrator cannot cause: a Store install, a
+      preview, version 6, an x86 build or one for another architecture,
+      or an entry of the install that others may change, that no trusted
+      account owns, that is a link, junction or other reparse point, or
+      whose access list keeps the agent out, which only its owner can
+      have set.
 
     Everything else blocks: a file of the install open in another
     program; `Program Files\PowerShell` that cannot be listed, held open
@@ -412,7 +413,17 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     cannot be read, held open with no sharing or its header locked; a
     file or folder of the install that cannot be opened or listed while it
     is checked, a folder held open with no sharing for one; and a module
-    folder or configuration file that fails (below). The inventory lists
+    folder or configuration file that fails (below). *Amended after the
+    fourth review of PR #90 (decided in review):* so do a file of the
+    install with more than one hard link, and a `pwsh.exe` whose version
+    was read but is not a version, both of which let a run fall back
+    before. Which Windows builds let a user who is not an administrator
+    link to a file they may only read has not been confirmed, and
+    Windows Server 2016 and 2019 are in the support matrix: such a user
+    holding a link to `pwsh.dll` could otherwise force runs into Windows
+    PowerShell 5.1. A version that is not one blocks as a version that
+    could not be read does, since nothing may be passed over for Windows
+    PowerShell that the agent could not make out. The inventory lists
     each as *found, not usable* with its reason, *Could not be checked: …*
     for what could not be read, and `Program Files\PowerShell` itself
     where it could not be listed, never as PowerShell 7 not installed.
@@ -422,8 +433,13 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     A run uses the first install, in the order it prefers them (below),
     that passes every check, and passes over any that is blocked,
     wherever that one stands in the order; only where none passes and one
-    is blocked does it fail, naming the first blocked one, whatever the
-    script allows. The install it moves to passed the same check as any
+    is blocked does it fail, whatever the script allows, naming the
+    blocked install the inventory lists first: blocked installs are
+    listed by path, and the device list's warning (`powershell7_blocked`,
+    below) gives the same one's reason. *Amended after the fourth
+    review:* before, the run named the first error met listing and
+    reading the installs ahead of any met checking them, which this
+    record did not say. The install it moves to passed the same check as any
     it uses, so only administrators can change it: a user who holds a
     file can make runs use another PowerShell 7 an administrator
     installed, or fail, but never run in Windows PowerShell instead, nor
@@ -1661,7 +1677,11 @@ endpoint its downloads use.
     standing in for a user's, failing a run that allows the fallback,
     with the inventory listing it as *could not be checked* and no
     PowerShell 7 usable; with `pwsh.dll` held in one copy, a run using a
-    second copy beside it; and PowerShell 7's own `$env:PSModulePath`
+    second copy beside it; *after the fourth review*, a second hard link
+    to a copy's `pwsh.dll`, which the test makes as SYSTEM, standing in
+    for a user's, failing a run that allows the fallback, with the
+    inventory listing the copy as blocked
+    (`TestPwshHardLinkAsSystem`); and PowerShell 7's own `$env:PSModulePath`
     ending with the path the run gave, spelled as given, its trailing
     backslash included where Windows' default is set. The
     statements of
@@ -1673,7 +1693,9 @@ endpoint its downloads use.
     measures the Linux build only, which does not compile that file.
 * **Agent tests on CI's *Agent tests on Windows* job** (as the runner's
   administrator), *added after the review of PR #90*: a file open to
-  write fails the check and one open to read does not; held files cannot
+  write fails the check and one open to read does not; *after the fourth
+  review*, a file with a second hard link fails a check that allows one
+  link, as linked, and passes one that allows links; held files cannot
   be written or renamed and a failed check holds nothing; a file
   compressed with `compact` passes and a junction does not, and the
   reparse tags a file may carry (`TestReparseTags`); the folders

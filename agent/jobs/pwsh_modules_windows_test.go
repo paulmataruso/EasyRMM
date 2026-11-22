@@ -334,6 +334,50 @@ func TestPwshBusyAsSystem(t *testing.T) {
 	usedAgain(t, install)
 }
 
+// TestPwshHardLinkAsSystem: a file of the install with a second hard link,
+// here pwsh.dll, stops a pwsh run, and a script that allows Windows
+// PowerShell does not run there instead: which Windows builds let a user
+// link to a file they may only read is not confirmed, and one who could
+// would otherwise choose where scripts run (ADR-0064). A stand-in: the test,
+// as SYSTEM, makes the link, beside the copy in a Program Files of the
+// test's own; what the check meets is the file's count of links, not who
+// made the link.
+func TestPwshHardLinkAsSystem(t *testing.T) {
+	systemTest(t)
+	install := copyInstall(t)
+	dll := filepath.Join(install, "pwsh.dll")
+	link := filepath.Join(filepath.Dir(filepath.Dir(install)), "pwsh.dll link")
+	if err := os.Link(dll, link); err != nil {
+		t.Fatal(err)
+	}
+	p := winPayload(agentproto.ShellPwsh, "Write-Output ran\n")
+	p.PwshFallback = true
+	res := Execute(context.Background(), p, t.TempDir())
+	want := dll + " has 2 hard links; the script was not run."
+	if res.Status != agentproto.RunFailed || !strings.EqualFold(res.Error, want) || res.Interpreter != nil || res.ExitCode != nil || res.Stdout != "" {
+		t.Errorf("with a second link to pwsh.dll: %+v, program %+v\nwant the error %q", res, res.Interpreter, want)
+	}
+	roots, _ := pwshRoots()
+	listed := false
+	for _, i := range powershell.Discover(roots) {
+		t.Logf("the inventory lists %+v", i)
+		if !strings.EqualFold(i.Path, filepath.Join(install, "pwsh.exe")) {
+			continue
+		}
+		listed = true
+		if i.Usable || !i.Blocked || !strings.HasPrefix(strings.ToLower(i.Reason), strings.ToLower(dll)+" has 2 hard links: not used while it has") {
+			t.Errorf("the copy with a second link to pwsh.dll: %+v", i)
+		}
+	}
+	if !listed {
+		t.Error("the inventory does not list the copy")
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	usedAgain(t, install)
+}
+
 // TestPwshFallbackModulesAsSystem: a pwsh script that falls back to Windows
 // PowerShell runs with a module path of the folders the agent checked, not
 // the agent's own, which names the computer's PSModulePath, and so does

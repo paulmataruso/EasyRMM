@@ -424,7 +424,7 @@ func handleProblem(h windows.Handle, p string, links, busy bool) (string, error)
 		}
 	}
 	if !folder && !links && info.NumberOfLinks != 1 {
-		return fmt.Sprintf("has %d hard links", info.NumberOfLinks), nil
+		return fmt.Sprintf(linksReason, info.NumberOfLinks), nil
 	}
 	acl, why, err := ownerAndList(h, p)
 	if why != "" || err != nil {
@@ -442,6 +442,10 @@ func handleProblem(h windows.Handle, p string, links, busy bool) (string, error)
 // busyReason is why a file that passes but is open in another program,
 // to write it or without sharing it, fails an exclusive check (openEntry).
 const busyReason = "is open in another program that may write to it"
+
+// linksReason is why a file with more than one hard link fails a check
+// that allows it one only (handleProblem), with how many it has.
+const linksReason = "has %d hard links"
 
 // reparseTag is the tag of the reparse point h is open to.
 func reparseTag(h windows.Handle) (uint32, error) {
@@ -514,12 +518,19 @@ type Untrusted struct {
 	// anyone who may read a file can do that, so it says nothing of who
 	// may change the file.
 	Busy bool
+	// Linked says the entry failed only for having more than one hard link.
+	// Which Windows builds let a user who may only read a file link to it
+	// is not confirmed, so neither does that say who may change the file.
+	Linked bool
 }
 
 func (u *Untrusted) Error() string { return u.Path + " " + u.Reason }
 
 func untrusted(p, why string) *Untrusted {
-	return &Untrusted{Path: p, Reason: why, Busy: why == busyReason}
+	var n uint32
+	_, err := fmt.Sscanf(why, linksReason, &n)
+	linked := err == nil && why == fmt.Sprintf(linksReason, n)
+	return &Untrusted{Path: p, Reason: why, Busy: why == busyReason, Linked: linked}
 }
 
 // CheckTree checks root and everything in it at any depth as trustedEntry

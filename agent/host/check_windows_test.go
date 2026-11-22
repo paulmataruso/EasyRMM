@@ -50,8 +50,26 @@ func installLike(t *testing.T) string {
 func wantUntrusted(t *testing.T, what string, err error, path, reason string) {
 	t.Helper()
 	var u *Untrusted
-	if !errors.As(err, &u) || !strings.EqualFold(u.Path, path) || u.Reason != reason || u.Busy != (reason == busyReason) {
+	linked := strings.HasPrefix(reason, "has ") && strings.HasSuffix(reason, " hard links")
+	if !errors.As(err, &u) || !strings.EqualFold(u.Path, path) || u.Reason != reason || u.Busy != (reason == busyReason) || u.Linked != linked {
 		t.Errorf("%s: %+v (%v), want %s %s", what, u, err, path, reason)
+	}
+}
+
+// TestCheckTreeFindsHardLinks: a file with a second hard link, which the
+// test makes, fails a check that allows it one link only, as linked, not
+// busy, and passes one that allows links (ADR-0064).
+func TestCheckTreeFindsHardLinks(t *testing.T) {
+	elevated(t)
+	dir := installLike(t)
+	dll := filepath.Join(dir, "a.dll")
+	if err := os.Link(dll, filepath.Join(filepath.Dir(dir), "link.dll")); err != nil {
+		t.Fatal(err)
+	}
+	wantUntrusted(t, "a second link", CheckTree(dir, false), dll, "has 2 hard links")
+	wantUntrusted(t, "the one entry", CheckEntry(dll, false), dll, "has 2 hard links")
+	if err := CheckTree(dir, true); err != nil {
+		t.Errorf("with links allowed: %v", err)
 	}
 }
 

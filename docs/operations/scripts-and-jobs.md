@@ -319,7 +319,8 @@ An install that fails is not used, and the device says which file and why.
 file before the fix keeps what it opened until it closes it, including a
 handle that may change the file's permissions or owner, which the check
 cannot see, and a restart closes everything. A user who can read a file can
-also hold it open, or lock it, so that the agent cannot check or read it;
+also hold it open, or lock it, so that the agent cannot check or read it,
+and on some Windows builds may make a second hard link to it;
 the install is then *Found, not usable* (below), so PowerShell 7 runs on the
 device use another install that passes every check, or fail while they hold
 it, without falling back, and they gain no way to change what runs.
@@ -330,11 +331,13 @@ not used. An agent of an earlier release reports none and says so.
 
 **Found, not usable**: an install is *blocked* when its own files pass
 while a module folder or configuration file its runs would read does not,
-when a file of it is open in another program, or when the agent could not
+when a file of it is open in another program or has more than one hard
+link, when its version is not a version, or when the agent could not
 read or check it (*Could not be checked: …*); so is `Program Files\PowerShell`
 itself where the agent cannot list it, which the Hardware tab lists as that
 folder, not as PowerShell 7 missing. Runs use another install where one
-passes every check. Otherwise PowerShell 7 scripts fail there, **and do not
+passes every check. Otherwise PowerShell 7 scripts fail there, naming the
+blocked install the Hardware tab lists first, **and do not
 fall back to Windows PowerShell 5.1 even where the script allows it**:
 Windows PowerShell loads from Windows PowerShell's module folders too, so a
 folder that fails would be loaded by the fallback as well, and anyone who
@@ -376,8 +379,10 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   It does not apply where PowerShell 7 is found but blocked (above): the
   run fails with "PowerShell 7 would load modules from …; the script was
   not run.", "PowerShell 7 would read its configuration from …", "… is
-  open in another program that may write to it; the script was not run."
-  or "… could not be checked: …; the script was not run."
+  open in another program that may write to it; the script was not run.",
+  "… has 2 hard links; the script was not run.", "the version of …, …,
+  could not be read; the script was not run." or "… could not be checked:
+  …; the script was not run."
   Windows PowerShell gets the module path a PowerShell 7 run gives its
   Windows PowerShell session (below), not the computer's `PSModulePath`;
   its module folders, and the system account's own

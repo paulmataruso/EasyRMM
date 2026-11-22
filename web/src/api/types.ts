@@ -374,8 +374,8 @@ export interface DeviceAgent {
   powerShell7: boolean | null;
   /**
    * Where no PowerShell 7 is usable but one is blocked, why: what it would load fails the agent's check, or a file of it is
-   * open in another program or could not be checked, and PowerShell 7 scripts fail there without falling back to Windows
-   * PowerShell 5.1 (ADR-0064). Absent otherwise.
+   * open in another program, has more than one hard link or could not be checked, and PowerShell 7 scripts fail there without
+   * falling back to Windows PowerShell 5.1 (ADR-0064). Absent otherwise.
    */
   powerShell7Blocked?: string;
 }

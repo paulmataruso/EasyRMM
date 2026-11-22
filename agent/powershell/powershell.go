@@ -147,14 +147,17 @@ const (
 	reasonOld     = "PowerShell %d is out of support: never used for scripts."
 	reasonX86     = "A 32-bit (x86) build: never used for scripts, since it sees the 32-bit registry and System32."
 	reasonArch    = "Built for %s, which this computer does not run natively: never used for scripts."
-	reasonVersion = "Its version could not be read: never used for scripts."
+	reasonVersion = "Its version could not be read: not used until it can be. Scripts that allow Windows PowerShell 5.1 do not run in it instead."
 )
 
 // assess marks an install that a pwsh run may use, before its files are
 // checked, or says why it may not: a Store install, a preview, a version
-// before 7, an x86 build or another architecture than the computer's.
-func assess(in *agentproto.PowerShellInstall, native string) {
-	in.Usable, in.Reason = false, ""
+// before 7, an x86 build or another architecture than the computer's. One
+// whose version is not a version is blocked, as what could not be read is,
+// and the error a run fails with returned: a run does not fall back from it
+// (ADR-0064).
+func assess(in *agentproto.PowerShellInstall, native string) error {
+	in.Usable, in.Blocked, in.Reason = false, false, ""
 	v, ok := parseVersion(in.Version)
 	_, archOK := archRank(native, in.Arch)
 	switch {
@@ -163,7 +166,8 @@ func assess(in *agentproto.PowerShellInstall, native string) {
 	case in.Preview || v.pre != "":
 		in.Preview, in.Reason = true, reasonPreview
 	case !ok:
-		in.Reason = reasonVersion
+		in.Blocked, in.Reason = true, reasonVersion
+		return fmt.Errorf("the version of %s, %q, could not be read", in.Path, in.Version)
 	case v.nums[0] < 7:
 		in.Reason = fmt.Sprintf(reasonOld, v.nums[0])
 	case in.Arch == agentproto.ArchX86:
@@ -173,6 +177,7 @@ func assess(in *agentproto.PowerShellInstall, native string) {
 	default:
 		in.Usable = true
 	}
+	return nil
 }
 
 // order sorts what was found as the inventory lists it: Windows PowerShell
