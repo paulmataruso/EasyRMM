@@ -1419,6 +1419,19 @@ func TestContract(t *testing.T) {
 			got.AllowPrivateNetworkWebhooks != mail.AllowPrivateNetworkWebhooks {
 			t.Errorf("mail settings: %+v, %v", got, err)
 		}
+		// The webhook switch from a server that does not give the engine its
+		// mail server sends no password, and the engine keeps its own.
+		for _, allow := range []bool{!got.AllowPrivateNetworkWebhooks, got.AllowPrivateNetworkWebhooks} {
+			if err := engine.SetMailSettings(super, got.unchanged(allow)); err != nil {
+				t.Fatal(err)
+			}
+			kept, err := engine.MailSettings(super)
+			want := got
+			want.AllowPrivateNetworkWebhooks = allow
+			if err != nil || kept != want {
+				t.Errorf("the switch without a password: %+v, want %+v, %v", kept, want, err)
+			}
+		}
 		// The engine's mail settings follow every change of EasyRMM's mail
 		// server, through one service, without a restart (ADR-0053): each
 		// reconcile pass gives the engine the mail server in force when it
