@@ -30,8 +30,12 @@ func TestLeader(t *testing.T) {
 		}
 		return ok
 	}
-	if !lead(a) || !lead(a) || lead(b) {
+	if !lead(a) || lead(b) {
 		t.Fatal("not one leader")
+	}
+	// Leading, it still leads.
+	if !lead(a) {
+		t.Fatal("the leader lost the lead")
 	}
 	// The lock is not left on a pooled connection.
 	var free bool

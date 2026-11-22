@@ -1099,13 +1099,15 @@ func (s *Service) AdminLinkRoom(ctx context.Context, by mailer.AccountMail) erro
 	}
 	err := s.mailer.Room(ctx, by)
 	var lim mailer.Limited
-	switch {
-	case errors.As(err, &lim) && lim.LimitCode() == mailer.LimitAdmin:
-		return apperr.TooMany(lim.LimitCode(), lim.Error(), lim.RetryIn())
-	case lim != nil:
-		return nil
+	if !errors.As(err, &lim) {
+		return err
 	}
-	return err
+	if lim.LimitCode() == mailer.LimitAdmin {
+		return apperr.TooMany(lim.LimitCode(), lim.Error(), lim.RetryIn())
+	}
+	// Another limit: the link is made, and EmailLink says why it is not
+	// sent.
+	return nil
 }
 
 // EmailLink sends l to the owner of an account, as account mail counted
