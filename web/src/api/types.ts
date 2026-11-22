@@ -947,6 +947,20 @@ export interface HardeningPorts {
   unknown?: string[];
 }
 
+/** Failed sign-ins in a Windows computer's Security log (ADR-0054, Accounts). */
+export interface HardeningExposure {
+  /** Failed sign-ins from public addresses, or 10 or more for one account within 15 minutes. */
+  exposed: boolean;
+  /** The failed sign-ins from public addresses: the accounts tried and the addresses. */
+  accounts: string[];
+  addresses: string[];
+  /** Accounts with 10 or more failed sign-ins within 15 minutes. */
+  bursts?: string[];
+  /** How far back the log was read; null, with sinceReason, where the oldest record read is dated after the check. */
+  since: string | null;
+  sinceReason?: string;
+}
+
 /** One module as the job that last covered it found it. */
 export interface HardeningModule {
   module: string;
@@ -958,6 +972,8 @@ export interface HardeningModule {
   changes?: string[];
   /** The firewall's only. */
   ports?: HardeningPorts;
+  /** Windows' accounts module only. */
+  exposure?: HardeningExposure;
   /** Null once the job is deleted. */
   jobId: string | null;
   checkedAt: string;
