@@ -64,9 +64,22 @@ var machineCases = map[string]map[string]map[string]machineCase{
 		HardeningUndo:  same(machineCase{Want: []string{HardeningUndone}}),
 	},
 	"permissions": {
-		HardeningCheck: same(machineCase{Want: []string{HardeningPartly}}),
-		HardeningApply: same(machineCase{Want: []string{HardeningApplied}, After: []string{HardeningInPlace}}),
-		HardeningUndo:  same(machineCase{Want: []string{HardeningUndone}}),
+		// Fedora 45's cloud image has every mode as strict already.
+		HardeningCheck: {
+			"debian": {Want: []string{HardeningPartly}},
+			"rhel":   {Want: []string{HardeningPartly}},
+			"fedora": {Want: []string{HardeningInPlace}},
+		},
+		HardeningApply: {
+			"debian": {Want: []string{HardeningApplied}, After: []string{HardeningInPlace}},
+			"rhel":   {Want: []string{HardeningApplied}, After: []string{HardeningInPlace}},
+			"fedora": {Want: []string{HardeningUnchanged}, After: []string{HardeningInPlace}},
+		},
+		HardeningUndo: {
+			"debian": {Want: []string{HardeningUndone}},
+			"rhel":   {Want: []string{HardeningUndone}},
+			"fedora": {Want: []string{HardeningNothingToUndo}},
+		},
 	},
 	"services": {
 		// None of the services is on in a cloud image.

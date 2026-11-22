@@ -90,7 +90,12 @@ until units=$(systemctl list-unit-files --no-legend --no-pager 2>/dev/null) && [
 done
 {
 find /etc /usr/local -xdev \( -type f -o -type l -o -type d \) -printf 'path %y %p %M %u:%g %l\n'
-find /etc /usr/local -xdev -type f -exec sha256sum {} + | sed 's/^/content /'
+find /etc /usr/local -xdev -type f -exec sha256sum {} + | grep -v ' /etc/selinux/[^/]*/policy/policy\.[0-9]*$' | sed 's/^/content /'
+# SELinux's policy, rebuilt when a package adds a module and again when it
+# goes (fail2ban's), is not the same bytes as the image's: its modules and
+# booleans are compared instead.
+! command -v semodule >/dev/null || semodule -l 2>/dev/null | sed 's/^/selinux-module /'
+! command -v getsebool >/dev/null || getsebool -a 2>/dev/null | sed 's/^/selinux-boolean /'
 `)
 	for _, p := range machineSysctls {
 		fmt.Fprintf(&b, "printf 'sysctl %s %%s\\n' \"$(sysctl -n %s 2>&1)\"\n", p, p)
@@ -185,9 +190,11 @@ func hardenMachine(t *testing.T, image string) {
 	// with no account that has a key, password-off is then refused. First
 	// in sshd_config, whose first value wins. And where sshd has penalties
 	// of its own for failed sign-ins (OpenSSH 9.8 and later), those off, so
-	// that what cuts the test's wrong sign-ins off is fail2ban alone.
+	// that what cuts the test's wrong sign-ins off is fail2ban alone
+	// (OpenSSH 10.5 prints the keyword as PerSourcePenalties, earlier
+	// releases in lower case).
 	m.run(`sed -i '1i PasswordAuthentication yes' /etc/ssh/sshd_config
-if sshd -T 2>/dev/null | grep -q '^persourcepenalties '; then sed -i '1i PerSourcePenalties no' /etc/ssh/sshd_config; fi
+if sshd -T 2>/dev/null | grep -qi '^persourcepenalties '; then sed -i '1i PerSourcePenalties no' /etc/ssh/sshd_config; fi
 for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/dev/null; done; true`, time.Minute)
 	// Debian 13's apt-listchanges.timer turns itself off once its service
 	// has run, within the hour: run it now, so that it is off in both
@@ -410,7 +417,9 @@ func (m *hardeningMachine) keepsAuditd(before bool) {
 	if has, marked := m.hasAuditd(), m.marked(); !has || marked == before || active != "active" {
 		m.t.Errorf("audit undone with %s: auditd installed %v, the marker %v, auditd %s", foreign, has, marked, active)
 	}
-	m.run("rm "+foreign+" && augenrules --load >/dev/null", time.Minute)
+	// augenrules makes audit.rules.prev, which undo took away: this
+	// load's is the test's, and goes too.
+	m.run("rm "+foreign+" && augenrules --load >/dev/null && rm -f /etc/audit/audit.rules.prev", time.Minute)
 	r = scriptModule(m.t, m.script(HardeningApply, []string{"audit"}), "audit")
 	if marked := m.marked(); r.Outcome != HardeningApplied || marked == before {
 		m.t.Errorf("audit applied again over the auditd it installed: %s %q, the marker %v", r.Outcome, r.Done, marked)
