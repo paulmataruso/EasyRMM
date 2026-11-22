@@ -45,9 +45,11 @@ jobs:
   #                     PostgreSQL image it takes from deploy/docker-compose.yml.
   #   machines          what the machine tests depend on: the harness
   #                     (internal/vmtest), the hardening script and its
-  #                     server side (server/internal/jobs/hardening*), go.mod
-  #                     and the Makefile. Add packages with vm-tagged tests
-  #                     as they arrive.
+  #                     server side (server/internal/jobs/hardening*), the
+  #                     disk reader and the inventory that lists its disks
+  #                     (agent/hardware, agent/inventory), go.mod and the
+  #                     Makefile. Add packages with vm-tagged tests as they
+  #                     arrive.
   # EasyRMM's side of the patching engine (server/internal/easypatch/) counts for
   # EasyRMM and the EasyPatch server; this file counts for everything. The
   # merge queue, manual runs, and anything this cannot work out run all.
@@ -90,7 +92,8 @@ jobs:
                 contract=true ;;
             esac
             case $1 in
-              internal/vmtest/* | server/internal/jobs/hardening* | go.mod | Makefile) machines=true ;;
+              internal/vmtest/* | server/internal/jobs/hardening* | agent/hardware/* | agent/inventory/* | go.mod | \
+                Makefile) machines=true ;;
             esac
             case $1 in
               .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true machines=true; return ;;

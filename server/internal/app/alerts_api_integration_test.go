@@ -55,7 +55,8 @@ func TestAlertsAPI(t *testing.T) {
 	}
 	var policies struct{ Items []policyView }
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies", nil, &policies)
-	if len(policies.Items) != 4 || policies.Items[1].Name != "Disk almost full" || !policies.Items[1].CanEdit {
+	// Four for devices, and five for disk health (ADR-0065).
+	if len(policies.Items) != 9 || policies.Items[1].Name != "Disk almost full" || !policies.Items[1].CanEdit {
 		t.Fatalf("seeded policies %+v", policies.Items)
 	}
 
@@ -76,7 +77,7 @@ func TestAlertsAPI(t *testing.T) {
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies/"+p.ID, nil, &p)
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies?organizationId="+acme, nil, &policies)
-	if len(policies.Items) != 5 {
+	if len(policies.Items) != 10 {
 		t.Fatalf("Acme's policies %+v", policies.Items)
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/alert-policies?organizationId=nope", nil), http.StatusUnprocessableEntity, "validation_failed")

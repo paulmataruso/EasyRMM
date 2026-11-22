@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -215,8 +216,16 @@ func (c Collector) timezone() string {
 // skippedDisks are block devices that are not disks.
 var skippedDisks = []string{"loop", "ram", "zram", "dm-", "md", "sr", "nbd", "fd", "zd"}
 
-func (c Collector) disks() []agentproto.Disk {
-	out := []agentproto.Disk{}
+// Storage lists the disks as Collect does, with what the hardware reader
+// needs, and names the machine's virtualization.
+func (c Collector) Storage() Storage {
+	return Storage{Virtualization: c.system().Virtualization, Disks: c.listDisks()}
+}
+
+func (c Collector) disks() []agentproto.Disk { return disks(c.listDisks()) }
+
+func (c Collector) listDisks() []ListedDisk {
+	out := []ListedDisk{}
 	entries, err := os.ReadDir(c.path("/sys/block"))
 	if err != nil {
 		return out
@@ -228,25 +237,113 @@ func (c Collector) disks() []agentproto.Disk {
 		}
 		base := "/sys/block/" + name
 		sectors, _ := strconv.ParseUint(c.read(base+"/size"), 10, 64)
-		if sectors == 0 {
+		// A hidden disk is a path of a multipath NVMe namespace (nvme0c1n1),
+		// listed through its namespace.
+		if sectors == 0 || c.read(base+"/hidden") == "1" {
 			continue
 		}
-		d := agentproto.Disk{
+		d := ListedDisk{Disk: agentproto.Disk{
 			Name: name, SizeBytes: sectors * 512, Removable: c.read(base+"/removable") == "1",
 			Model: strings.Join(strings.Fields(c.read(base+"/device/model")), " "), Serial: c.read(base + "/device/serial"),
-		}
+		}}
 		switch {
 		case strings.HasPrefix(name, "nvme"):
 			d.Kind = "nvme"
+			d.Controllers = c.nvmeControllers(base)
 		case c.read(base+"/queue/rotational") == "1":
 			d.Kind = "hdd"
 		case c.read(base+"/queue/rotational") == "0":
 			d.Kind = "ssd"
 		}
+		c.identity(&d, base)
 		out = append(out, d)
 		if len(out) == agentproto.MaxListed {
 			break
 		}
 	}
 	return out
+}
+
+// nvmeController names an NVMe controller's character device: nvme0.
+var nvmeController = regexp.MustCompile(`^nvme[0-9]+$`)
+
+// nvmeControllers finds the NVMe controllers that serve a namespace through
+// sysfs, never from its name: under native multipath the block device
+// nvmeXnY is a namespace head whose X is the subsystem's number, and its
+// paths, linked from the head's multipath directory, are each a hidden disk
+// whose parent is a controller (ADR-0065, "Reading on Linux"). Without
+// multipath the namespace's own parent is its controller.
+func (c Collector) nvmeControllers(base string) []string {
+	var out []string
+	add := func(disk string) {
+		dev, err := filepath.EvalSymlinks(c.path(disk + "/device"))
+		if err != nil {
+			return
+		}
+		name := filepath.Base(dev)
+		if _, err := os.Stat(c.path("/sys/class/nvme/" + name)); err == nil && nvmeController.MatchString(name) {
+			out = appendNew(out, name)
+		}
+	}
+	paths, _ := os.ReadDir(c.path(base + "/multipath"))
+	for _, p := range paths {
+		add(base + "/multipath/" + p.Name())
+	}
+	if len(paths) == 0 {
+		add(base)
+	}
+	return out
+}
+
+// identity fills the disk's firmware revision (ADR-0065): an NVMe
+// controller's, a SATA disk's from the IDENTIFY data in its ATA Information
+// VPD page (all eight characters, where device/rev holds the last four), or
+// another SCSI disk's device/rev; a SATA disk's whole model from the same
+// IDENTIFY data (device/model holds its first 16 characters); and a serial
+// number the kernel does not give in device/serial, from the same VPD page
+// or, for other SCSI disks, the Unit Serial Number page.
+func (c Collector) identity(d *ListedDisk, base string) {
+	switch {
+	case d.Kind == "nvme":
+		d.Firmware = firmwareNotExposed()
+		for _, ctrl := range d.Controllers {
+			if rev := c.read("/sys/class/nvme/" + ctrl + "/firmware_rev"); rev != "" {
+				d.Firmware = firmwareRead(rev)
+				break
+			}
+		}
+		return
+	case strings.HasPrefix(d.Name, "vd"), strings.HasPrefix(d.Name, "xvd"):
+		// virtio-blk and Xen's disks are a hypervisor's: they have no firmware.
+		d.Firmware = &agentproto.TextFact{State: agentproto.FactUnsupported, Reason: agentproto.ReasonVirtualDisk}
+		return
+	}
+	if b, err := os.ReadFile(c.path(base + "/device/vpd_pg89")); err == nil {
+		id, ok := parseVPD89(b)
+		if !ok {
+			d.Firmware = &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonBadAnswer}
+			return
+		}
+		serial, firmware, model := ataIdentityStrings(id)
+		d.Firmware = firmwareRead(firmware)
+		if model != "" {
+			d.Model = model
+		}
+		if d.Serial == "" {
+			d.Serial = serial
+		}
+		return
+	}
+	if d.Serial == "" {
+		if b, err := os.ReadFile(c.path(base + "/device/vpd_pg80")); err == nil {
+			d.Serial = parseVPD80(b)
+		}
+	}
+	// A SATA disk without the page (a kernel before it) has only device/rev's
+	// last four characters, which are not its revision.
+	if strings.TrimSpace(c.read(base+"/device/vendor")) == "ATA" {
+		d.Firmware = firmwareNotExposed()
+		return
+	}
+	d.Firmware = firmwareRead(c.read(base + "/device/rev"))
 }

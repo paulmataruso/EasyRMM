@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"maps"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -98,6 +100,56 @@ func TestQEMUUserNetworkingOnly(t *testing.T) {
 	}
 }
 
+// The extra disks: each on its sparse file, NVMe controllers with their
+// serial, SATA disks on one AHCI controller of their own with their model.
+func TestDisks(t *testing.T) {
+	dir := t.TempDir()
+	disks, err := diskFiles(dir, []Disk{
+		{ID: "nvme0", Kind: DiskNVMe, Serial: "EASYRMM0001"},
+		{ID: "sata0", Kind: DiskSATA},
+		{ID: "sata1", Kind: DiskSATA, Model: "Test, Disk", Serial: "EASYRMM0002"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range disks {
+		if fi, err := os.Stat(d.file); err != nil || fi.Size() != 64<<20 || filepath.Dir(d.file) != dir {
+			t.Errorf("%s: %v, %v", d.ID, fi, err)
+		}
+	}
+	m := testMachine("tcg")
+	m.disks = disks
+	args := qemuArgs(m)
+	wantDevices := []string{
+		"nvme,id=nvme0,drive=nvme0-drive,serial=EASYRMM0001",
+		"ahci,id=ahci1",
+		"ide-hd,id=sata0,bus=ahci1.0,drive=sata0-drive",
+		"ide-hd,id=sata1,bus=ahci1.1,drive=sata1-drive,model=Test,, Disk,serial=EASYRMM0002",
+	}
+	if got := flag(args, "-device"); !slices.Equal(got[len(got)-len(wantDevices):], wantDevices) {
+		t.Errorf("devices %q", got)
+	}
+	if got := flag(args, "-drive"); len(got) != 4 || got[1] != "if=none,id=nvme0-drive,format=raw,cache=unsafe,file="+filepath.Join(dir, "nvme0.raw") {
+		t.Errorf("drives %q", got)
+	}
+
+	for _, bad := range [][]Disk{
+		{{ID: "", Kind: DiskSATA}},
+		{{ID: "a b", Kind: DiskSATA}},
+		{{ID: "a", Kind: DiskSATA}, {ID: "a", Kind: DiskSATA}},
+		{{ID: "a", Kind: "scsi"}},
+		{{ID: "a", Kind: DiskNVMe, Serial: "S", Model: "M"}},
+		{{ID: "a", Kind: DiskNVMe}},
+	} {
+		if _, err := diskFiles(t.TempDir(), bad); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+	if _, err := diskFiles(filepath.Join(dir, "missing"), []Disk{{ID: "a", Kind: DiskSATA}}); err == nil {
+		t.Error("a missing directory accepted")
+	}
+}
+
 // From QEMU 10.2; 8.2 prints the same.
 const usernet = "Hub -1 (net0):\r\n" +
 	"  Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ\r\n" +
@@ -133,8 +185,8 @@ func fakeQMP(t *testing.T) net.Conn {
 				return
 			}
 			var req struct {
-				Execute   string            `json:"execute"`
-				Arguments map[string]string `json:"arguments"`
+				Execute   string         `json:"execute"`
+				Arguments map[string]any `json:"arguments"`
 			}
 			if err := json.Unmarshal(line, &req); err != nil {
 				t.Errorf("QMP request %q: %v", line, err)
@@ -146,6 +198,9 @@ func fakeQMP(t *testing.T) net.Conn {
 				_ = w.Encode(map[string]any{"return": map[string]any{}})
 			case req.Execute == "human-monitor-command" && req.Arguments["command-line"] == "info usernet":
 				_ = w.Encode(map[string]any{"return": usernet})
+			case req.Execute == "qom-set" && req.Arguments["path"] == "/machine/peripheral/nvme0" &&
+				req.Arguments["property"] == "smart_critical_warning" && req.Arguments["value"] == float64(4):
+				_ = w.Encode(map[string]any{"return": map[string]any{}})
 			default:
 				_ = w.Encode(map[string]any{"error": map[string]string{"class": "CommandNotFound", "desc": "The command " + req.Execute + " has not been found"}})
 			}
@@ -166,6 +221,13 @@ func TestQMP(t *testing.T) {
 	}
 	if _, err := q.execute("bogus", nil); err == nil || !strings.Contains(err.Error(), "CommandNotFound") {
 		t.Errorf("unknown command: %v", err)
+	}
+	vm := &VM{image: Image{Name: "debian-12"}, qmp: q}
+	if err := vm.QOMSet("nvme0", "smart_critical_warning", 4); err != nil {
+		t.Errorf("qom-set: %v", err)
+	}
+	if err := vm.QOMSet("sata0", "smart_critical_warning", 4); err == nil || !strings.HasPrefix(err.Error(), "debian-12: ") {
+		t.Errorf("qom-set of a missing device: %v", err)
 	}
 	_ = q.close()
 	if _, err := q.execute("quit", nil); err == nil {

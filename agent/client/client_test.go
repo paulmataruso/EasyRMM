@@ -31,8 +31,9 @@ type fakeServer struct {
 	job ed25519.PrivateKey
 	// short makes the MeshAgent download and the settings end early; huge
 	// sends more than agentproto.MaxMeshAgentBytes; tamper changes the
-	// settings after signing them.
-	short, huge, tamper bool
+	// settings after signing them; old is a server without the hardware
+	// endpoint.
+	short, huge, tamper, old bool
 }
 
 // signDownload signs a download as the server does.
@@ -112,6 +113,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = io.WriteString(w, `{"hash":"`+strconv.Itoa(len(body))+`"}`)
+	case agentproto.PathHardware:
+		var in agentproto.HardwareReport
+		if f.old {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.Unmarshal(body, &in); err != nil || len(in.Disks) != 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"hardware_invalid","message":"no"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = io.WriteString(w, "not json")
@@ -354,6 +367,31 @@ func TestJobCalls(t *testing.T) {
 	}
 	if err := c.Result(ctx, "r1", agentproto.ResultRequest{Status: "bogus"}); err == nil {
 		t.Error("a refused result was accepted")
+	}
+}
+
+func TestHardware(t *testing.T) {
+	c, f := newPair(t)
+	ctx := context.Background()
+	report := []byte(`{"disks":[{"name":"sda","model":"","serial":"","state":"unknown","reason":"asleep","readAt":"2026-11-21T12:00:00Z"}]}`)
+	if err := c.Hardware(ctx, report); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+		t.Errorf("before enrolling: %v", err)
+	}
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := c.Enroll(ctx, "ert_good", pub, agentproto.Facts{}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetIdentity("dev-1", key)
+	if err := c.Hardware(ctx, report); err != nil {
+		t.Errorf("report: %v", err)
+	}
+	if err := c.Hardware(ctx, []byte(`{"disks":[]}`)); Code(err) != "hardware_invalid" {
+		t.Errorf("refused: %v", err)
+	}
+	f.old = true
+	var e *Error
+	if err := c.Hardware(ctx, report); !errors.As(err, &e) || e.Status != http.StatusNotFound {
+		t.Errorf("an older server: %v", err)
 	}
 }
 

@@ -32,12 +32,14 @@ type fixture struct {
 	acme, hq, branch uuid.UUID
 	globex, plant    uuid.UUID
 	super            access.Caller
+	// dsn connects to the test database as the superuser.
+	dsn string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB}
+	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, dsn: inst.SuperDSN}
 	f.svc = New(inst.DB, audit.New(inst.DB, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	// A server that has served agents for a day: devices count as seen when
 	// they last checked in (TestOfflineAfterStart tests the start).
@@ -180,13 +182,35 @@ func TestSeededPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Device offline", "Disk almost full", "High memory use", "High processor use"}
+	want := []string{"Device offline", "Disk almost full", "Disk errors", "Disk failing", "Disk sectors pending", "Disk too hot",
+		"Disk wearing out", "High memory use", "High processor use"}
 	if got := names(list); !slices.Equal(got, want) {
 		t.Fatalf("seeded = %v", got)
 	}
 	for _, p := range list {
-		if p.Level != LevelShared || !p.Enabled || !p.CanEdit {
+		// Of the disk health policies only Disk failing is on (ADR-0065).
+		on := p.Kind != KindDiskHealth || p.Name == "Disk failing"
+		if p.Level != LevelShared || p.Enabled != on || !p.CanEdit {
 			t.Errorf("%s: level %s enabled %v canEdit %v", p.Name, p.Level, p.Enabled, p.CanEdit)
+		}
+	}
+	disk := map[string]*Policy{}
+	for _, p := range list {
+		if p.Kind == KindDiskHealth {
+			disk[*p.CheckName] = p
+		}
+	}
+	for check, w := range map[string]struct {
+		threshold *int
+		minutes   int
+		severity  string
+	}{
+		CheckFailing: {nil, 30, SeverityCritical}, CheckErrors: {ref(1), 30, SeverityWarning}, CheckPending: {ref(1), 30, SeverityWarning},
+		CheckWear: {ref(90), 30, SeverityWarning}, CheckTemperature: {nil, 60, SeverityWarning},
+	} {
+		p := disk[check]
+		if p == nil || !same(p.Threshold, w.threshold) || p.Minutes != w.minutes || p.Severity != w.severity {
+			t.Errorf("%s = %+v", check, p)
 		}
 	}
 	if list[0].Kind != KindOffline || list[0].Threshold != nil || list[0].Minutes != 15 || list[0].Severity != SeverityCritical {

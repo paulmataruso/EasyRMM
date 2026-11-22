@@ -4,6 +4,7 @@ import { useApiMutation } from "../../api/hooks";
 import type { AlertEntry } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Button, cx } from "../../components/ui";
+import { risingHint } from "./alertText";
 
 type Action = "acknowledge" | "resolve";
 
@@ -54,6 +55,7 @@ export function AlertActions({ alert, actions, align = "end", nowrap = false, cl
         variant="ghost"
         loading={actions.pending(alert, "resolve")}
         disabled={actions.busy}
+        title={risingHint(alert) ?? undefined}
         aria-label={`Resolve ${alert.name} on ${alert.deviceName}`}
         onClick={() => actions.run(alert, "resolve")}
       >

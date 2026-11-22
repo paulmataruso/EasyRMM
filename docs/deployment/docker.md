@@ -256,6 +256,7 @@ Authentik holds, `authentik-setup` applies nothing.
 | `EASYRMM_JOB_OUTPUT_RETENTION` | `720h` (30 days), or `EASYRMM_JOB_RETENTION` when that is shorter | How long a run's output is kept after it arrived; then it is emptied and the run kept. At least `24h` and at most `EASYRMM_JOB_RETENTION`. See [Who sees output and arguments](../operations/scripts-and-jobs.md#who-sees-output-and-arguments) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
+| `EASYRMM_HARDWARE_RETENTION` | `17520h` (730 days) | How long one disk health sample per disk and day is kept. Every reading is kept for `EASYRMM_METRICS_RETENTION`, then thinned to the day's worst state, highest temperature and last counts; at least `EASYRMM_METRICS_RETENTION`. See [Disk health](../operations/disk-health.md#history-and-retention) |
 
 ## Patching engine
 
