@@ -37,6 +37,7 @@ var query string
 func Reader() string { return reader }
 
 // QueryResultPrefix starts the line Query's script prints its answers on.
+// It is part of the contract below.
 const QueryResultPrefix = "EASYRMM-WINPOLICY-V1 "
 
 // Query returns the reader as a script of its own (reader.ps1, then
@@ -44,6 +45,11 @@ const QueryResultPrefix = "EASYRMM-WINPOLICY-V1 "
 // request file for the registry editor and the event viewer (ADR-0054,
 // "Policy ownership"; ADR-0067, ADR-0068). query.ps1 documents the request,
 // the answer and the exit codes.
+//
+// Query and QueryResultPrefix are that contract, built in W1 as ADR-0054
+// asks so that ADR-0067 and ADR-0068 start the same reader. Until the
+// agent carries the script for them, its only callers are this package's
+// tests, which start it as LocalSystem as the agent will.
 func Query() string { return reader + query }
 
 // The reader's three results for a value.
@@ -100,12 +106,23 @@ const (
 	// ReasonUnexplainedPolicy: a value under a Policies key that none of
 	// the readers explains (a tool the reader does not know).
 	ReasonUnexplainedPolicy = "unexplained_policy"
+	// ReasonOtherFirewall: on a server, where Windows Security Center does
+	// not report firewalls, another vendor's Windows Filtering Platform
+	// provider filters inbound traffic: possibly another firewall
+	// (ADR-0054, amended in W1). Firewall values only.
+	ReasonOtherFirewall = "other_firewall"
+	// ReasonUnreadable: a record the reader needs could not be read (the
+	// enrolments, the audit policy extension's history or copy, the
+	// filtering platform's state); the notes say which (ADR-0054, amended
+	// in W1).
+	ReasonUnreadable = "unreadable"
 )
 
 // Reasons are the reasons a result may give.
 var Reasons = []string{
 	ReasonGroupPolicyRecordOff, ReasonGroupPolicyPreferences, ReasonMDM, ReasonDefenderForEndpoint,
 	ReasonConfigMgr, ReasonDSC, ReasonAzureMachineConfiguration, ReasonOSConfig, ReasonUnexplainedPolicy,
+	ReasonOtherFirewall, ReasonUnreadable,
 }
 
 // How a subcategory of the audit table is set.
@@ -159,9 +176,8 @@ type AuditTable struct {
 
 var guidForm = regexp.MustCompile(`^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$`)
 
-// Audit returns the audit table. It is checked when the package loads.
-func Audit() AuditTable { return audit }
-
+// audit is the audit table, checked when the package loads; scripts read
+// it as AuditJSON.
 var audit = mustParseAudit(auditPolicyJSON)
 
 // AuditJSON returns the table as compact JSON, for scripts to read.

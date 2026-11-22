@@ -354,6 +354,9 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 	}
 	p := r.Platform
 	windows := h.platform() == HardeningWindows
+	if windows {
+		r.tidyWindows()
+	}
 	switch {
 	case r.Version != 1:
 		return fail("the result's version is not 1")

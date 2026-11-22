@@ -170,9 +170,12 @@ func TestModules(t *testing.T) {
 	for _, m := range c.Modules {
 		want = append(want, m.Module)
 	}
-	got := Modules()
+	var got []string
+	for _, m := range tables.Modules {
+		got = append(got, m.Module)
+	}
 	if !slices.Equal(got, want) {
-		t.Errorf("Modules() = %v, want cites.json's order %v", got, want)
+		t.Errorf("the tables' modules %v, want cites.json's order %v", got, want)
 	}
 	for _, m := range []string{"accounts", "firewall", "defender", "asr", "smb", "smb-signing", "ntlm", "wdigest", "lsa-protection",
 		"name-resolution", "powershell", "rdp", "uac", "autoplay", "anonymous", "winrm", "printing", "features", "tls",

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/paulmataruso/easyrmm/internal/winpolicy"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
@@ -321,9 +323,15 @@ var windowsSettingKinds = []string{
 
 var settingID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 
+// settingCSP is a Policy CSP policy as the reader takes it: Area/Policy.
+var settingCSP = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}/[A-Za-z0-9_]{1,128}$`)
+
 // parseWindowsSettings reads the settings and checks what the server and
 // the script rely on: known modules, kinds and citations, each ID once and
-// prefixed with its module, options that exist and belong to the module.
+// prefixed with its module, options that exist and belong to the module,
+// and a Policy CSP policy only where the Policy CSP has one: the firewall's
+// settings are the Firewall CSP's, and the reader names the policies of
+// security settings itself.
 func parseWindowsSettings(b []byte) ([]windowsSetting, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
@@ -360,6 +368,8 @@ func parseWindowsSettings(b []byte) ([]windowsSetting, error) {
 			return nil, fmt.Errorf("%s: option %q is not one of its module's", s.ID, s.Option)
 		case s.Kind == "asr" && !slices.Contains(ASRBlockable, s.Rule) && !s.Block && s.Rule != asrPSExec:
 			return nil, fmt.Errorf("%s: rule %q is neither blocked nor blockable", s.ID, s.Rule)
+		case s.CSP != "" && (!settingCSP.MatchString(s.CSP) || s.Kind == "firewall" || s.Kind == "secedit"):
+			return nil, fmt.Errorf("%s: %q is not a Policy CSP policy for it", s.ID, s.CSP)
 		}
 		seen[s.ID] = true
 	}
@@ -476,12 +486,20 @@ type HardeningManaged struct {
 }
 
 // HardeningExposure is what the accounts module found in the Security
-// log: failed sign-ins from public addresses.
+// log's failed sign-ins (ADR-0054, Accounts).
 type HardeningExposure struct {
-	Exposed   bool     `json:"exposed"`
+	// Exposed: failed sign-ins from public addresses, or an account with
+	// 10 or more within 15 minutes.
+	Exposed bool `json:"exposed"`
+	// Accounts and Addresses are the failed sign-ins from public addresses.
 	Accounts  []string `json:"accounts"`
 	Addresses []string `json:"addresses"`
-	Since     string   `json:"since"`
+	// Bursts are the accounts with 10 or more failed sign-ins within 15
+	// minutes, which the lockout would have locked.
+	Bursts []string `json:"bursts"`
+	// Since is how far back the log was read: 7 days, the log's oldest
+	// event, or the oldest event read where the scan stopped at its limit.
+	Since string `json:"since"`
 }
 
 var settingStates = []string{
@@ -507,38 +525,109 @@ func validWindowsPlatform(p HardeningPlatform) bool {
 		slices.Contains([]string{"workstation", "member_server", "standalone_server", "domain_controller"}, w.Role) &&
 		slices.Contains([]string{"none", "domain", "entra", "domain_entra"}, w.Joined) &&
 		slices.Contains([]string{"FullLanguage", "ConstrainedLanguage", "RestrictedLanguage", "NoLanguage"}, w.LanguageMode) &&
-		validTexts(w.Notes, maxFindingText) && len(w.CheckOnlyReasons) <= len(winpolicy.Reasons)
+		fewItems(w.Notes) && len(w.CheckOnlyReasons) <= len(winpolicy.Reasons)
 	for _, r := range w.CheckOnlyReasons {
 		ok = ok && slices.Contains(winpolicy.Reasons, r)
 	}
 	if o := w.Owners; o != nil {
-		ok = ok && slices.Contains([]string{"read", "off", "unread"}, o.GroupPolicyRecord) && validTexts(o.OSConfig, 128)
+		ok = ok && slices.Contains([]string{"read", "off", "unread"}, o.GroupPolicyRecord) && fewItems(o.OSConfig)
 	}
 	if f := w.Hardening; f != nil {
 		ok = ok && slices.Contains([]string{"absent", "present", "refused"}, f.Folder) &&
-			(f.CopySha256 == "" || sha256Hex.MatchString(f.CopySha256)) &&
-			validTexts(f.Warnings, maxFindingText) && validTexts(f.SetAside, maxFindingText)
+			(f.CopySha256 == "" || sha256Hex.MatchString(f.CopySha256)) && fewItems(f.Warnings, f.SetAside)
 	}
 	return ok
 }
 
-// validTexts is a list of at most maxFindingItems short texts.
-func validTexts(l []string, n int) bool {
-	if len(l) > maxFindingItems {
-		return false
-	}
-	for _, s := range l {
-		if s == "" || !shortText(s, n) {
+// fewItems: no list longer than maxFindingItems.
+func fewItems(lists ...[]string) bool {
+	for _, l := range lists {
+		if len(l) > maxFindingItems {
 			return false
 		}
 	}
 	return true
 }
 
+// tidyText is text the script read from the computer as a result keeps
+// it: without control or format characters (bidirectional marks, zero
+// width spaces), trimmed, at most n characters. Anyone who reaches the
+// computer can put text there (the user name of a failed sign-in comes
+// from the internet), so such text is tidied, never a reason to refuse
+// the whole result.
+func tidyText(s string, n int) string {
+	s = cleanText(strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s), false)
+	if utf8.RuneCountInString(s) > n {
+		s = strings.TrimSpace(string([]rune(s)[:n]))
+	}
+	return s
+}
+
+// tidyTexts tidies each text of a list and leaves out those that are then
+// empty.
+func tidyTexts(l []string, n int) []string {
+	if l == nil {
+		return nil
+	}
+	out := make([]string, 0, len(l))
+	for _, t := range l {
+		if t = tidyText(t, n); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// tidyWindows tidies the text of a Windows result that the script read
+// from the computer (tidyText), and leaves out addresses that are not
+// addresses; codes, states, IDs and times are checked as they are.
+func (r *hardeningResult) tidyWindows() {
+	if w := r.Platform.Windows; w != nil {
+		w.Notes = tidyTexts(w.Notes, maxFindingText)
+		if o := w.Owners; o != nil {
+			o.OSConfig = tidyTexts(o.OSConfig, 128)
+		}
+		if f := w.Hardening; f != nil {
+			f.Warnings = tidyTexts(f.Warnings, maxFindingText)
+			f.SetAside = tidyTexts(f.SetAside, maxFindingText)
+		}
+	}
+	for i := range r.Modules {
+		m := &r.Modules[i]
+		m.Reason = tidyText(m.Reason, maxFindingText)
+		m.Notes = tidyTexts(m.Notes, maxFindingText)
+		for j := range m.Settings {
+			st := &m.Settings[j]
+			st.Value = tidyText(st.Value, maxSettingText)
+			st.Note = tidyText(st.Note, maxFindingText)
+			if d := st.MDM; d != nil {
+				d.Config, d.Current, d.Provider = tidyText(d.Config, 80), tidyText(d.Current, 80), tidyText(d.Provider, 80)
+			}
+		}
+		for j := range m.Managed {
+			m.Managed[j].Policy = tidyText(m.Managed[j].Policy, maxSettingText)
+			m.Managed[j].Value = tidyText(m.Managed[j].Value, maxSettingText)
+		}
+		if e := m.Exposure; e != nil {
+			e.Accounts = tidyTexts(e.Accounts, 64)
+			e.Bursts = tidyTexts(e.Bursts, 64)
+			e.Addresses = slices.DeleteFunc(e.Addresses, func(a string) bool {
+				_, err := netip.ParseAddr(a)
+				return err != nil
+			})
+		}
+	}
+}
+
 // validWindows checks a Windows module's finding: settings of that module
 // in known states, owners and reasons from winpolicy, text within limits.
 func (f WindowsFinding) validWindows(module string) bool {
-	if len(f.Settings) > maxSettings || len(f.Managed) > maxSettings || !validTexts(f.Notes, maxFindingText) ||
+	if len(f.Settings) > maxSettings || len(f.Managed) > maxSettings || !fewItems(f.Notes) ||
 		!slices.Contains([]string{"", "in_place", "all"}, f.SettingsOmitted) {
 		return false
 	}
@@ -548,8 +637,8 @@ func (f WindowsFinding) validWindows(module string) bool {
 	}
 	for _, s := range f.Settings {
 		if !known(s.ID) || !slices.Contains(settingStates, s.State) || !shortText(s.Item, 64) ||
-			!shortText(s.Value, maxSettingText) || !shortText(s.Want, maxSettingText) || !shortText(s.Note, maxFindingText) ||
-			len(s.Reasons) > len(winpolicy.Reasons) {
+			!shortText(s.Want, maxSettingText) || len(s.Reasons) > len(winpolicy.Reasons) ||
+			(s.MDM != nil && !shortText(s.MDM.CSP, maxSettingText)) {
 			return false
 		}
 		for _, r := range s.Reasons {
@@ -557,30 +646,20 @@ func (f WindowsFinding) validWindows(module string) bool {
 				return false
 			}
 		}
-		if m := s.MDM; m != nil && (!shortText(m.CSP, maxSettingText) || !shortText(m.Config, 80) ||
-			!shortText(m.Current, 80) || !shortText(m.Provider, 80)) {
-			return false
-		}
 	}
 	for _, m := range f.Managed {
 		if (!known(m.ID) && m.ID != module) || !slices.Contains(winpolicy.Owners, m.Owner) ||
-			!slices.Contains([]string{"in_place", "managed_elsewhere"}, m.State) || !shortText(m.Item, 64) ||
-			!shortText(m.Policy, maxSettingText) || !shortText(m.Value, maxSettingText) {
+			!slices.Contains([]string{"in_place", "managed_elsewhere"}, m.State) || !shortText(m.Item, 64) {
 			return false
 		}
 	}
 	if e := f.Exposure; e != nil {
 		if module != "accounts" || len(e.Accounts) > maxExposureItems || len(e.Addresses) > maxExposureItems ||
-			!validTexts(e.Accounts, 64) {
+			len(e.Bursts) > maxExposureItems {
 			return false
 		}
 		if _, err := time.Parse(time.RFC3339Nano, e.Since); err != nil {
 			return false
-		}
-		for _, a := range e.Addresses {
-			if _, err := netip.ParseAddr(a); err != nil {
-				return false
-			}
 		}
 	}
 	return true

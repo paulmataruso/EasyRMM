@@ -20,8 +20,9 @@ import (
 // The reader started on its own, as the agent is to start it: Windows
 // PowerShell 5.1 as LocalSystem. CI's job "Windows hardening as
 // LocalSystem" starts these tests through a scheduled task with
-// EASYRMM_TEST_SYSTEM set; they write a value under HKLM\SOFTWARE\Policies,
-// so they run only on computers made for the job.
+// EASYRMM_TEST_SYSTEM set; they write values under HKLM and files under
+// Program Files and System32, so they run only on computers made for the
+// job.
 
 func systemTest(t *testing.T) {
 	t.Helper()
@@ -45,6 +46,11 @@ type answer struct {
 	} `json:"mdm"`
 }
 
+func (a answer) String() string {
+	b, _ := json.Marshal(a)
+	return string(b)
+}
+
 type answers struct {
 	Registry []answer `json:"registry"`
 	Security []answer `json:"security"`
@@ -52,9 +58,19 @@ type answers struct {
 	Notes    []string `json:"notes"`
 }
 
+func (a *answers) all() []answer {
+	return slices.Concat(a.Registry, a.Security, a.Audit)
+}
+
 // ask starts the reader with a request and returns its exit code and the
 // answers it printed.
 func ask(t *testing.T, request string) (int, *answers) {
+	t.Helper()
+	return askWith(t, request, nil)
+}
+
+// askWith is ask with more environment variables for the reader.
+func askWith(t *testing.T, request string, env []string) (int, *answers) {
 	t.Helper()
 	dir := t.TempDir()
 	script := filepath.Join(dir, "easyrmm-winpolicy.ps1")
@@ -67,6 +83,9 @@ func ask(t *testing.T, request string) (int, *answers) {
 	}
 	ps := filepath.Join(os.Getenv("SystemRoot"), `System32\WindowsPowerShell\v1.0\powershell.exe`)
 	cmd := exec.Command(ps, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, file)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -90,35 +109,10 @@ func ask(t *testing.T, request string) (int, *answers) {
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(last, QueryResultPrefix)), &a); err != nil {
 		t.Fatalf("%v: %s", err, last)
 	}
+	for i, x := range a.all() {
+		checkAnswer(t, "answer "+strconv.Itoa(i), x)
+	}
 	return code, &a
-}
-
-// enrolledInMDM reads the enrolments as the reader's rule does: enrolled,
-// and found through a discovery service.
-func enrolledInMDM(t *testing.T) bool {
-	t.Helper()
-	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Enrollments`, registry.ENUMERATE_SUB_KEYS)
-	if err != nil {
-		return false
-	}
-	defer k.Close()
-	names, err := k.ReadSubKeyNames(-1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range names {
-		e, err := registry.OpenKey(k, n, registry.QUERY_VALUE)
-		if err != nil {
-			continue
-		}
-		state, _, _ := e.GetIntegerValue("EnrollmentState")
-		url, _, _ := e.GetStringValue("DiscoveryServiceFullURL")
-		_ = e.Close()
-		if state == 1 && url != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func checkAnswer(t *testing.T, what string, a answer) {
@@ -140,59 +134,82 @@ func checkAnswer(t *testing.T, what string, a answer) {
 	}
 }
 
+// powershell runs a command with Windows PowerShell and returns its output.
+func powershell(t *testing.T, command string) string {
+	t.Helper()
+	ps := filepath.Join(os.Getenv("SystemRoot"), `System32\WindowsPowerShell\v1.0\powershell.exe`)
+	out, err := exec.Command(ps, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command).Output()
+	if err != nil {
+		t.Fatalf("%s: %v", command, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// valueExists: whether a value exists under HKLM.
+func valueExists(path, name string) bool {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	_, _, err = k.GetValue(name, nil)
+	return err == nil
+}
+
+// The request TestQueryAsSystem and the planted owners ask.
+const (
+	plantedKey = `SOFTWARE\Policies\EasyRMM-winpolicy-test`
+	realtime   = `SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection`
+	logonGUID  = "0cce9215-69ae-11d9-bed3-505054503030"
+)
+
+var baseRequest = `{"registry": [
+	{"path": "HKLM\\` + strings.ReplaceAll(plantedKey, `\`, `\\`) + `", "name": "Planted"},
+	{"path": "HKLM\\` + strings.ReplaceAll(realtime, `\`, `\\`) + `", "name": "DisableRealtimeMonitoring", "csp": "Defender/AllowRealtimeMonitoring", "defender": true, "product": "antivirus", "tamper": true},
+	{"path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\WDigest", "name": "UseLogonCredential"}],
+ "security": ["MinimumPasswordLength", "LockoutBadCount"],
+ "audit": ["` + logonGUID + `", "{0CCE922B-69AE-11D9-BED3-505054503030}"]}`
+
+// TestQueryAsSystem: on a runner, which no Group Policy object, MDM or
+// other owner manages (GitHub's images are not enrolled, carry no
+// preference items, Configuration Manager, DSC configuration or OSConfig
+// baseline), each answer is the one Windows' own state gives.
 func TestQueryAsSystem(t *testing.T) {
 	systemTest(t)
 	// A value under Policies that no owner the reader knows explains.
-	const key = `SOFTWARE\Policies\EasyRMM-winpolicy-test`
-	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, key, registry.SET_VALUE)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = registry.DeleteKey(registry.LOCAL_MACHINE, key) })
-	if err := k.SetDWordValue("Planted", 1); err != nil {
-		t.Fatal(err)
-	}
-	_ = k.Close()
+	plant(t, plantedKey, map[string]any{"Planted": uint32(1)})
 
-	request := `{"registry": [
-		{"path": "HKLM\\` + strings.ReplaceAll(key, `\`, `\\`) + `", "name": "Planted"},
-		{"path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Real-Time Protection", "name": "DisableRealtimeMonitoring", "csp": "Defender/AllowRealtimeMonitoring", "defender": true},
-		{"path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\WDigest", "name": "UseLogonCredential"}],
-	 "security": ["MinimumPasswordLength", "LockoutBadCount"],
-	 "audit": ["0cce9215-69ae-11d9-bed3-505054503030", "{0CCE922B-69AE-11D9-BED3-505054503030}"]}`
-	code, a := ask(t, request)
+	code, a := ask(t, baseRequest)
 	if code != 0 || len(a.Registry) != 3 || len(a.Security) != 2 || len(a.Audit) != 2 {
 		t.Fatalf("exit code %d, answers %+v", code, a)
 	}
-	b, _ := json.Marshal(a)
-	t.Logf("answers %s", b)
-	for i, x := range a.Registry {
-		checkAnswer(t, "registry "+strconv.Itoa(i), x)
+	t.Logf("answers %+v", a)
+	// The answers keep the request's order.
+	if r := a.Registry[0]; r.Result != ResultCannotTell || strings.Join(r.Reasons, ",") != ReasonUnexplainedPolicy {
+		t.Errorf("a value under Policies no one explains: %v", r)
 	}
-	for i, x := range a.Security {
-		checkAnswer(t, "security "+strconv.Itoa(i), x)
+	// Real-time protection: Tamper Protection's where it is on (the
+	// Windows 11 runner); otherwise unexplained where the image set a
+	// policy value, none where it did not.
+	tamper := powershell(t, `(Get-MpComputerStatus).IsTamperProtected`) == "True"
+	r := a.Registry[1]
+	switch {
+	case tamper:
+		if r.Result != ResultOwner || r.Owner != OwnerTamperProtection || r.Policy != "Tamper Protection" {
+			t.Errorf("real-time protection with Tamper Protection on: %v", r)
+		}
+	case valueExists(realtime, "DisableRealtimeMonitoring"):
+		if r.Result != ResultCannotTell || strings.Join(r.Reasons, ",") != ReasonUnexplainedPolicy {
+			t.Errorf("real-time protection's policy value: %v", r)
+		}
+	case r.Result != ResultNone:
+		t.Errorf("real-time protection: %v", r)
 	}
-	for i, x := range a.Audit {
-		checkAnswer(t, "audit "+strconv.Itoa(i), x)
-	}
-	// The planted value is never "none": unexplained, or another reason
-	// that holds for the whole computer. The answers keep the request's
-	// order: a value outside Policies is never unexplained.
-	if a.Registry[0].Result != ResultCannotTell {
-		t.Errorf("a value under Policies no one explains: %+v", a.Registry[0])
-	}
-	if slices.Contains(a.Registry[2].Reasons, ReasonUnexplainedPolicy) {
-		t.Errorf("a value outside Policies: %+v", a.Registry[2])
-	}
-	if p := a.Registry[1]; slices.Contains(p.Reasons, ReasonMDM) && (p.MDM == nil || p.MDM.CSP != "Defender/AllowRealtimeMonitoring") {
-		t.Errorf("an MDM reason without what the MDM reader read: %+v", p)
-	}
-	// Windows' own enrolments, on every computer, are not an MDM.
-	if !enrolledInMDM(t) {
-		for i, x := range a.Registry {
-			if slices.Contains(x.Reasons, ReasonMDM) {
-				t.Errorf("registry %d: an MDM reason on a computer no MDM enrolled: %+v", i, x)
-			}
+	// A value outside Policies, security settings and audit subcategories
+	// no one holds.
+	for i, x := range append([]answer{a.Registry[2]}, slices.Concat(a.Security, a.Audit)...) {
+		if x.Result != ResultNone {
+			t.Errorf("unowned %d: %v", i, x)
 		}
 	}
 
@@ -218,8 +235,7 @@ func TestQueryDomainAsSystem(t *testing.T) {
 	if code != 0 || len(a.Registry) != 3 || len(a.Security) != 3 || len(a.Audit) != 3 {
 		t.Fatalf("exit code %d, answers %+v", code, a)
 	}
-	b, _ := json.Marshal(a)
-	t.Logf("answers %s", b)
+	t.Logf("answers %+v", a)
 
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Policies\Microsoft\Windows\System`, registry.QUERY_VALUE)
 	recordOff := false
@@ -275,6 +291,9 @@ func badRequests(t *testing.T) {
 		``, `[]`, `{"other": []}`, `{"registry": [{"path": "HKCU\\x", "name": "y"}]}`,
 		`{"registry": [{"path": "HKLM\\x"}]}`, `{"registry": [{"path": "HKLM\\x", "name": "y", "csp": "no slash"}]}`,
 		`{"registry": [{"path": "HKLM\\x", "name": "y", "defender": "yes"}]}`,
+		`{"registry": [{"path": "HKLM\\x", "name": "y", "tamper": 1}]}`,
+		`{"registry": [{"path": "HKLM\\x", "name": "y", "product": "edr"}]}`,
+		`{"registry": [{"path": "HKLM\\x", "name": "y", "products": "firewall"}]}`,
 		`{"security": ["Minimum Password"]}`, `{"audit": ["Logon"]}`,
 	} {
 		if code, _ := ask(t, bad); code != 2 {

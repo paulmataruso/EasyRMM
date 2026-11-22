@@ -130,6 +130,9 @@ func TestParseWindowsSettings(t *testing.T) {
 		"unknown option":    `{"version":1,"settings":[{"id":"uac-x","module":"uac","what":"x","kind":"custom","option":"uac-off"}]}`,
 		"option of another": `{"version":1,"settings":[{"id":"uac-x","module":"uac","what":"x","kind":"custom","option":"spooler-off"}]}`,
 		"unknown rule":      `{"version":1,"settings":[{"id":"asr-x","module":"asr","what":"x","kind":"asr","rule":"a8f5898e-1dc8-49a9-9878-85004b8a61e6"}]}`,
+		"not a CSP policy":  `{"version":1,"settings":[{"id":"wdigest-x","module":"wdigest","what":"x","kind":"custom","csp":"Firewall"}]}`,
+		"firewall CSP":      `{"version":1,"settings":[{"id":"firewall-x","module":"firewall","what":"x","kind":"firewall","csp":"Firewall/DomainProfile"}]}`,
+		"security CSP":      `{"version":1,"settings":[{"id":"accounts-x","module":"accounts","what":"x","kind":"secedit","csp":"DeviceLock/MinDevicePasswordLength"}]}`,
 	} {
 		if _, err := parseWindowsSettings([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -267,7 +270,7 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 		`"settings":[{"id":"accounts-min-length","state":"managed_elsewhere","value":"7","want":">= 14"},` +
 		`{"id":"accounts-max-age","state":"reported","value":"42"}],` +
 		`"managed":[{"id":"accounts-min-length","owner":"group_policy","policy":"Default Domain Policy","value":"7","state":"managed_elsewhere"}],` +
-		`"notes":[],"exposure":{"exposed":true,"accounts":["administrator"],"addresses":["203.0.113.9"],"since":"2026-11-15T10:00:00.0000000Z"}},` +
+		`"notes":[],"exposure":{"exposed":true,"accounts":["administrator"],"addresses":["203.0.113.9"],"bursts":["backup"],"since":"2026-11-15T10:00:00.0000000Z"}},` +
 		`{"module":"wdigest","state":"not_in_place","settings":[{"id":"wdigest-logon-credential","state":"check_only","value":"1","want":"0",` +
 		`"reasons":["mdm"],"mdm":{"csp":"MSSecurityGuide/WDigestAuthentication","config":"","current":"","provider":""}}],"managed":[],"notes":[]},` +
 		`{"module":"audit","state":"partly","settings":[{"id":"audit-subcategories","item":"{0cce923f-69ae-11d9-bed3-505054503030}","state":"in_place","value":"success_failure","want":"success_failure"}],"managed":[],"notes":[]}`
@@ -297,28 +300,50 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 		"a container":               {strings.Replace(windowsPlatform, `"container":"none"`, `"container":"docker"`, 1), good},
 		"an unknown reason":         {strings.Replace(windowsPlatform, `"checkOnlyReasons":[]`, `"checkOnlyReasons":["sccm"]`, 1), good},
 		"a record state":            {strings.Replace(windowsPlatform, `"groupPolicyRecord":"read"`, `"groupPolicyRecord":"maybe"`, 1), good},
-		"an OSConfig scenario":      {strings.Replace(windowsPlatform, `2025\\MemberServer`, `2025\\Member\u0007`, 1), good},
 		"a folder state":            {strings.Replace(windowsPlatform, `"folder":"absent"`, `"folder":"gone"`, 1), good},
 		"a bad hash":                {strings.Replace(windowsPlatform, `"copySha256":""`, `"copySha256":"abc"`, 1), good},
-		"a control in a note":       {strings.Replace(windowsPlatform, `"notes":[]`, `"notes":["a\u0007b"]`, 1), good},
 		"another module's setting":  {windowsPlatform, strings.Replace(good, `"id":"accounts-max-age"`, `"id":"uac-on"`, 1)},
 		"an unknown setting state":  {windowsPlatform, strings.Replace(good, `"state":"reported"`, `"state":"fine"`, 1)},
 		"an unknown owner":          {windowsPlatform, strings.Replace(good, `"owner":"group_policy"`, `"owner":"intune"`, 1)},
 		"an unknown setting reason": {windowsPlatform, strings.Replace(good, `"reasons":["mdm"]`, `"reasons":["intune"]`, 1)},
 		"a managed state":           {windowsPlatform, strings.Replace(good, `"value":"7","state":"managed_elsewhere"}`, `"value":"7","state":"partly"}`, 1)},
-		"a bad address":             {windowsPlatform, strings.Replace(good, "203.0.113.9", "somewhere", 1)},
 		"a bad time":                {windowsPlatform, strings.Replace(good, "2026-11-15T10:00:00.0000000Z", "last week", 1)},
 		"exposure elsewhere":        {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","exposure":{"exposed":false,"accounts":[],"addresses":[],"since":"2026-11-15T10:00:00Z"},`, 1)},
 		"ports on Windows":          {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","ports":{"tcp":["22"]},`, 1)},
 		"an omission":               {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","settingsOmitted":"some",`, 1)},
-		"a long value":              {windowsPlatform, strings.Replace(good, `"value":"42"`, `"value":"`+strings.Repeat("x", 121)+`"`, 1)},
-		"a long MDM value":          {windowsPlatform, strings.Replace(good, `"config":""`, `"config":"`+strings.Repeat("x", 81)+`"`, 1)},
+		"a long want":               {windowsPlatform, strings.Replace(good, `"want":">= 14"`, `"want":"`+strings.Repeat("x", 121)+`"`, 1)},
+		"a control in an item":      {windowsPlatform, strings.Replace(good, `"item":"{0cce923f`, `"item":"{0cce923f\u0085`, 1)},
+		"many bursts":               {windowsPlatform, strings.Replace(good, `"bursts":["backup"]`, `"bursts":["a","b","c","d","e","f","g","h","i","j","k"]`, 1)},
 	}
 	for name, c := range bad {
 		if _, err := parseHardeningResult(windowsLine(c.platform, c.modules), h); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// Text the computer gave is tidied, and never refuses the result: a
+	// failed sign-in's user name comes from whoever tried it.
+	untidy := strings.NewReplacer(
+		`"accounts":["administrator"]`, `"accounts":["","   ","\u0085\u0080\u009f","admin\u0085istrator\u202e","\u200b"]`,
+		`"bursts":["backup"]`, `"bursts":[" backup\u0007 "]`,
+		`"addresses":["203.0.113.9"]`, `"addresses":["203.0.113.9","somewhere"]`,
+		`"value":"42"`, `"value":"`+strings.Repeat("x", 121)+`"`,
+		`"config":""`, `"config":"`+strings.Repeat("y", 81)+`"`,
+		`"policy":"Default Domain Policy"`, `"policy":"Default\u009b Domain Policy\u00a0"`,
+	).Replace(good)
+	untidyPlatform := strings.NewReplacer(`2025\\MemberServer`, `2025\\Member\u0007`, `"notes":[]`, `"notes":["a\u0007b","\u0085"]`).Replace(windowsPlatform)
+	r, err = parseHardeningResult(windowsLine(untidyPlatform, untidy), h)
+	if err != nil {
+		t.Fatalf("untidy text refused the result: %v", err)
+	}
+	e, a := r.Modules[0].Exposure, r.Modules[0]
+	if !slices.Equal(e.Accounts, []string{"administrator"}) || !slices.Equal(e.Bursts, []string{"backup"}) ||
+		!slices.Equal(e.Addresses, []string{"203.0.113.9"}) || a.Settings[1].Value != strings.Repeat("x", 120) ||
+		a.Managed[0].Policy != "Default Domain Policy" || r.Modules[1].Settings[0].MDM.Config != strings.Repeat("y", 80) ||
+		r.Platform.Windows.Owners.OSConfig[0] != `SecurityBaseline\WindowsServer\2025\Member` ||
+		!slices.Equal(r.Platform.Windows.Notes, []string{"ab"}) {
+		t.Errorf("tidied: exposure %+v, module %+v, platform %+v", e, a, r.Platform.Windows)
+	}
+
 	// Windows' fields in a Linux result.
 	lnx := Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}}
 	lp := `{"id":"ubuntu","versionId":"24.04","family":"debian","container":"none","support":"full"}`

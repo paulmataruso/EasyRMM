@@ -105,16 +105,6 @@ func For(module string) (Related, bool) {
 	return Related{}, false
 }
 
-// Modules returns the Windows hardening modules the tables cover, in the
-// order ADR-0054 lists them.
-func Modules() []string {
-	out := make([]string, 0, len(tables.Modules))
-	for _, m := range tables.Modules {
-		out = append(out, m.Module)
-	}
-	return out
-}
-
 // Sources returns the files the tables were built from, with their versions,
 // for the console's Related controls panel.
 func Sources() []Source {

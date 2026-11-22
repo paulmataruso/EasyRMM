@@ -72,8 +72,10 @@ jobs:
           go-version-file: go.mod
       - name: go test
         run: go test -count=1 -v ./agent/... ./internal/agentproto/...
-      - name: Windows software scripts
-        run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/
+      # The software and hardening scripts' functions, and the ownership
+      # reader's (ADR-0054), as the runner's administrator.
+      - name: Windows software and hardening scripts
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/ ./internal/winpolicy/
       # ADR-0065: the disk reader on the runner's disks, through the same
       # IOCTLs the agent sends. They are Azure virtual disks: NVMe ones,
       # which the NVMe path reads, or, on some runners, Hyper-V's virtual
@@ -171,7 +173,7 @@ jobs:
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\winpolicy.test.exe" `
-            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', '-test.timeout=25m' `
             -WorkingDirectory "$env:GITHUB_WORKSPACE\internal\winpolicy" -Environment 'EASYRMM_TEST_SYSTEM=1'
           exit $LASTEXITCODE
       - name: Check every module, and the Hardening folder's check, as LocalSystem

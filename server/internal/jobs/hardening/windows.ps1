@@ -3,8 +3,9 @@
 # one mode, check: for each chosen module it reports whether the module's
 # settings are in effect, who else owns each (Group Policy, Tamper
 # Protection, another antivirus or firewall) or why that cannot be told (an
-# MDM, OSConfig and the others of internal/winpolicy), and what apply would
-# change on this computer. It changes nothing (see "What check writes").
+# MDM, OSConfig and the others of internal/winpolicy, whose reader this
+# script includes), and what apply would change on this computer. It
+# changes nothing (see "What check writes").
 #
 # Arguments, which are never part of this script's text. The EasyRMM server
 # accepts only the names and forms below, and this script checks them again:
@@ -32,7 +33,8 @@
 # run by an administrator.
 #
 # What check writes. Nothing it reports on. It runs Windows' own readers that
-# write to files (secedit /export, auditpol /backup, gpresult /x) into a
+# write to files (secedit /export, auditpol /backup, gpresult /x, netsh wfp
+# show state) into a
 # folder it makes under %SystemRoot%\Temp that only SYSTEM and
 # Administrators can reach, and removes it before it ends. Where the
 # Hardening folder exists, it opens its lock file (creating it if missing),
@@ -149,7 +151,7 @@ function Get-ErPlatform {
     $entra = @(Get-ChildItem -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo' -ErrorAction SilentlyContinue).Count -gt 0
     $joined = 'none'
     if ($domain -and $entra) { $joined = 'domain_entra' } elseif ($domain) { $joined = 'domain' } elseif ($entra) { $joined = 'entra' }
-    $mdm = (Get-ErMdmProviders).Count -gt 0
+    $mdm = (Get-ErMdmProviders).Providers.Count -gt 0
     $arch = "$env:PROCESSOR_ARCHITECTURE".ToLowerInvariant()
     if ($arch -eq 'x86' -and $env:PROCESSOR_ARCHITEW6432) { $arch = "$env:PROCESSOR_ARCHITEW6432".ToLowerInvariant() }
     $edition = ''
@@ -266,15 +268,6 @@ function Test-ErOption {
     return [bool]$ErOptions[$Name]
 }
 
-# A short, printable form of any text for the result.
-function Limit-ErText {
-    param([string]$Text, [int]$Max = 300)
-    if ($null -eq $Text) { return '' }
-    $t = ($Text -replace '[\x00-\x1f\x7f]+', ' ').Trim()
-    if ($t.Length -gt $Max) { $t = $t.Substring(0, $Max - 3) + '...' }
-    return $t
-}
-
 # ---------------------------------------------------------------------------
 # Access lists of the Hardening folder and its files (the work folder,
 # under %SystemRoot%\Temp, is the reader's New-ErWorkFolder).
@@ -286,40 +279,8 @@ $ErInheritedFile = 'D:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)'
 # The Hardening folder (ADR-0054, "Backups, undo and interruptions"), with
 # PR #61's rule: the chain from ProgramData down is plain folders with a
 # trusted owner; the folder and its files have a trusted owner, the files
-# are plain with one link, and they are judged by who may write.
-
-$ErTrusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-# WriteData, AppendData, WriteEA, DeleteChild, WriteAttributes, Delete,
-# WriteDAC, WriteOwner, GenericAll, GenericWrite.
-$ErWriteRights = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
-
-# Test-ErWriters: who besides SYSTEM, Administrators and TrustedInstaller
-# may write, from the access list in SDDL, so that callback and object
-# entries count too. Deny entries are ignored (they only take rights away);
-# inherit-only entries count on folders, where new files inherit them.
-# Returns the SIDs that may write, or 'unreadable'.
-function Get-ErWriters {
-    param([string]$Sddl, [bool]$Folder)
-    try {
-        $sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($Sddl)
-    } catch {
-        return @('unreadable')
-    }
-    $out = @()
-    if ($null -eq $sd.DiscretionaryAcl) { return @('everyone (no access list)') }
-    foreach ($ace in $sd.DiscretionaryAcl) {
-        $type = [string]$ace.AceType
-        if ($type -like 'AccessDenied*' -or $type -like 'System*') { continue }
-        if ($type -notlike 'AccessAllowed*') { $out += "an entry of type $type"; continue }
-        # AceFlags is a byte enum, which Windows PowerShell's -band cannot
-        # take as it is.
-        if (-not $Folder -and ([int]$ace.AceFlags -band [int][System.Security.AccessControl.AceFlags]::InheritOnly)) { continue }
-        $sid = [string]$ace.SecurityIdentifier
-        if ($ErTrusted -contains $sid) { continue }
-        if (([int64]$ace.AccessMask -band $ErWriteRights) -ne 0) { $out += $sid }
-    }
-    return , $out
-}
+# are plain with one link, and they are judged by who may write (the
+# reader's Get-ErTrustedSids and Get-ErWriters).
 
 # The access part of an SDDL with its entries in a fixed order, to compare
 # access lists that hold the same allow entries in another order.
@@ -329,15 +290,6 @@ function ConvertTo-ErSortedSddl {
     $head = $Matches[1]
     $entries = @([regex]::Matches($Matches[2], '\([^()]*\)') | ForEach-Object { $_.Value } | Sort-Object)
     return $head + ($entries -join '')
-}
-
-function Get-ErOwnerSid {
-    param([string]$Sddl)
-    try {
-        return [string](New-Object System.Security.AccessControl.RawSecurityDescriptor($Sddl)).Owner
-    } catch {
-        return ''
-    }
 }
 
 # The number of names a file has (hard links), from fsutil, which prints
@@ -358,7 +310,7 @@ function Test-ErEntry {
     if ($Folder -ne ($item -is [IO.DirectoryInfo])) { return 'is not a plain ' + $(if ($Folder) { 'folder' } else { 'file' }) }
     $sddl = $item.GetAccessControl('Owner, Access').GetSecurityDescriptorSddlForm('Owner, Access')
     $owner = Get-ErOwnerSid $sddl
-    if ($ErTrusted -notcontains $owner) { return "is owned by $owner, not by SYSTEM, Administrators or TrustedInstaller" }
+    if ((Get-ErTrustedSids) -notcontains $owner) { return "is owned by $owner, not by SYSTEM, Administrators or TrustedInstaller" }
     if ($ChainOnly) { return 'ok' }
     if (-not $Folder) {
         $links = Get-ErLinkCount $Path
@@ -555,28 +507,17 @@ function Get-ErMpStatus {
     return $ErCache.mpstatus
 }
 
-# Security Center's antivirus and firewall products other than Microsoft's
-# that are on (workstations only; Microsoft says it is not supported on
-# servers).
-function Get-ErSecurityProducts {
-    param([string]$Class)
-    $names = @()
-    if (-not $ErPlatform.Client) { return , $names }
-    try {
-        foreach ($p in @(Get-CimInstance -Namespace 'root\SecurityCenter2' -ClassName $Class -ErrorAction Stop -OperationTimeoutSec 30)) {
-            $on = (([int64]$p.productState -shr 12) -band 0xF) -eq 1
-            $ms = ([string]$p.pathToSignedProductExe) -match '(?i)windows defender|windowsdefender:|%ProgramFiles%\\Windows Defender'
-            if ($on -and -not $ms) { $names += Limit-ErText ([string]$p.displayName) 80 }
-        }
-    } catch {
-        $null = $_
-    }
-    return , $names
-}
-
-function Get-ErService {
+# Get-ErServiceState: a service's status and start type, telling a service
+# that is not installed from one that could not be read.
+function Get-ErServiceState {
     param([string]$Name)
-    return Get-CimInstance -ClassName Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    try {
+        $s = Get-Service -Name $Name -ErrorAction Stop
+        return @{ Installed = $true; Read = $true; Status = [string]$s.Status; StartType = [string]$s.StartType }
+    } catch {
+        if ($_.FullyQualifiedErrorId -like 'NoServiceFoundForGivenName*') { return @{ Installed = $false; Read = $true } }
+        return @{ Installed = $true; Read = $false; Error = $_.Exception.Message }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -625,13 +566,15 @@ function Get-ErWantText {
 
 # Finish a setting that is not in place: managed elsewhere when an owner
 # holds it, check only when the reader cannot tell, not in place when no
-# owner holds it (apply would change it).
+# owner holds it (apply would change it). An owner that gives no value of
+# its own (Tamper Protection) holds the value the setting has.
 function Complete-ErSetting {
     param($Setting, $Owner, $Module)
     if ($Setting.state -ne 'not_in_place' -and $Setting.state -ne 'in_place') { return $Setting }
     if ($null -eq $Owner) { return $Setting }
     if ($Owner.Result -eq 'owner') {
-        $m = @{ id = $Setting.id; owner = $Owner.Owner; policy = Limit-ErText $Owner.Policy 120; value = Limit-ErText $Owner.Value 120 }
+        $value = $(if ($Owner.Value) { $Owner.Value } else { [string]$Setting.value })
+        $m = @{ id = $Setting.id; owner = $Owner.Owner; policy = Limit-ErText $Owner.Policy 120; value = Limit-ErText $value 120 }
         # ContainsKey: a hashtable without the key answers .item with its
         # own Item property.
         if ($Setting.ContainsKey('item')) { $m.item = $Setting.item }
@@ -680,7 +623,7 @@ function Test-ErRegistrySetting {
     } else {
         $s = New-ErSetting $Def 'not_in_place' $v.Data $want
     }
-    $owner = Resolve-ErRegistryOwner $ErPolicy $Def.path $Def.name ([string]$Def.csp)
+    $owner = Resolve-ErRegistryOwner $ErPolicy $Def.path $Def.name ([string]$Def.csp) -Tamper:([bool]$Def.tamper)
     return Complete-ErSetting $s $owner $Module
 }
 
@@ -697,13 +640,15 @@ function Test-ErSecuritySetting {
 }
 
 # An effective value read by a module itself, compared by the caller.
+# Product: antivirus or firewall, for a value another such product takes
+# over (with -Defender).
 function Test-ErValue {
-    param($Def, $Module, $Value, [bool]$InPlace, [string]$Want, [switch]$Defender, [string]$Note = '')
+    param($Def, $Module, $Value, [bool]$InPlace, [string]$Want, [switch]$Defender, [string]$Product = '', [string]$Note = '')
     if ($Def.cite -eq 'not_set') { return New-ErSetting $Def 'reported' $Value '' $Note }
     $s = New-ErSetting $Def $(if ($InPlace) { 'in_place' } else { 'not_in_place' }) $Value $Want $Note
     $owner = $null
     if ($Def.path) {
-        $owner = Resolve-ErRegistryOwner $ErPolicy $Def.path $Def.name ([string]$Def.csp) -Defender:$Defender
+        $owner = Resolve-ErRegistryOwner $ErPolicy $Def.path $Def.name ([string]$Def.csp) -Defender:$Defender -Product $Product -Tamper:([bool]$Def.tamper)
     }
     return Complete-ErSetting $s $owner $Module
 }
@@ -764,7 +709,7 @@ function Test-ErFirewallSetting {
     if ($Def.property -eq 'Enabled' -and $v -eq 'False' -and -not $ErPlatform.Client -and -not (Test-ErOption 'firewall-server')) {
         $note = 'A server profile that is off is reported and turned on only with firewall-server, in two steps.'
     }
-    return Test-ErValue $Def $Module $v (Test-ErWant $Def $v) (Get-ErWantText $Def) -Defender -Note $note
+    return Test-ErValue $Def $Module $v (Test-ErWant $Def $v) (Get-ErWantText $Def) -Defender -Product 'firewall' -Note $note
 }
 
 function Test-ErDefenderSetting {
@@ -778,11 +723,7 @@ function Test-ErDefenderSetting {
     if ($realtime -and -not $ErPlatform.Client -and "$v" -eq 'True' -and -not (Test-ErOption 'defender-server-realtime')) {
         return New-ErSetting $d 'reported' $v '' 'Off on this server: turned on only with defender-server-realtime.'
     }
-    $s = Test-ErValue $d $Module $v (Test-ErWant $d $v) (Get-ErWantText $d) -Defender
-    if ($s.state -eq 'not_in_place' -and $d.tamper -and $ErPolicy.TamperProtected) {
-        $s.state = 'managed_elsewhere'
-        $Module.managed += @{ id = $s.id; owner = 'tamper_protection'; policy = 'Tamper Protection'; value = $s.value; state = 'managed_elsewhere' }
-    }
+    $s = Test-ErValue $d $Module $v (Test-ErWant $d $v) (Get-ErWantText $d) -Defender -Product 'antivirus'
     # A local Set-MpPreference value that the policy value apply writes
     # would outrank: one that is not what apply wants. (Windows itself keeps
     # some local values, such as cloud protection's, at their defaults.)
@@ -829,7 +770,7 @@ function Test-ErAsrSetting {
     $want = $(if ($block) { 'block' } else { 'audit' })
     $path = 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules'
     $s = New-ErSetting $Def $(if ($ok) { 'in_place' } else { 'not_in_place' }) $names[$v] $want
-    $owner = Resolve-ErRegistryOwner $ErPolicy $path ([string]$Def.rule) ([string]$Def.csp) -Defender
+    $owner = Resolve-ErRegistryOwner $ErPolicy $path ([string]$Def.rule) ([string]$Def.csp) -Defender -Product 'antivirus'
     return Complete-ErSetting $s $owner $Module
 }
 
@@ -936,10 +877,11 @@ function Test-ErRdpSetting {
 
 function Test-ErSpooler {
     param($Def)
-    $svc = Get-ErService 'Spooler'
-    if ($null -eq $svc) { return New-ErSetting $Def 'in_place' 'not installed' 'stopped and disabled' }
-    $shown = "$($svc.State), $($svc.StartMode)"
-    $off = $svc.StartMode -eq 'Disabled' -and $svc.State -eq 'Stopped'
+    $svc = Get-ErServiceState 'Spooler'
+    if (-not $svc.Read) { return New-ErSetting $Def 'unknown' $null 'stopped and disabled' "The Print Spooler service could not be read: $($svc.Error)" }
+    if (-not $svc.Installed) { return New-ErSetting $Def 'in_place' 'not installed' 'stopped and disabled' }
+    $shown = "$($svc.Status), $($svc.StartType)"
+    $off = $svc.StartType -eq 'Disabled' -and $svc.Status -eq 'Stopped'
     $counted = $ErPlatform.Role -eq 'domain_controller' -or (Test-ErOption 'spooler-off')
     if (-not $off) {
         $why = @()
@@ -1026,7 +968,6 @@ function Test-ErAuditSubcategories {
     $a = Get-ErAuditPolicy
     if ($null -eq $a) { return , @(New-ErSetting $Def 'unknown' $null '' 'auditpol did not report the audit policy.') }
     $bits = @{ success = 1; failure = 2; success_failure = 3 }
-    $override = Get-ErRegistryValue 'HKLM\SYSTEM\CurrentControlSet\Control\Lsa' 'SCENoApplyLegacyAuditPolicy'
     $out = @()
     foreach ($row in @($ErAudit.subcategories)) {
         if ($row.set -eq 'left') { continue }
@@ -1035,7 +976,7 @@ function Test-ErAuditSubcategories {
         $want = $bits[[string]$row.set]
         $s = New-ErSetting $Def $(if ($null -ne $v -and ($v -band $want) -eq $want) { 'in_place' } else { 'not_in_place' }) (ConvertTo-ErAuditSetting ([int]$v)) $row.set
         $s.item = [string]$row.guid
-        $owner = Resolve-ErAuditOwner $ErPolicy ([string]$row.guid) ($override.Exists -and "$($override.Data)" -eq '1')
+        $owner = Resolve-ErAuditOwner $ErPolicy ([string]$row.guid)
         $out += Complete-ErSetting $s $owner $Module
     }
     return , $out
@@ -1074,31 +1015,85 @@ function Test-ErAuditLogs {
 # ---------------------------------------------------------------------------
 # Modules.
 
-# Failed sign-ins from public addresses in the Security log, as far back
-# as it reaches up to 7 days: an exposed computer gets no lockout unless
-# lockout-exposed is given.
+# Get-ErExposure: failed sign-ins (event 4625) in the Security log, as far
+# back as it reaches up to 7 days, and at most Limit of them, newest first
+# (ADR-0054, Accounts): those from public addresses, and the accounts with
+# 10 or more within 15 minutes, which the lockout would have locked. An
+# exposed computer gets no lockout unless lockout-exposed is given. Since is
+# how far back the log was read: 7 days, the log's oldest event, or the
+# oldest event read where the scan stopped at Limit. Read is false, with
+# the error, where the log could not be read.
 function Get-ErExposure {
+    param([int]$Limit = 5000)
     $since = (Get-Date).AddDays(-7)
+    $failed = $null
+    $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4625; StartTime = $since } -MaxEvents $Limit -ErrorAction SilentlyContinue -ErrorVariable failed)
+    $failed = @($failed | Where-Object { $_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*' })
+    if ($failed.Count -gt 0) { return @{ Read = $false; Error = $failed[0].Exception.Message } }
     $accounts = @{}
     $addresses = @{}
-    $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4625; StartTime = $since } -MaxEvents 5000 -ErrorAction SilentlyContinue)
+    $times = @{}
     foreach ($e in $events) {
         $x = [xml]$e.ToXml()
         $data = @{}
         foreach ($d in $x.Event.EventData.Data) { $data[[string]$d.Name] = [string]$d.'#text' }
-        $ip = $data['IpAddress']
-        if (-not $ip -or $ip -eq '-' -or $ip -match '^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|::1$|fe80:|fc|fd)') { continue }
-        $accounts[$data['TargetUserName']] = $true
+        # Windows writes '-' where it has no name.
+        $user = Limit-ErText $data['TargetUserName'] 64
+        if ($user -eq '-') { $user = '' }
+        if ($user) {
+            if (-not $times.ContainsKey($user)) { $times[$user] = New-Object 'System.Collections.Generic.List[datetime]' }
+            $times[$user].Add($e.TimeCreated)
+        }
+        $ip = ConvertTo-ErPublicAddress $data['IpAddress']
+        if (-not $ip) { continue }
         $addresses[$ip] = $true
+        if ($user) { $accounts[$user] = $true }
     }
-    $first = @(Get-WinEvent -LogName Security -MaxEvents 1 -Oldest -ErrorAction SilentlyContinue)
-    $reach = $(if ($first.Count -gt 0 -and $first[0].TimeCreated -gt $since) { $first[0].TimeCreated.ToUniversalTime().ToString('o') } else { $since.ToUniversalTime().ToString('o') })
+    $bursts = @()
+    foreach ($u in $times.Keys) {
+        $t = @($times[$u] | Sort-Object)
+        for ($i = 0; $i + 9 -lt $t.Count; $i++) {
+            if (($t[$i + 9] - $t[$i]).TotalMinutes -le 15) { $bursts += $u; break }
+        }
+    }
+    if ($events.Count -ge $Limit) {
+        $reach = $events[$events.Count - 1].TimeCreated
+    } else {
+        $first = @(Get-WinEvent -LogName Security -MaxEvents 1 -Oldest -ErrorAction SilentlyContinue)
+        $reach = $(if ($first.Count -gt 0 -and $first[0].TimeCreated -gt $since) { $first[0].TimeCreated } else { $since })
+    }
     return @{
-        Exposed = $addresses.Count -gt 0
-        Accounts = @($accounts.Keys | Select-Object -First 10 | ForEach-Object { Limit-ErText $_ 64 })
-        Addresses = @($addresses.Keys | Select-Object -First 10)
-        Since = $reach
+        Read = $true
+        Exposed = $addresses.Count -gt 0 -or $bursts.Count -gt 0
+        Accounts = @($accounts.Keys | Sort-Object | Select-Object -First 10)
+        Addresses = @($addresses.Keys | Sort-Object | Select-Object -First 10)
+        Bursts = @($bursts | Sort-Object | Select-Object -First 10)
+        Since = $reach.ToUniversalTime().ToString('o')
     }
+}
+
+# ConvertTo-ErPublicAddress: an address outside the private, loopback,
+# link-local and shared ranges, as text (an IPv4 address mapped into IPv6
+# as IPv4); '' for any other address or text.
+function ConvertTo-ErPublicAddress {
+    param([string]$Text)
+    $a = $null
+    if (-not [System.Net.IPAddress]::TryParse("$Text".Trim(), [ref]$a)) { return '' }
+    if ($a.IsIPv4MappedToIPv6) { $a = $a.MapToIPv4() }
+    $b = $a.GetAddressBytes()
+    if ($a.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        $private = $b[0] -eq 0 -or $b[0] -eq 10 -or $b[0] -eq 127 -or $b[0] -ge 224 -or
+            ($b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127) -or ($b[0] -eq 169 -and $b[1] -eq 254) -or
+            ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) -or ($b[0] -eq 192 -and $b[1] -eq 168)
+        if ($private) { return '' }
+        return $a.ToString()
+    }
+    if ([System.Net.IPAddress]::IsLoopback($a) -or $a.Equals([System.Net.IPAddress]::IPv6None) -or $a.IsIPv6LinkLocal -or
+        $a.IsIPv6SiteLocal -or $a.IsIPv6Multicast -or ($b[0] -band 0xfe) -eq 0xfc) {
+        return ''
+    }
+    $a.ScopeId = 0
+    return $a.ToString()
 }
 
 # What stops a whole module before its settings are read.
@@ -1107,7 +1102,7 @@ function Get-ErModuleGate {
     switch ($Name) {
         { $_ -eq 'defender' -or $_ -eq 'asr' } {
             $st = Get-ErMpStatus
-            $av = Get-ErSecurityProducts 'AntiVirusProduct'
+            $av = @($ErPolicy.Products.antivirus)
             if ($av.Count -gt 0) {
                 foreach ($n in $av) { $Module.managed += @{ id = $Name; owner = 'security_product'; policy = $n; value = 'on'; state = 'managed_elsewhere' } }
                 return @{ state = 'managed_elsewhere'; reason = 'Another antivirus is on: ' + ($av -join ', ') + '.' }
@@ -1122,13 +1117,17 @@ function Get-ErModuleGate {
             }
         }
         'firewall' {
-            $fw = Get-ErSecurityProducts 'FirewallProduct'
+            $fw = @($ErPolicy.Products.firewall)
             if ($fw.Count -gt 0) {
                 foreach ($n in $fw) { $Module.managed += @{ id = $Name; owner = 'security_product'; policy = $n; value = 'on'; state = 'managed_elsewhere' } }
                 return @{ state = 'managed_elsewhere'; reason = 'Another firewall is on: ' + ($fw -join ', ') + '.' }
             }
-            $svc = Get-ErService 'MpsSvc'
-            if ($null -eq $svc -or $svc.State -ne 'Running') { $Module.notes += 'The Windows Defender Firewall service is not running.' }
+            $svc = Get-ErServiceState 'MpsSvc'
+            if (-not $svc.Read) {
+                $Module.notes += "The Windows Defender Firewall service could not be read: $($svc.Error)"
+            } elseif (-not $svc.Installed -or $svc.Status -ne 'Running') {
+                $Module.notes += 'The Windows Defender Firewall service is not running.'
+            }
         }
         'uac' {
             if ($ErPlatform.Core) { return @{ state = 'not_applicable'; reason = 'Server Core has no UAC prompts.' } }
@@ -1138,9 +1137,13 @@ function Get-ErModuleGate {
         }
         'accounts' {
             $x = Get-ErExposure
-            $Module.exposure = @{ exposed = $x.Exposed; accounts = $x.Accounts; addresses = $x.Addresses; since = $x.Since }
-            if ($x.Exposed -and -not (Test-ErOption 'lockout-exposed')) {
-                $Module.notes += 'Failed sign-ins from public addresses: apply sets no lockout here unless lockout-exposed is given.'
+            if (-not $x.Read) {
+                $Module.notes += "The Security log could not be read for failed sign-ins: $($x.Error)"
+            } else {
+                $Module.exposure = @{ exposed = $x.Exposed; accounts = $x.Accounts; addresses = $x.Addresses; bursts = $x.Bursts; since = $x.Since }
+                if ($x.Exposed -and -not (Test-ErOption 'lockout-exposed')) {
+                    $Module.notes += 'Failed sign-ins from public addresses, or 10 or more for one account within 15 minutes: apply sets no lockout here unless lockout-exposed is given.'
+                }
             }
         }
     }
@@ -1232,12 +1235,11 @@ function Get-ErPlatformExtra {
         mdm = $ErPolicy.Mdm; mdmWinsOverGp = $ErPolicy.MdmWinsOverGp
         defenderForEndpoint = $ErPolicy.DefenderForEndpoint; configMgr = $ErPolicy.ConfigMgr; dsc = $ErPolicy.Dsc
         azureMachineConfiguration = $ErPolicy.AzureMachineConfiguration; tamperProtected = $ErPolicy.TamperProtected
-        osConfig = @($ErPolicy.OSConfigScenarios | ForEach-Object { Limit-ErText $_ 128 } | Select-Object -First 20)
+        osConfig = @($ErPolicy.OSConfigScenarios)
     }
     # What makes apply check only on this computer (ADR-0054, Platforms).
     $reasons = @() + (Get-ErComputerReasons $ErPolicy)
     if ($ErPolicy.GpPreferences) { $reasons += 'group_policy_preferences' }
-    if ($ErPolicy.Mdm) { $reasons += 'mdm' }
     return @{
         owners = $owners
         checkOnlyReasons = $reasons
@@ -1256,7 +1258,6 @@ try {
         $ErFolder = @{ Folder = 'refused'; Refusal = 'The Hardening folder could not be checked: ' + $_.Exception.Message; Warnings = @(); SetAside = @(); Lock = $null; Manifest = $null; CopySha256 = '' }
     }
     $ErPolicy = Get-ErPolicyContext $ErWork
-    $platformJson = ConvertTo-ErPlatformJson $ErPlatform $ErSupport $ErLanguageMode (Get-ErPlatformExtra $ErFolder)
     $modules = @()
     if ($ErFolder.Refusal) {
         Say "Refused: $($ErFolder.Refusal)"
@@ -1279,6 +1280,9 @@ try {
             $modules += $m
         }
     }
+    # After the modules: some records are read only when a setting needs
+    # them, and add their notes.
+    $platformJson = ConvertTo-ErPlatformJson $ErPlatform $ErSupport $ErLanguageMode (Get-ErPlatformExtra $ErFolder)
     Write-ErResult $platformJson $modules
 } finally {
     if ($ErFolder -and $ErFolder.Lock) { $ErFolder.Lock.Dispose() }

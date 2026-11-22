@@ -3,8 +3,11 @@
 package jobs
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +17,9 @@ import (
 	"testing"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+
+	"github.com/paulmataruso/easyrmm/internal/winpolicy"
 )
 
 // Windows hardening's check (ADR-0054, W1) on a real Windows, as the
@@ -92,13 +98,116 @@ func powershellValue(t *testing.T, command string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// checkedKeys are the keys under HKLM whose values check reads: the
+// settings' policy and local keys, the attack surface reduction rules' and
+// the audit table's.
+func checkedKeys(t *testing.T) []string {
+	t.Helper()
+	var a winpolicy.AuditTable
+	if err := json.Unmarshal([]byte(winpolicy.AuditJSON()), &a); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{`HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules`}
+	for _, s := range windowsSettings {
+		paths = append(paths, s.Path, s.LocalPath)
+	}
+	for _, v := range a.Values {
+		paths = append(paths, v.Path)
+	}
+	var keys []string
+	for _, p := range paths {
+		if k, ok := strings.CutPrefix(p, `HKLM\`); ok && !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// registrySnapshot: every value of the keys, as its type and data, or the
+// key's absence.
+func registrySnapshot(t *testing.T, keys []string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, path := range keys {
+		k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
+		if err != nil {
+			out[path] = "not opened: " + err.Error()
+			continue
+		}
+		names, err := k.ReadValueNames(-1)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		for _, n := range names {
+			size, _, err := k.GetValue(n, nil)
+			if err != nil {
+				t.Fatalf(`%s\%s: %v`, path, n, err)
+			}
+			buf := make([]byte, size)
+			size, typ, err := k.GetValue(n, buf)
+			if err != nil {
+				t.Fatalf(`%s\%s: %v`, path, n, err)
+			}
+			out[path+`\`+n] = fmt.Sprintf("%d %x", typ, buf[:size])
+		}
+		_ = k.Close()
+	}
+	return out
+}
+
+// policyExports: the security policy (secedit /export) and audit policy
+// (auditpol /backup) as Windows' own tools write them.
+func policyExports(t *testing.T) [2][]byte {
+	t.Helper()
+	dir := t.TempDir()
+	sys := filepath.Join(os.Getenv("SystemRoot"), "System32")
+	security := filepath.Join(dir, "security.inf")
+	audit := filepath.Join(dir, "audit.csv")
+	if out, err := exec.Command(filepath.Join(sys, "secedit.exe"), "/export", "/cfg", security, "/areas", "SECURITYPOLICY", "/quiet").CombinedOutput(); err != nil {
+		t.Fatalf("secedit: %v %s", err, out)
+	}
+	if out, err := exec.Command(filepath.Join(sys, "auditpol.exe"), "/backup", "/file:"+audit).CombinedOutput(); err != nil {
+		t.Fatalf("auditpol: %v %s", err, out)
+	}
+	var out [2][]byte
+	for i, f := range []string{security, audit} {
+		b, err := os.ReadFile(f)
+		if err != nil || len(b) == 0 {
+			t.Fatalf("%s: %v", f, err)
+		}
+		out[i] = b
+	}
+	return out
+}
+
 func TestWindowsHardeningCheckAsSystem(t *testing.T) {
 	hardeningSystemTest(t)
 	hardening := filepath.Join(os.Getenv("ProgramData"), "EasyRMM", "Hardening")
 	if err := os.RemoveAll(hardening); err != nil {
 		t.Fatal(err)
 	}
+	// What check reads, before and after: it changes none of it (ADR-0054,
+	// check mode).
+	keys := checkedKeys(t)
+	values := registrySnapshot(t, keys)
+	exports := policyExports(t)
 	r := checkAll(t)
+	if after := registrySnapshot(t, keys); !maps.Equal(values, after) {
+		for k, v := range after {
+			if values[k] != v {
+				t.Errorf("check changed %s: %q, then %q", k, values[k], v)
+			}
+		}
+		for k, v := range values {
+			if _, ok := after[k]; !ok {
+				t.Errorf("check removed %s (%q)", k, v)
+			}
+		}
+	}
+	if after := policyExports(t); !bytes.Equal(exports[0], after[0]) || !bytes.Equal(exports[1], after[1]) {
+		t.Errorf("check changed the security or audit policy:\n%s\n%s\nthen\n%s\n%s", exports[0], exports[1], after[0], after[1])
+	}
+	t.Logf("%d values in %d keys unchanged", len(values), len(keys))
 	w := r.Platform.Windows
 	b, _ := json.Marshal(r.Platform)
 	t.Logf("platform %s", b)

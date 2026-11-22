@@ -2,6 +2,7 @@ package winpolicy
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestReader(t *testing.T) {
 	}
 	// The reader names each owner and reason as the Go constants do, so
 	// that a result never carries a code the server does not know.
-	for _, s := range append(append([]string{ResultOwner, ResultNone, ResultCannotTell}, Reasons...), OwnerGroupPolicy) {
+	for _, s := range append(append([]string{ResultOwner, ResultNone, ResultCannotTell}, Reasons...), Owners...) {
 		if !strings.Contains(r, "'"+s+"'") {
 			t.Errorf("the reader never gives %q", s)
 		}
@@ -29,6 +30,39 @@ func TestReader(t *testing.T) {
 			continue
 		}
 		t.Errorf("line %d runs something: %q", n+1, line)
+	}
+}
+
+// TestReaderAudit: the reader's table of audit subcategories knows every
+// subcategory of the audit table, under its legacy category (which Group
+// Policy's legacy audit policy sets) and the Policy CSP's Audit area for
+// its category.
+func TestReaderAudit(t *testing.T) {
+	row := regexp.MustCompile(`'([0-9a-f]{2})' = @\('(Audit[A-Za-z]+)', '([A-Za-z]+)_Audit[A-Za-z]+'\)`)
+	rows := map[string][]string{}
+	for _, m := range row.FindAllStringSubmatch(Reader(), -1) {
+		if rows[m[1]] != nil {
+			t.Errorf("%s twice", m[1])
+		}
+		rows[m[1]] = m[2:]
+	}
+	if len(rows) != 59 {
+		t.Errorf("%d subcategories, want Windows' 59", len(rows))
+	}
+	categories := map[string][2]string{
+		"Account Logon": {"AuditAccountLogon", "AccountLogon"}, "Account Management": {"AuditAccountManage", "AccountManagement"},
+		"Detailed Tracking": {"AuditProcessTracking", "DetailedTracking"}, "DS Access": {"AuditDSAccess", "DSAccess"},
+		"Logon/Logoff": {"AuditLogonEvents", "AccountLogonLogoff"}, "Object Access": {"AuditObjectAccess", "ObjectAccess"},
+		"Policy Change": {"AuditPolicyChange", "PolicyChange"}, "Privilege Use": {"AuditPrivilegeUse", "PrivilegeUse"},
+		"System": {"AuditSystemEvents", "System"},
+	}
+	for _, s := range audit.Subcategories {
+		// {0cce92xx-69ae-11d9-bed3-505054503030}
+		got, want := rows[s.GUID[7:9]], categories[s.Category]
+		if !strings.HasPrefix(s.GUID, "{0cce92") || !strings.HasSuffix(s.GUID, "-69ae-11d9-bed3-505054503030}") ||
+			got == nil || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("%s (%s, %s): the reader has %v", s.GUID, s.Category, s.Name, got)
+		}
 	}
 }
 
@@ -60,7 +94,7 @@ func TestQuery(t *testing.T) {
 }
 
 func TestAudit(t *testing.T) {
-	a := Audit()
+	a := audit
 	if len(a.Subcategories) != 31 || len(a.Values) != 4 || len(a.Logs) != 5 || a.Source == "" {
 		t.Errorf("table %d subcategories, %d values, %d logs", len(a.Subcategories), len(a.Values), len(a.Logs))
 	}

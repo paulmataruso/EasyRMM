@@ -10,14 +10,17 @@
 # The request file is JSON, at most 1000 values in all:
 #
 #   {"registry": [{"path": "HKLM\\SOFTWARE\\Policies\\...", "name": "...",
-#                  "csp": "Area/Policy", "defender": false}],
+#                  "csp": "Area/Policy", "defender": false,
+#                  "product": "antivirus", "tamper": false}],
 #    "security": ["MinimumPasswordLength"],
 #    "audit": ["0cce9215-69ae-11d9-bed3-505054503030"]}
 #
 # registry: values under HKLM, with the Policy CSP policy that sets the
-# value, if any, and whether it belongs to Defender, attack surface
-# reduction or the firewall; security: security policy settings by their
-# names in a security template; audit: audit subcategories by GUID.
+# value, if any; whether it belongs to Defender, attack surface reduction
+# or the firewall (defender); whether another antivirus or firewall that is
+# on takes it over (product, antivirus or firewall); and whether Tamper
+# Protection guards it (tamper). security: security policy settings by
+# their names in a security template; audit: audit subcategories by GUID.
 #
 # It prints one line, EASYRMM-WINPOLICY-V1 and the answers as JSON, each
 # list in the request's order:
@@ -54,11 +57,15 @@ function Read-ErQuery {
         if ($r -isnot [System.Management.Automation.PSCustomObject] -or
             [string]$r.path -notmatch '^HKLM\\[^\x00-\x1f]{1,250}$' -or $null -eq $r.name -or
             [string]$r.name -match '[\x00-\x1f]' -or ([string]$r.name).Length -gt 255 -or
-            ($r.csp -and [string]$r.csp -notmatch '^[A-Za-z0-9]{1,64}/[A-Za-z0-9_]{1,128}$') -or
-            ($null -ne $r.defender -and $r.defender -isnot [bool])) {
-            throw 'A registry value needs a path under HKLM\, a name, and may name a csp (Area/Policy) and defender (true or false).'
+            ($r.csp -and [string]$r.csp -notmatch '^[A-Za-z0-9_]{1,64}/[A-Za-z0-9_]{1,128}$') -or
+            ($null -ne $r.defender -and $r.defender -isnot [bool]) -or ($null -ne $r.tamper -and $r.tamper -isnot [bool]) -or
+            ($r.product -and @('antivirus', 'firewall') -cnotcontains [string]$r.product)) {
+            throw 'A registry value needs a path under HKLM\, a name, and may name a csp (Area/Policy), defender and tamper (true or false), and product (antivirus or firewall).'
         }
-        $out.Registry += , @{ Path = [string]$r.path; Name = [string]$r.name; Csp = [string]$r.csp; Defender = [bool]$r.defender }
+        foreach ($p in $r.PSObject.Properties) {
+            if ($p.Name -notin 'path', 'name', 'csp', 'defender', 'product', 'tamper') { throw "A registry value has an unknown field: $($p.Name)." }
+        }
+        $out.Registry += , @{ Path = [string]$r.path; Name = [string]$r.name; Csp = [string]$r.csp; Defender = [bool]$r.defender; Product = [string]$r.product; Tamper = [bool]$r.tamper }
     }
     foreach ($s in @($q.security | Where-Object { $null -ne $_ })) {
         if ($s -isnot [string] -or $s -notmatch '^[A-Za-z]{1,64}$') { throw 'A security setting is named as in a security template.' }
@@ -90,18 +97,18 @@ try {
 $ErQueryWork = New-ErWorkFolder 'easyrmm-winpolicy-'
 try {
     $context = Get-ErPolicyContext $ErQueryWork
-    $override = Get-ErRegistryValue 'HKLM\SYSTEM\CurrentControlSet\Control\Lsa' 'SCENoApplyLegacyAuditPolicy'
-    $subcategories = $override.Exists -and "$($override.Data)" -eq '1'
-    $answers = [ordered]@{ registry = @(); security = @(); audit = @(); notes = @($context.Notes) }
+    $answers = [ordered]@{ registry = @(); security = @(); audit = @(); notes = @() }
     foreach ($r in $ErQuery.Registry) {
-        $answers.registry += , (ConvertTo-ErAnswer (Resolve-ErRegistryOwner $context $r.Path $r.Name $r.Csp -Defender:$r.Defender))
+        $answers.registry += , (ConvertTo-ErAnswer (Resolve-ErRegistryOwner $context $r.Path $r.Name $r.Csp -Defender:$r.Defender -Product $r.Product -Tamper:$r.Tamper))
     }
     foreach ($s in $ErQuery.Security) {
         $answers.security += , (ConvertTo-ErAnswer (Resolve-ErSecurityOwner $context $s))
     }
     foreach ($g in $ErQuery.Audit) {
-        $answers.audit += , (ConvertTo-ErAnswer (Resolve-ErAuditOwner $context $g $subcategories))
+        $answers.audit += , (ConvertTo-ErAnswer (Resolve-ErAuditOwner $context $g))
     }
+    # After the answers: some records are read only when a value needs them.
+    $answers.notes = @($context.Notes | ForEach-Object { Limit-ErText $_ 300 })
     Write-Output ('EASYRMM-WINPOLICY-V1 ' + (ConvertTo-ErAscii ($answers | ConvertTo-Json -Depth 6 -Compress)))
 } finally {
     Remove-Item -LiteralPath $ErQueryWork -Recurse -Force -ErrorAction SilentlyContinue
