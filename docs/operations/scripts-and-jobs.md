@@ -373,7 +373,11 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   its module folders, and the system account's own
   `Documents\WindowsPowerShell\Modules`, are checked first, and one that
   fails stops the script: "Windows PowerShell would load modules from …;
-  the script was not run."
+  the script was not run." Windows PowerShell adds a folder of its own to
+  a module path equal to the computer's or the system account's
+  `PSModulePath`, so where the computer has Windows' default the agent
+  gives the same two folders with a trailing backslash on the first, and
+  a script sees `C:\Program Files\WindowsPowerShell\Modules\`.
 
 The setting is part of the script, copied into each job; whoever runs the
 script sees it and cannot change it. A job is not refused because a

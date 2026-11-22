@@ -482,7 +482,38 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     the same folder is checked for a `pwsh` run's compatibility session;
     one that fails fails the script ("Windows PowerShell would load
     modules from …; the script was not run"). So no fallback sees a
-    module path the check did not cover.
+    module path the check did not cover;
+  * **Windows' default `PSModulePath`.** *Amended after the second review
+    of PR #90, from CI's runs on 2026-11-22:* Windows PowerShell 5.1 keeps
+    a `PSModulePath` it is given only when it differs, ignoring case,
+    from the computer's `PSModulePath`, from the account's, and from the
+    two joined, each read from the registry and expanded. One equal to any
+    of them counts as never changed, and Windows PowerShell puts the
+    account's `PSModulePath` in front of it or, where the account has
+    none, the account's `Documents\WindowsPowerShell\Modules`
+    (`ModuleIntrinsics.GetModulePath`, Windows PowerShell's branch, in
+    PowerShell's repository at `v6.0.0-alpha.9`, read for this; CI's
+    runs match it for Windows' default). Windows' default `PSModulePath`,
+    `%ProgramFiles%\WindowsPowerShell\Modules;%SystemRoot%\system32\WindowsPowerShell\v1.0\Modules`,
+    is exactly the two folders the agent gives. On both runners, with that
+    default set and none for SYSTEM, the fallback and the compatibility
+    session each got `WindowsPowerShell\Modules` in front: a relative
+    path, not SYSTEM's `Documents\WindowsPowerShell\Modules`, since
+    SYSTEM has no `Documents` folder there. A relative path names no
+    fixed folder, so it cannot be checked, administrator-only or not.
+    Where SYSTEM's `Documents` folder exists, Windows PowerShell would add
+    that folder, which the agent checks. So the agent spells the path it
+    gives unlike each of those values: the two folders as they are, or
+    with a trailing backslash on the first, the second or both, which
+    Windows PowerShell reads as the same folders; three values leave one
+    of the four spellings free. On a computer with Windows' default, a run
+    sees `C:\Program Files\WindowsPowerShell\Modules\` with its
+    trailing backslash. The agent expands those values with its own
+    environment, and Windows PowerShell with the run's, which differs in
+    `TEMP`, `TMP`, the `EASYRMM_` variables and the variables the
+    agent sets for a run, `PSModulePath` among them: a value an
+    administrator wrote naming one of those could still match. That is
+    recorded, not handled.
 
   Refusing every `pwsh` run while some folder in the machine's
   `PSModulePath` is open to users was weighed and not chosen: a run
@@ -1528,9 +1559,11 @@ endpoint its downloads use.
     shared module folder fails a run that allows the fallback; the
     compatibility session's module path; *after the second review*, the
     fallback's module path, and the compatibility session's, holding only
-    folders the agent checked, both with the runner's `PSModulePath` and
-    with Windows' default one, and a folder opened to Users in Windows
-    PowerShell's folder in Program Files failing the fallback. The
+    folders the agent checked, with the runner's `PSModulePath`, with
+    Windows' default one and none for SYSTEM (the path given spelled
+    unlike it), and with Windows' default and one of SYSTEM's own; and a
+    folder opened to Users in Windows PowerShell's folder in Program Files
+    failing the fallback. The
     statements of
     `agent/powershell/powershell_windows.go` that the two test binaries
     run are measured from their coverage profiles, and the job fails below

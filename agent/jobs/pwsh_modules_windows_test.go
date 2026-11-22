@@ -195,12 +195,15 @@ func TestPwshBusyAsSystem(t *testing.T) {
 
 // TestPwshFallbackModulesAsSystem: a pwsh script that falls back to Windows
 // PowerShell runs with a module path of the folders the agent checked, not
-// the agent's own, which names the computer's PSModulePath; with the
-// computer's PSModulePath as the runner has it and as Windows sets it on a
-// new computer. A folder there that Users may change stops the script
-// (ADR-0064). Where Windows PowerShell adds the system account's own module
-// folder (Documents\WindowsPowerShell\Modules) to what it is given, that
-// folder was checked too; the test logs whether it does.
+// the agent's own, which names the computer's PSModulePath, and so does
+// PowerShell 7's compatibility session. With the computer's PSModulePath as
+// the runner has it; as Windows sets it on a new computer, which Windows
+// PowerShell 5.1 compares a given path with: one equal to it gets the
+// system account's own module folder in front, a relative path where that
+// account has no Documents folder; and with a PSModulePath of the system
+// account's, which one equal to the computer's would get instead. A folder
+// Users may change in Windows PowerShell's folder in Program Files stops
+// the script (ADR-0064).
 func TestPwshFallbackModulesAsSystem(t *testing.T) {
 	systemTest(t)
 	empty := t.TempDir()
@@ -215,7 +218,7 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Modules) != 3 || len(f.Env) != 1 || !strings.EqualFold(f.Env[0], "PSModulePath="+strings.Join(f.Modules[1:], ";")) {
+	if len(f.Modules) != 3 || len(f.Env) != 1 || !sameFolders(f.Env[0], f.Modules[1:]) {
 		t.Fatalf("the fallback %+v", f)
 	}
 	script := "'path:' + $env:PSModulePath\n"
@@ -267,18 +270,36 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 	compat("the runner's PSModulePath")
 
 	// Windows' own PSModulePath, as on a computer no installer changed, and
-	// none for the system account.
+	// none for the system account: the path given is spelled unlike it.
 	machine := `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`
-	setPath(t, registry.LOCAL_MACHINE, machine, `%ProgramFiles%\WindowsPowerShell\Modules;%SystemRoot%\system32\WindowsPowerShell\v1.0\Modules`)
+	def := `%ProgramFiles%\WindowsPowerShell\Modules;%SystemRoot%\system32\WindowsPowerShell\v1.0\Modules`
+	setPath(t, registry.LOCAL_MACHINE, machine, def)
 	setPath(t, registry.CURRENT_USER, `Environment`, "")
+	expanded, err := registry.ExpandString(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := powershell.ForFallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("given %s where the computer's PSModulePath is %s", g.Env[0], expanded)
+	if !sameFolders(g.Env[0], f.Modules[1:]) || strings.EqualFold(g.Env[0], "PSModulePath="+expanded) {
+		t.Errorf("given %q where the computer's PSModulePath is %q", g.Env[0], expanded)
+	}
 	fallback("Windows' default PSModulePath")
 	compat("Windows' default PSModulePath")
+
+	// And a PSModulePath of the system account's own.
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	setPath(t, registry.CURRENT_USER, `Environment`, filepath.Join(os.Getenv("SystemDrive")+`\`, "EasyRMM system account "+hex.EncodeToString(b)))
+	fallback("Windows' default PSModulePath and the system account's")
+	compat("Windows' default PSModulePath and the system account's")
 
 	// A folder Users may change in Windows PowerShell's folder in Program
 	// Files stops the fallback.
 	folder := filepath.Join(roots[0], `WindowsPowerShell\Modules`)
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
 	planted := filepath.Join(folder, "EasyRMM open "+hex.EncodeToString(b))
 	if err := os.MkdirAll(planted, 0o755); err != nil {
 		t.Fatal(err)
@@ -292,6 +313,14 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 	if res.Status != agentproto.RunFailed || res.Error != want || res.Interpreter != nil || res.Stdout != "" {
 		t.Errorf("the fallback with %s open to Users: %+v\nwant the error %q", planted, res, want)
 	}
+}
+
+// sameFolders reports whether env, PSModulePath=…, names folders, in order,
+// as Windows reads them: ignoring case and a trailing backslash.
+func sameFolders(env string, folders []string) bool {
+	v, ok := strings.CutPrefix(env, "PSModulePath=")
+	got := strings.Split(v, ";")
+	return ok && slices.EqualFunc(got, folders, func(a, b string) bool { return strings.EqualFold(filepath.Clean(a), filepath.Clean(b)) })
 }
 
 // setPath sets the PSModulePath a registry key holds, or removes it for "",

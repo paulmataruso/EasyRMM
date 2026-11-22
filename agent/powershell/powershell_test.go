@@ -257,7 +257,7 @@ func TestPerRun(t *testing.T) {
 // never what each run sets for itself, nor a name with "=".
 func TestRunLookup(t *testing.T) {
 	agent := map[string]string{"PSModulePath": `C:\Machine`, "ProgramData": `C:\ProgramData`, "TEMP": `C:\Windows\TEMP`, "=C:": `C:\`}
-	lookup := runLookup(runEnv([]string{`C:\A`, `C:\B`}), func(k string) (string, bool) { v, ok := agent[k]; return v, ok })
+	lookup := runLookup(runEnv(`C:\A;C:\B`), func(k string) (string, bool) { v, ok := agent[k]; return v, ok })
 	for name, want := range map[string]string{
 		"PSModulePath":                `C:\A;C:\B`,
 		"psmodulepath":                `C:\A;C:\B`,
@@ -273,6 +273,37 @@ func TestRunLookup(t *testing.T) {
 		if got, ok := lookup(name); ok {
 			t.Errorf("%s: %q", name, got)
 		}
+	}
+}
+
+// TestSpell: Windows PowerShell's two folders, spelled unlike every value
+// Windows PowerShell 5.1 compares a given PSModulePath with, ignoring case:
+// as they are, then with a trailing backslash on the first, the second,
+// both.
+func TestSpell(t *testing.T) {
+	folders := []string{`C:\Program Files\WindowsPowerShell\Modules`, `C:\Windows\system32\WindowsPowerShell\v1.0\Modules`}
+	plain := folders[0] + ";" + folders[1]
+	first := folders[0] + `\;` + folders[1]
+	second := plain + `\`
+	both := first + `\`
+	for _, c := range []struct {
+		taken []string
+		want  string
+	}{
+		{nil, plain},
+		{[]string{`C:\Other`}, plain},
+		{[]string{strings.ToUpper(plain)}, first},
+		{[]string{`C:\Account`, plain, `C:\Account;` + plain}, first},
+		{[]string{plain, first}, second},
+		{[]string{second, plain, strings.ToLower(first)}, both},
+		{[]string{first}, plain},
+	} {
+		if got := spell(folders, c.taken); got != c.want {
+			t.Errorf("taken %q: %q, want %q", c.taken, got, c.want)
+		}
+	}
+	if folders[0] != `C:\Program Files\WindowsPowerShell\Modules` {
+		t.Errorf("the folders changed: %q", folders)
 	}
 }
 

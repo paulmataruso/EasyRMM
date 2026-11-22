@@ -471,8 +471,8 @@ type Fallback struct {
 	// Modules are the folders checked: the account's own and the two its
 	// PSModulePath names.
 	Modules []string
-	// Env sets PSModulePath to Windows PowerShell's two folders, as for
-	// PowerShell 7's compatibility session, so that the system
+	// Env sets PSModulePath to Windows PowerShell's two folders (givenPath),
+	// as for PowerShell 7's compatibility session, so that the system
 	// environment's PSModulePath and what it names are not used.
 	Env []string
 }
@@ -492,7 +492,58 @@ func ForFallback() (*Fallback, error) {
 			return nil, fmt.Errorf("Windows PowerShell would load modules from %s, and %w", m, err) //nolint:staticcheck // ST1005: a name
 		}
 	}
-	return &Fallback{Modules: all, Env: []string{"PSModulePath=" + strings.Join(given, ";")}}, nil
+	return &Fallback{Modules: all, Env: []string{"PSModulePath=" + givenPath(given)}}, nil
+}
+
+// givenPath is the PSModulePath a run gives Windows PowerShell's two
+// folders (given), spelled (spell) unlike every value Windows PowerShell 5.1
+// compares it with, so that it keeps it as it is and adds no folder.
+func givenPath(given []string) string {
+	machine, isMachine := registryModulePath(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`)
+	account, isAccount := registryModulePath(registry.CURRENT_USER, "Environment")
+	var taken []string
+	if isMachine {
+		taken = append(taken, machine)
+	}
+	if isAccount {
+		taken = append(taken, account)
+	}
+	if isMachine && isAccount {
+		taken = append(taken, account+";"+machine)
+	}
+	return spell(given, taken)
+}
+
+// registryModulePath reads a PSModulePath as Windows PowerShell 5.1 reads
+// the computer's and the account's: an expandable value expanded, as .NET's
+// registry read does, then expanded once more. Windows PowerShell expands
+// them with the run's environment and the agent with its own, which differ
+// only in what each run sets for itself (PerRun) and in runEnv's
+// variables: a value naming one of those is compared as the agent expands
+// it, a limit ADR-0064 records. A value that is missing, or cannot be
+// read, is not compared; Windows PowerShell reads a missing one as not set.
+func registryModulePath(root registry.Key, path string) (string, bool) {
+	k, err := registry.OpenKey(root, path, registry.QUERY_VALUE)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = k.Close() }()
+	v, typ, err := k.GetStringValue("PSModulePath")
+	if err != nil {
+		return "", false
+	}
+	if typ == registry.EXPAND_SZ {
+		v = expandOnce(v)
+	}
+	return expandOnce(v), true
+}
+
+// expandOnce expands the variables in s as Windows does, or leaves s.
+func expandOnce(s string) string {
+	if e, err := registry.ExpandString(s); err == nil {
+		return e
+	}
+	return s
 }
 
 // checkIfThere checks a folder and what it holds when it exists.
@@ -582,7 +633,7 @@ func ForRun(roots []string) (*Run, error) {
 		return &Run{
 			Interpreter: agentproto.Interpreter{Edition: p.Edition, Version: p.Version, Arch: p.Arch, Path: p.Path},
 			Modules:     c.modules,
-			Env:         runEnv(c.windowsPS),
+			Env:         runEnv(givenPath(c.windowsPS)),
 			Took:        time.Since(start),
 			held:        c.held,
 		}, nil
@@ -625,7 +676,7 @@ func moduleFolders(psHome string) (all, windowsPS []string, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	lookup := runLookup(runEnv(windowsPS), os.LookupEnv)
+	lookup := runLookup(runEnv(givenPath(windowsPS)), os.LookupEnv)
 	user, err := configured(filepath.Join(docs, "PowerShell", "powershell.config.json"), filepath.Join(docs, "PowerShell", "Modules"), lookup)
 	if err != nil {
 		return nil, nil, err

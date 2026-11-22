@@ -278,14 +278,49 @@ func PerRun(name string) bool {
 }
 
 // runEnv is what a PowerShell run's environment sets over the agent's: a
-// module path of Windows PowerShell's two folders, which PowerShell 7 puts
-// its own three before, and PowerShell 7's telemetry and update check off.
-func runEnv(windowsPS []string) []string {
+// module path of Windows PowerShell's two folders, spelled by spell, which
+// PowerShell 7 puts its own three before, and PowerShell 7's telemetry and
+// update check off.
+func runEnv(modulePath string) []string {
 	return []string{
-		"PSModulePath=" + strings.Join(windowsPS, ";"),
+		"PSModulePath=" + modulePath,
 		"POWERSHELL_TELEMETRY_OPTOUT=1",
 		"POWERSHELL_UPDATECHECK=Off",
 	}
+}
+
+// spell joins folders into a PSModulePath that equals, ignoring case, none
+// of taken. Windows PowerShell 5.1 keeps a PSModulePath it is given only
+// when it differs from the computer's PSModulePath, the account's, and the
+// two joined; one equal to any of them counts as never changed, and Windows
+// PowerShell puts the account's PSModulePath, or else the account's own
+// Documents\WindowsPowerShell\Modules, in front of it. Where the system
+// account has no Documents folder, as on CI's runners, that folder is the
+// relative path WindowsPowerShell\Modules, which no check can cover
+// (ADR-0064). spell tries the folders as they are, then
+// with a trailing backslash on the first, on the second, and on both, which
+// Windows PowerShell reads as the same folders: of two folders' four
+// spellings, three taken values leave one free.
+func spell(folders, taken []string) string {
+	last := 1<<len(folders) - 1
+	for mask := range last {
+		if s := spelling(folders, mask); !slices.ContainsFunc(taken, func(t string) bool { return strings.EqualFold(t, s) }) {
+			return s
+		}
+	}
+	return spelling(folders, last)
+}
+
+// spelling joins folders with ";", each whose bit is set in mask ending in
+// a backslash.
+func spelling(folders []string, mask int) string {
+	parts := slices.Clone(folders)
+	for i := range parts {
+		if mask&(1<<i) != 0 {
+			parts[i] += `\`
+		}
+	}
+	return strings.Join(parts, ";")
 }
 
 // runLookup looks a variable up as a run's environment has it: from set,
