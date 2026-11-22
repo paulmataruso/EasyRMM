@@ -39,8 +39,64 @@ type State struct {
 	// deployment had stopped: automatic upgrades do not try it again until
 	// an operator asks for it. It does not count as failed.
 	NeedsRoom *NeedsRoom `json:"needsRoom,omitempty"`
+	// CutShort counts a version's attempts cut short once the deployment
+	// had stopped (interruption): each brought the previous version back
+	// and does not count as the version failing, but each took the server
+	// down. After maxCutShort, automatic upgrades do not try it again until
+	// an operator asks for it.
+	CutShort *CutShort `json:"cutShort,omitempty"`
 	// Attempt is the last attempt, or the one running.
 	Attempt *Attempt `json:"attempt,omitempty"`
+}
+
+// maxCutShort is how many attempts at one version automatic upgrades let
+// be cut short once the deployment had stopped before they wait for an
+// operator.
+const maxCutShort = 2
+
+// CutShort is a version whose attempts were cut short.
+type CutShort struct {
+	Version string `json:"version"`
+	Times   int    `json:"times"`
+	// Last is what cut the last one short.
+	Last string `json:"last"`
+}
+
+func (c *CutShort) String() string {
+	return fmt.Sprintf("%s's attempts were cut short %d times once the deployment had stopped, the last by: %s", c.Version, c.Times, c.Last)
+}
+
+// countCutShort counts an attempt at v cut short by why.
+func (s *State) countCutShort(v, why string) {
+	if s.CutShort == nil || s.CutShort.Version != v {
+		s.CutShort = &CutShort{Version: v}
+	}
+	s.CutShort.Times++
+	s.CutShort.Last = why
+}
+
+// waitsForOperator says why automatic upgrades do not try v until an
+// operator asks for it, and "" when they do: it ran out of room once the
+// deployment had stopped, or its attempts were cut short maxCutShort times.
+func (s *State) waitsForOperator(v string) string {
+	switch {
+	case s.NeedsRoom != nil && s.NeedsRoom.Version == v:
+		return "it ran out of room once the deployment had stopped: " + s.NeedsRoom.String()
+	case s.CutShort != nil && s.CutShort.Version == v && s.CutShort.Times >= maxCutShort:
+		return s.CutShort.String()
+	}
+	return ""
+}
+
+// operatorAsks forgets that automatic upgrades wait with v: an operator
+// asks for it by hand.
+func (s *State) operatorAsks(v string) {
+	if s.NeedsRoom != nil && s.NeedsRoom.Version == v {
+		s.NeedsRoom = nil
+	}
+	if s.CutShort != nil && s.CutShort.Version == v {
+		s.CutShort = nil
+	}
 }
 
 // NeedsRoom is a version that needs more room than a disk had.
@@ -116,9 +172,10 @@ type Attempt struct {
 	Repaired string `json:"repaired,omitempty"`
 	// Interrupted is why the updater stopped the attempt where it was,
 	// once the deployment had stopped, for the next run to finish from
-	// this record (finishInterrupted): a command it ran was killed by a
-	// signal, or it could not record a step. An attempt cut short so does
-	// not count against its version.
+	// this record (finishInterrupted): it could not record a step, or a
+	// command it ran was killed by a signal after a stop was asked for, or
+	// while it brought the previous version back (leave). An attempt cut
+	// short so does not count against its version.
 	Interrupted string `json:"interrupted,omitempty"`
 }
 

@@ -309,9 +309,10 @@ func rotateBackups(backupDir string, keep ...string) error {
 //
 // A restore done again, after one cut short, finds that directory there.
 // Of the data root's entries, those it already holds are the first
-// restore's copies, whole or not: they are moved into a directory of their
-// own, removed once the backup is copied in again and checked. The others
-// are the failed version's, which the first restore did not get to move.
+// restore's copies, whole or not: copies of a backup on its disk, worth
+// nothing, which are removed before the backup is copied in again, so that
+// a restore never needs room for more than one copy. The others are the
+// failed version's, which the first restore did not get to move.
 func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (string, error) {
 	asideDir := filepath.Join(dataRoot, failedPrefix+aside)
 	again := false
@@ -327,23 +328,18 @@ func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (strin
 	if err != nil {
 		return "", err
 	}
-	// Left by a restore done again and itself cut short: worth nothing.
-	half := filepath.Join(dataRoot, failedPrefix+aside+".half-restored")
-	if err := os.RemoveAll(half); err != nil {
-		return "", err
-	}
 	for _, e := range entries {
 		if skippedEntry(e.Name()) {
 			continue
 		}
-		to := filepath.Join(asideDir, e.Name())
+		path, to := filepath.Join(dataRoot, e.Name()), filepath.Join(asideDir, e.Name())
 		if _, err := os.Lstat(to); again && err == nil {
-			if err := os.Mkdir(half, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-				return "", err
+			if err := os.RemoveAll(path); err != nil {
+				return "", fmt.Errorf("removing the copy a restore cut short left: %w", err)
 			}
-			to = filepath.Join(half, e.Name())
+			continue
 		}
-		if err := os.Rename(filepath.Join(dataRoot, e.Name()), to); err != nil {
+		if err := os.Rename(path, to); err != nil {
 			return "", err
 		}
 	}
@@ -355,9 +351,6 @@ func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (strin
 		if err := copyTree(ctx, filepath.Join(b.Dir, "data", e.Name()), filepath.Join(dataRoot, e.Name())); err != nil {
 			return "", err
 		}
-	}
-	if err := os.RemoveAll(half); err != nil {
-		return "", fmt.Errorf("removing the copy a restore cut short left: %w", err)
 	}
 	return asideDir, nil
 }

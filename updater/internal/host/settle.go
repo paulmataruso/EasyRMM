@@ -59,9 +59,9 @@ func (u *Updater) settle(ctx context.Context, st *State, by string, repaired boo
 // reading the discarded database's head again; once a restore had put
 // everything back, the restored version starts. The new version is marked
 // failed unless the attempt was cut short by something else than it: the
-// updater stopped it (Interrupted), or a stop was asked for. What it is
-// itself cut short in, it leaves again; what it cannot finish ends
-// rollback-failed.
+// updater stopped it (Interrupted), or a stop was asked for; such an
+// attempt is counted (State.CutShort). What it is itself cut short in, it
+// leaves again; what it cannot finish ends rollback-failed.
 func (u *Updater) finishInterrupted(ctx context.Context, st *State) (string, error) {
 	ctx = context.WithoutCancel(ctx)
 	a := st.Attempt
@@ -123,6 +123,9 @@ func (u *Updater) finishInterrupted(ctx context.Context, st *State) (string, err
 	}
 	if !upgrade {
 		st.Previous, st.Rollback = "", nil
+	}
+	if upgrade && cutShort != "" && result == ResultRolledBack && !st.HasFailed(a.To) {
+		st.countCutShort(a.To, cutShort)
 	}
 	u.end(st, d, result, reason)
 	return fmt.Sprintf("finished an attempt whose process had ended (%s from %s to %s, at its %s step): %s", a.Action, orNone(a.From), a.To, step, result), nil

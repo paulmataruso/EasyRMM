@@ -92,7 +92,10 @@ type Status struct {
 	// NeedsRoom is a version automatic upgrades wait with until an
 	// operator asks for it: it ran out of room.
 	NeedsRoom *NeedsRoom `json:"needsRoom,omitempty"`
-	Updated   time.Time  `json:"updated"`
+	// CutShort counts a version's attempts cut short; automatic upgrades
+	// wait with it once they reach maxCutShort.
+	CutShort *CutShort `json:"cutShort,omitempty"`
+	Updated  time.Time `json:"updated"`
 }
 
 // RollbackStatus is the rollback a confirmed upgrade offers.

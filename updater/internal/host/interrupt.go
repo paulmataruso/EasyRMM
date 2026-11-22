@@ -12,18 +12,23 @@ import (
 	"time"
 )
 
-// How an attempt that has stopped the deployment stops short of its end
-// (ADR-0052, "Interrupted attempts"). It stops where it is, the server held,
-// for the next run to finish from what it recorded (finishInterrupted),
-// when:
-//   - a command it ran was killed by a signal that its own context did not
-//     send (killedError): the out-of-memory killer, an operator, systemd's
-//     kill. The command did not fail, so the version is not counted as
-//     failing;
-//   - it could not record a step before beginning it (unsavedError), from
-//     step 5 on: the next run must not misread what was done. Before step
-//     5 the data root is as it stopped, and the previous version starts
-//     again there.
+// How an attempt that has stopped the deployment is cut short (ADR-0052,
+// "Interrupted attempts"). A command it ran killed by a signal that its own
+// context did not send (killedError: the out-of-memory killer, an operator)
+// did not fail, and a record it could not write (unsavedError) is not the
+// version's doing: neither counts as the version failing, and each brings
+// the previous version back at once, as a failure would. Each such attempt
+// is counted (State.CutShort), and automatic upgrades stop trying a version
+// cut short maxCutShort times.
+//
+// The attempt stops where it is instead, the server held, for the next run
+// to finish from what it recorded (leave, finishInterrupted), only when
+// bringing the previous version back would not be sound or would not end:
+//   - a step it could not record, from step 5 on (the next run must not
+//     misread what was done; before step 5 the data root is as it stopped,
+//     and the previous version starts again there);
+//   - a command killed after a stop was asked for: the host is going down;
+//   - bringing the previous version back, itself cut short.
 //
 // The updater's own process may be killed too: systemd sends it SIGTERM
 // alone (KillMode=mixed), and it runs on to the attempt's end, or brings the
@@ -83,8 +88,27 @@ func changesData(step string) bool {
 	return false
 }
 
-// leaves reports whether err, once the deployment has stopped, stops the
-// attempt where it is (leave), at its recorded step.
+// interruption reports whether err cut an attempt short, rather than its
+// version failing: a command killed, a record not written.
+func interruption(err error) bool {
+	var killed *killedError
+	var unsaved *unsavedError
+	return errors.As(err, &killed) || errors.As(err, &unsaved)
+}
+
+// stopsHere reports whether err, which failed an attempt at step once the
+// deployment had stopped, stops it where it is (leave), rather than
+// bringing the previous version back: a step not recorded once the data
+// root may change, or a command killed after a stop was asked for (asked).
+func stopsHere(err error, step string, asked bool) bool {
+	var killed *killedError
+	var unsaved *unsavedError
+	return (errors.As(err, &unsaved) && changesData(step)) || (asked && errors.As(err, &killed))
+}
+
+// leaves reports whether err, from bringing a version back (or a rollback's
+// restore), stops the attempt where it is (leave), at its recorded step: a
+// command killed, or a record not written once the data root may change.
 func leaves(err error, step string) bool {
 	var killed *killedError
 	var unsaved *unsavedError
@@ -92,10 +116,12 @@ func leaves(err error, step string) bool {
 }
 
 // leave stops the attempt where it is, for the next run to finish from
-// what it recorded: the server held (a restore's copy of the data root
-// lacks the hold file, which the backup predates) and nothing more
-// changes. Why is recorded in the attempt when it can be, and in
-// status.json, which the console reads, either way.
+// what it recorded: the server held and nothing more changes. The hold is
+// written again: the attempt may have lifted it to start a version, or not
+// have reached the set-up, which writes it. It lies in the data root's
+// updater/, which no backup holds and no restore replaces, so the next run
+// finds it as it is left. Why is recorded in the attempt when it can be,
+// and in status.json, which the console reads, either way.
 func (u *Updater) leave(st *State, d *deployment, err error) error {
 	a := st.Attempt
 	a.Interrupted = err.Error()

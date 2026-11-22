@@ -298,29 +298,46 @@ var systemPaths = []string{"/etc/localtime", "/etc/timezone", "/run/docker.sock"
 //     backup copies;
 //   - anywhere, read-only, for the server's certificates (EASYRMM_TLS_DIR
 //     in manual TLS mode: the operator's, which no upgrade changes);
-//   - one of the system paths.
+//   - one of the system paths, by name.
+//
+// Each source, but a system path and the certificates', is taken where
+// Docker finds it, its links followed (realPath), and so is each of the
+// places it must lie in: a source named in the data root whose way leads
+// out of it, through a link, is refused.
 func checkMounts(mounts []composeMount, dataRoot, deployDir string) error {
-	trees := resolved(filepath.Dir(deployDir))
-	inTree := func(src string) bool {
-		for _, t := range trees {
-			if inDir(src, filepath.Join(t, "deploy")) || inDir(src, filepath.Join(t, "docker")) {
-				return true
-			}
-		}
-		return false
+	root, err := realPath(dataRoot)
+	if err != nil {
+		return err
+	}
+	status, err := realPath(string(statusDirOf(dataRoot)))
+	if err != nil {
+		return err
+	}
+	tree, err := realPath(filepath.Dir(deployDir))
+	if err != nil {
+		return err
 	}
 	for _, m := range mounts {
 		src := filepath.Clean(m.Source)
-		rel, _ := filepath.Rel(dataRoot, src)
 		switch {
 		case m.Type == "tmpfs":
+			continue
 		case m.Type != "bind":
 			return fmt.Errorf("the service %s mounts a %s volume at %s: a backup holds the data root and the deployment's directory only, and a rollback would not restore it", m.Service, m.Type, m.Target)
-		case inDir(src, dataRoot) && rel != "." && !skippedEntry(strings.SplitN(rel, "/", 2)[0]):
-		case src == string(statusDirOf(dataRoot)) && m.Target == statusMount && m.ReadOnly:
-		case inTree(src):
-		case m.Service == "server" && m.Target == tlsMount && m.ReadOnly:
-		case slices.Contains(systemPaths, src):
+		case m.Service == "server" && m.Target == tlsMount && m.ReadOnly, slices.Contains(systemPaths, src):
+			continue
+		}
+		to, err := realPath(src)
+		if err != nil {
+			return fmt.Errorf("the service %s mounts %s: %w", m.Service, src, err)
+		}
+		rel, _ := filepath.Rel(root, to)
+		switch {
+		case inDir(to, root) && rel != "." && !skippedEntry(strings.SplitN(rel, "/", 2)[0]):
+		case to == status && m.Target == statusMount && m.ReadOnly:
+		case inDir(to, filepath.Join(tree, "deploy")), inDir(to, filepath.Join(tree, "docker")):
+		case to != src:
+			return fmt.Errorf("the service %s mounts %s at %s, which leads, through a link, to %s, outside the data root %s and the deployment's directory %s: a backup copies the link, not what it leads to, and a rollback would not restore it. Put what it leads to in its place (docs/operations/updater.md#the-data-root)", m.Service, src, m.Target, to, dataRoot, filepath.Dir(deployDir))
 		default:
 			return fmt.Errorf("the service %s mounts %s at %s, outside the data root %s and the deployment's directory %s: a backup would not hold it, and a rollback would not restore it. Move it into the data root (docs/operations/updater.md#the-data-root)", m.Service, src, m.Target, dataRoot, filepath.Dir(deployDir))
 		}

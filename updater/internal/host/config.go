@@ -249,10 +249,17 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := syncDir(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("syncing %s after writing %s: %w", filepath.Dir(path), filepath.Base(path), err)
+		return &unsyncedError{fmt.Errorf("syncing %s after writing %s: %w", filepath.Dir(path), filepath.Base(path), err)}
 	}
 	return nil
 }
+
+// unsyncedError is a file renamed into place whose directory could not be
+// synced: after a power cut, the new file or the old one may be there.
+type unsyncedError struct{ err error }
+
+func (e *unsyncedError) Error() string { return e.err.Error() }
+func (e *unsyncedError) Unwrap() error { return e.err }
 
 // syncDir makes a directory's entries durable: a file renamed into it is
 // there after a power cut once it returns. The tests watch it.

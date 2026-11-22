@@ -1,10 +1,13 @@
 package host
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -30,12 +33,13 @@ func (h *testHost) refusedBeforeStopping(err error, want string) {
 	}
 }
 
-// A data-root entry that is a link, or a mount point anywhere in the data
-// root, is refused before anything stops: a backup would copy the link,
-// not what it leads to, and a restore would put the link back over the
-// failed version's data, or fail to move a mount point aside.
+// A data-root entry that is a link, a link at any depth that leads out of
+// the data root, or a mount point anywhere in the data root, is refused
+// before anything stops: a backup would copy the link, not what it leads
+// to, and a restore would put the link back over the failed version's data,
+// or fail to move a mount point aside.
 func TestDataRootLinksAndMountPoints(t *testing.T) {
-	t.Run("a link", func(t *testing.T) {
+	t.Run("a link a service mounts", func(t *testing.T) {
 		h := newTestHost(t, "v1.0.0", release.ChannelStable)
 		elsewhere := filepath.Join(t.TempDir(), "server")
 		if err := os.Rename(filepath.Join(h.dataRoot, "server"), elsewhere); err != nil {
@@ -45,7 +49,72 @@ func TestDataRootLinksAndMountPoints(t *testing.T) {
 			t.Fatal(err)
 		}
 		h.offer("v1.1.0", nil)
-		h.refusedBeforeStopping(h.upgrade(Request{}), filepath.Join(h.dataRoot, "server")+" is a link (to "+elsewhere+")")
+		h.refusedBeforeStopping(h.upgrade(Request{}), "mounts "+filepath.Join(h.dataRoot, "server")+" at /var/lib/easyrmm, which leads, through a link, to "+elsewhere+", outside the data root")
+	})
+	t.Run("a link at the top", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		inside := filepath.Join(h.dataRoot, "server")
+		if err := os.Symlink(inside, filepath.Join(h.dataRoot, "other")); err != nil {
+			t.Fatal(err)
+		}
+		h.offer("v1.1.0", nil)
+		h.refusedBeforeStopping(h.upgrade(Request{}), filepath.Join(h.dataRoot, "other")+" is a link (to "+inside+")")
+	})
+	for name, target := range map[string]func(h *testHost) string{
+		"a link deeper out":          func(h *testHost) string { return h.t.TempDir() },
+		"a relative link deeper out": func(*testHost) string { return "../../../elsewhere" },
+		"a link deeper to nothing":   func(*testHost) string { return "/nonexistent/bigdisk" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHost(t, "v1.0.0", release.ChannelStable)
+			to := target(h)
+			link := filepath.Join(h.dataRoot, "server", "files", "big")
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(to, link); err != nil {
+				t.Fatal(err)
+			}
+			h.offer("v1.1.0", nil)
+			h.refusedBeforeStopping(h.upgrade(Request{}), link+" is a link (to "+to+") that leads out of the data root")
+		})
+	}
+	// A mount whose way, below the data root's top, goes through a link out
+	// of it: Docker follows the link.
+	t.Run("a mount through a link", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "srv")
+		bigdisk := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "meshcentral"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(bigdisk, filepath.Join(root, "meshcentral", "files")); err != nil {
+			t.Fatal(err)
+		}
+		deploy := filepath.Join(t.TempDir(), "easyrmm-v1.0.0", "deploy")
+		mounts := []composeMount{{Service: "meshcentral", Type: "bind", Source: filepath.Join(root, "meshcentral", "files"), Target: "/opt/meshcentral/meshcentral-files"}}
+		err := checkMounts(mounts, root, deploy)
+		if err == nil || !strings.Contains(err.Error(), "which leads, through a link, to "+bigdisk) {
+			t.Errorf("got %v", err)
+		}
+		// One that does not exist yet, below a link out: Docker makes it
+		// there.
+		mounts[0].Source = filepath.Join(root, "meshcentral", "files", "new", "dir")
+		if err := checkMounts(mounts, root, deploy); err == nil || !strings.Contains(err.Error(), "which leads, through a link, to "+filepath.Join(bigdisk, "new", "dir")) {
+			t.Errorf("not there yet: %v", err)
+		}
+		// Through the data root's own link, inside it: taken.
+		link := filepath.Join(t.TempDir(), "data")
+		if err := os.Symlink(root, link); err != nil {
+			t.Fatal(err)
+		}
+		mounts[0].Source = filepath.Join(link, "meshcentral", "data")
+		if err := checkMounts(mounts, root, deploy); err != nil {
+			t.Errorf("through the data root's link: %v", err)
+		}
+		mounts[0].Source = filepath.Join(root, "meshcentral", "data")
+		if err := checkMounts(mounts, link, deploy); err != nil {
+			t.Errorf("the data root named by its link: %v", err)
+		}
 	})
 	for name, mount := range map[string]func(h *testHost) string{
 		"a mount point":            func(h *testHost) string { return filepath.Join(h.dataRoot, "postgres") },
@@ -66,9 +135,12 @@ func TestDataRootLinksAndMountPoints(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		h := newTestHost(t, "v1.0.0", release.ChannelStable)
 		// The data root itself, what lies above it and the updater's own
-		// directory may be mount points; links deeper down are the
-		// services' own.
-		if err := os.Symlink("/etc", filepath.Join(h.dataRoot, "server", "etc")); err != nil {
+		// directory may be mount points; links deeper down that lead into
+		// the data root are copied as they are.
+		if err := os.Symlink("../postgres/18", filepath.Join(h.dataRoot, "server", "relative")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(h.dataRoot, "postgres"), filepath.Join(h.dataRoot, "server", "absolute")); err != nil {
 			t.Fatal(err)
 		}
 		h.mounts("/", filepath.Dir(h.dataRoot), h.dataRoot, filepath.Join(h.dataRoot, "updater", "status"), "/elsewhere")
@@ -94,9 +166,9 @@ func (h *testHost) mounts(points ...string) {
 }
 
 // The room needed on each filesystem is added up: the backup, a restore's
-// copy of the data root and one more should the restore be done again, a
-// restore's copy of the deployment's directory, the images and the bundle
-// all on one disk need all of it. A file counts as the larger of its
+// copy of the data root (a restore done again removes the first's before
+// it copies), a restore's copy of the deployment's directory, the images
+// and the bundle all on one disk need all of it. A file counts as the larger of its
 // length and its blocks: a copy may fill a file's holes.
 func TestRoomAddsUpPerFilesystem(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
@@ -131,14 +203,14 @@ func TestRoomAddsUpPerFilesystem(t *testing.T) {
 	h.offer("v1.1.0", nil)
 	err = h.upgrade(Request{})
 	h.refusedBeforeStopping(err, "the upgrade needs")
-	for _, want := range []string{"the backup", "a restore's copy of the data root, and one more should it be done again", "a restore's copy of the deployment's directory", "the new images", "the bundle's download", "the unpacked bundle"} {
+	for _, want := range []string{"the backup", "a restore's copy of the data root ", "a restore's copy of the deployment's directory", "the new images", "the bundle's download", "the unpacked bundle"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
 	}
 	// With room for all of it but the restore's copy of the deployment's
 	// directory, refused.
-	room = 3*size + 2*tree + minImageSpace + 2*bundleSpace - 1
+	room = 2*size + 2*tree + minImageSpace + 2*bundleSpace - 1
 	err = h.upgrade(Request{})
 	h.refusedBeforeStopping(err, "the upgrade needs")
 	// With room for all of it, taken.
@@ -245,7 +317,7 @@ func TestOutOfRoomAfterTheStop(t *testing.T) {
 					h.t.Fatal(err)
 				}
 				// One disk holds everything.
-				return 3*data + 2*tree + minImageSpace + 2*bundleSpace - 1<<20
+				return 2*data + 2*tree + minImageSpace + 2*bundleSpace - 1<<20
 			},
 			path: func(h *testHost) string { return h.u.Config.BackupDir },
 		},
@@ -398,8 +470,8 @@ func TestRunningVersionSources(t *testing.T) {
 	})
 }
 
-// .env is read as setup.sh writes it, every line of it; what Compose would
-// read otherwise is refused rather than misread.
+// .env is read by Compose's rules, every line of it; what Compose would
+// read otherwise is refused rather than misread (TestEnvLikeCompose).
 func TestEnvSyntax(t *testing.T) {
 	long := "A=1\nLONG=" + strings.Repeat("x", 70<<10) + "\nEASYRMM_ENCRYPTION_KEY=secret\nEASYRMM_DATA_ROOT=/data\n"
 	if err := checkEnv([]byte(long)); err != nil {
@@ -413,17 +485,19 @@ func TestEnvSyntax(t *testing.T) {
 		t.Errorf("a line after a long one was dropped: %v", err)
 	}
 	for env, want := range map[string]string{
-		"export EASYRMM_DATA_ROOT=/elsewhere\n":                   "line 1 is not KEY=value",
-		"A=1\n  EASYRMM_DATA_ROOT=/elsewhere\n":                   "line 2 is not KEY=value",
-		"EASYRMM_DATA_ROOT = /elsewhere\n":                        "line 1 is not KEY=value",
-		"EASYRMM_DATA_ROOT=\"/elsewhere\"\n":                      "EASYRMM_DATA_ROOT's value is quoted",
-		"EASYRMM_SMTP_FROM='EasyRMM <a@b>'\n":                     "EASYRMM_SMTP_FROM's value is quoted",
-		"EASYRMM_DATA_ROOT=/a\nEASYRMM_DATA_ROOT=/b\n":            "sets EASYRMM_DATA_ROOT twice, on lines 1 and 2",
-		"EASYRMM_DATA_ROOT=/srv/easyrmm # the data\n":             "is not plain",
-		"EASYRMM_DATA_ROOT=${HOME}/easyrmm\n":                     "is not plain",
-		"COMPOSE_PROFILES=authentik, patching\n":                  "is not plain",
-		"EASYRMM_DATA_ROOT=/srv/easyrmm\r\n":                      "carriage return",
-		"# comment\n\n  # indented comment\nEASYRMM_SECRET=a b\n": "",
+		"export EASYRMM_DATA_ROOT=/elsewhere\n":                         "line 1 is not KEY=value",
+		"A=1\n  EASYRMM_DATA_ROOT=/elsewhere\n":                         "line 2 is not KEY=value",
+		"EASYRMM_DATA_ROOT = /elsewhere\n":                              "line 1 is not KEY=value",
+		"EASYRMM_DATA_ROOT=\"/srv/easyrmm\" # the data\n":               "",
+		"EASYRMM_SMTP_FROM='EasyRMM <a@b>'\n":                           "",
+		"EASYRMM_DATA_ROOT=/a\nEASYRMM_DATA_ROOT=/b\n":                  "sets EASYRMM_DATA_ROOT twice, on lines 1 and 2",
+		"EASYRMM_DATA_ROOT=/srv/easyrmm # the data\n":                   "",
+		"EASYRMM_DATA_ROOT=/srv/easyrmm#data\n":                         "is not plain",
+		"EASYRMM_SMTP_FROM=\"EasyRMM\nEASYRMM_DATA_ROOT=/elsewhere\"\n": "line 1: EASYRMM_SMTP_FROM's quoted value does not end on its line",
+		"EASYRMM_DATA_ROOT=${HOME}/easyrmm\n":                           "is not plain",
+		"COMPOSE_PROFILES=authentik, patching\n":                        "is not plain",
+		"EASYRMM_DATA_ROOT=/srv/easyrmm\r\n":                            "carriage return",
+		"# comment\n\n  # indented comment\nEASYRMM_SECRET=a b\n":       "",
 	} {
 		err := checkEnv([]byte(env))
 		if (want == "") != (err == nil) || want != "" && !strings.Contains(err.Error(), want) {
@@ -437,6 +511,155 @@ func TestEnvSyntax(t *testing.T) {
 	h.offer("v1.1.0", nil)
 	if err := h.upgrade(Request{}); err == nil || !strings.Contains(err.Error(), "the deployment's .env line 1 is not KEY=value") {
 		t.Errorf("got %v", err)
+	}
+}
+
+// setupEnv runs setup.sh's check_env on env, in dir, then its env_value
+// for key, as setup.sh reads .env.
+func setupEnv(t *testing.T, dir, env, key string) (string, error) {
+	t.Helper()
+	script := readFile(t, "../../../deploy/scripts/setup.sh")
+	part := func(start string) string {
+		at := strings.Index(script, "\n"+start)
+		if at < 0 {
+			t.Fatalf("setup.sh has no %s", start)
+		}
+		end := strings.Index(script[at+1:], "\n}\n")
+		if strings.HasSuffix(start, "=") {
+			end = strings.Index(script[at+1:], "\n")
+			return script[at+1 : at+1+end+1]
+		}
+		return script[at+1 : at+1+end+3]
+	}
+	harness := "set -euo pipefail\ndie() { echo \"error: $*\" >&2; exit 1; }\n" + part("env_read=") + part("check_env() {") + part("env_value() {") +
+		"cd \"$1\"\ncheck_env .env\nenv_value \"$2\"\n"
+	writeFile(t, filepath.Join(dir, ".env"), env, 0o600)
+	cmd := exec.Command("bash", "-c", harness, "setup.sh", dir, key)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s(%w)", out, err)
+	}
+	return strings.TrimSuffix(string(out), "\n"), nil
+}
+
+// composeEnv is what docker compose reads of keys from env, its .env.
+func composeEnv(t *testing.T, dir, env string, keys ...string) (map[string]string, error) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("services:\n  s:\n    image: busybox\n    environment:\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "      %s: \"${%s-<unset>}\"\n", k, k)
+	}
+	writeFile(t, filepath.Join(dir, "docker-compose.yml"), b.String(), 0o644)
+	writeFile(t, filepath.Join(dir, ".env"), env, 0o600)
+	cmd := exec.Command("docker", "compose", "config", "--format", "json")
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var config struct {
+		Services map[string]struct {
+			Environment map[string]string `json:"environment"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &config); err != nil {
+		return nil, err
+	}
+	got := map[string]string{}
+	for k, v := range config.Services["s"].Environment {
+		// config writes a $ as $$.
+		got[k] = strings.ReplaceAll(v, "$$", "$")
+	}
+	return got, nil
+}
+
+// .env is read by Compose's rules, by the updater and by setup.sh alike:
+// what either reads, Compose reads the same, and the lines after it too;
+// what either would read otherwise, it refuses. A sender with a name is
+// read as written, quoted or not (docs/operations/mail.md).
+func TestEnvLikeCompose(t *testing.T) {
+	_, noCompose := exec.Command("docker", "compose", "version").Output()
+	const from, root, password = "EASYRMM_SMTP_FROM", "EASYRMM_DATA_ROOT", "EASYRMM_SMTP_PASSWORD"
+	for _, c := range []struct {
+		line, key string
+		// want is what Compose reads; goErr and shErr are the updater's
+		// and setup.sh's refusals, "" when they read it.
+		want, goErr, shErr string
+	}{
+		{line: `EASYRMM_SMTP_FROM=EasyRMM <rmm@example.com>`, key: from, want: "EasyRMM <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"`, key: from, want: "EasyRMM <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM='EasyRMM <rmm@example.com>'`, key: from, want: "EasyRMM <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"  # the sender`, key: from, want: "EasyRMM <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM=EasyRMM <rmm@example.com> # the sender`, key: from, want: "EasyRMM <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM="Ops \"Night\" Desk <rmm@example.com>"`, key: from, want: `Ops "Night" Desk <rmm@example.com>`},
+		{line: `EASYRMM_SMTP_PASSWORD='p#ss w$rd'`, key: password, want: "p#ss w$rd"},
+		{line: `EASYRMM_SMTP_PASSWORD=p#ss\w0rd`, key: password, want: `p#ss\w0rd`},
+		{line: `EASYRMM_SMTP_PASSWORD="a\\b$$c"`, key: password, want: `a\b$c`},
+		{line: `EASYRMM_DATA_ROOT=/srv/easyrmm`, key: root, want: "/srv/easyrmm"},
+		{line: `EASYRMM_DATA_ROOT="/srv/easyrmm"`, key: root, want: "/srv/easyrmm"},
+		{line: `EASYRMM_DATA_ROOT='/srv/easyrmm' # where the data is`, key: root, want: "/srv/easyrmm"},
+		{line: "EASYRMM_DATA_ROOT=  /srv/easyrmm \t # where the data is", key: root, want: "/srv/easyrmm"},
+		{line: `EASYRMM_DATA_ROOT=/srv/easyrmm#data`, key: root, want: "/srv/easyrmm#data", goErr: "is not plain"},
+		{line: `EASYRMM_DATA_ROOT="${HOME}/easyrmm"`, key: root, goErr: "is not plain", shErr: "holds a backslash, a $ or a quote"},
+		{line: `EASYRMM_DATA_ROOT="/srv/easy\"rmm"`, key: root, goErr: "is not plain", shErr: "holds a backslash, a $ or a quote"},
+		{line: `EASYRMM_DATA_ROOT=/srv/"easyrmm"`, key: root, goErr: "is not plain", shErr: "holds a backslash, a $ or a quote"},
+		{line: `export EASYRMM_DATA_ROOT=/srv/easyrmm`, key: root, goErr: "line 1 is not KEY=value", shErr: "line 1 is not KEY=value"},
+		{line: `  EASYRMM_DATA_ROOT=/srv/easyrmm`, key: root, goErr: "line 1 is not KEY=value", shErr: "line 1 is not KEY=value"},
+		{line: `EASYRMM_DATA_ROOT = /srv/easyrmm`, key: root, goErr: "line 1 is not KEY=value", shErr: "line 1 is not KEY=value"},
+		{line: `EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>`, key: from, goErr: "quoted value does not end on its line", shErr: "quoted value does not end on its line"},
+		{line: `EASYRMM_SMTP_FROM="EasyRMM" <rmm@example.com>`, key: from, goErr: "text follows its closing quote", shErr: "text follows its closing quote"},
+		{line: `EASYRMM_SMTP_FROM='it''s'`, key: from, goErr: "text follows its closing quote", shErr: "text follows its closing quote"},
+		{line: "EASYRMM_SMTP_FROM=\"EasyRMM\nEASYRMM_DATA_ROOT=/elsewhere\"", key: root, goErr: "line 1: EASYRMM_SMTP_FROM's quoted value does not end", shErr: "line 1: EASYRMM_SMTP_FROM's quoted value does not end"},
+		{line: "EASYRMM_DATA_ROOT=/srv/easyrmm\r", key: root, goErr: "carriage return", shErr: "control character"},
+		{line: "EASYRMM_SMTP_FROM=\u00a0\"EasyRMM", key: from, goErr: "starts with a blank other than", shErr: "starts with a blank other than"},
+	} {
+		env := c.line + "\nB=after\n"
+		err := checkEnv([]byte(env))
+		if c.goErr == "" && err != nil || c.goErr != "" && (err == nil || !strings.Contains(err.Error(), c.goErr)) {
+			t.Errorf("%q: the updater: %v, want %q", c.line, err, c.goErr)
+		}
+		if err == nil && (slices.Contains(envKeysRead, c.key) && envValue([]byte(env), c.key) != c.want || envValue([]byte(env), "B") != "after") {
+			t.Errorf("%q: the updater reads %q, and B=%q", c.line, envValue([]byte(env), c.key), envValue([]byte(env), "B"))
+		}
+		got, err := setupEnv(t, t.TempDir(), env, c.key)
+		switch {
+		// setup.sh reads EASYRMM_DATA_ROOT, not the mail server.
+		case c.shErr == "" && (err != nil || c.key == root && got != c.want):
+			t.Errorf("%q: setup.sh: %q, %v", c.line, got, err)
+		case c.shErr != "" && (err == nil || !strings.Contains(err.Error(), c.shErr)):
+			t.Errorf("%q: setup.sh: %q, %v, want %q", c.line, got, err, c.shErr)
+		}
+		if c.want == "" || noCompose != nil {
+			continue
+		}
+		read, err := composeEnv(t, t.TempDir(), env, c.key, "B")
+		if err != nil || read[c.key] != c.want || read["B"] != "after" {
+			t.Errorf("%q: Compose reads %q, %v", c.line, read, err)
+		}
+	}
+	if noCompose != nil {
+		t.Logf("no docker compose here: %v", noCompose)
+	}
+	// What setup.sh reads, it checks; and the release's .env.example passes.
+	script := readFile(t, "../../../deploy/scripts/setup.sh")
+	reads := regexp.MustCompile(`\$\(env_value ([A-Z][A-Z_]+)\)`).FindAllStringSubmatch(script, -1)
+	if len(reads) < 15 {
+		t.Errorf("setup.sh reads %d settings", len(reads))
+	}
+	for _, m := range reads {
+		if !regexp.MustCompile(`\nenv_read="[^"\n]* ` + m[1] + ` `).MatchString(script) {
+			t.Errorf("setup.sh reads %s, which env_read does not list", m[1])
+		}
+	}
+	example := readFile(t, "../../../deploy/.env.example")
+	if err := checkEnv([]byte(example)); err != nil {
+		t.Errorf(".env.example: %v", err)
+	}
+	if _, err := setupEnv(t, t.TempDir(), example, "EASYRMM_DATA_ROOT"); err != nil {
+		t.Errorf(".env.example, by setup.sh: %v", err)
 	}
 }
 
@@ -461,7 +684,7 @@ func TestBundleDirectory(t *testing.T) {
 		mode os.FileMode
 		want string
 	}{
-		{filepath.Dir(h.u.BundleDir), 0o777, "bundles, above " + h.u.BundleDir + ", can be written by others than root (mode 777)"},
+		{filepath.Dir(h.u.BundleDir), 0o777, "bundles, on the way to " + h.u.BundleDir + ", can be written by others than root (mode 777)"},
 		{filepath.Dir(h.u.BundleDir), 0o775, "can be written by others than root (mode 775)"},
 		{h.u.BundleDir, 0o757, h.u.BundleDir + " can be written by others than root (mode 757)"},
 	} {
@@ -492,22 +715,73 @@ func TestBundleDirectory(t *testing.T) {
 	}
 }
 
-// A link above the bundle directory is refused, even to a directory only
-// root writes: whoever can change the link changes where the updater
+// A link on the way to the bundle directory is taken when it belongs to
+// root, and only root can change the way to where it leads, element by
+// element, links and all: whoever could would change where the updater
 // unpacks.
 func TestBundleDirectoryBehindALink(t *testing.T) {
-	h := newTestHost(t, "v1.0.0", release.ChannelStable)
-	real := filepath.Join(filepath.Dir(h.root), "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
-		t.Fatal(err)
+	setUp := func(t *testing.T) (h *testHost, base, real, link string) {
+		t.Helper()
+		h = newTestHost(t, "v1.0.0", release.ChannelStable)
+		base = filepath.Dir(h.root)
+		real = filepath.Join(base, "disks", "real")
+		if err := os.MkdirAll(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A link to a link: bundles -> disks/current -> real.
+		if err := os.Symlink("real", filepath.Join(base, "disks", "current")); err != nil {
+			t.Fatal(err)
+		}
+		link = filepath.Join(base, "bundles")
+		if err := os.Symlink("disks/current", link); err != nil {
+			t.Fatal(err)
+		}
+		h.u.BundleDir = filepath.Join(link, "easyrmm")
+		h.offer("v1.1.0", nil)
+		return h, base, real, link
 	}
-	link := filepath.Join(filepath.Dir(h.root), "bundles")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
-	h.u.BundleDir = filepath.Join(link, "easyrmm")
-	h.offer("v1.1.0", nil)
-	h.refusedBeforeStopping(h.upgrade(Request{}), link+", above "+h.u.BundleDir+", is a link (to "+real+")")
+	t.Run("root's", func(t *testing.T) {
+		h, _, real, _ := setUp(t)
+		if err := h.upgrade(Request{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(real, "easyrmm", "easyrmm-v1.1.0", "deploy", "docker-compose.yml")); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Run("where it leads written by others", func(t *testing.T) {
+		h, base, _, _ := setUp(t)
+		disks := filepath.Join(base, "disks")
+		if err := os.Chmod(disks, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		h.refusedBeforeStopping(h.upgrade(Request{}), disks+", on the way to "+h.u.BundleDir+", can be written by others than root (mode 777)")
+	})
+	t.Run("a loop", func(t *testing.T) {
+		h, base, _, _ := setUp(t)
+		current := filepath.Join(base, "disks", "current")
+		if err := os.Remove(current); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../bundles", current); err != nil {
+			t.Fatal(err)
+		}
+		h.refusedBeforeStopping(h.upgrade(Request{}), "too many levels of symbolic links")
+		if err := rootOnlyWay(filepath.Join(base, "bundles"), h.u.BundleDir); err == nil || !strings.Contains(err.Error(), "more than 40 links on the way to "+filepath.Join(base, "bundles")) {
+			t.Errorf("followed: %v", err)
+		}
+	})
+	t.Run("someone else's", func(t *testing.T) {
+		if os.Getuid() != 0 {
+			t.Skip("only root gives a link to someone else")
+		}
+		h, base, _, _ := setUp(t)
+		current := filepath.Join(base, "disks", "current")
+		if err := os.Lchown(current, 65534, 65534); err != nil {
+			t.Fatal(err)
+		}
+		h.refusedBeforeStopping(h.upgrade(Request{}), current+", a link (to real) on the way to "+h.u.BundleDir+", does not belong to root")
+	})
 }
 
 // The mount points looked at are those whose names lie in the data root,

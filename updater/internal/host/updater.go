@@ -228,16 +228,32 @@ func (u *Updater) begin(st *State, d *deployment, action, by, from, to string) (
 	return st.Attempt, u.save(st, d)
 }
 
-// step records the step an attempt reaches, before it begins it: a step
-// that could not be recorded is not begun (unsavedError), and the attempt
-// stays at the step it recorded last.
+// step records the step an attempt reaches, before it begins it (record).
 func (u *Updater) step(st *State, d *deployment, step string) error {
 	last := st.Attempt.Step
 	st.Attempt.Step = step
 	u.Log.Info("step", "step", step, "attempt", st.Attempt.ID)
-	if err := u.save(st, d); err != nil {
-		st.Attempt.Step = last
-		return &unsavedError{what: "the " + step + " step", err: err}
+	return u.record(st, d, "the "+step+" step", func() { st.Attempt.Step = last })
+}
+
+// record writes the state once the attempt's next stage is set in it, before
+// that stage begins; undo unsets it. A stage state.json does not record is
+// not begun (unsavedError), and undone; one state.json may record (written,
+// its directory not synced) is not begun either, but stays set, so that
+// what the attempt does next agrees with state.json, as the next run reads
+// it. Once state.json records it, it is begun, and status.json failing to
+// say so is logged: the console shows the stage before until the next
+// write.
+func (u *Updater) record(st *State, d *deployment, what string, undo func()) error {
+	if err := saveState(st, u.StateDir); err != nil {
+		var unsynced *unsyncedError
+		if !errors.As(err, &unsynced) {
+			undo()
+		}
+		return &unsavedError{what: what, err: err}
+	}
+	if err := u.writeStatus(st, d); err != nil {
+		u.Log.Error("could not write the status: the console shows the attempt as it was", "recorded", what, "error", err)
 	}
 	return nil
 }
@@ -277,7 +293,7 @@ func (u *Updater) writeStatus(st *State, d *deployment) error {
 	if d.dataRoot == "" {
 		return nil
 	}
-	s := Status{Running: st.Running, Previous: st.Previous, Channel: string(u.Config.Channel), Attempt: st.Attempt, NeedsRoom: st.NeedsRoom, Updated: u.now()}
+	s := Status{Running: st.Running, Previous: st.Previous, Channel: string(u.Config.Channel), Attempt: st.Attempt, NeedsRoom: st.NeedsRoom, CutShort: st.CutShort, Updated: u.now()}
 	if rp := st.Rollback; rp != nil && u.now().Before(rp.Until) {
 		s.Rollback = &RollbackStatus{To: rp.To, Since: rp.Since, Until: rp.Until}
 	}
@@ -320,8 +336,8 @@ func (u *Updater) choose(ctx context.Context, req Request, st *State, vs version
 	case st.HasFailed(stop.target.String()):
 		u.Log.Info("the required upgrade stop failed or was rolled back before: waiting for an operator", "stop", stop.target, "for", c.target)
 		return choice{}, nil
-	case st.NeedsRoom != nil && st.NeedsRoom.Version == stop.target.String():
-		u.Log.Info("the required upgrade stop ran out of room once the deployment had stopped: waiting for an operator to make room and ask for it", "stop", stop.target, "for", c.target, "needs", st.NeedsRoom.String())
+	case st.waitsForOperator(stop.target.String()) != "":
+		u.Log.Info("the required upgrade stop waits for an operator to ask for it (easyrmm-updater upgrade)", "stop", stop.target, "for", c.target, "why", st.waitsForOperator(stop.target.String()))
 		return choice{}, nil
 	}
 	u.Log.Info("installing the required upgrade stop first", "stop", stop.target, "for", c.target)
@@ -345,8 +361,8 @@ func (u *Updater) chooseTarget(ctx context.Context, req Request, st *State, vs v
 			u.Log.Info("the newest version failed or was rolled back before: waiting for a newer one, or for an operator to ask for it by name", "version", newest)
 			return choice{}, nil
 		}
-		if n := st.NeedsRoom; req.Automatic && n != nil && n.Version == newest.String() {
-			u.Log.Info("the newest version ran out of room once the deployment had stopped: waiting for an operator to make room and ask for it (easyrmm-updater upgrade)", "needs", n.String())
+		if why := st.waitsForOperator(newest.String()); req.Automatic && why != "" {
+			u.Log.Info("the newest version waits for an operator to ask for it (easyrmm-updater upgrade)", "version", newest, "why", why)
 			return choice{}, nil
 		}
 		target = newest
@@ -582,9 +598,11 @@ func (u *Updater) Upgrade(ctx context.Context, req Request) error {
 	if err != nil || c.target.IsZero() {
 		return err
 	}
-	if n := st.NeedsRoom; n != nil && !req.Automatic && n.Version == c.target.String() {
-		u.Log.Info("trying again, asked for by hand, a version that ran out of room", "version", n.Version)
-		st.NeedsRoom = nil
+	if why := st.waitsForOperator(c.target.String()); !req.Automatic && why != "" {
+		u.Log.Info("trying again, asked for by hand, a version automatic upgrades waited with", "version", c.target, "why", why)
+	}
+	if !req.Automatic {
+		st.operatorAsks(c.target.String())
 	}
 	running := vs.high()
 	if _, err := u.begin(st, d, "upgrade", req.By, running.String(), c.target.String()); err != nil {
@@ -625,6 +643,7 @@ func (up *upgrade) run(ctx context.Context) error {
 	if up.downloads != "" {
 		_ = os.RemoveAll(up.downloads)
 	}
+	asked := ctx.Err() != nil
 	// Whatever happens now runs to its end: a stop asked for waits.
 	ctx = context.WithoutCancel(ctx)
 	if err == nil {
@@ -648,13 +667,12 @@ func (up *upgrade) run(ctx context.Context) error {
 	// written) is tried again; a version refused, or one that failed once
 	// the deployment stopped, is not, so that automatic upgrades do not take
 	// the server down every hour. A version that ran out of room once the
-	// deployment stopped waits for an operator.
+	// deployment stopped waits for an operator, as one cut short too often
+	// does.
 	var transient *transientError
 	var stop *StopError
-	var killed *killedError
-	var unsaved *unsavedError
 	switch {
-	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled), errors.As(err, &killed), errors.As(err, &unsaved):
+	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled), interruption(err):
 	default:
 		st.MarkFailed(up.target.String())
 	}
@@ -667,13 +685,13 @@ func (up *upgrade) run(ctx context.Context) error {
 		st.NeedsRoom = up.needsRoom(ctx, err)
 		u.Log.Error("out of room once the deployment had stopped: automatic upgrades wait with this version until an operator asks for it", "needs", st.NeedsRoom.String())
 	}
-	if leaves(err, st.Attempt.Step) {
+	if stopsHere(err, st.Attempt.Step, asked) {
 		return u.leave(st, d, err)
 	}
-	// Failures after the deployment stopped bring the previous version
-	// back: from where it stopped while the data root is as it stopped
-	// (the backup not complete, or the set-up not recorded), otherwise from
-	// the backup.
+	// Failures after the deployment stopped, a command killed among them,
+	// bring the previous version back: from where it stopped while the data
+	// root is as it stopped (the backup not complete, or the set-up not
+	// recorded), otherwise from the backup.
 	u.Log.Error("the upgrade failed; bringing the previous version back", "step", st.Attempt.Step, "error", err)
 	var rerr error
 	if up.backup == nil || !changesData(st.Attempt.Step) {
@@ -693,6 +711,9 @@ func (up *upgrade) run(ctx context.Context) error {
 		return st.Attempt.reasonError()
 	}
 	up.removeNewRoot()
+	if interruption(err) {
+		st.countCutShort(up.target.String(), err.Error())
+	}
 	u.end(st, d, ResultRolledBack, err)
 	return st.Attempt.reasonError()
 }
@@ -819,7 +840,7 @@ func (up *upgrade) steps(ctx context.Context) error {
 		Backup: b.Dir, Since: b.Meta.Taken, Until: u.now().Add(RollbackWindow),
 	}
 	st.Failed = removeString(st.Failed, up.target.String())
-	st.NeedsRoom = nil
+	st.NeedsRoom, st.CutShort = nil, nil
 	return nil
 }
 

@@ -420,17 +420,19 @@ grep -x 'auto_upgrade = yes' /etc/easyrmm/updater.conf
 grep -x 'auto_upgrade_hours = 0-24' /etc/easyrmm/updater.conf`, time.Minute)
 	// The service is stopped (SIGTERM, as at a reboot) during its
 	// backup: KillMode=mixed sends it to the updater alone, so the backup's
-	// cp runs on, and the updater, which runs on to the attempt's end,
-	// within TimeoutStopSec. A ballast file in the data root makes the
-	// backup last long enough to be stopped in.
+	// cp runs on (a cp killed would bring the previous version back, and the
+	// attempt would not succeed), and the updater, which runs on to the
+	// attempt's end, within TimeoutStopSec. A ballast file in the data root
+	// makes the backup last long enough to be stopped in.
 	stopped := m.run("the timer's service, installing "+versionD+" first, stopped during its backup", fmt.Sprintf(`set -e
 dd if=/dev/zero of=%[1]s/machinetest-ballast bs=1M count=1024 status=none
 systemctl start --no-block easyrmm-updater.service
 end=$(($(date +%%s) + 3600))
-until grep -Eq '"step": "(backup|set-up|start-held|confirm)"' /var/lib/easyrmm-updater/state.json 2>/dev/null &&
+until grep -q '"step": "backup"' /var/lib/easyrmm-updater/state.json 2>/dev/null &&
   grep -q '"to": "%[2]s"' /var/lib/easyrmm-updater/state.json; do
-  if [ "$(date +%%s)" -ge "$end" ] || [ "$(systemctl show -P ActiveState easyrmm-updater.service)" = failed ]; then
-    echo "the service did not reach its backup" >&2
+  if [ "$(date +%%s)" -ge "$end" ] || [ "$(systemctl show -P ActiveState easyrmm-updater.service)" = failed ] ||
+    grep -Eq '"step": "(set-up|start-held|confirm|finished|restore)"' /var/lib/easyrmm-updater/state.json 2>/dev/null; then
+    echo "the service was not seen at its backup" >&2
     journalctl -u easyrmm-updater.service --no-pager -o cat >&2
     exit 1
   fi
@@ -440,11 +442,29 @@ sed -n 's/.*"step": "\(.*\)".*/stopped at the \1 step/p' /var/lib/easyrmm-update
 systemctl stop easyrmm-updater.service
 systemctl show -P Result easyrmm-updater.service`, dataRoot, versionD), 45*time.Minute)
 	t.Logf("the service stopped: %s", strings.TrimSpace(stopped))
-	if !strings.Contains(stopped, "stopped at the backup step") {
-		t.Logf("the stop came after the backup: the set-up's setup.sh ran on instead of the backup's cp")
+	if !strings.HasSuffix(strings.TrimSpace(stopped), "success") {
+		t.Errorf("the service's stop: %s", stopped)
 	}
-	if journal := m.run("the service's journal", "journalctl -u easyrmm-updater.service --no-pager -o cat", time.Minute); !strings.Contains(journal, "asked to stop") {
-		t.Errorf("the journal does not say a stop was asked for:\n%s", journal)
+	// The stop landed during the backup: the last step the updater began
+	// before it was asked to stop is the backup, and it went on past it.
+	journal := strings.Split(m.run("the service's journal", "journalctl -u easyrmm-updater.service --no-pager -o cat", time.Minute), "\n")
+	asked := -1
+	for i, line := range journal {
+		if strings.Contains(line, "asked to stop") {
+			asked = i
+		}
+	}
+	if asked < 0 {
+		t.Fatalf("the journal does not say a stop was asked for:\n%s", strings.Join(journal, "\n"))
+	}
+	last := ""
+	for _, line := range journal[:asked] {
+		if strings.Contains(line, "msg=step ") {
+			last = line
+		}
+	}
+	if !strings.Contains(last, "step=backup") || !slices.ContainsFunc(journal[asked:], func(line string) bool { return strings.Contains(line, "msg=step step=set-up") }) {
+		t.Errorf("the stop was asked for after %q, not during the backup the attempt went on from:\n%s", last, strings.Join(journal, "\n"))
 	}
 	m.serves(versionD)
 	st = m.status()

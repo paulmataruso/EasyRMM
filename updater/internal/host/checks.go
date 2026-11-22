@@ -74,8 +74,14 @@ func readSmall(path string, limit int64) ([]byte, error) {
 // each the larger of its length and the blocks it has, since a copy of a
 // file with holes may fill them, and a small file takes a whole block.
 func treeSize(dir string) (int64, error) {
+	return sizeOf(dir, nil)
+}
+
+// sizeOf is treeSize, calling link, when it is not nil, with each link it
+// meets.
+func sizeOf(dir string, link func(path string) error) (int64, error) {
 	var total int64
-	err := filepath.WalkDir(dir, func(_ string, e fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, e fs.DirEntry, err error) error {
 		// The running deployment's files come and go while they are
 		// counted.
 		if errors.Is(err, fs.ErrNotExist) {
@@ -83,6 +89,11 @@ func treeSize(dir string) (int64, error) {
 		}
 		if err != nil {
 			return err
+		}
+		if link != nil && e.Type()&fs.ModeSymlink != 0 {
+			if err := link(path); err != nil {
+				return err
+			}
 		}
 		fi, err := e.Info()
 		if errors.Is(err, fs.ErrNotExist) {
@@ -164,10 +175,13 @@ func resolved(path string) []string {
 // cover, and measures it. A backup copies each entry with cp -a, which
 // copies a link as the link, not what it leads to; a restore moves each
 // entry aside, which a mount point refuses (EBUSY). So an entry that is a
-// link, and a mount point anywhere under the data root (another disk, or a
-// directory bound there), are refused, before anything stops. Links deeper
-// down are the services' own, which they follow inside their containers,
-// and are copied as they are. The data root itself may be a mount point.
+// link, a link at any depth that leads out of the data root (where the host
+// follows it: Docker, when the link is on a mount's way, and anyone else),
+// and a mount point anywhere under the data root (another disk, or a
+// directory bound there) are refused, before anything stops; links are
+// never followed to copy what they lead to. Links deeper down that lead
+// into the data root are copied as they are. The data root itself may be a
+// mount point.
 //
 // The kernel lists mount points by their paths, without links, so only the
 // data root's path is resolved, once: the host's other mount points are
@@ -177,6 +191,20 @@ func checkDataRoot(dataRoot string) (int64, error) {
 	points, err := mountPoints()
 	if err != nil {
 		return 0, err
+	}
+	realRoot, err := realPath(dataRoot)
+	if err != nil {
+		return 0, err
+	}
+	var out error
+	leadsOut := func(path string) error {
+		to, err := realPath(path)
+		if err == nil && inDir(to, realRoot) {
+			return nil
+		}
+		target, _ := os.Readlink(path)
+		out = fmt.Errorf("%s is a link (to %s) that leads out of the data root %s: a backup copies the link, not what it leads to, and Docker follows it when a service mounts it. Put what it leads to in its place (docs/operations/updater.md#the-data-root)", path, target, dataRoot)
+		return fs.SkipAll
 	}
 	roots := resolved(dataRoot)
 	for _, p := range points {
@@ -203,7 +231,10 @@ func checkDataRoot(dataRoot string) (int64, error) {
 			target, _ := os.Readlink(path)
 			return 0, fmt.Errorf("%s is a link (to %s): a backup copies the link, not what it leads to, and a restore puts the link back. Move what it leads to into the data root, or mount it there as a whole (docs/operations/updater.md#the-data-root)", path, target)
 		}
-		size, err := treeSize(path)
+		size, err := sizeOf(path, leadsOut)
+		if out != nil {
+			return 0, out
+		}
 		if err != nil {
 			return 0, fmt.Errorf("measuring the data root: %w", err)
 		}
@@ -246,11 +277,10 @@ type fsNeed struct {
 // free: in backup_dir, the backup (a full copy of the data root, the
 // deployment's tree and the configuration: reflinks, where there are any,
 // only save room); in the data root, a restore's copy of it, should the
-// upgrade fail, and another, should a restore cut short be done again (the
-// first's copy goes only once the second is checked); beside the
-// deployment's tree, a restore's copy of it; in Docker's data directory,
-// the new images; in the updater's state directory and its bundle
-// directory, the bundle downloaded and unpacked.
+// upgrade fail (a restore done again removes the copy the first left
+// before it copies); beside the deployment's tree, a restore's copy of it;
+// in Docker's data directory, the new images; in the updater's state
+// directory and its bundle directory, the bundle downloaded and unpacked.
 func (up *upgrade) roomNeeds(ctx context.Context) ([]*fsNeed, error) {
 	u, d := up.u, up.d
 	if err := ensureRootDir(u.Config.BackupDir, 0o700); err != nil {
@@ -267,7 +297,7 @@ func (up *upgrade) roomNeeds(ctx context.Context) ([]*fsNeed, error) {
 		bytes      int64
 	}{
 		{u.Config.BackupDir, "the backup", up.dataSize + up.treeSize},
-		{d.dataRoot, "a restore's copy of the data root, and one more should it be done again", 2 * up.dataSize},
+		{d.dataRoot, "a restore's copy of the data root", up.dataSize},
 		{filepath.Dir(d.dir), "a restore's copy of the deployment's directory", up.treeSize},
 		{dockerRoot, "the new images", minImageSpace},
 		{u.StateDir, "the bundle's download", bundleSpace},
@@ -347,40 +377,125 @@ func deploymentSize(deployDir string) (int64, error) {
 }
 
 // ensureRootPath makes dir, root's with mode 755, unless it is there, and
-// makes sure no one but root can change it or a directory above it: each
-// is a directory, not a link, root's, and only root can write it, or it is
-// sticky (as /tmp is), where no one can rename or remove what is not
-// theirs.
+// makes sure no one but root can change it or the way to it (rootOnlyWay).
 func ensureRootPath(dir string) error {
 	if err := ensureRootDir(dir, 0o755); err != nil {
 		return err
 	}
-	for p := filepath.Dir(dir); p != checkedBelow; p = filepath.Dir(p) {
-		fi, err := os.Lstat(p)
+	return rootOnlyWay(filepath.Dir(dir), dir)
+}
+
+// maxLinks bounds the links followed on a path, as the kernel's own bound
+// does.
+const maxLinks = 40
+
+// followPath follows the absolute path from / as the kernel does, each link
+// on the way followed where it leads, and returns where it leads. It calls
+// visit with each element it reaches, a link before it follows it, and what
+// os.Lstat says of it; an element that does not exist (fi nil), and the
+// rest of the path after it, are taken by their names.
+func followPath(path string, visit func(p string, fi fs.FileInfo) error) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s is not an absolute path", path)
+	}
+	cur, links := "/", 0
+	todo := strings.Split(filepath.Clean(path), "/")
+	for len(todo) > 0 {
+		name := todo[0]
+		todo = todo[1:]
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, name)
+		fi, _ := os.Lstat(next) // nil when it is not there
+		if err := visit(next, fi); err != nil {
+			return "", err
+		}
+		if fi == nil || fi.Mode()&fs.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if links++; links > maxLinks {
+			return "", fmt.Errorf("more than %d links on the way to %s", maxLinks, path)
+		}
+		target, err := os.Readlink(next)
 		if err != nil {
-			return err
+			return "", err
 		}
-		st, ok := fi.Sys().(*syscall.Stat_t)
+		if filepath.IsAbs(target) {
+			cur = "/"
+		}
+		todo = append(strings.Split(target, "/"), todo...)
+	}
+	return cur, nil
+}
+
+// realPath is where path leads (followPath).
+func realPath(path string) (string, error) {
+	return followPath(path, func(string, fs.FileInfo) error { return nil })
+}
+
+// rootOnlyWay makes sure no one but root can change the way to path, the
+// directory above dir, as the kernel follows it from /: each directory on
+// the way belongs to root, and only root can write it, or it is sticky (as
+// /tmp is), where no one can rename or remove what is not theirs; each link
+// on the way belongs to root, and the way to where it leads is checked the
+// same, element by element.
+func rootOnlyWay(path, dir string) error {
+	if err := rootOnly("/", dir); err != nil {
+		return err
+	}
+	_, err := followPath(path, func(p string, fi fs.FileInfo) error {
 		switch {
-		case fi.Mode()&fs.ModeSymlink != 0:
+		case fi == nil || fi.Mode()&fs.ModeSymlink == 0:
+			return rootOnly(p, dir)
+		case !aboveChecks(p) && !ownedByRoot(fi):
 			target, _ := os.Readlink(p)
-			return fmt.Errorf("%s, above %s, is a link (to %s): whoever can change what it leads to changes %s. Give the updater a path without links", p, dir, target, dir)
-		case !ok || (st.Uid != 0 && st.Uid != rootUID):
-			return fmt.Errorf("%s, above %s, does not belong to root", p, dir)
-		case fi.Mode().Perm()&0o022 != 0 && fi.Mode()&fs.ModeSticky == 0:
-			return fmt.Errorf("%s, above %s, can be written by others than root (mode %o)", p, dir, fi.Mode().Perm())
+			return fmt.Errorf("%s, a link (to %s) on the way to %s, does not belong to root", p, target, dir)
 		}
-		if p == filepath.Dir(p) {
-			return nil
-		}
+		return nil
+	})
+	return err
+}
+
+// rootOnly checks p, a directory on the way to dir (rootOnlyWay).
+func rootOnly(p, dir string) error {
+	if aboveChecks(p) {
+		return nil
+	}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !ownedByRoot(fi):
+		return fmt.Errorf("%s, on the way to %s, does not belong to root", p, dir)
+	case fi.Mode().Perm()&0o022 != 0 && fi.Mode()&fs.ModeSticky == 0:
+		return fmt.Errorf("%s, on the way to %s, can be written by others than root (mode %o)", p, dir, fi.Mode().Perm())
 	}
 	return nil
 }
 
-// checkedBelow, when set, is where ensureRootPath stops: the directories
-// from it up are not checked. It is "" on a host, so every directory up
-// to / is; the tests set it to their TMPDIR, which is the developer's.
+func ownedByRoot(fi fs.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && (st.Uid == 0 || st.Uid == rootUID)
+}
+
+// checkedBelow, when set, is where rootOnlyWay's checks stop: it and the
+// directories above it are not checked. It is "" on a host, so every
+// directory up to / is; the tests set it to their TMPDIR, which is the
+// developer's.
 var checkedBelow string
+
+// aboveChecks reports whether p is checkedBelow or above it, so that
+// rootOnlyWay does not check it.
+func aboveChecks(p string) bool {
+	return checkedBelow != "" && inDir(checkedBelow, p)
+}
 
 // downloadBundle downloads a verified manifest's bundle and checks it
 // against the manifest's SHA-256.

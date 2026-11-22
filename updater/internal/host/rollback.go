@@ -94,9 +94,8 @@ func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p resto
 		}
 	}
 	a.Restored = true
-	if err := u.save(st, d); err != nil {
-		a.Restored = false
-		return &unsavedError{what: "the restore's end", err: err}
+	if err := u.record(st, d, "the restore's end", func() { a.Restored = false }); err != nil {
+		return err
 	}
 	return u.startRestored(ctx, st, d, b)
 }

@@ -96,8 +96,61 @@ while [[ $# -gt 0 ]]; do
 done
 
 die() { echo "error: $*" >&2; exit 1; }
-# env_value KEY: KEY's value in .env (the last, if it is there twice).
-env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+
+# --- .env (docs/operations/updater.md#env) -----------------------------------
+# setup.sh reads .env by Compose's rules, as the host updater does: blank
+# lines, comments, and KEY=value lines, KEY at the start of the line. A value
+# is unquoted, ending at a " #" that starts a comment, the blanks around it
+# trimmed; or in single or double quotes, which end on the same line, a
+# backslash escaping the character after it, and nothing but blanks and a
+# comment after them. check_env refuses what Compose would read otherwise,
+# and, in the settings setup.sh reads (env_read), a backslash, a $ or a
+# quote, which env_value does not read as Compose does.
+env_read=" EASYRMM_PUBLIC_URL EASYRMM_MESH_PUBLIC_URL EASYRMM_TLS_MODE EASYRMM_ACME_EMAIL EASYRMM_TRUSTED_PROXIES EASYRMM_TLS_CERT_FILE EASYRMM_TLS_KEY_FILE EASYRMM_DATA_ROOT EASYRMM_IP_ACCESS EASYRMM_IP_ADDRESSES COMPOSE_PROFILES EASYRMM_AUTHENTIK_HOSTNAME EASYRMM_AUTHENTIK_ADMIN_EMAIL EASYRMM_EASYPATCH_HOSTNAME EASYRMM_VERSION "
+check_env() {
+  local LC_ALL=C file=$1 n=0 line key value
+  local control=$'[\001-\010\013-\037\177]'
+  local blank='^[[:blank:]]*(#.*)?$'
+  local setting='^([A-Za-z_][A-Za-z0-9_]*)=[[:blank:]]*(.*)$'
+  local double='^"(([^"\\]|\\.)*)"[[:blank:]]*(#.*)?$'
+  local single="^'(([^'\\\\]|\\\\.)*)'[[:blank:]]*(#.*)?\$"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    [[ ! "$line" =~ $control ]] || die "$file line $n holds a control character (a Windows line end?): setup.sh reads .env with Unix line ends only"
+    [[ ! "$line" =~ $blank ]] || continue
+    [[ "$line" =~ $setting ]] ||
+      die "$file line $n is not KEY=value at the start of the line: setup.sh does not read export, spaces around the key or other forms Compose takes"
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+    [[ "$value" != $'\xc2\x85'* && "$value" != $'\xc2\xa0'* ]] || die "$file line $n: ${key}'s value starts with a blank other than a space or a tab"
+    case "$value" in
+      \"*|\'*)
+        [[ "$value" =~ $double || "$value" =~ $single ]] ||
+          die "$file line $n: ${key}'s quoted value does not end on its line, or text follows its closing quote: write it on one line, its closing quote followed by nothing but a comment"
+        value=${BASH_REMATCH[1]}
+        ;;
+      *)
+        value=${value%% #*}
+        value=${value%"${value##*[![:blank:]]}"}
+        ;;
+    esac
+    [[ "$env_read" != *" $key "* || "$value" != *[\\\$\"\']* ]] ||
+      die "$file line $n: ${key}'s value holds a backslash, a \$ or a quote, which setup.sh does not read as Compose does"
+  done < "$file"
+}
+# env_value KEY [FILE]: KEY's value in .env, or FILE, read as check_env
+# reads it (the last, if KEY is there twice).
+env_value() {
+  local value
+  value=$(sed -n "s/^$1=//p" "${2:-.env}" | tail -n 1)
+  value=${value#"${value%%[![:blank:]]*}"}
+  case "$value" in
+    \"*) value=${value#\"}; value=${value%%\"*} ;;
+    \'*) value=${value#\'}; value=${value%%\'*} ;;
+    *) value=${value%% #*}; value=${value%"${value##*[![:blank:]]}"} ;;
+  esac
+  printf '%s\n' "$value"
+}
 
 # --- The updater's lock (ADR-0052) -------------------------------------------
 # Run as root, setup.sh holds the host updater's lock for its whole run: an
@@ -125,6 +178,7 @@ updater_lock() {
     die "an updater attempt is running (easyrmm-updater status): setup.sh changes nothing while one does. Run it again once it has ended."
 }
 [[ $(id -u) -ne 0 ]] || updater_lock
+[[ ! -e .env ]] || check_env .env
 
 # --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
 # Authentik as everyone's sign-in. Its services are in docker-compose.yml
@@ -166,13 +220,13 @@ authentik_env() {
   fill_secret AUTHENTIK_SECRET_KEY "$(openssl rand -hex 50)"
   fill_secret AUTHENTIK_DB_PASSWORD "$(openssl rand -hex 32)"
   local profiles
-  profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+  profiles=$(env_value COMPOSE_PROFILES)
   case ",$profiles," in
     *,authentik,*) ;;
     ,,) set_setting COMPOSE_PROFILES authentik ;;
     *) set_setting COMPOSE_PROFILES "$profiles,authentik" ;;
   esac
-  echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1))."
+  echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(env_value COMPOSE_PROFILES))."
 }
 
 # authentik_put writes its input to a file in one of Authentik's
@@ -404,10 +458,10 @@ fi
 # leaves it alone otherwise. Secrets later versions need reach an older .env
 # this way without touching the ones that protect existing data.
 fill_secret() {
-  if grep -q "^$1=." .env; then
+  if [[ -n "$(env_value "$1")" ]]; then
     return
-  elif grep -q "^$1=\$" .env; then
-    sed -i "s|^$1=\$|$1=$2|" .env
+  elif grep -q "^$1=" .env; then
+    sed -i "s|^$1=.*|$1=$2|" .env
   else
     printf '%s=%s\n' "$1" "$2" >> .env
   fi
@@ -431,7 +485,7 @@ if grep -q '^EASYRMM_PATCHING=' .env; then
   sed -i '/^EASYRMM_PATCHING=/d' .env
   echo "Removed EASYRMM_PATCHING from .env: patching always runs in this deployment."
 fi
-profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+profiles=$(env_value COMPOSE_PROFILES)
 if [[ ",$profiles," == *,patching,* ]]; then
   profiles=$(printf '%s\n' "${profiles//,/$'\n'}" | grep -vx patching | paste -sd , - || true)
   if [[ -n "$profiles" ]]; then
@@ -444,7 +498,7 @@ fi
 # EasyPatch on the same server (ADR-0035) is gone (ADR-0046). Empty settings
 # are tidied away; a name is left for the operator, and the server refuses
 # to start with it.
-if [[ -n "$(sed -n 's/^EASYRMM_EASYPATCH_HOSTNAME=//p' .env | tail -n 1)" ]]; then
+if [[ -n "$(env_value EASYRMM_EASYPATCH_HOSTNAME)" ]]; then
   echo "EASYRMM_EASYPATCH_HOSTNAME is set: EasyPatch on this server is replaced by the patching engine." >&2
   echo "EasyRMM does not start while it is set. Remove it, then import that EasyPatch (docs/operations/import-easypatch.md)." >&2
 elif grep -q '^EASYRMM_EASYPATCH_' .env; then
@@ -458,7 +512,7 @@ fi
 if [[ "$upgrade" == true ]]; then
   # A release's bundle names its server image in .env.example; a clone's
   # says latest, and the version is the operator's to set.
-  version=$(sed -n 's/^EASYRMM_VERSION=//p' .env.example | tail -n 1)
+  version=$(env_value EASYRMM_VERSION .env.example)
   if [[ -n "$version" && "$version" != latest ]]; then
     set_setting EASYRMM_VERSION "$version"
     echo "EASYRMM_VERSION=${version}: this release's server image."

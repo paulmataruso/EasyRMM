@@ -105,18 +105,22 @@ deployment had stopped, until you make room and ask for it by name
    one ([below](#required-upgrade-stops)). The host must be as the updater
    needs it:
    * the data root Compose mounts is the one `.env` names, and it holds
-     no links or mount points ([below](#the-data-root));
+     no mount points, and no links that lead out of it
+     ([below](#the-data-root));
    * Compose reads the deployment as `docker-compose.yml` and `.env` say,
      and mounts only what a backup holds ([below](#the-data-root));
-   * `/opt/easyrmm`, where the updater unpacks bundles, and every
-     directory above it, can be written only by root, and none is a link;
+     `.env` reads the same to the updater, `setup.sh` and Compose
+     ([below](#env));
+   * only root can change `/opt/easyrmm`, where the updater unpacks
+     bundles, or the way to it: every directory on the way is root's and
+     only root can write it (or it is sticky, as `/tmp` is); a link on the
+     way is root's, and so is the way to where it leads, element by element;
    * each disk has room for all that goes on it: the backup (a copy of the
      data root and the deployment directory), a restore's copy of the data
-     root and one more should the restore be done again, a restore's copy
-     of the deployment directory, 2 GiB for the new images, and 256 MiB
-     for the bundle's download and its unpacking. Where they share a disk,
-     it needs the sum. A file counts as the larger of its length and the
-     blocks it takes: a copy may fill a sparse file's holes.
+     root, a restore's copy of the deployment directory, 2 GiB for the new
+     images, and 256 MiB for the bundle's download and its unpacking. Where
+     they share a disk, it needs the sum. A file counts as the larger of its
+     length and the blocks it takes: a copy may fill a sparse file's holes.
 2. **Pull** the new images by digest while the running version serves.
 3. **Stop** every service. The downtime starts.
 4. **Back up** the data root, the deployment directory (with `.env`) and
@@ -219,23 +223,44 @@ host starts does it unattended:
   version starts again;
 * after the backup, the backup is restored as above, and the new version
   is marked failed. A restore cut short is done again: what the first one
-  moved aside stays, and the copy it left is removed once the second is
-  checked. The failed database's audit chain head is read only once: if
-  the first restore did not get to read it, it is recorded as unknown.
+  moved aside stays, and the copies it left, worth nothing beside the
+  backup, are removed before the second copies, so a restore never needs
+  room for more than one copy. The failed database's audit chain head is
+  read only once: if the first restore did not get to read it, it is
+  recorded as unknown.
 
-Once the deployment has stopped, the attempt also stops where it is, the
-server held, for the next run to finish the same way, when a command it
-runs (`cp`, `docker`, `setup.sh`) is killed by a signal, or when it cannot
-record a step it is about to begin. Neither is the new version failing.
-`status` and `status.json` (the attempt's `interrupted`) say why.
+Once the deployment has stopped, a command the updater runs (`cp`,
+`docker`, `setup.sh`) that is killed by a signal (the out-of-memory killer,
+someone's `kill`), and a step the updater cannot record before step 5, are
+not the new version failing: the previous version comes back at once, as
+for a failure, during steps 3 and 4 where it stopped, from step 5 on from
+the backup. The version is not marked failed, but the attempt is counted
+as cut short. After two such attempts at one version, each of which took
+the server down, automatic upgrades wait with that version until you ask
+for it by name; `status` and `status.json` (`cutShort`) say so:
 
-The new version is not counted as failed for an attempt cut short before
-step 5, nor for one cut short by the updater itself (above) or by a stop
-someone asked for ([below](#stopping-an-attempt)). Until the next run,
-`status` says that no updater runs and the attempt did not end. A
-confirmed upgrade cut short before `hold` was removed is restored, since
-the updater did not record it; one cut short after that keeps running, and
-the next run removes `hold` if it is still there.
+```text
+Cut short:   v1.2.4's attempts were cut short 2 times once the deployment had stopped, the last by: ... Each took the server down, so automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade v1.2.4
+```
+
+The attempt stops where it is instead, the server held, for the next run to
+finish as above, only when bringing the previous version back would not be
+sound, or not end:
+* it cannot record a step from step 5 on (the next run must not misread
+  what was done; a step `state.json` records is begun, even when
+  `status.json` could not say so);
+* a command is killed after a stop was asked for: the host is going down;
+* bringing the previous version back is itself cut short.
+
+`status` and `status.json` (the attempt's `interrupted`) say why. The new
+version is not counted as failed for an attempt cut short before step 5,
+nor for one cut short by the updater itself (above) or by a stop someone
+asked for ([below](#stopping-an-attempt)); those two count as cut short.
+Until the next run, `status` says that no updater runs and the
+attempt did not end. A confirmed upgrade cut short before `hold` was
+removed is restored, since the updater did not record it; one cut short
+after that keeps running, and the next run removes `hold` if it is still
+there.
 
 ### Stopping an attempt
 
@@ -253,7 +278,7 @@ waits for the updater. A backup or a restore of a large data root can take
 longer. systemd then kills the updater and its commands, and the next run
 finishes the attempt from its record
 ([above](#interrupted-attempts)). Since the stop was recorded, that run
-does not count the attempt against the new version.
+does not count the attempt against the new version, but as cut short.
 
 ### When a rollback fails
 
@@ -377,14 +402,20 @@ before anything stops, when:
 * an entry at its top (`postgres`, `server`, `meshcentral` and the others)
   is a link: a backup would copy the link, not what it leads to, and a
   restore would put the link back over the failed version's data;
+* a link anywhere in it leads out of it, by where the host follows it.
+  Such a link is refused, never followed to copy what it leads to: a
+  backup would copy the link, not what it leads to, and Docker follows a
+  link on the way to a directory it mounts. Put what the link leads to in
+  its place;
 * anything in it, at any depth, is a mount point (a disk, a network share,
   a bind mount): a restore cannot move it aside, and its copy would land
   on the disk below;
 * the data root Compose mounts for the server is not the one `.env` names.
 
-The data root itself may be a mount point, and links deeper in the tree,
-which the services make themselves, are copied as links. To keep data on
-another disk, mount that disk at the data root, or set
+The data root itself may be a mount point, and links deeper in the tree
+that lead into it, which the services may make themselves, are copied as
+links. To keep data on another disk, mount that disk at the data root, or
+set
 `EASYRMM_DATA_ROOT` to a directory on it, before installing. Mount points
 are compared with the data root by their names, and by where a link to the
 data root leads: the updater does not follow the host's every mount point,
@@ -404,9 +435,37 @@ or mount otherwise than a backup covers:
   directory, read-only; the server's certificates (`EASYRMM_TLS_DIR`),
   read-only; or one of `/etc/localtime`, `/etc/timezone`,
   `/run/docker.sock` and `/var/run/docker.sock`, which hold no state.
+  A mount is taken where Docker finds it, its links followed: one whose
+  way, through a link, leads out of the data root and the deployment
+  directory is refused, with where it leads.
 
 The updater runs Compose with an environment of its own (`PATH`, `HOME`,
 `LANG`), so a `COMPOSE_` variable in root's environment changes nothing.
+
+## .env
+
+The updater, `setup.sh` and Compose read the deployment's `.env` alike, by
+Compose's rules. Each line is blank, a comment (`#` first, blanks before it
+allowed), or `KEY=value` with `KEY` at the start of the line. A value is
+one of:
+* unquoted: up to a space followed by `#`, which starts a comment, the
+  blanks around it trimmed (`$` starts a variable; write `$$` for a `$`);
+* in double quotes, which end on the same line: `\"` is a quote, `\\` a
+  backslash, `$$` a `$`;
+* in single quotes, which end on the same line: as written, but `\'`
+  for a quote.
+
+After a closing quote, only blanks and a comment may follow. A sender with
+a name is written `EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"`, or
+unquoted, which reads the same ([mail](mail.md#where-the-mail-server-comes-from)).
+The updater and `setup.sh` refuse, rather than misread, what Compose would
+read otherwise: `export`, blanks before the key or around `=`, a quoted
+value over more than one line, text after a closing quote, and control
+characters such as a Windows line end. The settings they read
+(`EASYRMM_DATA_ROOT`, `EASYRMM_VERSION`, `COMPOSE_PROFILES`, the public
+URLs, the TLS and IP settings) must hold no backslash, `$` or quote inside
+their value; the updater's must be plain (letters, digits and `._/:@,+-`)
+and set once.
 
 ## Status
 
@@ -415,7 +474,7 @@ the server and the engine's worker mount read-only at `/run/easyrmm-updater`:
 
 | File | What |
 |---|---|
-| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, a rollback asked for ending `rolled-back`, and `reason`; `warning`, when the updater could not replace itself; `repaired`, who said with `--deployment-repaired` that they repaired the deployment, and when; `interrupted`, why the updater stopped a running attempt where it was; and what the attempt works on: `deployment`, `dataRoot`, `newDeploy`, `backup`), the `rollback` on offer (`to`, `since`, `until`), `needsRoom` (`version`, `short`, the bytes it lacked, and `path`) and `updated` |
+| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, a rollback asked for ending `rolled-back`, and `reason`; `warning`, when the updater could not replace itself; `repaired`, who said with `--deployment-repaired` that they repaired the deployment, and when; `interrupted`, why the updater stopped a running attempt where it was; and what the attempt works on: `deployment`, `dataRoot`, `newDeploy`, `backup`), the `rollback` on offer (`to`, `since`, `until`), `needsRoom` (`version`, `short`, the bytes it lacked, and `path`), `cutShort` (`version`, `times` its attempts were cut short, and the `last` reason) and `updated` |
 | `hold` | While it exists the server is held |
 | `agent-updates-held-until` | One RFC 3339 time: until then the engine starts no automatic agent update |
 

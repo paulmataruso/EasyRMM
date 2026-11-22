@@ -374,7 +374,7 @@ contacts no agent, so it does not depend on agents being reachable.
 * **`.env`** is read as `setup.sh` writes it: `KEY=value` lines, comments
   and blank lines. `export`, quoted values, spaces around a key and
   Windows line ends are refused, and the settings the updater reads must
-  be set once, to plain values.
+  be set once, to plain values (quoted values amended below, 2026-11-22).
 * **The updater not replacing itself** at the confirm is recorded as the
   attempt's warning, in `status`; the next run re-installs it from the
   running version's bundle, when it is older than that version and the
@@ -394,32 +394,47 @@ in review):*
   and the next run settles the attempt. A stop recorded during an attempt
   keeps the next run from counting it against the version.
 * **A command killed by a signal** (one the updater's own context did not
-  send) after the stop is an interruption, not the version failing: the
-  attempt stops at its step, the server held, its record saying why
-  (`interrupted`, in `state.json` and `status.json`), and the next run
-  finishes it.
+  send: the out-of-memory killer, someone's `kill`) after the stop is not
+  the version failing. The previous version comes back at once, as for a
+  failure: before step 5 where it stopped, from step 5 on from the backup.
+  The attempt is counted as cut short (`cutShort`, in `state.json` and
+  `status.json`), as one cut short by a stop asked for, or by a record not
+  written, is; after two at one version, each of which took the server
+  down, automatic runs wait with it until an operator asks for it, and
+  `status` says why. The attempt stops where it is instead, the server
+  held, its record saying why (`interrupted`), for the next run to finish,
+  only when bringing the previous version back would not be sound or would
+  not end: a step not recorded from step 5 on (below), a command killed
+  once a stop was asked for (the host is going down), and bringing the
+  previous version back itself cut short.
 * **Records before changes.** The updater never changes the data root, by
   starting the new version or by restoring, unless the step that says so
   is recorded. Before step 5 a step it cannot record ends the attempt, and
   the previous version starts again on its own data; from step 5 on the
-  attempt stops where it is, the server held (a restore's copy of the data
-  root predates `hold`, which the updater writes again), and `status` says
-  why. The same holds for a restore's stages: the discarded head, and the
-  restore's end.
+  attempt stops where it is, the server held, and `status` says why. The
+  hold is written again then: the attempt may have lifted it to start a
+  version, or not yet written it; it lies in the data root's `updater/`,
+  which no backup holds and no restore replaces. The same holds for a
+  restore's stages: the discarded head, and the restore's end. A stage is
+  undone only when `state.json` still says the stage before; once
+  `state.json` records it, it is begun, whether or not `status.json` could
+  say so, and one `state.json` was renamed to record but whose directory
+  could not be synced stops the attempt at it.
 * **Durability.** Every file the updater writes is synced, renamed into
   place and its directory synced. The backup's filesystem is synced
   (`syncfs`) before `backup.json` marks it complete, and the filesystems a
   restore copied to before the restore is recorded as done.
 * **Room.** A file counts as the larger of its length and its blocks. The
-  data root's filesystem needs room for two copies of it (a restore, and
-  one done again), and the deployment directory's for a copy of it. A disk
+  data root's filesystem needs room for a restore's copy of it, and the
+  deployment directory's for a copy of it. A disk
   that runs out once the deployment has stopped does not mark the version
   failed; automatic runs skip that version until an operator asks for it,
   and `status` and `status.json` (`needsRoom`) say how many bytes it was
   short, and where.
-* **A restore done again** removes the copy the first left once its own
-  copy is checked, and the deployment directory's replaced copies once
-  each copy is checked.
+* **A restore done again** removes the copies the first left in the data
+  root, worth nothing beside the synced backup, before it copies, so a
+  restore needs room for one copy; and the deployment directory's
+  replaced copies once each copy is made.
 * **`--deployment-repaired`** removes the failed version's directory only
   when no container of the project runs from it; otherwise tidying does,
   once none does.
@@ -431,10 +446,30 @@ in review):*
   `updater/` or a failed data root), the deployment's `deploy/` and
   `docker/`, the status directory and the server's certificates
   read-only, or `/etc/localtime`, `/etc/timezone` and the Docker socket.
-  The updater runs Compose with an environment of its own.
-* **Paths.** No directory above the bundle directory may be a link. Mount
-  points are compared with the data root by name, and with where a link to
-  it leads, without resolving the host's every mount point.
+  Each source but those last is taken where Docker finds it, its links
+  followed: one whose way leads, through a link, out of the data root or
+  the deployment's directory is refused. The updater runs Compose with an
+  environment of its own.
+* **Links in the data root.** A link at any depth that leads out of the
+  data root, where the host follows it, is refused at step 1; links are
+  never followed to copy what they lead to. Links that lead into it are
+  copied as links.
+* **Paths.** Only root may change the way to the bundle directory: each
+  directory on it is root's and only root writes it (or it is sticky); a
+  link on it is root's, and the way to where it leads is checked the same,
+  element by element. Mount points are compared with the data root by
+  name, and with where a link to it leads, without resolving the host's
+  every mount point.
+* **`.env` by Compose's rules.** The updater and `setup.sh` read a value
+  unquoted (up to a `" #"` comment, blanks trimmed), or in single or double
+  quotes that end on the line, a backslash escaping the next character,
+  and only a comment after them; so a sender with a name may be quoted.
+  Either refuses what Compose would read otherwise (`export`, blanks
+  before the key or around `=`, a quoted value over more lines, text after
+  the closing quote, control characters), and a backslash, `$` or quote in
+  a setting it reads; the updater's must also be plain and set once. A
+  test runs the same lines through both and through `docker compose
+  config`.
 * **`setup.sh`**, run as root, holds the updater's lock for its whole run,
   every `.env` edit and the data root's directories included, and changes
   nothing while an attempt runs. The updater hands its own lock, open, to

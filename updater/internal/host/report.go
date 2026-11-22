@@ -210,6 +210,11 @@ func (r *StatusReport) Write(w io.Writer) {
 	if n := st.NeedsRoom; n != nil {
 		fmt.Fprintf(w, "Needs room:  %s, which it ran out of once the deployment had stopped. Automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade %s\n", n, n.Version)
 	}
+	if c := st.CutShort; c != nil && c.Times >= maxCutShort {
+		fmt.Fprintf(w, "Cut short:   %s. Each took the server down, so automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade %s\n", c, c.Version)
+	} else if c != nil {
+		fmt.Fprintf(w, "Cut short:   %s. Automatic upgrades try it again; after %d times they wait until it is asked for by hand.\n", c, maxCutShort)
+	}
 	fmt.Fprintf(w, "Held:        %v\n", r.Held)
 	if r.AgentUpdatesHeldUntil != "" {
 		fmt.Fprintf(w, "The engine's automatic agent updates held until %s\n", r.AgentUpdatesHeldUntil)

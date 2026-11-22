@@ -57,13 +57,16 @@ func hangingCopies(t *testing.T, fifo string) <-chan error {
 	return killed
 }
 
-// systemd's stop, with KillMode=control-group (or the out-of-memory killer,
-// or an operator), kills a command the updater runs once the deployment has
-// stopped: a real cp, in the backup and in the restore. That is not the
-// version failing: the attempt stops where it is, the server held, and the
-// next run finishes it from its record, without counting it against the
-// version. A restore cut short is done again: the copy it left goes once
-// the second is checked, and so do the deployment directory's copies.
+// A command the updater runs once the deployment has stopped, killed by a
+// signal (the out-of-memory killer, an operator; systemd's stop, were the
+// unit's KillMode control-group): a real cp, in the backup and in the
+// restore. That is not the version failing. Killed in the attempt, it brings
+// the previous version back at once, as a failure would, and counts the
+// attempt as cut short: after two, the timer's runs wait for an operator,
+// and status says why. Killed while bringing the previous version back, the
+// attempt stops where it is, the server held, for the next run to finish
+// from its record. A restore cut short is done again: the copy it left goes
+// before the second copies, and so do the deployment directory's copies.
 func TestCutShortByASignal(t *testing.T) {
 	t.Run("the backup's cp", func(t *testing.T) {
 		h := newTestHost(t, "v1.0.0", release.ChannelStable)
@@ -71,41 +74,74 @@ func TestCutShortByASignal(t *testing.T) {
 		t.Cleanup(func() { cpProgram = was })
 		h.offer("v1.1.0", nil)
 		fifo := filepath.Join(h.dataRoot, "server", "pipe")
-		killed := hangingCopies(t, fifo)
-		err := h.upgrade(Request{Automatic: true})
-		if kerr := <-killed; kerr != nil {
-			t.Fatal(kerr)
+		for times := 1; times <= maxCutShort; times++ {
+			killed := hangingCopies(t, fifo)
+			err := h.upgrade(Request{Automatic: true})
+			if kerr := <-killed; kerr != nil {
+				t.Fatal(kerr)
+			}
+			cpProgram = was
+			if err == nil || !strings.Contains(err.Error(), "rolled-back: backing up: ") || !strings.Contains(err.Error(), "signal: terminated") {
+				t.Fatalf("got %v", err)
+			}
+			// v1.0.0 started again at once, not held until the next run.
+			st := h.state()
+			if a := st.Attempt; a.Result != ResultRolledBack || a.Step != StepBackup || a.Interrupted != "" || st.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() {
+				t.Fatalf("attempt %+v, failed %v, running %v", a, st.Failed, h.docker.running)
+			}
+			if c := st.CutShort; c == nil || c.Version != "v1.1.0" || c.Times != times || !strings.Contains(c.Last, "signal: terminated") {
+				t.Fatalf("cut short %+v", c)
+			}
+			if left, _ := filepath.Glob(filepath.Join(h.u.Config.BackupDir, "*")); len(left) != 0 {
+				t.Errorf("left %v", left)
+			}
+			if err := os.Remove(fifo); err != nil {
+				t.Fatal(err)
+			}
+			// The timer's next run, within the hours for automatic
+			// upgrades.
+			h.now = h.now.Add(30 * time.Minute)
 		}
-		cpProgram = was
-		if err == nil || !strings.Contains(err.Error(), "signal: terminated") || !strings.Contains(err.Error(), "the attempt stops at its backup step, the server held, and the next run") {
+		// Cut short twice: the timer's runs wait for an operator.
+		stops := h.docker.called("compose stop")
+		if err := h.upgrade(Request{Automatic: true}); err != nil || h.docker.called("compose stop") != stops || h.state().Attempt.Result != ResultRolledBack {
+			t.Errorf("the timer's third run: %v, stopped %d more times", err, h.docker.called("compose stop")-stops)
+		}
+		if status := readFile(t, h.statusDir().path(StatusFile)); !strings.Contains(status, `"cutShort": {`) || !strings.Contains(status, `"times": 2`) {
+			t.Errorf("status.json:\n%s", status)
+		}
+		s, err := h.u.Status(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		s.Write(&out)
+		if !strings.Contains(out.String(), "Cut short:   v1.1.0's attempts were cut short 2 times once the deployment had stopped, the last by: backing up: ") ||
+			!strings.Contains(out.String(), "automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade v1.1.0") {
+			t.Errorf("status:\n%s", out.String())
+		}
+		// The operator's run takes it.
+		if err := h.upgrade(Request{}); err != nil || h.state().Running != "v1.1.0" || h.state().CutShort != nil {
+			t.Errorf("the operator's run: %v, state %+v", err, h.state())
+		}
+	})
+	// The set-up's setup.sh, killed (the out-of-memory killer's SIGKILL):
+	// the backup is restored at once.
+	t.Run("setup.sh", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		files := bundleFiles("v1.1.0")
+		files["easyrmm-v1.1.0/deploy/scripts/setup.sh"] = "#!/bin/sh\necho 'SETUP_RAN=yes' >> .env\nkill -KILL $$\n"
+		h.offerFiles("v1.1.0", files, nil)
+		err := h.upgrade(Request{Automatic: true})
+		if err == nil || !strings.Contains(err.Error(), "rolled-back: setup.sh --upgrade failed (signal: killed)") {
 			t.Fatalf("got %v", err)
 		}
 		st := h.state()
-		if a := st.Attempt; a.Result != ResultRunning || a.Step != StepBackup || !strings.Contains(a.Interrupted, "signal: terminated") || st.HasFailed("v1.1.0") {
-			t.Fatalf("attempt %+v, failed %v", a, st.Failed)
+		if a := st.Attempt; a.Result != ResultRolledBack || a.Step != StepRestore || !a.Restored || st.HasFailed("v1.1.0") || st.CutShort == nil || st.CutShort.Times != 1 || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() {
+			t.Fatalf("attempt %+v, failed %v, cut short %+v, running %v", a, st.Failed, st.CutShort, h.docker.running)
 		}
-		if len(h.docker.running) != 0 {
-			t.Errorf("the attempt went on: %v runs", h.docker.running)
-		}
-		if err := os.Remove(fifo); err != nil {
-			t.Fatal(err)
-		}
-		// The timer's next run finishes it: the incomplete backup goes,
-		// v1.0.0 starts again, and v1.1.0 is not counted as failed.
-		h.now = h.now.Add(time.Hour)
-		if err := h.upgrade(Request{Automatic: true}); err != nil {
-			t.Fatal(err)
-		}
-		st = h.state()
-		if a := st.Attempt; a.Result != ResultRolledBack || !strings.Contains(a.Reason, "the attempt stopped during the backup step: ") || st.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") {
-			t.Fatalf("attempt %+v, failed %v, running %v", a, st.Failed, h.docker.running)
-		}
-		if left, _ := filepath.Glob(filepath.Join(h.u.Config.BackupDir, "*")); len(left) != 0 {
-			t.Errorf("left %v", left)
-		}
-		// And the run after that upgrades.
-		if err := h.upgrade(Request{Automatic: true}); err != nil || h.state().Running != "v1.1.0" {
-			t.Errorf("the next run: %v, running %s", err, h.state().Running)
+		if got := readFile(t, filepath.Join(h.dataRoot, "server", "data")); got != "the data of v1.0.0" {
+			t.Errorf("the data root holds %q", got)
 		}
 	})
 	t.Run("the restore's cp", func(t *testing.T) {
@@ -153,7 +189,9 @@ func TestCutShortByASignal(t *testing.T) {
 			t.Fatal(err)
 		}
 		st = h.state()
-		if a := st.Attempt; a.Result != ResultRolledBack || !strings.Contains(a.Reason, "the attempt stopped during the restore step: ") || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() {
+		// v1.1.0 failed: the restore cut short does not count it as cut
+		// short too.
+		if a := st.Attempt; a.Result != ResultRolledBack || !strings.Contains(a.Reason, "the attempt stopped during the restore step: ") || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() || st.CutShort != nil {
 			t.Fatalf("attempt %+v, running %v", a, h.docker.running)
 		}
 		if got := readFile(t, filepath.Join(h.dataRoot, "server", "data")); got != "the data of v1.0.0" {
@@ -256,8 +294,8 @@ func TestStopAskedThenKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := h.state()
-	if a := st.Attempt; a.Result != ResultRolledBack || !strings.Contains(a.Reason, "the attempt stopped during the start-held step: a stop was asked for at 2026-11-21T03:00:00Z") || st.HasFailed("v1.1.0") {
-		t.Fatalf("attempt %+v, failed %v", a, st.Failed)
+	if a := st.Attempt; a.Result != ResultRolledBack || !strings.Contains(a.Reason, "the attempt stopped during the start-held step: a stop was asked for at 2026-11-21T03:00:00Z") || st.HasFailed("v1.1.0") || st.CutShort == nil || st.CutShort.Times != 1 {
+		t.Fatalf("attempt %+v, failed %v, cut short %+v", a, st.Failed, st.CutShort)
 	}
 	if err := h.upgrade(Request{Automatic: true}); err != nil || h.state().Running != "v1.1.0" {
 		t.Errorf("the next run: %v, running %s", err, h.state().Running)
@@ -269,6 +307,40 @@ func TestStopAskedThenKilled(t *testing.T) {
 	writeFile(t, stopFilePath, "2026-11-21T02:00:00Z\n", 0o600)
 	if got := h.u.stopAsked(&Attempt{Started: h.now}); got != "" {
 		t.Errorf("an older stop: %q", got)
+	}
+}
+
+// A command killed once a stop was asked for (systemd's stop at a reboot,
+// the host going down) stops the attempt where it is, the server held:
+// nothing more starts on a host going down. The next run finishes it,
+// without counting it against the version.
+func TestStopAskedThenACommandKilled(t *testing.T) {
+	h := newTestHost(t, "v1.0.0", release.ChannelStable)
+	h.offer("v1.1.0", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.docker.fail = func(dir string, args []string) error {
+		if dir == h.deploy("v1.1.0") && strings.HasPrefix(strings.Join(args, " "), "compose up") {
+			cancel()
+			return &killedError{errors.New("signal: killed")}
+		}
+		return nil
+	}
+	err := h.u.Upgrade(ctx, Request{By: "automatic", Automatic: true})
+	h.docker.fail = nil
+	if err == nil || !strings.Contains(err.Error(), "signal: killed") || !strings.Contains(err.Error(), "the attempt stops at its start-held step, the server held") {
+		t.Fatalf("got %v", err)
+	}
+	if a := h.state().Attempt; a.Result != ResultRunning || a.Step != StepStart || !strings.Contains(a.Interrupted, "signal: killed") || !h.statusDir().Held() || h.docker.running["server"] != "" {
+		t.Fatalf("attempt %+v, held %v, running %v", a, h.statusDir().Held(), h.docker.running)
+	}
+	h.now = h.now.Add(time.Hour)
+	if err := h.upgrade(Request{Automatic: true}); err != nil {
+		t.Fatal(err)
+	}
+	st := h.state()
+	if a := st.Attempt; a.Result != ResultRolledBack || st.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() || st.CutShort == nil || st.CutShort.Times != 1 {
+		t.Fatalf("attempt %+v, failed %v, cut short %+v, running %v", a, st.Failed, st.CutShort, h.docker.running)
 	}
 }
 
@@ -322,6 +394,57 @@ func TestUnrecordedStep(t *testing.T) {
 		}
 		if got := readFile(t, filepath.Join(h.dataRoot, "server", "data")); got != "the data of v1.0.0" || h.docker.running["server"] != h.deploy("v1.0.0") || h.state().HasFailed("v1.1.0") {
 			t.Errorf("the data root holds %q, running %v, failed %v", got, h.docker.running, h.state().Failed)
+		}
+	})
+	// state.json says the step began; status.json, which the console
+	// reads, could not be written: the step is begun, and the attempt goes
+	// on.
+	t.Run("status.json", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		h.offer("v1.1.0", nil)
+		was := syncDir
+		t.Cleanup(func() { syncDir = was })
+		failed := 0
+		syncDir = func(dir string) error {
+			if dir == string(h.statusDir()) && h.state().Attempt.Step == StepSetUp && failed == 0 {
+				failed++
+				return errors.New("input/output error")
+			}
+			return was(dir)
+		}
+		if err := h.upgrade(Request{Automatic: true}); err != nil || failed != 1 || h.state().Running != "v1.1.0" {
+			t.Fatalf("got %v, failed %d times, state %+v", err, failed, h.state())
+		}
+	})
+	// state.json says the step began, its directory not synced: after a
+	// power cut it may say so or not. The step is not begun, nor taken back:
+	// the attempt stops at it, as state.json says.
+	t.Run("state.json not synced", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		h.offer("v1.1.0", nil)
+		was := syncDir
+		t.Cleanup(func() { syncDir = was })
+		failed := 0
+		syncDir = func(dir string) error {
+			if dir == h.u.StateDir && h.state().Attempt.Step == StepSetUp && failed == 0 {
+				failed++
+				return errors.New("input/output error")
+			}
+			return was(dir)
+		}
+		err := h.upgrade(Request{Automatic: true})
+		if err == nil || !strings.Contains(err.Error(), "could not record the set-up step: syncing "+h.u.StateDir) || !strings.Contains(err.Error(), "the attempt stops at its set-up step, the server held") {
+			t.Fatalf("got %v", err)
+		}
+		if a := h.state().Attempt; a.Result != ResultRunning || a.Step != StepSetUp || h.docker.called(h.deploy("v1.1.0")+": compose up") != 0 || h.docker.running["server"] != "" || !h.statusDir().Held() {
+			t.Fatalf("attempt %+v, running %v", a, h.docker.running)
+		}
+		h.now = h.now.Add(time.Hour)
+		if err := h.upgrade(Request{Automatic: true}); err != nil {
+			t.Fatal(err)
+		}
+		if st := h.state(); st.Attempt.Result != ResultRolledBack || st.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") {
+			t.Errorf("attempt %+v, running %v", st.Attempt, h.docker.running)
 		}
 	})
 	for name, tc := range map[string]struct {
@@ -477,12 +600,58 @@ func TestServiceStopsTheUpdaterAlone(t *testing.T) {
 			t.Errorf("systemd-analyze: %s", out)
 		}
 	}
+	// And stops, by the unit's kill settings, a service whose main process
+	// runs a command: the main process alone is signaled, and its command
+	// runs on while it handles the signal.
+	t.Run("systemd", func(t *testing.T) {
+		if os.Getuid() != 0 {
+			t.Skip("only root runs a service of the system's systemd")
+		}
+		if fi, err := os.Stat("/run/systemd/system"); err != nil || !fi.IsDir() {
+			t.Skip("systemd does not run here")
+		}
+		args := []string{"--collect", "--quiet"}
+		for _, line := range strings.Split(unit, "\n") {
+			if strings.HasPrefix(line, "KillMode=") || strings.HasPrefix(line, "TimeoutStopSec=") {
+				args = append(args, "--property="+line)
+			}
+		}
+		dir := t.TempDir()
+		name := fmt.Sprintf("easyrmm-updater-test-%d.service", os.Getpid())
+		script := filepath.Join(dir, "service")
+		writeFile(t, script, `#!/bin/bash
+dir=$1
+bash -c 'trap "echo command-signaled >> $1/log; exit 0" TERM; echo $$ > $1/command; while :; do sleep 0.1; done' - "$dir" &
+command=$!
+trap 'echo main-signaled >> "$dir/log"; sleep 1; ! kill -0 $command 2>/dev/null || echo command-runs-on >> "$dir/log"; exit 0' TERM
+while :; do sleep 0.1 & wait $!; done
+`, 0o755)
+		if out, err := exec.Command("systemd-run", append(append(args, "--unit="+name), script, dir)...).CombinedOutput(); err != nil {
+			t.Fatalf("systemd-run: %s: %v", out, err)
+		}
+		t.Cleanup(func() { _ = exec.Command("systemctl", "stop", name).Run() })
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if _, err := os.Stat(filepath.Join(dir, "command")); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the service's command did not start")
+			}
+		}
+		if out, err := exec.Command("systemctl", "stop", name).CombinedOutput(); err != nil {
+			t.Fatalf("systemctl stop: %s: %v", out, err)
+		}
+		if got := readFile(t, filepath.Join(dir, "log")); got != "main-signaled\ncommand-runs-on\n" {
+			t.Errorf("stopped by the unit's settings (%s), the service logged:\n%s", strings.Join(args[2:], " "), got)
+		}
+	})
 }
 
 // A restore done again, after one cut short, finds what the first moved
 // aside: the failed version's data root stays as it was moved, whether the
-// first was cut short while moving it or while copying the backup in; the
-// copy the first left goes once the second is done.
+// first was cut short while moving it or while copying the backup in. The
+// copies the first left, worth nothing, go before the backup is copied in
+// again: the data root never holds two copies of it.
 func TestRestoreDoneAgain(t *testing.T) {
 	for name, first := range map[string]func(t *testing.T, root, aside string){
 		"cut short while moving": func(t *testing.T, root, aside string) {
@@ -501,16 +670,6 @@ func TestRestoreDoneAgain(t *testing.T) {
 			writeFile(t, filepath.Join(root, "postgres", "db"), "the backup's", 0o600)
 			writeFile(t, filepath.Join(root, "server", "half"), "half", 0o600)
 		},
-		"cut short again": func(t *testing.T, root, aside string) {
-			for _, e := range []string{"postgres", "server"} {
-				if err := os.Rename(filepath.Join(root, e), filepath.Join(aside, e)); err != nil {
-					t.Fatal(err)
-				}
-			}
-			// A restore done again, itself cut short.
-			writeFile(t, filepath.Join(root+"/"+failedPrefix+"stamp.half-restored", "server", "half"), "half", 0o600)
-			writeFile(t, filepath.Join(root, "server", "half"), "half", 0o600)
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "srv")
@@ -525,9 +684,19 @@ func TestRestoreDoneAgain(t *testing.T) {
 				t.Fatal(err)
 			}
 			first(t, root, aside)
+			// What the data root holds as each copy begins.
+			seen := filepath.Join(t.TempDir(), "seen")
+			cp := filepath.Join(t.TempDir(), "cp")
+			writeFile(t, cp, fmt.Sprintf("#!/bin/sh\n(cd %[1]s && find . -mindepth 1 -not -path './updater' -not -path './updater/*' -not -path './%[2]s' -not -path './%[2]s/*' | sort | tr '\\n' ' '; echo) >> %[3]s\nexec cp \"$@\"\n", root, failedPrefix+"stamp", seen), 0o755)
+			was := cpProgram
+			cpProgram = cp
+			t.Cleanup(func() { cpProgram = was })
 			got, err := b.restoreData(t.Context(), root, "stamp")
 			if err != nil || got != aside {
 				t.Fatalf("%s, %v", got, err)
+			}
+			if copies := readFile(t, seen); copies != "\n./postgres ./postgres/db \n" {
+				t.Errorf("as each copy began, the data root held, besides the updater's and the failed one:\n%s", copies)
 			}
 			for path, want := range map[string]string{
 				filepath.Join(root, "postgres", "db"):                   "the backup's",

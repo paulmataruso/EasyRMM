@@ -607,8 +607,9 @@ func TestTheDeploymentsMounts(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "easyrmm-v1.0.0")
 			deploy := filepath.Join(root, "deploy")
 			writeFile(t, filepath.Join(deploy, "docker-compose.yml"), readFile(t, "../../../deploy/docker-compose.yml"), 0o644)
-			if err := os.Symlink(filepath.Join(must(filepath.Abs("../../..")), "docker"), filepath.Join(root, "docker")); err != nil {
-				t.Fatal(err)
+			// A copy: a link would lead the mounts out of the deployment.
+			if out, err := exec.Command("cp", "-a", filepath.Join(must(filepath.Abs("../../..")), "docker"), filepath.Join(root, "docker")).CombinedOutput(); err != nil {
+				t.Fatalf("%s: %v", out, err)
 			}
 			writeFile(t, filepath.Join(deploy, ".env"), "EASYRMM_DATA_ROOT=/srv/test-data\nPOSTGRES_PASSWORD=x\nEASYRMM_DB_OWNER_PASSWORD=x\nEASYRMM_DB_APP_PASSWORD=x\nEASYRMM_PUBLIC_URL=https://rmm.example.com\nEASYRMM_SECRET_KEY=x\n"+env, 0o600)
 			d := Docker{R: ExecRunner{}}
