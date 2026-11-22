@@ -57,7 +57,9 @@ func TestCheckInContainers(t *testing.T) {
 			scriptFailures(t, c)
 			scriptPackagesLeft(t, c)
 			scriptRollbackLeaves(t, c)
+			scriptModuleStream(t, c)
 			scriptPackageRecovery(t, c)
+			scriptDanglingUnitLink(t, c)
 			scriptPlatforms(t, c)
 		})
 	}
@@ -630,6 +632,31 @@ func scriptRollbackLeaves(t *testing.T, c *scriptContainer) {
 	c.sh(t, "dpkg --purge easyrmm-test-pkg >/dev/null && rm -rf "+stateDir+" /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb")
 }
 
+// scriptModuleStream: a dnf module stream a package step enabled (RHEL 8's
+// python36, for fail2ban from EPEL) goes with the rollback of a module that
+// fails. A stand-in dnf, first in the script's PATH, writes a module
+// stream's file as dnf does when it enables one, and fails to install AIDE.
+// Only where dnf is the package manager.
+func scriptModuleStream(t *testing.T, c *scriptContainer) {
+	if !c.has(t, "dnf") {
+		return
+	}
+	const stream = "/etc/dnf/modules.d/easyrmm-test.module"
+	c.sh(t, "rm -rf "+stateDir+" && test ! -e "+stream+" && "+
+		"printf '%s\\n' '#!/bin/sh' "+
+		`'mkdir -p /etc/dnf/modules.d && printf "[easyrmm-test]\\nname=easyrmm-test\\nstream=1\\nprofiles=\\nstate=enabled\\n" >`+stream+`' `+
+		`'case " $* " in *" install "*) echo "Error: stopped by the test" >&2; exit 1 ;; esac' `+
+		">/usr/local/sbin/dnf && chmod 0755 /usr/local/sbin/dnf")
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "integrity"), HardeningApply, []string{"integrity"}), "integrity")
+	c.sh(t, "rm -f /usr/local/sbin/dnf")
+	const want = "AIDE could not be installed: Error: stopped by the test; what this run changed was put back."
+	if m.Outcome != HardeningOutcomeFailed || m.OutcomeReason != want || m.Recorded {
+		t.Errorf("a failed apply that enabled a module stream: %+v, want %q", m, want)
+	}
+	c.wantGone(t, stream)
+	c.sh(t, "rm -rf "+stateDir)
+}
+
 // scriptPackageRecovery: a package step that finds the package database
 // left unusable by one stopped part way recovers it first, unless another
 // process still uses it, which is waited for and never touched (ADR-0051).
@@ -775,6 +802,26 @@ func scriptRpmRecovery(t *testing.T, c *scriptContainer) {
 	wantRecovered(t, c.recoveryUndo(t, scriptPath, pkg), pkg, what+": removing /var/lib/rpm/__db.* put it right before the package step")
 	c.sh(t, "! rpm -q rootfiles >/dev/null && rpm -q tzdata >/dev/null && dnf -q -C check && rm -f "+shortWait)
 	c.wantGone(t, stateDir)
+}
+
+// scriptDanglingUnitLink: undo of a unit that was not there before apply,
+// and went with the package undo removed, removes a link systemctl enable
+// made for it, which points nowhere now (Ubuntu 22.04's fail2ban). Another
+// such link, to a unit that was there before apply, stays.
+func scriptDanglingUnitLink(t *testing.T, c *scriptContainer) {
+	const wants = "/etc/systemd/system/multi-user.target.wants/"
+	c.sh(t, "rm -rf "+stateDir+" && mkdir -p "+stateDir+"/modules/sudo "+wants+" && "+
+		"ln -s /usr/lib/systemd/system/easyrmm-test.service "+wants+"easyrmm-test.service && "+
+		"ln -s /usr/lib/systemd/system/easyrmm-test-kept.service "+wants+"easyrmm-test-kept.service && "+
+		"printf 'format 1\\nunit\\teasyrmm-test.service\\tnot-found\\tinactive\\tenabled\\tactive\\n"+
+		"unit\\teasyrmm-test-kept.service\\tenabled\\tactive\\tenabled\\tactive\\n' >"+stateDir+"/modules/sudo/manifest && "+
+		"date >"+stateDir+"/modules/sudo/done")
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
+	const want = "Removed " + wants + "easyrmm-test.service, a link to easyrmm-test.service, gone with its package"
+	if m.Outcome != HardeningUndone || !slices.Equal(m.Done, []string{want}) || m.Recorded {
+		t.Errorf("undo of units gone with their packages: %+v, want done %q", m, want)
+	}
+	c.sh(t, "! test -L "+wants+"easyrmm-test.service && test -L "+wants+"easyrmm-test-kept.service && rm -rf "+stateDir+" "+wants+"easyrmm-test-kept.service")
 }
 
 type scriptContainer struct {

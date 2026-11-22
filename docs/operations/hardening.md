@@ -136,7 +136,9 @@ that fails part way is put back as it was, but for packages it installed
 that cannot be removed (others need them, or the package manager fails):
 the result names those and says why. Packages a module needs
 (nftables, fail2ban, auditd, AIDE, chrony or systemd-timesyncd) come from
-the computer's own repositories, without recommended packages. AIDE's first
+the computer's own repositories, without recommended packages; on Ubuntu
+22.04, AIDE comes with mailutils, which its configuration package needs in
+place of a mail server. AIDE's first
 database is built after the job ends, in `easyrmm-aide-init.service`; the
 next check says whether it finished.
 

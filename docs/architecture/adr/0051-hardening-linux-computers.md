@@ -274,6 +274,14 @@ or Kubernetes installed later.
   2026-11-22:* a module that fails after installing packages removes them
   by the same rule as it is put back, and its failure names the packages
   that stay and why, rather than saying that everything was put back.
+  *Amended 2026-11-22,* as CI's machines found: on Ubuntu 22.04,
+  aide-common depends on a mailx, and bsd-mailx, apt's choice, on a mail
+  server, which would listen, so AIDE comes with mailutils, which needs
+  none; a dnf module stream an installation enabled (RHEL 8's python36,
+  for fail2ban from EPEL) is recorded, and undo removes its file before
+  the packages; and a link `systemctl enable` made for a unit that came
+  with a package undo removed goes too, where removing the package leaves
+  it pointing nowhere (Ubuntu 22.04's fail2ban).
   Undo removes auditd only where `/var/lib/easyrmm/auditd-installed` says
   EasyRMM installed it, and only when no rules file is left in
   `/etc/audit/rules.d/` but those the audit package shipped, unchanged:

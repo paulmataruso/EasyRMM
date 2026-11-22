@@ -2810,6 +2810,7 @@ pkg_install() {
 	pkg_ready || return 1
 	intent || return 1
 	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
+	pkg_modules >"$TX_DIR/modules-before"
 	rec_add "pending$tab$*"
 	pi_rc=0
 	if [ "$PKG_REFRESHED" = no ]; then
@@ -2843,10 +2844,25 @@ pkg_install() {
 		rec_add "pkg$tab$pi_new"
 		tx_push "pkg_remove_alone $pi_new"
 	fi
+	# A module stream dnf enabled for a package (RHEL 8's python36, for
+	# fail2ban): its file goes before the packages.
+	for pi_m in $(pkg_modules | LC_ALL=C comm -13 "$TX_DIR/modules-before" -); do
+		rec_has gen "$pi_m" || rec_add "gen$tab$pi_m"
+		tx_push "rm -f $pi_m"
+	done
 	[ "$pi_rc" -eq 0 ] || {
 		pkg_failed "$pi_rc" 25
 		return 1
 	}
+}
+# pkg_modules: the files of dnf's module streams that are set (enabled or
+# disabled), one a line; nothing on Debian and Ubuntu. A glob, not find:
+# a minimal installation may have no findutils.
+pkg_modules() {
+	[ "$FAMILY" != debian ] || return 0
+	for pm_f in /etc/dnf/modules.d/*.module; do
+		[ ! -e "$pm_f" ] || printf '%s\n' "$pm_f"
+	done | LC_ALL=C sort
 }
 # pkg_removable PACKAGE...: whether removing them would remove nothing else
 # (simulated: apt-get -s, rpm -e --test). Names without =rc. Returns 1 when
@@ -3028,8 +3044,18 @@ undo_unit() {
 	ut_now=$(unit_states "$1")
 	ut_ne=${ut_now% *}
 	ut_na=${ut_now#* }
-	# A unit whose package undo removed is gone, as it was.
+	# A unit whose package undo removed is gone, as it was. A link that
+	# systemctl enable made for it, which removing the package does not
+	# take away where the package did not make it (Ubuntu 22.04's
+	# fail2ban), points nowhere: it goes.
 	if [ "$ut_ne" = not-found ]; then
+		if [ "$2" = not-found ]; then
+			for ut_l in /etc/systemd/system/*.wants/"$1" /etc/systemd/system/*.requires/"$1"; do
+				[ -L "$ut_l" ] && [ ! -e "$ut_l" ] || continue
+				tx_push "ln -s $(readlink "$ut_l") $ut_l"
+				rm -f "$ut_l" && did "Removed $ut_l, a link to $1, gone with its package"
+			done
+		fi
 		unit_gone "$1"
 		return 0
 	fi
@@ -4058,6 +4084,10 @@ apply_integrity() {
 		debian) ai_pk='aide aide-common' ;;
 		*) ai_pk=aide ;;
 		esac
+		# Ubuntu 22.04's aide-common depends on a mailx, and bsd-mailx, apt's
+		# choice, on a mail server, which would listen: mailutils, the other
+		# mailx, needs none.
+		[ "$OS_ID $OS_VERSION" != 'ubuntu 22.04' ] || ai_pk="$ai_pk mailutils"
 		# shellcheck disable=SC2086 # package names, one word each
 		if ! pkg_install $ai_pk; then
 			abort "AIDE could not be installed$(pkg_why)"
