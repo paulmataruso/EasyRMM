@@ -93,8 +93,9 @@ func label(labels map[string]string, v string) string {
 // --- Patch compliance --------------------------------------------------------
 
 var patchComplianceReport = definition{
-	title: "Patch compliance",
-	perm:  rbac.PermPatchView,
+	title:         "Patch compliance",
+	perm:          rbac.PermPatchView,
+	privateSearch: true,
 	columns: []Column{
 		{"organization", "Organization", TypeText},
 		{"site", "Site", TypeText},
@@ -141,8 +142,9 @@ var patchComplianceReport = definition{
 // --- Patch installations -----------------------------------------------------
 
 var patchInstallationsReport = definition{
-	title: "Patch installations",
-	perm:  rbac.PermPatchView,
+	title:         "Patch installations",
+	perm:          rbac.PermPatchView,
+	privateSearch: true,
 	columns: []Column{
 		{"completed", "Finished", TypeTime},
 		{"organization", "Organization", TypeText},

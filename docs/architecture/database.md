@@ -448,6 +448,22 @@ Down removes a console mail server that signs in with an application, as
 **Remove** does, keeping its limits, and makes `mail_engine_given` as
 migration 00030 did.
 
+## The customer record (migration 00036)
+
+An organization's contact information, sites' addresses, business hours,
+contacts and places within a site (ADR-0066, slice 1; the
+[guide](../operations/customer-record.md)). Goose applies migrations in
+order, so 00036 follows 00032 to 00035.
+
+| Table, column or index | Notes |
+|---|---|
+| `organizations.main_phone`, `main_email`, `website`, `after_hours_note` | Text, empty by default, at most 50, 254, 2,000 and 2,000 characters. The server checks the rest (a digit in a phone number, one email address, an `http` or `https` website) |
+| `organizations.business_hours`, `sites.business_hours` | JSON object or NULL for none: up to four `{start, end}` periods (`HH:MM`) for each of `monday` to `sunday`, checked and sorted by the server; at most 8 KiB. A site's NULL uses its organization's |
+| `sites.address_line1`, `address_line2`, `city`, `region`, `postal_code`, `country_code`, `after_hours_note` | Text, empty by default, at most 200, 200, 100, 100, 20 and 2,000 characters; `country_code` two capitals or empty (the server keeps to the 249 assigned ISO 3166-1 codes). `sites.address` stays, the free text |
+| `site_places` | A building, floor, room, rack or other within a site: `organization_id`, `site_id`, `parent_id` (NULL at the top), `depth` 1 to 4, `kind`, `name` (1 to 200 characters). The foreign key `(site_id, parent_id, parent_depth)` → `(site_id, id, depth)`, with the generated `parent_depth = depth - 1`, keeps a parent in the same site and exactly one level up, so no cycle can form, and refuses to delete a place with places inside (a move updates a place and the places inside it in one statement, so the key holds at its end). `site_places_name_key`: names unique, ignoring case, among one parent's places (`NULLS NOT DISTINCT`, the top included). Goes with its site |
+| `contacts` | `organization_id`, `site_id` (NULL for the organization's own) through the composite key to `sites`, `name` (1 to 200 characters), `job_title`, `email`, `office_phone`, `mobile_phone`, `note` (up to 2,000), `priority` (`primary`, `secondary` or `none`), `emergency`. `contacts_primary_org_key` and `contacts_primary_site_key`: one primary for the organization and one per site. Goes with its organization or site |
+| Policies `site_places_tenant`, `contacts_tenant` | `sites_tenant`'s, without `scope_read_orgs`: site-scoped people see their sites' rows, not the organization's own contacts. Enabled and forced |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

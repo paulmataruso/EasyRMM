@@ -203,6 +203,118 @@ test("the technician accepts, enrolls, and sees only their organization", async 
   await context.close();
 });
 
+test("the customer record: contact information, hours, an address, places and contacts", async () => {
+  const page = admin;
+  const card = (title: RegExp) => page.locator("section", { has: page.getByRole("heading", { name: title }) });
+  await page.goto("/organizations");
+  await page.getByRole("main").getByRole("link", { name: "Contoso Dental Group" }).click();
+
+  // The organization's contact information and hours, Monday to Friday.
+  await card(/Contact information/).getByRole("button", { name: "Edit" }).click();
+  const details = page.getByRole("dialog", { name: "Edit contact information" });
+  await details.getByLabel("Main phone").fill("+1 555 0100");
+  await details.getByLabel("Main email").fill("front-desk@example.com");
+  await details.getByLabel("Website").fill("example.com");
+  await details.getByRole("button", { name: "Add a period on Monday" }).click();
+  await details.getByRole("button", { name: "Copy Monday to Tuesday–Friday" }).click();
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(details).toBeHidden();
+  await expect(card(/Contact information/).getByRole("link", { name: "https://example.com" })).toBeVisible();
+  await expect(card(/Contact information/).getByText("Mon–Fri")).toBeVisible();
+  await expect(card(/Contact information/).getByText(/^(Open|Closed) now$/)).toBeVisible();
+
+  // A primary contact for the organization, and one for the clinic.
+  await page.getByRole("tab", { name: "Contacts" }).click();
+  for (const [where, name] of [
+    ["The organization", "Pat Example"],
+    ["Downtown clinic", "Kim Example"],
+  ] as const) {
+    await page.getByRole("button", { name: "Add contact" }).click();
+    const form = page.getByRole("dialog", { name: "New contact" });
+    await form.getByLabel("Contact of").selectOption({ label: where });
+    await form.getByLabel(/^Name/).fill(name);
+    await form.getByLabel("Mobile phone").fill("555 0199");
+    await form.getByLabel("Priority").selectOption("primary");
+    await form.getByRole("button", { name: "Add contact" }).click();
+    await expect(form).toBeHidden();
+  }
+  await expect(page.getByRole("row", { name: /Pat Example/ })).toContainText("Organization");
+  await expect(page.getByRole("row", { name: /Kim Example/ })).toContainText("Downtown clinic");
+  // A second primary at the organization makes the first secondary.
+  await page.getByRole("button", { name: "Add contact" }).click();
+  const second = page.getByRole("dialog", { name: "New contact" });
+  await second.getByLabel(/^Name/).fill("Lee Example");
+  await second.getByLabel("Priority").selectOption("primary");
+  await second.getByLabel("Emergency contact").check();
+  await second.getByRole("button", { name: "Add contact" }).click();
+  await expect(page.getByRole("row", { name: /Lee Example/ })).toContainText("Emergency");
+  await expect(page.getByRole("row", { name: /Pat Example/ })).toContainText("Secondary");
+
+  // The overview names the primary and emergency contacts: Pat, now secondary, is on the Contacts tab only.
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await expect(card(/Primary and emergency contacts/).getByRole("listitem")).toHaveText([/Lee Example.*Primary.*Emergency/, /Kim Example.*Downtown clinic/]);
+
+  // The clinic's address, its places, and the organization's hours in its own time zone.
+  await page.getByRole("main").getByRole("link", { name: "Downtown clinic" }).click();
+  await card(/Address and hours/).getByRole("button", { name: "Edit" }).click();
+  const address = page.getByRole("dialog", { name: "Edit address and hours" });
+  await address.getByLabel("Address line 1").fill("1 Example Road");
+  await address.getByLabel("City or town").fill("Springfield");
+  await address.getByLabel("Country").selectOption("US");
+  await address.getByRole("button", { name: "Save" }).click();
+  await expect(address).toBeHidden();
+  await expect(card(/Address and hours/).getByText("1 Example Road")).toBeVisible();
+  await expect(card(/Address and hours/).getByText("The organization's hours, in the site's time zone.")).toBeVisible();
+  await expect(card(/^Contacts$/).getByText("Kim Example")).toBeVisible();
+
+  await card(/^Places$/).getByRole("button", { name: "Add place" }).click();
+  const building = page.getByRole("dialog", { name: "New place" });
+  await building.getByLabel(/^Name/).fill("Main building");
+  await building.getByRole("button", { name: "Add place" }).click();
+  await page.getByRole("button", { name: "Add a place inside Main building" }).click();
+  const room = page.getByRole("dialog", { name: "New place" });
+  await room.getByLabel(/^Name/).fill("Comms room");
+  await room.getByRole("button", { name: "Add place" }).click();
+  const places = page.getByRole("list", { name: "Places at Downtown clinic" });
+  await expect(places.getByRole("listitem")).toHaveText([/Main building/, /Comms room/]);
+
+  // Back on the organization, the clinic shows its address and whether it is open.
+  await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Contoso Dental Group" }).click();
+  const clinic = page.getByRole("row", { name: /Downtown clinic/ });
+  await expect(clinic).toContainText("1 Example Road, Springfield, ");
+  await expect(clinic.getByText(/^(Open|Closed) now$/)).toBeVisible();
+
+  // A site holding documentation is deleted only once what goes with it is confirmed.
+  await page.getByRole("button", { name: "Add site" }).click();
+  const popUp = page.getByRole("dialog", { name: "New site" });
+  await popUp.getByLabel(/^Name/).fill("Pop-up clinic");
+  await popUp.getByLabel(/^Time zone/).fill("America/New_York");
+  await popUp.getByRole("button", { name: "Create site" }).click();
+  await expect(page.getByRole("heading", { name: "Pop-up clinic" })).toBeVisible();
+  await card(/^Places$/).getByRole("button", { name: "Add place" }).click();
+  const tent = page.getByRole("dialog", { name: "New place" });
+  await tent.getByLabel("Kind").selectOption("other");
+  await tent.getByLabel(/^Name/).fill("Tent");
+  await tent.getByRole("button", { name: "Add place" }).click();
+  await expect(tent).toBeHidden();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "Delete site" });
+  await confirm.getByLabel(/Type .* to confirm/).fill("Pop-up clinic");
+  await confirm.getByRole("button", { name: "Delete site" }).click();
+  await expect(confirm.getByText(/holds 1 place/)).toBeVisible();
+  await confirm.getByRole("button", { name: "Delete site and its documentation" }).click();
+  await expect(page.getByRole("heading", { name: "Contoso Dental Group" })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("link", { name: "Pop-up clinic" })).toHaveCount(0);
+
+  // The contacts export as a report.
+  await page.goto("/reports?report=contacts");
+  await expect(page.getByRole("cell", { name: "Lee Example" })).toBeVisible();
+
+  // The next step starts inside the Organizations section, as the earlier ones leave it.
+  await page.goto("/organizations");
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Back to the main menu" })).toBeVisible();
+});
+
 test("devices and remote access report honestly when MeshCentral is not running", async () => {
   // start-server.sh enables remote access but runs no MeshCentral.
   const page = admin;
@@ -810,7 +922,7 @@ test("a deep link survives sign-in and the second factor", async () => {
 
 test("the audit log records everything and its hash chain verifies", async () => {
   const page = admin;
-  for (const label of ["Created organization", "Created site", "Created device group", "Invited user", "Created deployment token", "Enrolled device", "Hardening job"]) {
+  for (const label of ["Created organization", "Created site", "Changed contact information", "Added contact", "Added place", "Created device group", "Invited user", "Created deployment token", "Enrolled device", "Hardening job"]) {
     await expect(page.getByRole("cell", { name: new RegExp(label) }).first()).toBeVisible();
   }
   await page.getByLabel("Area").selectOption({ label: "Users" });

@@ -33,6 +33,9 @@ type ErrorDetail struct {
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
 	Fields  map[string]string `json:"fields,omitempty"`
+	// Counts, for a conflict about what something still holds, is how many
+	// of each kind it holds.
+	Counts map[string]int `json:"counts,omitempty"`
 }
 
 // Error is an error with an HTTP status and a stable machine-readable code.
@@ -130,7 +133,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			setRetryAfter(w, ae.RetryAfter)
 		}
 		if status != http.StatusInternalServerError {
-			WriteJSON(w, status, ErrorBody{Error: ErrorDetail{Code: ae.Code, Message: ae.Message, Fields: ae.Fields}})
+			WriteJSON(w, status, ErrorBody{Error: ErrorDetail{Code: ae.Code, Message: ae.Message, Fields: ae.Fields, Counts: ae.Counts}})
 			return
 		}
 	}

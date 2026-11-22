@@ -265,6 +265,36 @@ All notable changes to this project are documented here. The format follows
   integration tests run the rc.4 agent, built from its tag, on Linux
   through Bash, sh and Python scripts with arguments and exit codes, a
   timeout and a cancel.
+
+- **The customer record** (ADR-0066, slice 1, the first of its three pull
+  requests). An organization's **Overview** shows its main phone, email,
+  website, business hours with *Open now* or *Closed now*, and
+  after-hours instructions, its primary and emergency contacts, and each
+  site with its address and whether it is open now; a **Contacts** tab
+  lists the people to call at the customer, the organization's own and
+  each site's, with one primary for the organization and one per site,
+  secondary, and an emergency flag.
+  A site's page shows its address as fields (two lines, city, region,
+  postal code, country) beside the free text, its own hours or the
+  organization's in the site's time zone, its contacts, and **Places**:
+  buildings, floors, rooms, racks and others, up to four deep. Two new
+  permissions: `doc.view`, held by every built-in role, and `doc.manage`,
+  held by Technicians and above, at the organization or site where the
+  role is; site-scoped people see their sites' contacts and places, not
+  the organization's own contacts, which row-level security enforces in
+  PostgreSQL. Every change is audited without the text typed in: the
+  records name the fields that changed, and keep a contact's priority and
+  emergency flag and a place's kind and the ID of the place it is inside
+  (`parentId`), never a contact's name, job title, email address, phone
+  numbers or note, or a place's name. A new primary contact and the one it
+  replaces each get a record, naming the other by ID. Email addresses are
+  plain ones only: characters such as `?` and `&`, which would add headers
+  to a `mailto:` link, are refused; letters beyond ASCII, as in
+  `zoë@example.com`, are taken, the server and not the browser judging
+  them. A **Contacts** report exports them as CSV.
+  Contacts are personal data of the customer's staff:
+  [PRIVACY.md](PRIVACY.md) says what is kept and why. See
+  [The customer record](docs/operations/customer-record.md).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends
@@ -501,6 +531,40 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **A site's address moves to its details.** The free-text address is
+  edited under **Address and hours** on the site's page, with
+  `doc.manage`, instead of in the site's **Edit**: `PUT /api/v1/sites/{id}`
+  and `POST /api/v1/organizations/{id}/sites` no longer take `address`
+  (they answer `422` with the field named) and
+  `PUT /api/v1/sites/{id}/details` does. Existing addresses are kept as
+  they are; nothing is read from them into the new fields. Without
+  `doc.view`, a site's and an organization's answers carry empty
+  details.
+- **Deleting a site or an organization that holds contacts or places**
+  needs them confirmed: the first try answers `409 documentation_exists`
+  with their counts, and the console then offers **Delete site and its
+  documentation** on a site's page, or **Delete organization and
+  contacts** on an organization's. Through the API, send the counts back as
+  query parameters (`?contacts=2&places=1`). Sites and organizations
+  without any are deleted as before. The deletion's audit record keeps the
+  counts; the contacts and places deleted with it get no records of their
+  own.
+- **Time zones must be names from the time zone database, as it writes
+  them.** An organization's or site's time zone is one of the IANA names
+  in the copy of the database the server is built with, such as
+  `Europe/London` or `US/Eastern`, every one the console offers among
+  them. Other spellings the system opens as the same zone, such as
+  `Europe//London` or `./Europe/London`, were accepted and are now refused
+  with the field named; upgrading rewrites any stored one as the name it
+  stood for. Names held only by the server image's own zone files, such
+  as `right/Europe/London` or `posixrules`, are left as stored and must be
+  changed the next time that organization or site is edited: the console
+  shows the error under the time zone field.
+- **A downloaded report's audit record no longer quotes a search that can
+  name a person.** For **Device inventory**, whose names are often their
+  users', the two patch reports and **Contacts**, the record says
+  `"searched": true` instead of the search text (`q`); **Installed
+  software** still records it.
 - **Upgrading adds five shared alert policies** for disk health, only
   **Disk failing** turned on. **Where a shared policy already has one of
   their names** (case aside), the new one is added as *… (disk health)*,

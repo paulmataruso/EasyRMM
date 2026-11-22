@@ -78,6 +78,30 @@ func TestJobViewSensitive(t *testing.T) {
 	}
 }
 
+// TestDocumentationPermissions: every role reads customer documentation;
+// Technicians and above change it (ADR-0066). A site-scoped grant reaches
+// its site's rows, never the organization's own.
+func TestDocumentationPermissions(t *testing.T) {
+	for role, manage := range map[Role]bool{
+		RoleReadOnly: false, RoleTechnician: true, RoleSiteAdmin: true, RoleOrgAdmin: true, RoleSuperAdmin: true,
+	} {
+		perms := Roles[role].Permissions
+		if !slices.Contains(perms, PermDocView) || slices.Contains(perms, PermDocManage) != manage {
+			t.Errorf("%s: doc.view %v, doc.manage %v", role, slices.Contains(perms, PermDocView), slices.Contains(perms, PermDocManage))
+		}
+	}
+	if !slices.Contains(viewPerms, PermDocView) || slices.Contains(viewPerms, PermDocManage) {
+		t.Error("doc.view must be a view permission and doc.manage not")
+	}
+	tech := mustPrincipal(t, Assignment{Role: RoleTechnician, OrganizationID: orgA, SiteID: siteA1})
+	if !tech.Can(PermDocManage, Site(orgA, siteA1)) || tech.Can(PermDocManage, Site(orgA, siteA2)) {
+		t.Error("a site technician manages their site's documentation only")
+	}
+	if tech.Can(PermDocView, Org(orgA)) || !tech.CanInOrg(PermDocView, orgA) {
+		t.Error("a site technician reads no organization-level documentation, but holds doc.view in the organization")
+	}
+}
+
 func TestAssignmentValidation(t *testing.T) {
 	cases := []struct {
 		a     Assignment

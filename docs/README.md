@@ -23,6 +23,8 @@ Everything about running, using and building EasyRMM. Start with the
 
 ## Use
 
+* [The customer record](operations/customer-record.md): contact
+  information, addresses, business hours, contacts and places.
 * [Patching](operations/patching.md): status, scans, installs, restarts,
   holds, policies, reports, alerts and the engine's settings.
 * [Inventory and health](operations/inventory.md)

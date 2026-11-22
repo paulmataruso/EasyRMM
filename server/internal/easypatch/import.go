@@ -221,13 +221,16 @@ func (s *Service) importSites(ctx context.Context, t *tenancy.Service, caller ac
 		join, want := importName(cleanName(x.Name, "Imported site"), existing)
 		rec := ImportedRecord{Kind: "site", EngineID: x.ID, EngineName: x.Name, Organization: org.Name, Name: want, Joined: join != nil}
 		if join == nil {
-			in := tenancy.SiteInput{Name: want, Timezone: tz}
-			if x.Address != nil && len([]rune(*x.Address)) <= tenancy.MaxAddressLength {
-				in.Address = *x.Address
-			}
-			created, err := t.CreateSite(ctx, caller, org.ID, in)
+			created, err := t.CreateSite(ctx, caller, org.ID, tenancy.SiteInput{Name: want, Timezone: tz})
 			if err != nil {
 				return fmt.Errorf("creating site %q of %q: %w", want, org.Name, err)
+			}
+			// The engine keeps one free-text address, the customer record's
+			// own free-text field (ADR-0066).
+			if x.Address != nil && strings.TrimSpace(*x.Address) != "" && len([]rune(*x.Address)) <= tenancy.MaxAddressLength {
+				if _, err := t.UpdateSiteDetails(ctx, caller, created.ID, tenancy.SiteDetails{Address: *x.Address}); err != nil {
+					return fmt.Errorf("recording the address of site %q of %q: %w", want, org.Name, err)
+				}
 			}
 			join = &rmmName{id: created.ID, name: created.Name, tz: created.Timezone}
 			existing = append(existing, join)

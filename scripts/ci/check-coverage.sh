@@ -69,6 +69,10 @@ floors=(
   # Microsoft 365's tokens: an application's secret or private key signs
   # them in to every mailbox it is given.
   "server/internal/m365                    90"
+  # The customer record: customers' staff as contacts, personal data each
+  # organization and site keeps to itself (ADR-0066).
+  "server/internal/docs                    90"
+  "server/internal/httpapi/docsapi         90"
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"

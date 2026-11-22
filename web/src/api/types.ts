@@ -32,6 +32,8 @@ export type Permission =
   | "user.manage"
   | "audit.view"
   | "report.view"
+  | "doc.view"
+  | "doc.manage"
   | "settings.manage";
 
 export type Role = "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
@@ -137,7 +139,28 @@ export interface SessionItem {
   current: boolean;
 }
 
-export interface Organization {
+export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+
+/** One period of opening, "HH:MM" to "HH:MM"; an end at or before the start runs past midnight. */
+export interface OpeningPeriod {
+  start: string;
+  end: string;
+}
+
+/** A weekly schedule (ADR-0066): up to four periods a day, in the organization's or the site's time zone. */
+export type BusinessHours = Record<Weekday, OpeningPeriod[]>;
+
+/** The customer's contact information and hours (ADR-0066): empty without doc.view. */
+export interface OrganizationDetails {
+  mainPhone: string;
+  mainEmail: string;
+  website: string;
+  /** Null when the organization keeps no hours. */
+  businessHours: BusinessHours | null;
+  afterHoursNote: string;
+}
+
+export interface Organization extends OrganizationDetails {
   id: string;
   name: string;
   /** IANA time zone; patching's monthly reports use it. */
@@ -149,6 +172,10 @@ export interface Organization {
   canManage: boolean;
   /** Names are unique on the server, so only Super Administrators rename. */
   canRename: boolean;
+  /** Whether the business hours hold now; null when none are kept. */
+  openNow: boolean | null;
+  /** doc.manage at the organization: may change the details and the organization's contacts. */
+  canManageDocumentation: boolean;
 }
 
 export interface OrganizationInput {
@@ -157,25 +184,102 @@ export interface OrganizationInput {
   notes: string;
 }
 
-export interface Site {
+/** A site's address and hours (ADR-0066): empty without doc.view. */
+export interface SiteDetails {
+  /** Free text, for an address the fields do not fit. */
+  address: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  /** ISO 3166-1 alpha-2, or empty. */
+  countryCode: string;
+  /** Null when the site uses its organization's hours. */
+  businessHours: BusinessHours | null;
+  afterHoursNote: string;
+}
+
+export interface Site extends SiteDetails {
   id: string;
   organizationId: string;
   organizationName: string;
   name: string;
   timezone: string;
-  address: string;
   notes: string;
   deviceGroupCount: number;
   createdAt: string;
   updatedAt: string;
   canManage: boolean;
+  /** Whether the site's hours, or its organization's, hold now in the site's time zone; null when neither keeps any. */
+  openNow: boolean | null;
+  /** The site keeps no hours of its own and openNow reads its organization's. */
+  hoursFromOrganization: boolean;
+  /** doc.manage at the site: may change the details, its places and its contacts. */
+  canManageDocumentation: boolean;
 }
 
 export interface SiteInput {
   name: string;
   timezone: string;
-  address: string;
   notes: string;
+}
+
+export type ContactPriority = "primary" | "secondary" | "none";
+
+/** Someone to call at the customer (ADR-0066), at the organization or at one of its sites. */
+export interface Contact {
+  id: string;
+  organizationId: string;
+  /** Null for a contact of the whole organization. */
+  siteId: string | null;
+  siteName: string;
+  name: string;
+  jobTitle: string;
+  email: string;
+  officePhone: string;
+  mobilePhone: string;
+  note: string;
+  priority: ContactPriority;
+  emergency: boolean;
+  createdAt: string;
+  updatedAt: string;
+  canManage: boolean;
+}
+
+export interface ContactInput {
+  /** Only when creating: the site, or null for the organization. */
+  siteId?: string | null;
+  name: string;
+  jobTitle: string;
+  email: string;
+  officePhone: string;
+  mobilePhone: string;
+  note: string;
+  priority: ContactPriority;
+  emergency: boolean;
+}
+
+export type PlaceKind = "building" | "floor" | "room" | "rack" | "other";
+
+/** Somewhere within a site (ADR-0066), at most four deep. */
+export interface Place {
+  id: string;
+  organizationId: string;
+  siteId: string;
+  /** Null at the top of the site. */
+  parentId: string | null;
+  kind: PlaceKind;
+  name: string;
+  depth: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaceInput {
+  parentId: string | null;
+  kind: PlaceKind;
+  name: string;
 }
 
 export interface DeviceGroup {
@@ -1482,7 +1586,7 @@ export interface AlertSummary {
 
 // --- Reports (ADR-0029) --------------------------------------------------------------------
 
-export type ReportName = "devices" | "software" | "health" | "alerts" | "patch-compliance" | "patch-installations";
+export type ReportName = "devices" | "software" | "health" | "alerts" | "contacts" | "patch-compliance" | "patch-installations";
 
 export interface ReportColumn {
   key: string;

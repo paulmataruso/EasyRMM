@@ -5,7 +5,7 @@ Authentik (`setup.sh --with-authentik`). All are needed to restore.
 
 | Part | Where | Why |
 |---|---|---|
-| Database | PostgreSQL in the `postgres` container | Everything: tenants, devices, users, audit log |
+| Database | PostgreSQL in the `postgres` container | Everything: tenants and their [customer record](customer-record.md) (contacts, addresses, hours, places), devices, users, audit log |
 | The patching engine's database | `easypatch`, in the same PostgreSQL | Patching: each device's update state and history, policies, holds, jobs, alerts, reports, and the EasyPatch agents' credentials. Without it, every EasyPatch agent has to be reinstalled and patch history is lost |
 | `/srv/easyrmm/easypatch/keys` | The engine's data-protection keys | They decrypt the engine's stored mail and webhook credentials. Without them, notification channels have to be set up again |
 | `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key, among them authenticator-app secrets, MeshCentral's service account, the single sign-on and audit-forwarding credentials, the console's mail server password, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled. With Authentik, it also holds Authentik's settings and secrets: `COMPOSE_PROFILES=authentik`, `EASYRMM_AUTHENTIK_HOSTNAME`, `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_DB_PASSWORD` |
