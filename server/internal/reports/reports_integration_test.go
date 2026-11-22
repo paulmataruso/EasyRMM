@@ -354,6 +354,8 @@ func TestReportLimitsAndChecks(t *testing.T) {
 		f.software(d, "curl=8.14", "zlib=1.3")
 		f.alert(d, "Busy", "cpu", "warning", 97, time.Hour, false)
 	}
+	f.exec(`INSERT INTO contacts (organization_id, site_id, name) VALUES ($1, NULL, 'Ann Example'), ($1, $2, 'Bob Example'), ($3, $4, 'Gail Example')`,
+		f.acme, f.hq, f.globex, f.plant)
 
 	// Rows are checked against the caller's permissions even when the data
 	// scope would let them through.
@@ -420,4 +422,85 @@ func dbReports() []string {
 		}
 	}
 	return out
+}
+
+// TestContactsReport covers the customer record's contacts as a report
+// (ADR-0066): their order, who reads which, the search, and the export's
+// audit entry, which never holds a contact's details.
+func TestContactsReport(t *testing.T) {
+	f := newFixture(t)
+	admin := f.user("admin@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	f.exec(`INSERT INTO contacts (organization_id, site_id, name, job_title, email, office_phone, mobile_phone, priority, emergency, note) VALUES
+		($1, NULL, 'Zoe Owner', 'Director', 'zoe@example.com', '+1 555 0100', '', 'primary', true, 'Calls back'),
+		($1, NULL, 'Al Accounts', '', 'al@example.com', '', '', 'none', false, ''),
+		($1, $2, 'Hal Desk', '', 'hal@example.com', '', '+1 555 0101', 'secondary', false, ''),
+		($1, $3, 'Bea Branch', '', '', '', '', 'primary', false, ''),
+		($4, $5, 'Gus Plant', '', 'gus@example.com', '', '', 'none', false, '')`,
+		f.acme, f.hq, f.branch, f.globex, f.plant)
+
+	rep, err := f.svc.Run(f.ctx, admin, "contacts", Query{}, PreviewRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The organization's own first, the primary first; then each site by name.
+	if got := column(rep, "name"); !slices.Equal(got, []any{"Zoe Owner", "Al Accounts", "Bea Branch", "Hal Desk", "Gus Plant"}) {
+		t.Errorf("order %v", got)
+	}
+	if r := rep.Rows[0]; r[0] != "Acme" || r[1] != "" || r[3] != "Director" || r[4] != "zoe@example.com" || r[5] != "+1 555 0100" ||
+		r[7] != "Primary" || r[8] != true || r[9] != "Calls back" {
+		t.Errorf("an organization's contact %v", r)
+	}
+	if r := rep.Rows[3]; r[1] != "HQ" || r[6] != "+1 555 0101" || r[7] != "Secondary" || r[8] != false {
+		t.Errorf("a site's contact %v", r)
+	}
+	if got := column(rep, "priority")[1]; got != "" {
+		t.Errorf("no priority shows as %q", got)
+	}
+
+	// Search reads names and email addresses; filters narrow to a level.
+	for q, want := range map[Query][]any{
+		{Search: "HAL@"}:                           {"Hal Desk"},
+		{Search: "bea"}:                            {"Bea Branch"},
+		{OrganizationID: f.globex}:                 {"Gus Plant"},
+		{OrganizationID: f.acme, SiteID: f.branch}: {"Bea Branch"},
+	} {
+		rep, err := f.svc.Run(f.ctx, admin, "contacts", q, PreviewRows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := column(rep, "name"); !slices.Equal(got, want) {
+			t.Errorf("%+v: %v, want %v", q, got, want)
+		}
+	}
+
+	// A site's people read their site's contacts, not the organization's
+	// own; another organization's administrator reads none of Acme's.
+	tech := f.user("tech@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme, SiteID: f.hq})
+	rep, err = f.svc.Run(f.ctx, tech, "contacts", Query{}, PreviewRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := column(rep, "name"); !slices.Equal(got, []any{"Hal Desk"}) {
+		t.Errorf("a site's technician reads %v", got)
+	}
+	globex := f.user("globex@example.com", rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: f.globex})
+	rep, err = f.svc.Run(f.ctx, globex, "contacts", Query{OrganizationID: f.acme}, PreviewRows)
+	if err != nil || rep.Total != 0 {
+		t.Errorf("another organization's administrator reads Acme's contacts: %v %+v", err, rep)
+	}
+
+	// Exporting is recorded once per organization, without a contact's
+	// name, address or number.
+	if _, err := f.svc.Export(f.ctx, admin, "contacts", Query{Search: "example"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export' AND target_id = 'contacts'`); n != "2" {
+		t.Errorf("%s export entries, want one per organization", n)
+	}
+	details := f.str(`SELECT string_agg(details::text, ' ') FROM audit_log WHERE action = 'report.export' AND target_id = 'contacts'`)
+	for _, leak := range []string{"Zoe", "zoe@", "555", "Calls back"} {
+		if strings.Contains(details, leak) {
+			t.Errorf("the export's audit entry holds %q: %s", leak, details)
+		}
+	}
 }

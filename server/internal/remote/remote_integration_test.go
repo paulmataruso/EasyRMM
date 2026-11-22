@@ -377,7 +377,7 @@ func TestReconcileMirrorsTenancy(t *testing.T) {
 
 	// Deleting a site deletes its group.
 	branchMesh := r.meshOfSite(branch.ID)
-	if err := r.ten.DeleteSite(r.ctx, r.sys, branch.ID); err != nil {
+	if err := r.ten.DeleteSite(r.ctx, r.sys, branch.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	r.reconcile()

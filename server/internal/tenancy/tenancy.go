@@ -21,6 +21,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -50,6 +51,29 @@ type Organization struct {
 	// rename, and an organization's own administrators cannot probe for
 	// other customers' names.
 	CanRename bool `json:"canRename"`
+
+	OrganizationDetails
+	// OpenNow says whether the business hours hold now, in the
+	// organization's time zone; nil when it keeps none.
+	OpenNow *bool `json:"openNow"`
+	// CanManageDocumentation tells the client whether the caller may change
+	// the details and the organization's own contacts (doc.manage).
+	CanManageDocumentation bool `json:"canManageDocumentation"`
+}
+
+// OrganizationDetails are the customer's contact information and business
+// hours (ADR-0066), read with doc.view anywhere in the organization (its
+// sites' people see them too) and written with doc.manage at the
+// organization. Empty for a caller without doc.view.
+type OrganizationDetails struct {
+	MainPhone string `json:"mainPhone"`
+	MainEmail string `json:"mainEmail"`
+	// Website is an http or https address.
+	Website string `json:"website"`
+	// BusinessHours is a weekly schedule in the organization's time zone,
+	// which its sites without their own use; nil when none is kept.
+	BusinessHours  *docs.Hours `json:"businessHours"`
+	AfterHoursNote string      `json:"afterHoursNote"`
 }
 
 // Site is a location or logical subdivision of an organization.
@@ -59,12 +83,43 @@ type Site struct {
 	OrganizationName string    `json:"organizationName"`
 	Name             string    `json:"name"`
 	Timezone         string    `json:"timezone"`
-	Address          string    `json:"address"`
 	Notes            string    `json:"notes"`
 	DeviceGroupCount int       `json:"deviceGroupCount"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 	CanManage        bool      `json:"canManage"`
+
+	SiteDetails
+	// OpenNow says whether the site's business hours, or its organization's
+	// when it keeps none, hold now in the site's time zone; nil when
+	// neither keeps any.
+	OpenNow *bool `json:"openNow"`
+	// HoursFromOrganization says the site keeps no hours of its own and
+	// OpenNow reads its organization's.
+	HoursFromOrganization bool `json:"hoursFromOrganization"`
+	// CanManageDocumentation tells the client whether the caller may change
+	// the details, the site's places and its contacts (doc.manage).
+	CanManageDocumentation bool `json:"canManageDocumentation"`
+}
+
+// SiteDetails are a site's address and business hours (ADR-0066), read
+// with doc.view and written with doc.manage at the site. Empty for a
+// caller without doc.view.
+type SiteDetails struct {
+	// Address is free text, for an address that fits none of the fields;
+	// nothing is parsed from it.
+	Address      string `json:"address"`
+	AddressLine1 string `json:"addressLine1"`
+	AddressLine2 string `json:"addressLine2"`
+	City         string `json:"city"`
+	Region       string `json:"region"`
+	PostalCode   string `json:"postalCode"`
+	// CountryCode is an ISO 3166-1 alpha-2 code, such as GB, or empty.
+	CountryCode string `json:"countryCode"`
+	// BusinessHours is the site's own weekly schedule in its time zone; nil
+	// when it uses its organization's.
+	BusinessHours  *docs.Hours `json:"businessHours"`
+	AfterHoursNote string      `json:"afterHoursNote"`
 }
 
 // DeviceGroup organizes devices within a site.
@@ -87,11 +142,11 @@ type OrganizationInput struct {
 	Notes    string `json:"notes"`
 }
 
-// SiteInput is the editable part of a site.
+// SiteInput is the part of a site site.manage edits; its address and
+// hours are its SiteDetails, which doc.manage edits.
 type SiteInput struct {
 	Name     string `json:"name"`
 	Timezone string `json:"timezone"`
-	Address  string `json:"address"`
 	Notes    string `json:"notes"`
 }
 
@@ -149,7 +204,6 @@ func (in *SiteInput) normalize() error {
 	f := apperr.Fields{}
 	checkName(f, in.Name)
 	f.Check(ValidTimezone(in.Timezone), "timezone", "Choose a time zone from the list, such as Europe/London.")
-	f.Check(utf8.RuneCountInString(in.Address) <= MaxAddressLength, "address", "The address is limited to 1,000 characters.")
 	f.Check(utf8.RuneCountInString(in.Notes) <= MaxNotesLength, "notes", "Notes are limited to 10,000 characters.")
 	return f.Err()
 }
@@ -176,12 +230,44 @@ func ValidTimezone(tz string) bool {
 // ---------------------------------------------------------------------------
 
 const orgColumns = `o.id, o.name, o.timezone, o.notes, o.created_at, o.updated_at,
-	(SELECT count(*) FROM sites s WHERE s.organization_id = o.id)`
+	(SELECT count(*) FROM sites s WHERE s.organization_id = o.id),
+	o.main_phone, o.main_email, o.website, o.business_hours, o.after_hours_note`
 
 func scanOrg(row pgx.Row) (Organization, error) {
 	var o Organization
-	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount)
+	var hours []byte
+	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount,
+		&o.MainPhone, &o.MainEmail, &o.Website, &hours, &o.AfterHoursNote)
+	if err == nil {
+		o.BusinessHours, err = docs.ParseHours(hours)
+	}
 	return o, err
+}
+
+// finishOrg fills in what the caller may do with an organization, and
+// clears its details for a caller who may not read them.
+func finishOrg(c access.Caller, o *Organization) {
+	o.CanManage = c.Can(rbac.PermOrgManage, rbac.Org(o.ID))
+	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
+	if !c.CanInOrg(rbac.PermDocView, o.ID) {
+		o.OrganizationDetails = OrganizationDetails{}
+		return
+	}
+	o.CanManageDocumentation = c.Can(rbac.PermDocManage, rbac.Org(o.ID))
+	o.OpenNow = openNow(o.BusinessHours, o.Timezone)
+}
+
+// openNow says whether hours hold now in the time zone; nil without hours.
+func openNow(h *docs.Hours, tz string) *bool {
+	if h == nil {
+		return nil
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		loc = time.UTC
+	}
+	open := h.OpenAt(time.Now(), loc)
+	return &open
 }
 
 // ListOrganizations returns the organizations visible to the caller, sorted
@@ -201,8 +287,7 @@ func (s *Service) ListOrganizations(ctx context.Context, c access.Caller, query 
 			if err != nil {
 				return err
 			}
-			o.CanManage = c.Can(rbac.PermOrgManage, rbac.Org(o.ID))
-			o.CanRename = c.CanGlobal(rbac.PermOrgManage)
+			finishOrg(c, &o)
 			out = append(out, o)
 		}
 		return rows.Err()
@@ -224,8 +309,7 @@ func (s *Service) GetOrganization(ctx context.Context, c access.Caller, id uuid.
 	if err != nil {
 		return nil, err
 	}
-	o.CanManage = c.Can(rbac.PermOrgManage, rbac.Org(o.ID))
-	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
+	finishOrg(c, &o)
 	return &o, nil
 }
 
@@ -250,9 +334,9 @@ func (s *Service) CreateOrganization(ctx context.Context, c access.Caller, in Or
 	}
 	var o Organization
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO organizations (name, timezone, notes) VALUES ($1, $2, $3)
-			RETURNING id, name, timezone, notes, created_at, updated_at`, in.Name, in.Timezone, in.Notes).
-			Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt)
+		var err error
+		o, err = scanOrg(tx.QueryRow(ctx, `WITH o AS (INSERT INTO organizations (name, timezone, notes) VALUES ($1, $2, $3) RETURNING *)
+			SELECT `+orgColumns+` FROM o`, in.Name, in.Timezone, in.Notes))
 		if err != nil {
 			return err
 		}
@@ -263,8 +347,7 @@ func (s *Service) CreateOrganization(ctx context.Context, c access.Caller, in Or
 		return nil, mapOrgWriteError(err)
 	}
 	s.changed()
-	o.CanManage = true
-	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
+	finishOrg(c, &o)
 	return &o, nil
 }
 
@@ -315,8 +398,10 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 }
 
 // DeleteOrganization removes an empty organization. Sites must be deleted
-// first so that nothing is removed by accident.
-func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uuid.UUID) error {
+// first so that nothing is removed by accident. Documentation it holds at
+// its own level goes with it only when confirmed holds exactly its counts
+// (docs.CheckDeletion); nil confirms nothing.
+func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uuid.UUID, confirmed docs.Counts) error {
 	org, err := s.GetOrganization(ctx, c, id)
 	if err != nil {
 		return err
@@ -328,6 +413,17 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 		return apperr.Conflict("organization_not_empty", "Delete this organization's sites before deleting it.")
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		// The lock holds new documentation back until the deletion is decided.
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE`, id); err != nil {
+			return err
+		}
+		held, err := docs.OrganizationCounts(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := docs.CheckDeletion("organization", held, confirmed); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM organizations WHERE id = $1`, id)
 		if err != nil {
 			return err
@@ -335,8 +431,12 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 		if tag.RowsAffected() == 0 {
 			return pgx.ErrNoRows
 		}
+		details := map[string]any{"name": org.Name}
+		if held.Total() > 0 {
+			details["documentation"] = map[string]int(held)
+		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "organization.delete", Outcome: audit.Success,
-			OrganizationID: id, TargetType: "organization", TargetID: id.String(), Details: map[string]any{"name": org.Name}})
+			OrganizationID: id, TargetType: "organization", TargetID: id.String(), Details: details})
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -354,13 +454,48 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 // ---------------------------------------------------------------------------
 
 const siteColumns = `s.id, s.organization_id, o.name, s.name, s.timezone, s.address, s.notes, s.created_at, s.updated_at,
-	(SELECT count(*) FROM device_groups g WHERE g.site_id = s.id)`
+	(SELECT count(*) FROM device_groups g WHERE g.site_id = s.id),
+	s.address_line1, s.address_line2, s.city, s.region, s.postal_code, s.country_code, s.business_hours,
+	s.after_hours_note, o.business_hours`
 
-func scanSite(row pgx.Row) (Site, error) {
-	var x Site
+// siteRow is a site as read, with its organization's business hours.
+type siteRow struct {
+	Site
+	orgHours *docs.Hours
+}
+
+func scanSite(row pgx.Row) (siteRow, error) {
+	var x siteRow
+	var hours, orgHours []byte
 	err := row.Scan(&x.ID, &x.OrganizationID, &x.OrganizationName, &x.Name, &x.Timezone, &x.Address, &x.Notes,
-		&x.CreatedAt, &x.UpdatedAt, &x.DeviceGroupCount)
+		&x.CreatedAt, &x.UpdatedAt, &x.DeviceGroupCount,
+		&x.AddressLine1, &x.AddressLine2, &x.City, &x.Region, &x.PostalCode, &x.CountryCode, &hours,
+		&x.AfterHoursNote, &orgHours)
+	if err == nil {
+		x.BusinessHours, err = docs.ParseHours(hours)
+	}
+	if err == nil {
+		x.orgHours, err = docs.ParseHours(orgHours)
+	}
 	return x, err
+}
+
+// finish fills in what the caller may do with the site, and clears its
+// details for a caller who may not read them.
+func (x *siteRow) finish(c access.Caller) Site {
+	where := rbac.Site(x.OrganizationID, x.ID)
+	x.CanManage = c.Can(rbac.PermSiteManage, where)
+	if !c.Can(rbac.PermDocView, where) {
+		x.SiteDetails = SiteDetails{}
+		return x.Site
+	}
+	x.CanManageDocumentation = c.Can(rbac.PermDocManage, where)
+	hours := x.BusinessHours
+	if hours == nil && x.orgHours != nil {
+		hours, x.HoursFromOrganization = x.orgHours, true
+	}
+	x.OpenNow = openNow(hours, x.Timezone)
+	return x.Site
 }
 
 // ListSites returns visible sites, optionally limited to one organization.
@@ -380,8 +515,7 @@ func (s *Service) ListSites(ctx context.Context, c access.Caller, orgID uuid.UUI
 			if err != nil {
 				return err
 			}
-			x.CanManage = c.Can(rbac.PermSiteManage, rbac.Site(x.OrganizationID, x.ID))
-			out = append(out, x)
+			out = append(out, x.finish(c))
 		}
 		return rows.Err()
 	})
@@ -390,7 +524,7 @@ func (s *Service) ListSites(ctx context.Context, c access.Caller, orgID uuid.UUI
 
 // GetSite returns one site.
 func (s *Service) GetSite(ctx context.Context, c access.Caller, id uuid.UUID) (*Site, error) {
-	var x Site
+	var x siteRow
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		var err error
 		x, err = scanSite(tx.QueryRow(ctx, `SELECT `+siteColumns+` FROM sites s JOIN organizations o ON o.id = s.organization_id WHERE s.id = $1`, id))
@@ -402,8 +536,8 @@ func (s *Service) GetSite(ctx context.Context, c access.Caller, id uuid.UUID) (*
 	if err != nil {
 		return nil, err
 	}
-	x.CanManage = c.Can(rbac.PermSiteManage, rbac.Site(x.OrganizationID, x.ID))
-	return &x, nil
+	site := x.finish(c)
+	return &site, nil
 }
 
 func mapSiteWriteError(err error) error {
@@ -426,8 +560,8 @@ func (s *Service) CreateSite(ctx context.Context, c access.Caller, orgID uuid.UU
 	}
 	var id uuid.UUID
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO sites (organization_id, name, timezone, address, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			orgID, in.Name, in.Timezone, in.Address, in.Notes).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO sites (organization_id, name, timezone, notes) VALUES ($1, $2, $3, $4) RETURNING id`,
+			orgID, in.Name, in.Timezone, in.Notes).Scan(&id)
 		if err != nil {
 			return err
 		}
@@ -454,8 +588,8 @@ func (s *Service) UpdateSite(ctx context.Context, c access.Caller, id uuid.UUID,
 		return nil, err
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE sites SET name = $2, timezone = $3, address = $4, notes = $5 WHERE id = $1`,
-			id, in.Name, in.Timezone, in.Address, in.Notes)
+		tag, err := tx.Exec(ctx, `UPDATE sites SET name = $2, timezone = $3, notes = $4 WHERE id = $1`,
+			id, in.Name, in.Timezone, in.Notes)
 		if err != nil {
 			return err
 		}
@@ -480,8 +614,10 @@ func (s *Service) UpdateSite(ctx context.Context, c access.Caller, id uuid.UUID,
 }
 
 // DeleteSite removes a site and its device groups. Sites that still have
-// devices cannot be deleted (enforced by the devices foreign key).
-func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID) error {
+// devices cannot be deleted (enforced by the devices foreign key). The
+// site's documentation goes with it only when confirmed holds exactly its
+// counts (docs.CheckDeletion); nil confirms nothing.
+func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID, confirmed docs.Counts) error {
 	cur, err := s.GetSite(ctx, c, id)
 	if err != nil {
 		return err
@@ -490,6 +626,25 @@ func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID)
 		return err
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		// The lock holds new documentation back until the deletion is decided.
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM sites WHERE id = $1 FOR UPDATE`, id); err != nil {
+			return err
+		}
+		var devices bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM devices WHERE site_id = $1)`, id).Scan(&devices); err != nil {
+			return err
+		}
+		if devices {
+			// Asked before the documentation, which would be confirmed for nothing.
+			return errSiteNotEmpty
+		}
+		held, err := docs.SiteCounts(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := docs.CheckDeletion("site", held, confirmed); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM sites WHERE id = $1`, id)
 		if err != nil {
 			return err
@@ -497,20 +652,27 @@ func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID)
 		if tag.RowsAffected() == 0 {
 			return pgx.ErrNoRows
 		}
+		details := map[string]any{"name": cur.Name}
+		if held.Total() > 0 {
+			details["documentation"] = map[string]int(held)
+		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "site.delete", Outcome: audit.Success,
-			OrganizationID: cur.OrganizationID, SiteID: id, TargetType: "site", TargetID: id.String(), Details: map[string]any{"name": cur.Name}})
+			OrganizationID: cur.OrganizationID, SiteID: id, TargetType: "site", TargetID: id.String(), Details: details})
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return apperr.NotFound()
 	case database.IsForeignKeyViolation(err):
-		// Moving and retiring devices are not available yet, so the message only states the rule.
-		return apperr.Conflict("site_not_empty", "This site still has devices, so it cannot be deleted.")
+		return errSiteNotEmpty
 	case err == nil:
 		s.changed()
 	}
 	return err
 }
+
+// Moving and retiring devices are not available yet, so the message only
+// states the rule.
+var errSiteNotEmpty = apperr.Conflict("site_not_empty", "This site still has devices, so it cannot be deleted.")
 
 // ---------------------------------------------------------------------------
 // Device groups

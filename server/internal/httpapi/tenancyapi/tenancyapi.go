@@ -4,6 +4,7 @@ package tenancyapi
 import (
 	"net/http"
 
+	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 )
@@ -24,6 +25,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/organizations/{id}", a.getOrg)
 	r("PUT /api/v1/organizations/{id}", a.updateOrg)
 	r("DELETE /api/v1/organizations/{id}", a.deleteOrg)
+	r("PUT /api/v1/organizations/{id}/details", a.updateOrgDetails)
 	r("GET /api/v1/organizations/{id}/sites", a.listOrgSites)
 	r("POST /api/v1/organizations/{id}/sites", a.createSite)
 
@@ -31,6 +33,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/sites/{id}", a.getSite)
 	r("PUT /api/v1/sites/{id}", a.updateSite)
 	r("DELETE /api/v1/sites/{id}", a.deleteSite)
+	r("PUT /api/v1/sites/{id}/details", a.updateSiteDetails)
 	r("GET /api/v1/sites/{id}/device-groups", a.listGroups)
 	r("POST /api/v1/sites/{id}/device-groups", a.createGroup)
 
@@ -95,11 +98,52 @@ func (a *API) deleteOrg(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.svc.DeleteOrganization(r.Context(), httpapi.Caller(r), id); err != nil {
+	confirmed, err := confirmedCounts(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.DeleteOrganization(r.Context(), httpapi.Caller(r), id, confirmed); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+func (a *API) updateOrgDetails(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in tenancy.OrganizationDetails
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	o, err := a.svc.UpdateOrganizationDetails(r.Context(), httpapi.Caller(r), id, in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, o)
+	return nil
+}
+
+// confirmedCounts reads the documentation a deletion confirms, one query
+// parameter per kind (?contacts=2&places=1); none confirms nothing.
+func confirmedCounts(r *http.Request) (docs.Counts, error) {
+	var out docs.Counts
+	for _, kind := range docs.CountKinds {
+		if !r.URL.Query().Has(kind) {
+			continue
+		}
+		n, err := httpapi.QueryCount(r, kind, 0, 0, 1_000_000)
+		if err != nil {
+			return nil, err
+		}
+		if out == nil {
+			out = docs.Counts{}
+		}
+		out[kind] = n
+	}
+	return out, nil
 }
 
 func (a *API) listOrgSites(w http.ResponseWriter, r *http.Request) error {
@@ -184,10 +228,31 @@ func (a *API) deleteSite(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := a.svc.DeleteSite(r.Context(), httpapi.Caller(r), id); err != nil {
+	confirmed, err := confirmedCounts(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.DeleteSite(r.Context(), httpapi.Caller(r), id, confirmed); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) updateSiteDetails(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in tenancy.SiteDetails
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	s, err := a.svc.UpdateSiteDetails(r.Context(), httpapi.Caller(r), id, in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, s)
 	return nil
 }
 

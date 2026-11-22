@@ -332,3 +332,61 @@ var alertsReport = definition{
 		return rows.Err()
 	},
 }
+
+// --- Contacts ----------------------------------------------------------------
+
+// contactPriorities are contacts' priorities as the report shows them.
+var contactPriorities = map[string]string{"primary": "Primary", "secondary": "Secondary", "none": ""}
+
+// contactsReport lists the customer record's contacts (ADR-0066): each
+// organization's own, with no site, then each site's. They are personal
+// data, and exporting them is recorded like every export.
+var contactsReport = definition{
+	title: "Contacts",
+	perm:  rbac.PermDocView,
+	columns: []Column{
+		{"organization", "Organization", TypeText},
+		{"site", "Site", TypeText},
+		{"name", "Name", TypeText},
+		{"jobTitle", "Job title", TypeText},
+		{"email", "Email", TypeText},
+		{"officePhone", "Office phone", TypeText},
+		{"mobilePhone", "Mobile phone", TypeText},
+		{"priority", "Priority", TypeText},
+		{"emergency", "Emergency", TypeBool},
+		{"note", "Note", TypeText},
+	},
+	run: func(ctx context.Context, tx pgx.Tx, q Query, out emit) error {
+		rows, err := tx.Query(ctx, `SELECT c.organization_id, c.site_id, o.name, coalesce(st.name, ''), c.name, c.job_title, c.email,
+				c.office_phone, c.mobile_phone, c.priority, c.emergency, c.note
+			FROM contacts c JOIN organizations o ON o.id = c.organization_id LEFT JOIN sites st ON st.id = c.site_id
+			WHERE ($1::uuid IS NULL OR c.organization_id = $1) AND ($2::uuid IS NULL OR c.site_id = $2)
+			  AND ($3 = '' OR lower(c.name) LIKE $3 ESCAPE '\' OR lower(c.email) LIKE $3 ESCAPE '\')
+			ORDER BY lower(o.name), o.id, c.site_id IS NOT NULL, lower(st.name), st.id,
+				CASE c.priority WHEN 'primary' THEN 0 WHEN 'secondary' THEN 1 ELSE 2 END, lower(c.name), c.id`,
+			nullID(q.OrganizationID), nullID(q.SiteID), likePattern(q.Search))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var org uuid.UUID
+			var site *uuid.UUID
+			var orgName, siteName, name, title, email, office, mobile, priority, note string
+			var emergency bool
+			if err := rows.Scan(&org, &site, &orgName, &siteName, &name, &title, &email, &office, &mobile, &priority, &emergency, &note); err != nil {
+				return err
+			}
+			// An organization's own contact belongs to no site: the
+			// permissions it needs are the organization's.
+			var at uuid.UUID
+			if site != nil {
+				at = *site
+			}
+			if !out(org, at, []any{orgName, siteName, name, title, email, office, mobile, contactPriorities[priority], emergency, note}) {
+				return nil
+			}
+		}
+		return rows.Err()
+	},
+}

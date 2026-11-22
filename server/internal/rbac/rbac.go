@@ -58,6 +58,12 @@ const (
 	PermAuditView      Permission = "audit.view"
 	PermReportView     Permission = "report.view"
 	PermSettingsManage Permission = "settings.manage" // platform settings (platform-wide)
+	// PermDocView reads customer documentation: contact information,
+	// contacts, addresses, places and business hours (ADR-0066).
+	PermDocView Permission = "doc.view"
+	// PermDocManage creates, changes and deletes it. Checked at the row's
+	// organization, or its site for a site's rows.
+	PermDocManage Permission = "doc.manage"
 )
 
 // AllPermissions lists every permission.
@@ -68,6 +74,7 @@ var AllPermissions = []Permission{
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
+	PermDocView, PermDocManage,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -124,7 +131,7 @@ type RoleDef struct {
 
 var viewPerms = []Permission{
 	PermOrgView, PermSiteView, PermDeviceView, PermScriptView, PermJobView,
-	PermSoftwareView, PermPatchView, PermMonitorView, PermAlertView, PermReportView,
+	PermSoftwareView, PermPatchView, PermMonitorView, PermAlertView, PermReportView, PermDocView,
 }
 
 func union(sets ...[]Permission) []Permission {
@@ -145,6 +152,7 @@ func union(sets ...[]Permission) []Permission {
 var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
+	PermDocManage,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{

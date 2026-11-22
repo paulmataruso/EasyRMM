@@ -117,6 +117,18 @@ func TestWriteErrorAppErrKinds(t *testing.T) {
 	if rec.Header().Get("Retry-After") != "" {
 		t.Error("a 409 has Retry-After")
 	}
+	if strings.Contains(rec.Body.String(), "counts") {
+		t.Errorf("a conflict without counts says counts: %s", rec.Body.String())
+	}
+	// A conflict about what something holds says how much of each kind.
+	counts := map[string]int{"contacts": 2, "places": 0}
+	rec = httptest.NewRecorder()
+	WriteError(rec, req, apperr.ConflictCounts("documentation_exists", "It holds documentation.", counts))
+	counts["contacts"] = 9 // the error keeps its own copy
+	if got := decodeError(t, rec); rec.Code != http.StatusConflict || got.Code != "documentation_exists" ||
+		got.Counts["contacts"] != 2 || got.Counts["places"] != 0 || len(got.Counts) != 2 {
+		t.Errorf("counts: %d %+v", rec.Code, got)
+	}
 
 	// An apperr with an unknown kind is an internal error.
 	rec = httptest.NewRecorder()

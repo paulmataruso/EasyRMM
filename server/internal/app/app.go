@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
@@ -37,6 +38,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/docsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/hardwareapi"
@@ -87,10 +89,12 @@ type Deps struct {
 	Auth     *auth.Service
 	Sessions *httpapi.Sessions
 	Tenancy  *tenancy.Service
-	Users    *users.Service
-	Setup    *usersapi.Setup
-	Devices  *devices.Service
-	Agents   *agents.Service
+	// Docs keeps the customer record's contacts and places (ADR-0066).
+	Docs    *docs.Service
+	Users   *users.Service
+	Setup   *usersapi.Setup
+	Devices *devices.Service
+	Agents  *agents.Service
 	// Jobs is the script library and job delivery (ADR-0017).
 	Jobs *jobs.Service
 	// Inventory stores devices' inventory and metrics (ADR-0018).
@@ -162,7 +166,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d := &Deps{
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
-		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup, Mail: mailSvc,
+		Tenancy: tenancy.New(db, auditLog), Docs: docs.New(db, auditLog), Users: usersSvc, Setup: setup, Mail: mailSvc,
 	}
 	if cfg.NeedsInternalCA() {
 		ca, err := pki.Load(ctx, db, sealer)
@@ -409,6 +413,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	mux := http.NewServeMux()
 	authapi.New(d.Auth, d.Sessions, authapi.Features{RemoteAccess: d.Remote != nil}).Register(mux)
 	tenancyapi.New(d.Tenancy).Register(mux)
+	docsapi.New(d.Docs).Register(mux)
 	devicesapi.New(d.Devices).Register(mux)
 	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), addresses, caInfo).Register(mux)
 	if d.Remote != nil {

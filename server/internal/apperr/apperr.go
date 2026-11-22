@@ -32,6 +32,9 @@ type Error struct {
 	// RetryAfter, for KindTooMany, is how long until trying again may
 	// succeed; 0 when unknown.
 	RetryAfter time.Duration
+	// Counts, for a conflict about what something still holds, is how many
+	// of each kind it holds, for the caller to show and confirm.
+	Counts map[string]int
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -61,6 +64,12 @@ func Forbidden() error { return ErrForbidden }
 // Conflict builds a conflict error with a stable code.
 func Conflict(code, msg string) *Error {
 	return &Error{Kind: KindConflict, Code: code, Message: msg}
+}
+
+// ConflictCounts builds a conflict error that says how many of each kind
+// of thing stand in the way.
+func ConflictCounts(code, msg string, counts map[string]int) *Error {
+	return &Error{Kind: KindConflict, Code: code, Message: msg, Counts: maps.Clone(counts)}
 }
 
 // Unavailable builds an error for a dependency that is down, such as the

@@ -83,8 +83,9 @@ type Query struct {
 	SiteID         uuid.UUID
 	// Platform is windows, linux, or empty for every platform.
 	Platform string
-	// Search matches device names and host names (devices) or package
-	// names (software), ignoring case.
+	// Search matches device names and host names (devices), package
+	// names (software) or contacts' names and email addresses (contacts),
+	// ignoring case.
 	Search string
 	// Days is how far back alerts go (alerts).
 	Days int
@@ -147,11 +148,13 @@ var definitions = map[string]definition{
 
 	"patch-compliance":    patchComplianceReport,
 	"patch-installations": patchInstallationsReport,
+
+	"contacts": contactsReport,
 }
 
 // Names lists the reports there are.
 func Names() []string {
-	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations"}
+	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations", "contacts"}
 }
 
 // Service runs reports.
