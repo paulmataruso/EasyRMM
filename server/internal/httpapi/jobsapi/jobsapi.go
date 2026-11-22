@@ -27,7 +27,7 @@ const (
 
 // errTooManyZips answers an archive beyond the limit, with Retry-After.
 var errTooManyZips = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
-	Message: "You have downloaded several jobs' output in the last minute. Wait a few seconds and try again."}
+	Message: "You have downloaded several jobs' output in the last minute. Wait a few seconds and try again.", RetryAfter: zipEvery}
 
 // API serves the script and job routes.
 type API struct {
@@ -346,7 +346,6 @@ func (a *API) jobOutputZip(w http.ResponseWriter, r *http.Request) error {
 	}
 	c := httpapi.Caller(r)
 	if !a.zips.Allow(c.Actor.ID.String()) {
-		w.Header().Set("Retry-After", strconv.Itoa(int(zipEvery/time.Second)))
 		return errTooManyZips
 	}
 	arc, err := a.svc.OutputArchive(r.Context(), c, id)
