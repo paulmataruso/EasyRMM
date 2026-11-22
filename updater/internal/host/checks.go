@@ -368,7 +368,7 @@ func downloadBundle(ctx context.Context, src fetch.Source, m *release.Manifest, 
 func runSetup(ctx context.Context, deployDir string, log *slog.Logger) error {
 	cmd := exec.CommandContext(ctx, filepath.Join(deployDir, "scripts", "setup.sh"), "--upgrade", "--no-updater") //nolint:gosec // the verified bundle's setup.sh
 	cmd.Dir = deployDir
-	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8"}
+	cmd.Env = fixedEnv()
 	cmd.SysProcAttr = ownGroup()
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out

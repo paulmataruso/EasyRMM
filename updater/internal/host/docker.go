@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"os/user"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,7 +34,7 @@ type ExecRunner struct{}
 func (ExecRunner) Run(ctx context.Context, dir string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // arguments the updater builds
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8"}
+	cmd.Env = fixedEnv()
 	cmd.SysProcAttr = ownGroup()
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
@@ -43,6 +44,21 @@ func (ExecRunner) Run(ctx context.Context, dir string, stdin []byte, args ...str
 	}
 	return stdout.Bytes(), nil
 }
+
+// fixedEnv is the environment of the commands the updater runs: a fixed
+// PATH and locale, and the home directory of the user it runs as (root's,
+// /root, on a host), where docker finds its configuration and, in some
+// installations, its Compose plugin. Nothing else is taken from the shell.
+func fixedEnv() []string {
+	home := "/root"
+	if u, err := currentUser(); err == nil && u.HomeDir != "" {
+		home = u.HomeDir
+	}
+	return []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + home, "LANG=C.UTF-8"}
+}
+
+// currentUser is the user the updater runs as; the tests' is another.
+var currentUser = user.Current
 
 // ownGroup puts a command in a process group of its own: a terminal's
 // Ctrl-C or hang-up, which reaches its foreground group, must not stop

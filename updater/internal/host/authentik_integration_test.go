@@ -57,13 +57,15 @@ func (c *cluster) docker(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// wait waits for PostgreSQL to answer. pg_isready is told the user: run as
+// CI's user, which the image does not know, it cannot name one itself.
 func (c *cluster) wait(logLine string) {
 	c.t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		logs, _ := exec.Command("docker", "logs", c.name).CombinedOutput()
 		if (logLine == "" || strings.Contains(string(logs), logLine)) &&
-			exec.Command("docker", "exec", c.name, "pg_isready", "-q").Run() == nil {
+			exec.Command("docker", "exec", c.name, "pg_isready", "-q", "-U", "postgres").Run() == nil {
 			return
 		}
 		time.Sleep(250 * time.Millisecond)

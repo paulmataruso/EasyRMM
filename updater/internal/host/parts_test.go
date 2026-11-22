@@ -3,7 +3,9 @@ package host
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -427,10 +429,29 @@ esac
 `, 0o755)
 	t.Setenv("PATH", bin+":/usr/bin:/bin")
 	t.Setenv("FOO", "from the shell")
+	t.Setenv("HOME", "/home/from-the-shell")
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	out, err := ExecRunner{}.Run(context.Background(), dir, []byte("input"), "ok")
-	if err != nil || string(out) != "in "+dir+" with HOME=/root FOO=unset\ninput" {
+	if err != nil || string(out) != "in "+dir+" with HOME="+me.HomeDir+" FOO=unset\ninput" {
 		t.Errorf("Run = %q, %v", out, err)
+	}
+	// HOME is the home of the user the updater runs as: as root, /root;
+	// as CI's runner, its own, where docker finds the Compose plugin
+	// (with root's, which it cannot read, docker knows no compose).
+	was := currentUser
+	currentUser = func() (*user.User, error) { return &user.User{Uid: "1001", HomeDir: "/home/runner"}, nil }
+	t.Cleanup(func() { currentUser = was })
+	out, err = ExecRunner{}.Run(context.Background(), dir, nil, "ok")
+	if err != nil || string(out) != "in "+dir+" with HOME=/home/runner FOO=unset\n" {
+		t.Errorf("Run as another user = %q, %v", out, err)
+	}
+	currentUser = func() (*user.User, error) { return nil, errors.New("no such user") }
+	if out, err = (ExecRunner{}).Run(context.Background(), dir, nil, "ok"); err != nil || !strings.Contains(string(out), "HOME=/root ") {
+		t.Errorf("Run as an unknown user = %q, %v", out, err)
 	}
 	_, err = ExecRunner{}.Run(context.Background(), dir, nil, "fail", "now")
 	if err == nil || !strings.Contains(err.Error(), "docker fail now") || !strings.Contains(err.Error(), "one / two / three") {
