@@ -1,11 +1,25 @@
 # ADR-0065: Hardware diagnostics and health monitoring
 
-* Status: Accepted (2026-11-21, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-21, after an independent review); slice 1
+  implemented in PR #86, the later slices not yet.
 * Revised after an independent review (2026-11-21): commands allowed
   whole rather than by opcode, kernel default timeouts, failing disks
   that stay in view, and the review's other findings, each in its
   section.
+* Amended 2026-11-21, decided in review while slice 1 was built: a
+  missing disk's alerts resolve `subject_gone` once it has been missing
+  for 14 days and no hardware report since lists it, compared with the
+  hardware reports rather than with when the inventory arrived. The
+  agent uploads its inventory only when it changes, so after a disk is
+  swapped while the device is off, the inventory arrives before the
+  report that leaves the disk out and never after it, and the rule as
+  first written would never have resolved the alert. See *Disks that
+  disappear*.
+* Amended 2026-11-22, decided in review while slice 1 was built: the
+  sizes measured, and the hardware report's body limit raised from 256
+  to 512 KiB, because the largest report an agent can build (64 disks,
+  each fact and the attribute table at their longest) is 267 KiB. See
+  *Size*.
 * Nothing here was decided by the owner. Everything marked as decided
   was decided in review, and the owner can overturn it; the
   [owner questions](#owner-questions) list what is the owner's.
@@ -38,8 +52,8 @@
   built: its Windows test job, the plan's step 6, runs the agent's tests
   as LocalSystem on CI's runners; nothing else of it is needed here),
   and these proposed ADRs:
-  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (Windows
-  machines under KVM; tests run as LocalSystem),
+  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (accepted
+  since, on 2026-11-22; Windows machines under KVM; tests run as LocalSystem),
   [ADR-0058](0058-signed-settings-that-reach-the-agent.md) (settings
   per organization, for later). ADR-0063 (who sees job output) is on a
   branch of its own and not merged, so it is cited without a link; the
@@ -479,11 +493,14 @@ domain-controller role).
   * **on their own** as `subject_gone`, a new resolution, at the first
     evaluation at which both hold: the disk has been missing for at
     least 14 days (by the server's clock, from the first report that
-    left it out), and the device's latest inventory was received after
-    that report and lists no disk with the disk's identity (model and
-    serial, or name where it has no serial). Its row goes then too; its
-    samples stay until their retention. Until both hold, nothing
-    happens on its own, however long it has been missing.
+    left it out), and no hardware report since then lists a disk with
+    its identity (model and serial, or name where it has no serial); a
+    report that lists it ends its being missing. Its row goes then too;
+    its samples stay until their retention. Until both hold, nothing
+    happens on its own. *(Amended 2026-11-21, decided in review: the
+    rule first compared with the device's inventory, which an agent
+    sends only when it changes, so it could arrive before the report
+    that left the disk out and never after it.)*
 
   A device that stops reporting marks nothing missing: only a report
   that leaves a disk out does. A disk that died and dropped off the bus
@@ -514,10 +531,10 @@ domain-controller role).
   `raid_controller`, `storage_driver`, `container`, `smart_off`,
   `usb_bridge`, `protocol_not_read`, `not_kept`, `asleep`, `timeout`,
   `timed_out_recently`, `io_error`, `access_denied`, `bad_checksum`,
-  `agent_error`, `stale`, `missing`, `invalid_report` and the like),
-  shown in words by the console. The health report may add a short
-  detail (a Windows error number); the inventory never does, so its
-  hash stays stable.
+  `agent_error`, `other_disk`, `stale`, `missing`, `invalid_report` and
+  the like), shown in words by the console. The health report may add
+  a short detail (a Windows error number); the inventory never does, so
+  its hash stays stable.
 * **Old fields keep the old rule.** The inventory's existing fields
   stay as they are, empty when unread; changing their encoding would
   break every older server. New facts follow this rule.
@@ -738,7 +755,7 @@ page not listed, and expects every one refused.
 | SMART READ ATTRIBUTE THRESHOLDS (B0h, D1h) | As READ DATA | The fallback verdict only (*What is read*) |
 | SMART RETURN STATUS (B0h, DAh) | LBA mid 4Fh, LBA high C2h; every other field 0; non-data; registers returned | The drive's verdict |
 | SMART READ LOG (B0h, D5h) | LBA mid 4Fh, LBA high C2h; log address (LBA low) 00h or 01h with count 1, or 04h with count 1 to 8 as the directory gives its size; PIO data-in | 00h, the SMART log directory: which logs exist and how long. 01h, the summary error log: the drive's error count. 04h, Device Statistics, where only this directory lists it |
-| READ LOG EXT (2Fh) | Log address 00h, page 0; or 04h, page 00h, 03h, 04h, 05h or 07h; count 1; features 0; PIO data-in; 48-bit | 00h, the general-purpose log directory. 04h, Device Statistics: the list of pages, rotating media, general errors, temperature, solid state |
+| READ LOG EXT (2Fh) | Log address 00h, page 0; or 04h, page 00h, 03h, 05h or 07h; count 1; features 0; PIO data-in; 48-bit | 00h, the general-purpose log directory. 04h, Device Statistics: the list of pages, rotating media, temperature, solid state |
 
 * **ATA PASS-THROUGH (16) only, never (12).** Operation code A1h,
   PASS-THROUGH (12), is also BLANK, an MMC command for optical drives
@@ -828,7 +845,7 @@ and a disk may need its spin-up time to answer. So:
 | Pending sectors | — | Attribute 197 | Yes, apart from reallocated ones |
 | Uncorrectable sectors | — | Attribute 198 | Yes, with pending ones |
 | Reported drive errors | Number of error information log entries (bytes 191:176) | The summary SMART error log's count, bytes 452–453 | Reported |
-| Power-on hours | Health log | Attribute 9 | Reported |
+| Power-on hours | Health log | Attribute 9, its raw value's low 24 bits (amended 2026-11-22, decided in review: some makers keep minutes or milliseconds above them) | Reported |
 | Data written | Data units written, in thousands of 512-byte units | — | Reported |
 | Unsafe shutdowns | Health log | — | Reported |
 | Every attribute | — | ID, flags, value, worst, threshold, raw (48 bits) | Pre-fail ones in the verdict |
@@ -904,8 +921,11 @@ numbers.
 * **On a goroutine of its own**, not in the heartbeat's loop, so a slow
   disk never delays a heartbeat.
 * **Sleeping disks are not woken.** An ATA disk that Windows'
-  `GetDevicePowerState` says is not working, or that CHECK POWER MODE
-  says is in standby, is skipped: *unknown* (`asleep`), and the server
+  `GetDevicePowerState` says is not working, that Linux's runtime power
+  management has suspended (its SCSI device's `power/runtime_status` is
+  `suspended`, where any command, CHECK POWER MODE included, would resume
+  it first; amended 2026-11-22, decided in review), or that CHECK POWER
+  MODE says is in standby, is skipped: *unknown* (`asleep`), and the server
   keeps showing its last values with their time (and its level, if it
   was failing or warning). After 24 hours of
   skipping, the agent reads it once, waking it, so a disk that always
@@ -925,11 +945,15 @@ numbers.
   heartbeat, which stays small and whose failures stay as they are;
   **not in the hashed inventory**, whose hash would then change every
   half hour and send up to 4 MiB again.
-* **Size.** About 0.8 KiB for an NVMe disk and 2.5 KiB for an ATA disk
-  with 30 attributes (estimates, measured in slice 1); at most 64
-  disks, so the body limit is 256 KiB. The heartbeat gains nothing; the
+* **Size.** About 1.0 KiB for an NVMe disk and 3.1 KiB for an ATA disk
+  with 30 attributes (measured in slice 1 from `tools/agentsim`'s
+  reports; first estimated at 0.8 and 2.5 KiB); at most 64 disks, so
+  the body limit is 512 KiB. *(Amended 2026-11-22, decided in review:
+  first 256 KiB, but the largest report an agent can build, 64 disks
+  with every fact and the attribute table at their longest, is 267 KiB;
+  a test holds it under the limit.)* The heartbeat gains nothing; the
   inventory gains about 40 bytes a disk. A device with two disks sends
-  about 5 KiB every 30 minutes, 240 KiB a day; 10,000 devices send
+  about 4 KiB every 30 minutes, 200 KiB a day; 10,000 devices send
   about 5.6 reports a second, against 167 heartbeats a second.
 * **A limit per device** beside the existing ones: one report in 10
   minutes with bursts of 6, as inventories have.
@@ -948,6 +972,18 @@ numbers.
   for alerts is made on the server: the first 16 bytes of the SHA-256 of
   the drive's model and serial, in hex; a disk without a serial gets
   one from its name, marked as unstable.
+* **The agent checks the drive is the disk listed** (amended
+  2026-11-22, decided in review). A reading names the disk as the
+  inventory does, so a name that now leads to another disk (disks added,
+  removed or renumbered since the listing) would give that disk's health
+  to this one. The drive's own serial, Identify Controller's SN or
+  IDENTIFY DEVICE's words 10 to 19, is compared with the listing's,
+  spaces squeezed; on a mismatch the disk is *unknown* (`other_disk`),
+  with nothing it read. A serial missing on either side is not compared,
+  nor is a listed serial in the form Windows' storage stack gives some
+  NVMe drives instead of theirs, the namespace's EUI-64 or NGUID in
+  groups of four hex digits (`0025_3852_81B0_5A6A`); that form is from
+  public reports, *to be confirmed* on a real Windows NVMe drive.
 
 ### Disk firmware in the inventory (F1's first part)
 *Decided in review.*
@@ -1035,7 +1071,10 @@ numbers.
   The existing threshold column (1 to 100) fits all five; its `CHECK`
   that only `offline` has no threshold gains `failing` and the
   temperature check's *drive's own limit*. Minutes apply to temperature
-  only (at least 30, the reading interval).
+  only: at least 60, two reading intervals, so that the window holds the
+  two readings the check needs. *(Amended 2026-11-22, decided in review:
+  first at least 30, the reading interval, at which readings 30 minutes
+  apart never both fell in the window and the check could never open.)*
 * **Pending sectors are judged apart** from reallocated ones because
   they go down: smartd's manual says the count of pending sectors
   drops "when all pending sectors have been reallocated or could be
@@ -1080,6 +1119,18 @@ numbers.
 * **Evaluated in `monitoring.Evaluate`**, each minute, under its lock,
   from `device_disk_health` and the samples, with the policies'
   coverage and reconciliation as for every kind.
+  *Amended 2026-11-22, decided in review:* each disk's readings are read
+  back only as far as its check needs, since its open alert opened, or
+  without one the last day, which a sleeping disk is still read within;
+  missing disks and disks never judged are not read at all. The bound is
+  an index condition (a `CASE`: under row-level security PostgreSQL
+  keeps a `coalesce` out of the index). On 10,000 disks with 1,066 rows
+  each and every check on, the query read about 890,000 buffers in 28
+  to 63 seconds before, mostly over the 30-second statement timeout,
+  and 300,000 to 400,000 in 3.2 to 7.8 seconds after, once its pages
+  were cached (21 to 37 seconds on the first run after a `VACUUM`); a
+  partial index on full judged readings changed neither, so none was
+  added (`TestDiskFactsAtScale`).
 * **Added by a migration** as five shared policies, **only *Disk
   failing* turned on**, the other four added turned off for each MSP
   to turn on (owner question 2 asks the owner to confirm this
@@ -1428,8 +1479,9 @@ this order, each when its inputs exist.
   *unknown* and a failing one staying *failing*, "last read …", through
   age, timeouts and an offline device; a disk dropped by a report kept
   as *missing* with its alert open, resolved by hand and staying so, and
-  resolved `subject_gone` only after 14 days and an inventory without
-  it, not after 13 days, not without that inventory; two disks giving
+  resolved `subject_gone` only after 14 days missing, not after 13
+  days, not when a report lists it again, and a disk that comes back
+  after it opening a new alert; two disks giving
   two alerts, one acknowledged; each check opening, and resolving only
   after two clearing readings (temperature 5 °C below), a `pending`
   alert resolving when the count falls; changing a policy's check
@@ -1490,6 +1542,17 @@ this order, each when its inputs exist.
   deadline. A VHD attached in the job (FileBackedVirtual) is reported
   *unsupported* (whether the runner allows attaching one is *to be
   confirmed*).
+  *Amended 2026-11-22, decided in review:* slice 1's step runs as the
+  runner's elevated administrator, not LocalSystem, on
+  `windows-latest` only. The runner's two disks are Azure virtual disks:
+  NVMe ones, which the NVMe path reads, or, on some runners, Hyper-V's
+  virtual SCSI disks (*Msft Virtual Disk*), whose driver refuses both
+  pass-throughs (the NVMe query with *Incorrect function*); they are not
+  drives. The test also passes on a driver's refusal, which on a virtual
+  machine the reader records as the detail of *unsupported
+  (virtual_machine)*, so it does not by itself show a read.
+  `IOCTL_ATA_PASS_THROUGH` and `GetDevicePowerState` have not completed
+  a successful call anywhere yet.
 * **Windows machines under KVM**, when ADR-0054's W1 builds them: QEMU's
   NVMe and AHCI disks under Windows' own `stornvme` and `storahci`, read
   through both IOCTLs: stand-ins for real drives, named so.

@@ -21,7 +21,8 @@ const (
 	StatusResolved     = "resolved"
 )
 
-// Alert is one policy's condition on one device.
+// Alert is one policy's condition on one device, and on one of its disks
+// for disk health (Subject).
 type Alert struct {
 	ID               uuid.UUID  `json:"id"`
 	PolicyID         *uuid.UUID `json:"policyId"`
@@ -33,14 +34,23 @@ type Alert struct {
 	SiteName         string     `json:"siteName"`
 	// The policy's name, condition and severity: as they were when the
 	// alert resolved, or as they are while it is not.
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Threshold *int   `json:"threshold"`
-	Minutes   int    `json:"minutes"`
-	Severity  string `json:"severity"`
-	Status    string `json:"status"`
+	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
+	CheckName *string `json:"checkName"`
+	Threshold *int    `json:"threshold"`
+	Minutes   int     `json:"minutes"`
+	Severity  string  `json:"severity"`
+	Status    string  `json:"status"`
+	// Subject is the disk's identity for disk health, empty for the other
+	// kinds; SubjectLabel names it ("PhysicalDrive1 · Samsung SSD 870 EVO
+	// 1TB") and Detail says what holds ("Pending sectors 8,
+	// uncorrectable 0").
+	Subject      string `json:"subject"`
+	SubjectLabel string `json:"subjectLabel"`
+	Detail       string `json:"detail"`
 	// Value raised the alert; LastValue is the latest. Percent, or minutes
-	// without a check-in for offline.
+	// without a check-in for offline; for disk health the count,
+	// percentage or °C the check watches, 1 for failing.
 	Value          float64    `json:"value"`
 	LastValue      float64    `json:"lastValue"`
 	OpenedAt       time.Time  `json:"openedAt"`
@@ -49,7 +59,8 @@ type Alert struct {
 	ResolvedAt     *time.Time `json:"resolvedAt"`
 	ResolvedBy     string     `json:"resolvedBy,omitempty"`
 	// Resolution says why it resolved: cleared, manual, not_covered,
-	// policy_off, policy_changed or policy_deleted.
+	// policy_off, policy_changed, policy_deleted or subject_gone (a disk
+	// missing from the device's hardware reports for 14 days).
 	Resolution string `json:"resolution,omitempty"`
 	CanManage  bool   `json:"canManage"`
 
@@ -57,7 +68,8 @@ type Alert struct {
 }
 
 const alertColumns = `a.id, a.seq, a.policy_id, a.device_id, d.name, d.organization_id, o.name, d.site_id, si.name,
-	a.name, a.kind, a.threshold, a.minutes, a.severity, a.status, a.value, a.last_value, a.opened_at,
+	a.name, a.kind, a.check_name, a.threshold, a.minutes, a.severity, a.status, a.subject, a.subject_label, a.detail,
+	a.value, a.last_value, a.opened_at,
 	a.acknowledged_at, a.acknowledged_by_label, a.resolved_at, a.resolved_by_label, coalesce(a.resolution, '')`
 
 const alertFrom = ` FROM alerts a
@@ -68,7 +80,8 @@ const alertFrom = ` FROM alerts a
 func scanAlert(row pgx.Row) (*Alert, error) {
 	var a Alert
 	err := row.Scan(&a.ID, &a.seq, &a.PolicyID, &a.DeviceID, &a.DeviceName, &a.OrganizationID, &a.OrganizationName, &a.SiteID, &a.SiteName,
-		&a.Name, &a.Kind, &a.Threshold, &a.Minutes, &a.Severity, &a.Status, &a.Value, &a.LastValue, &a.OpenedAt,
+		&a.Name, &a.Kind, &a.CheckName, &a.Threshold, &a.Minutes, &a.Severity, &a.Status, &a.Subject, &a.SubjectLabel, &a.Detail,
+		&a.Value, &a.LastValue, &a.OpenedAt,
 		&a.AcknowledgedAt, &a.AcknowledgedBy, &a.ResolvedAt, &a.ResolvedBy, &a.Resolution)
 	return &a, err
 }
@@ -84,6 +97,10 @@ type AlertQuery struct {
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
 	Severity       string
+	// PolicyID and Subject narrow to one policy's alerts, and for disk
+	// health to one disk's: an alert's earlier and later openings.
+	PolicyID uuid.UUID
+	Subject  string
 	// Before pages: alerts opened before the one with this cursor.
 	Before int64
 	Limit  int
@@ -105,6 +122,7 @@ func (s *Service) ListAlerts(ctx context.Context, c access.Caller, q AlertQuery)
 	f := apperr.Fields{}
 	f.Check(q.Status == FilterActive || q.Status == FilterResolved || q.Status == FilterAll, "status", "Use active, resolved or all.")
 	f.Check(q.Severity == "" || q.Severity == SeverityWarning || q.Severity == SeverityCritical, "severity", "Use warning or critical.")
+	f.Check(len(q.Subject) <= maxSubject, "subject", "A subject is at most 64 characters.")
 	if err := f.Err(); err != nil {
 		return nil, 0, err
 	}
@@ -118,8 +136,11 @@ func (s *Service) ListAlerts(ctx context.Context, c access.Caller, q AlertQuery)
 			  AND ($4::uuid IS NULL OR d.site_id = $4)
 			  AND ($5 = '' OR a.severity = $5)
 			  AND ($6 = 0 OR a.seq < $6)
+			  AND ($8::uuid IS NULL OR a.policy_id = $8)
+			  AND ($9 = '' OR a.subject = $9)
 			ORDER BY a.seq DESC LIMIT $7`,
-			q.Status, nullUUID(q.DeviceID), nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Severity, q.Before, q.Limit+1)
+			q.Status, nullUUID(q.DeviceID), nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Severity, q.Before, q.Limit+1,
+			nullUUID(q.PolicyID), q.Subject)
 		if err != nil {
 			return err
 		}

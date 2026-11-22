@@ -36,6 +36,18 @@ type Agent struct {
 	// Update is where the agent stands against the build the server serves
 	// for its platform; nil when the server serves none.
 	Update *AgentUpdate `json:"update"`
+	// Accepts is what the agent's build last said its polls accept, such as
+	// job.pwsh (ADR-0064); nil when the build it runs has not said.
+	Accepts []string `json:"accepts"`
+	// PowerShell7 says whether its last inventory listed a usable
+	// PowerShell 7; nil when the inventory listed no PowerShell installs
+	// (an agent too old to look, or not Windows).
+	PowerShell7 *bool `json:"powerShell7"`
+	// PowerShell7Blocked says why a pwsh run fails there, without falling
+	// back to Windows PowerShell, when the inventory listed no usable
+	// PowerShell 7 but a blocked one (agentproto.PowerShellInstall.Blocked,
+	// ADR-0064); empty otherwise.
+	PowerShell7Blocked string `json:"powerShell7Blocked,omitempty"`
 
 	// The update the server holds for the agent, if any.
 	updateState, updateTarget string
@@ -143,7 +155,7 @@ type Device struct {
 	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
 	CanManageSoftware bool `json:"canManageSoftware"`
 	// CanCheckHardening: the caller holds script.run here and the device
-	// has the EasyRMM agent on Linux (ADR-0051).
+	// has the EasyRMM agent on Linux or Windows (ADR-0051, ADR-0054).
 	CanCheckHardening bool `json:"canCheckHardening"`
 	// CanHarden: the caller holds device.harden here and the device has the
 	// EasyRMM agent on Linux: it may apply and undo hardening (ADR-0051).
@@ -156,6 +168,9 @@ type Device struct {
 	// Hardening sums up what hardening jobs found on the device, nil until
 	// one reported (ADR-0051).
 	Hardening *HardeningSummary `json:"hardening"`
+	// DiskHealth sums up its disks' health, nil while its agent has
+	// reported none (ADR-0065).
+	DiskHealth *DiskHealthSummary `json:"diskHealth"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
@@ -168,6 +183,30 @@ type HardeningSummary struct {
 	CheckedAt time.Time      `json:"checkedAt"`
 	States    map[string]int `json:"states"`
 }
+
+// DiskHealthSummary is a device's disk health (ADR-0065, "A device's disk
+// health"): its label, and how many of its disks show each state.
+type DiskHealthSummary struct {
+	// Label is the highest of the disks' states in the order failing,
+	// warning, unknown, healthy; else unavailable if any disk is, else
+	// unsupported.
+	Label  string         `json:"label"`
+	States map[string]int `json:"states"`
+}
+
+// Disk health filters of a device list (Query.DiskHealth): a label, or
+// DiskNotReported. DiskUnavailable and DiskUnsupported find a device with
+// any disk in that state, whatever its label.
+const (
+	DiskFailing     = "failing"
+	DiskWarning     = "warning"
+	DiskUnknown     = "unknown"
+	DiskHealthy     = "healthy"
+	DiskUnavailable = "unavailable"
+	DiskUnsupported = "unsupported"
+	// DiskNotReported: the device's agent has reported no disk health.
+	DiskNotReported = "not_reported"
+)
 
 // Hardening filters of a device list (Query.Hardening).
 const (
@@ -206,6 +245,8 @@ type Query struct {
 	Status string
 	// Hardening is "" or one of the Hardening* filters.
 	Hardening string
+	// DiskHealth is "" or one of the Disk* filters.
+	DiskHealth string
 }
 
 // MaxList bounds one list response.
@@ -221,10 +262,13 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
 	coalesce(u.error, ''), coalesce(u.requested, false),
 	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, ''),
-	hc.checked_at, coalesce(hs.states, '{}')`
+	hc.checked_at, coalesce(hs.states, '{}'),
+	CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END,
+	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}')`
 
 // from joins what the columns read. hs counts the device's hardening
-// modules by state, as {"in_place": 9, "partly": 1}.
+// modules by state, as {"in_place": 9, "partly": 1}; ds its disks by the
+// state the console shows, with the device's label (NULL without disks).
 const from = ` FROM devices d
 	JOIN sites s ON s.id = d.site_id
 	JOIN organizations o ON o.id = d.organization_id
@@ -235,7 +279,19 @@ const from = ` FROM devices d
 	LEFT JOIN LATERAL (
 		SELECT jsonb_object_agg(x.state, x.n) AS states
 		FROM (SELECT h.state, count(*) AS n FROM device_hardening h WHERE h.device_id = d.id GROUP BY h.state) x
-	) hs ON true`
+	) hs ON true
+	LEFT JOIN LATERAL (
+		SELECT jsonb_object_agg(x.state, x.n) AS states, CASE
+				WHEN bool_or(x.state = 'failing') THEN 'failing'
+				WHEN bool_or(x.state = 'warning') THEN 'warning'
+				WHEN bool_or(x.state = 'unknown') THEN 'unknown'
+				WHEN bool_or(x.state = 'healthy') THEN 'healthy'
+				WHEN bool_or(x.state = 'unavailable') THEN 'unavailable'
+				WHEN bool_or(x.state = 'unsupported') THEN 'unsupported'
+			END AS label
+		FROM (SELECT easyrmm_disk_state(h.missing_since, h.state, h.judged_level, h.judged_at) AS state, count(*) AS n
+			FROM device_disk_health h WHERE h.device_id = d.id GROUP BY 1) x
+	) ds ON true`
 
 func scan(row pgx.Row) (*Device, error) {
 	var (
@@ -247,6 +303,8 @@ func scan(row pgx.Row) (*Device, error) {
 		asked      *time.Time
 		checkedAt  *time.Time
 		states     map[string]int
+		diskLabel  *string
+		diskStates map[string]int
 	)
 	err := row.Scan(&d.ID, &d.OrganizationID, &d.OrganizationName, &d.SiteID, &d.SiteName, &d.DeviceGroupID, &d.DeviceGroupName,
 		&d.Name, &d.Hostname, &d.OSDescription, &d.Platform, &d.MeshNodeID, &d.RemoteOnline,
@@ -254,7 +312,7 @@ func scan(row pgx.Row) (*Device, error) {
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
-		&checkedAt, &states)
+		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +323,9 @@ func scan(row pgx.Row) (*Device, error) {
 	}
 	if checkedAt != nil {
 		d.Hardening = &HardeningSummary{CheckedAt: *checkedAt, States: states}
+	}
+	if diskLabel != nil {
+		d.DiskHealth = &DiskHealthSummary{Label: *diskLabel, States: diskStates}
 	}
 	if enrolledAt != nil {
 		a.EnrolledAt = *enrolledAt
@@ -303,7 +364,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
-	d.CanCheckHardening = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermScriptRun, r)
+	d.CanCheckHardening = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermScriptRun, r)
 	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)
 	d.CanRemove = c.Can(rbac.PermDeviceRetire, r)
 	s.updateStatus(d)
@@ -352,6 +413,11 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	default:
 		return nil, apperr.Invalid("hardening", "Use attention, in_place or unchecked.")
 	}
+	switch q.DiskHealth {
+	case "", DiskFailing, DiskWarning, DiskUnknown, DiskHealthy, DiskUnavailable, DiskUnsupported, DiskNotReported:
+	default:
+		return nil, apperr.Invalid("diskHealth", "Use failing, warning, unknown, healthy, unavailable, unsupported or not_reported.")
+	}
 	out := []*Device{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+columns+from+`
@@ -364,8 +430,15 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				WHEN 'in_place' THEN hc.device_id IS NOT NULL AND NOT coalesce(hs.states ?| $7::text[], false)
 				WHEN 'unchecked' THEN d.platform = 'linux' AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
 				ELSE true END
+			  AND CASE $8
+				WHEN '' THEN true
+				WHEN 'not_reported' THEN ds.label IS NULL
+				WHEN 'unavailable' THEN coalesce(ds.states ? $8, false)
+				WHEN 'unsupported' THEN coalesce(ds.states ? $8, false)
+				ELSE ds.label IS NOT DISTINCT FROM $8 END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
-			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates)
+			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates,
+			q.DiskHealth)
 		if err != nil {
 			return err
 		}

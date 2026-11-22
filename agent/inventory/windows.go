@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/agent/powershell"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -35,7 +36,7 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 		CPU:    processors(),
 		Memory: totalMemory(),
 		OS:     windowsOS(),
-		Disks:  physicalDisks(),
+		Disks:  disks(physicalDisks()),
 	}
 	inv.System.Virtualization = hypervisor(inv.System)
 	inv.Interfaces, inv.Gateways, inv.DNS = adapters()
@@ -46,7 +47,17 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 	}
 	inv.PackageManager, inv.Packages = "windows", installedPrograms(ctx)
 	inv.EasyPatch = c.easyPatch(ctx)
+	inv.PowerShell = powerShell()
 	return inv
+}
+
+// powerShell lists Windows PowerShell and the PowerShell 7 installs, each
+// usable one's whole install checked (ADR-0064). Without Program Files'
+// known folders, which Windows always has, it lists Windows PowerShell
+// alone.
+func powerShell() []agentproto.PowerShellInstall {
+	roots, _ := powershell.Roots()
+	return powershell.Discover(roots)
 }
 
 // firmware reads the SMBIOS tables Windows keeps a copy of.
@@ -129,9 +140,15 @@ const (
 	storageSeekPenalty        = 7
 )
 
+// Storage lists the disks as Collect does, with their bus types, and names
+// the machine's virtualization.
+func (c Collector) Storage() Storage {
+	return Storage{Virtualization: hypervisor(firmware()), Disks: physicalDisks()}
+}
+
 // physicalDisks reads \\.\PhysicalDrive0 to 63.
-func physicalDisks() []agentproto.Disk {
-	out := []agentproto.Disk{}
+func physicalDisks() []ListedDisk {
+	out := []ListedDisk{}
 	for i := range 64 {
 		name := fmt.Sprintf("PhysicalDrive%d", i)
 		if d, ok := physicalDisk(name); ok {
@@ -144,26 +161,29 @@ func physicalDisks() []agentproto.Disk {
 	return out
 }
 
-func physicalDisk(name string) (agentproto.Disk, bool) {
+func physicalDisk(name string) (ListedDisk, bool) {
 	path, err := windows.UTF16PtrFromString(`\\.\` + name)
 	if err != nil {
-		return agentproto.Disk{}, false
+		return ListedDisk{}, false
 	}
 	h, err := windows.CreateFile(path, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
 	if err != nil {
-		return agentproto.Disk{}, false
+		return ListedDisk{}, false
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
 	var length int64
 	var n uint32
 	if err := windows.DeviceIoControl(h, ioctlDiskGetLengthInfo, nil, 0, (*byte)(unsafe.Pointer(&length)), 8, &n, nil); err != nil || length <= 0 {
-		return agentproto.Disk{}, false
+		return ListedDisk{}, false
 	}
-	d := agentproto.Disk{Name: name, SizeBytes: uint64(length)}
+	d := ListedDisk{Disk: agentproto.Disk{Name: name, SizeBytes: uint64(length)}}
+	// Without the descriptor the firmware could not be read this time.
+	d.Firmware = &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonIOError}
 	desc := make([]byte, 1024)
 	if b, ok := queryProperty(h, storageDeviceProperty, desc); ok {
 		if sd, ok := parseStorageDescriptor(b); ok {
-			d.Model, d.Serial, d.Removable = sd.Model, sd.Serial, sd.Removable
+			d.Model, d.Serial, d.Removable, d.Bus = sd.Model, sd.Serial, sd.Removable, sd.Bus
+			d.Firmware = firmwareRead(sd.Revision)
 			if sd.Bus == busNVMe {
 				d.Kind = "nvme"
 			}

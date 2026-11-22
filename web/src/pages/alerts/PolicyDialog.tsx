@@ -1,22 +1,59 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { api, fieldError } from "../../api/client";
 import { useApiMutation, useOrganizations, useSites } from "../../api/hooks";
-import type { AlertKind, AlertPolicy, AlertPolicyInput, AlertSeverity, ScriptLevel } from "../../api/types";
+import type { AlertKind, AlertPolicy, AlertPolicyInput, AlertSeverity, DiskCheck, ScriptLevel } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Button, Field, InlineError, Input, KeyValueList, Segmented, Select, SelectField, TextareaField, TextField } from "../../components/ui";
+import { Button, cx, Field, InlineError, Input, KeyValueList, Segmented, Select, SelectField, TextareaField, TextField } from "../../components/ui";
 import { plural } from "../../lib/format";
-import { conditionText, KIND_NAMES, KINDS, policyScope, POLICY_LIMITS } from "./alertText";
+import { CHECK_NAMES, CHECKS, conditionText, KIND_NAMES, KINDS, policyScope, POLICY_LIMITS } from "./alertText";
 
-const FIELDS = ["name", "description", "kind", "threshold", "minutes", "severity", "organizationId", "siteId"];
+const FIELDS = ["name", "description", "kind", "checkName", "threshold", "minutes", "severity", "organizationId", "siteId"];
 
 const SEVERITIES: { value: AlertSeverity; label: string }[] = [
   { value: "warning", label: "Warning" },
   { value: "critical", label: "Critical" },
 ];
 
-const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90 };
+const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90, disk_health: 0 };
+
+/** Each disk health check's threshold when chosen: the shared policies' defaults (ADR-0065, "Alerts"); 60 °C when a
+ * temperature check is given one instead of each drive's own limit. */
+const CHECK_THRESHOLD: Record<DiskCheck, number> = { failing: 0, errors: 1, pending: 1, wear: 90, temperature: 60 };
+
+/** What a disk health check's threshold counts, beside its field. */
+const CHECK_UNITS: Record<DiskCheck, string> = { failing: "", errors: "sectors and errors", pending: "sectors", wear: "% used", temperature: "°C" };
+
+/** The server's words for a threshold out of range (monitoring/policies.go). */
+const CHECK_RANGE: Record<DiskCheck, string> = {
+  failing: "",
+  errors: "Use a count from 1 to 100.",
+  pending: "Use a count from 1 to 100.",
+  wear: "Use a percentage from 1 to 100.",
+  temperature: "Use 1 to 100 °C, or the drive's own limit.",
+};
+
+/** What a disk health check watches, and when its alert resolves. */
+function checkHelp(check: DiskCheck, driveLimit: boolean): string {
+  switch (check) {
+    case "failing":
+      return "The drive's own verdict: SMART status threshold exceeded, a pre-fail attribute at or below its threshold, or an NVMe critical warning about its spare, reliability, read-only media or volatile memory backup. One alert per disk; it resolves after two readings that are not failing.";
+    case "errors":
+      return "Reallocated sectors plus NVMe media errors, 1 to 100. These counts only rise, so the alert stays until the disk is replaced or the threshold is raised: acknowledge it rather than resolve it.";
+    case "pending":
+      return "Pending plus offline-uncorrectable sectors, 1 to 100. These fall again as the drive reallocates or reads them; the alert resolves after two readings below the threshold.";
+    case "wear":
+      return "The percentage of its rated endurance a disk has used, 1 to 100. Wear only rises, so the alert stays until the disk is replaced or the threshold is raised: acknowledge it rather than resolve it.";
+    case "temperature":
+      return driveLimit
+        ? "Every reading in that time, at least two, at or over each drive's own temperature limit; a drive that reports no limit is not checked. It resolves after two readings 5 °C below the limit. Disks are read every 30 minutes, so that time is 60 to 1,440 minutes."
+        : "Every reading in that time, at least two, at or above the temperature. It resolves after two readings 5 °C below it. Disks are read every 30 minutes, so that time is 60 to 1,440 minutes.";
+  }
+}
+
+/** "a disk's own verdict is failing": a condition in the middle of a sentence, its units kept as they are. */
+const lowerFirst = (s: string) => (s ? s[0]!.toLowerCase() + s.slice(1) : s);
 
 /** Whether the caller can write policies somewhere, so the page offers "New policy". */
 export function useCanWritePolicies(): boolean {
@@ -41,6 +78,9 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<AlertKind>("cpu");
+  const [checkName, setCheckName] = useState<DiskCheck>("failing");
+  // A temperature check without a threshold uses each drive's own limit.
+  const [driveLimit, setDriveLimit] = useState(true);
   const [threshold, setThreshold] = useState("95");
   const [minutes, setMinutes] = useState("15");
   const [severity, setSeverity] = useState<AlertSeverity>("warning");
@@ -55,8 +95,12 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     setSiteId("");
     setName(policy?.name ?? "");
     setDescription(policy?.description ?? "");
-    setKind(policy?.kind ?? "cpu");
-    setThreshold(String(policy?.threshold ?? 95));
+    const k = policy?.kind ?? "cpu";
+    const check = policy?.checkName ?? "failing";
+    setKind(k);
+    setCheckName(check);
+    setDriveLimit(k !== "disk_health" || check !== "temperature" || policy?.threshold === null);
+    setThreshold(String(policy?.threshold ?? (k === "disk_health" ? CHECK_THRESHOLD[check] : DEFAULT_THRESHOLD[k])));
     setMinutes(String(policy?.minutes ?? 15));
     setSeverity(policy?.severity ?? "warning");
     setEnabled(policy?.enabled ?? true);
@@ -75,7 +119,10 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
             name: input.name,
             description: input.description,
             kind: input.kind,
+            ...(input.kind === "disk_health" && { checkName: input.checkName }),
             threshold: input.threshold,
+            // A change leaves out a null threshold, so the drive's own limit is asked for by name.
+            ...(input.kind === "disk_health" && input.checkName === "temperature" && input.threshold === null && { driveLimit: true }),
             minutes: input.minutes,
             severity: input.severity,
             enabled: input.enabled,
@@ -114,17 +161,38 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
   const err = (field: string) => missing[field] ?? fieldError(save.error, field);
 
   const offline = kind === "offline";
+  const diskHealth = kind === "disk_health";
+  const temperature = diskHealth && checkName === "temperature";
+  // Offline and the failing check take no threshold; a temperature check none when it uses each drive's own limit.
+  const noThreshold = offline || (diskHealth && (checkName === "failing" || (temperature && driveLimit)));
+  // Disk checks other than temperature take the reading interval as their minutes.
+  const showMinutes = !diskHealth || temperature;
   const thresholdN = Number(threshold);
   const minutesN = Number(minutes);
-  const minMinutes = offline ? POLICY_LIMITS.minOfflineMinutes : 1;
-  const validThreshold = offline || (Number.isInteger(thresholdN) && thresholdN >= 1 && thresholdN <= 100);
-  const validMinutes = Number.isInteger(minutesN) && minutesN >= minMinutes && minutesN <= POLICY_LIMITS.maxMinutes;
+  const minMinutes = offline ? POLICY_LIMITS.minOfflineMinutes : temperature ? POLICY_LIMITS.minTemperatureMinutes : 1;
+  const validThreshold = noThreshold || (Number.isInteger(thresholdN) && thresholdN >= 1 && thresholdN <= 100);
+  const validMinutes = !showMinutes || (Number.isInteger(minutesN) && minutesN >= minMinutes && minutesN <= POLICY_LIMITS.maxMinutes);
+  const sentThreshold = noThreshold ? null : thresholdN;
+  const sentMinutes = showMinutes ? minutesN : POLICY_LIMITS.diskMinutes;
+
+  /** Chooses a disk health check, with its default threshold (and an hour for a temperature check). */
+  function chooseCheck(c: DiskCheck) {
+    setCheckName(c);
+    setThreshold(String(CHECK_THRESHOLD[c]));
+    if (c === "temperature") {
+      setDriveLimit(true);
+      if (!(Number(minutes) >= POLICY_LIMITS.minTemperatureMinutes)) setMinutes(String(POLICY_LIMITS.minTemperatureMinutes));
+    }
+    edited("checkName");
+    edited("threshold");
+    edited("minutes");
+  }
 
   function submit(e: FormEvent) {
     e.preventDefault();
     const m: Record<string, string> = {};
     if (!name.trim()) m.name = "Enter a name.";
-    if (!validThreshold) m.threshold = "Use a whole percentage from 1 to 100.";
+    if (!validThreshold) m.threshold = diskHealth ? CHECK_RANGE[checkName] : "Use a whole percentage from 1 to 100.";
     if (!validMinutes) m.minutes = `Use ${minMinutes} to 1,440 minutes.`;
     if (!policy && level !== "shared" && !organizationId) m.organizationId = "Choose an organization.";
     if (!policy && level === "site" && !siteId) m.siteId = "Choose a site.";
@@ -136,12 +204,58 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
       name: name.trim(),
       description: description.trim(),
       kind,
-      threshold: offline ? null : thresholdN,
-      minutes: minutesN,
+      ...(diskHealth && { checkName }),
+      threshold: sentThreshold,
+      minutes: sentMinutes,
       severity,
       enabled,
     });
   }
+
+  const thresholdField = (label: string, unit: string) => (
+    <Field label={label} htmlFor={thresholdId} error={err("threshold")}>
+      <div className="flex items-center gap-1.5">
+        <Input
+          id={thresholdId}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={100}
+          step={1}
+          value={threshold}
+          aria-invalid={err("threshold") ? true : undefined}
+          onChange={(e) => {
+            setThreshold(e.target.value);
+            edited("threshold");
+          }}
+          className="w-20 tabular-nums"
+        />
+        <span className="text-sm whitespace-nowrap text-muted">{unit}</span>
+      </div>
+    </Field>
+  );
+  const minutesField = (
+    <Field label={offline ? "Without a check-in for" : "For"} htmlFor={minutesId} error={err("minutes")}>
+      <div className="flex items-center gap-1.5">
+        <Input
+          id={minutesId}
+          type="number"
+          inputMode="numeric"
+          min={minMinutes}
+          max={POLICY_LIMITS.maxMinutes}
+          step={1}
+          value={minutes}
+          aria-invalid={err("minutes") ? true : undefined}
+          onChange={(e) => {
+            setMinutes(e.target.value);
+            edited("minutes");
+          }}
+          className="w-20 tabular-nums"
+        />
+        <span className="text-sm text-muted">minutes</span>
+      </div>
+    </Field>
+  );
 
   const scope = policy
     ? policyScope(policy)
@@ -150,7 +264,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
       : (level === "site" ? sites.items.find((s) => s.id === siteId)?.name : orgs.items.find((o) => o.id === organizationId)?.name) ?? null;
   const summary =
     validThreshold && validMinutes
-      ? `${enabled ? "Raises" : "Once turned on, raises"} a ${severity} alert ${scope ? `on ${scope === "Every device" ? "any device" : `a device in ${scope}`} ` : ""}when: ${conditionText({ kind, threshold: offline ? null : thresholdN, minutes: minutesN }).toLowerCase()}.`
+      ? `${enabled ? "Raises" : "Once turned on, raises"} a ${severity} alert ${scope ? `on ${scope === "Every device" ? "any device" : `a device in ${scope}`} ` : ""}when: ${lowerFirst(conditionText({ kind, checkName, threshold: sentThreshold, minutes: sentMinutes }))}.`
       : null;
 
   return (
@@ -243,14 +357,18 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className={cx("grid grid-cols-1 gap-3", diskHealth ? "sm:grid-cols-2" : "sm:grid-cols-[minmax(0,1fr)_auto_auto]")}>
             <SelectField
               label="Watch for"
               value={kind}
               onChange={(e) => {
                 const k = e.target.value as AlertKind;
                 setKind(k);
-                if (k !== "offline" && kind === "offline") setThreshold(String(DEFAULT_THRESHOLD[k]));
+                if (k === "disk_health") {
+                  if (kind !== "disk_health") chooseCheck(checkName);
+                } else if (kind === "offline" || kind === "disk_health") {
+                  setThreshold(String(DEFAULT_THRESHOLD[k]));
+                }
                 edited("threshold");
                 edited("minutes");
               }}
@@ -262,53 +380,46 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
                 </option>
               ))}
             </SelectField>
-            {!offline && (
-              <Field label="At or above" htmlFor={thresholdId} error={err("threshold")}>
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    id={thresholdId}
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={100}
-                    step={1}
-                    value={threshold}
-                    aria-invalid={err("threshold") ? true : undefined}
-                    onChange={(e) => {
-                      setThreshold(e.target.value);
-                      edited("threshold");
-                    }}
-                    className="w-20 tabular-nums"
-                  />
-                  <span className="text-sm text-muted">%</span>
-                </div>
-              </Field>
+            {diskHealth ? (
+              <SelectField label="Check" value={checkName} onChange={(e) => chooseCheck(e.target.value as DiskCheck)} error={err("checkName")}>
+                {CHECKS.map((c) => (
+                  <option key={c} value={c}>
+                    {CHECK_NAMES[c]}
+                  </option>
+                ))}
+              </SelectField>
+            ) : (
+              <>
+                {!offline && thresholdField("At or above", "%")}
+                {minutesField}
+              </>
             )}
-            <Field label={offline ? "Without a check-in for" : "For"} htmlFor={minutesId} error={err("minutes")}>
-              <div className="flex items-center gap-1.5">
-                <Input
-                  id={minutesId}
-                  type="number"
-                  inputMode="numeric"
-                  min={minMinutes}
-                  max={POLICY_LIMITS.maxMinutes}
-                  step={1}
-                  value={minutes}
-                  aria-invalid={err("minutes") ? true : undefined}
-                  onChange={(e) => {
-                    setMinutes(e.target.value);
-                    edited("minutes");
-                  }}
-                  className="w-20 tabular-nums"
-                />
-                <span className="text-sm text-muted">minutes</span>
-              </div>
-            </Field>
           </div>
+          {diskHealth && checkName !== "failing" && (
+            <div className="flex flex-wrap items-start gap-3">
+              {temperature && (
+                <SelectField
+                  label="At or above"
+                  value={driveLimit ? "limit" : "degrees"}
+                  onChange={(e) => {
+                    setDriveLimit(e.target.value === "limit");
+                    edited("threshold");
+                  }}
+                >
+                  <option value="limit">The drive's own limit</option>
+                  <option value="degrees">A temperature</option>
+                </SelectField>
+              )}
+              {!noThreshold && thresholdField(temperature ? "Temperature" : "At or above", CHECK_UNITS[checkName])}
+              {temperature && minutesField}
+            </div>
+          )}
           <p className="-mt-1.5 text-xs text-muted">
             {offline
               ? "A device is checked in while its EasyRMM agent or MeshAgent is connected. 3 to 1,440 minutes."
-              : `Every measurement in that time must reach the percentage${kind === "disk" ? " on the fullest filesystem" : ""}, and the alert resolves after 5 quiet minutes. 1 to 1,440 minutes.`}
+              : diskHealth
+                ? checkHelp(checkName, driveLimit)
+                : `Every measurement in that time must reach the percentage${kind === "disk" ? " on the fullest filesystem" : ""}, and the alert resolves after 5 quiet minutes. 1 to 1,440 minutes.`}
           </p>
 
           <div className="flex flex-wrap items-center justify-between gap-3">

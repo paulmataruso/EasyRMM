@@ -23,11 +23,13 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/jobs/hardening/controls"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Hardening Linux computers (ADR-0051): a job of EasyRMM's own script, with
-// the mode, the modules and the options as arguments.
+// Hardening Linux computers (ADR-0051), and Windows (ADR-0054, in
+// hardening_windows.go): a job of EasyRMM's own script, with the mode, the
+// modules and the options as arguments.
 
 // KindHardening is the kind of a hardening job.
 const KindHardening = "hardening"
@@ -82,9 +84,11 @@ var HardeningModules = []string{
 
 // Hardening is what a hardening job does.
 type Hardening struct {
-	Mode    string           `json:"mode"`
-	Modules []string         `json:"modules"`
-	Options HardeningOptions `json:"options"`
+	// Platform is linux (stored as empty) or windows.
+	Platform string           `json:"platform,omitempty"`
+	Mode     string           `json:"mode"`
+	Modules  []string         `json:"modules"`
+	Options  HardeningOptions `json:"options"`
 }
 
 // HardeningOptions change what a module does. Each applies to one module.
@@ -101,6 +105,7 @@ type HardeningOptions struct {
 	PasswordOff     bool `json:"passwordOff,omitempty"`
 	// EPEL lets fail2ban come from EPEL on RHEL and its rebuilds.
 	EPEL bool `json:"epel,omitempty"`
+	WindowsHardeningOptions
 }
 
 // maxHardeningList bounds each list option.
@@ -260,7 +265,7 @@ func (h Hardening) label() string {
 func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in HardeningInput) (*Job, error) {
 	f := apperr.Fields{}
 	ids := checkDevices(f, in.DeviceIDs)
-	in.check(f)
+	in.validate(f)
 	wait := checkWait(f, in.WaitHours)
 	if err := f.Err(); err != nil {
 		return nil, err
@@ -269,11 +274,15 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 	sp := &spec{
 		kind: KindHardening, hardening: &h, name: h.label(), shell: agentproto.ShellSh, body: hardeningScript, args: h.args(),
 		timeout: h.timeout(), auditAction: "device.hardening",
-		details: map[string]any{"mode": h.Mode, "modules": h.Modules, "options": h.Options},
+		details: map[string]any{"platform": h.platform(), "mode": h.Mode, "modules": h.Modules, "options": h.Options},
 	}
 	r := rule{perm: rbac.PermDeviceHarden, verb: hardeningModes[h.Mode].verb, platforms: []string{"linux"}, runsOn: "Hardening runs on"}
 	if h.Mode == HardeningCheck {
 		r.perm = rbac.PermScriptRun
+	}
+	if h.platform() == HardeningWindows {
+		sp.name, sp.shell, sp.body, sp.args = h.windowsLabel(), agentproto.ShellPowerShell, windowsHardeningScript, h.windowsArgs()
+		r.platforms, r.runsOn = []string{"windows"}, "Windows hardening runs on"
 	}
 	return s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
 		return s.targets(ctx, tx, c, ids, r)
@@ -307,6 +316,8 @@ type HardeningPlatform struct {
 	Container string `json:"container"`
 	// Support is full (check, apply and undo), check_only or unsupported.
 	Support string `json:"support"`
+	// Windows is the rest of a Windows computer's platform.
+	Windows *HardeningWindowsPlatform `json:"windows,omitempty"`
 }
 
 // HardeningPorts are the firewall's ports: open to TCP and UDP, published
@@ -342,6 +353,7 @@ type HardeningFinding struct {
 	// UndoWith names the modules an undo refused without: undone together
 	// (the console selects them with this one), it runs.
 	UndoWith []string `json:"undoWith,omitempty"`
+	WindowsFinding
 }
 
 // HardeningPackageRecovery is a package database recovered before a
@@ -449,13 +461,18 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 		return fail("the result has more than one value")
 	}
 	p := r.Platform
+	windows := h.platform() == HardeningWindows
+	if windows {
+		r.tidyWindows()
+	}
 	switch {
 	case r.Version != 1:
 		return fail("the result's version is not 1")
 	case r.Mode != h.Mode:
 		return fail("the result is for another mode")
-	case !slices.Contains([]string{"debian", "rhel", "fedora", "other"}, p.Family),
-		!slices.Contains([]string{"full", "check_only", "unsupported"}, p.Support),
+	case !slices.Contains([]string{"full", "check_only", "unsupported"}, p.Support),
+		windows && (p.Family != "windows" || !validWindowsPlatform(p)),
+		!windows && (!slices.Contains([]string{"debian", "rhel", "fedora", "other"}, p.Family) || p.Windows != nil),
 		!shortText(p.ID, 64) || !shortText(p.VersionID, 64) || !shortText(p.Container, 32) || p.Container == "":
 		return fail("the platform is not described as expected")
 	}
@@ -472,7 +489,8 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 			return fail("module " + m.Module + " has an unknown state")
 		case !slices.Contains(hardeningOutcomes[r.Mode], m.Outcome):
 			return fail("module " + m.Module + " has no outcome of " + r.Mode)
-		case !m.valid(m.Module == "firewall"):
+		case !m.valid(!windows && m.Module == "firewall"),
+			windows && !m.validWindows(m.Module), !windows && m.hasWindowsFields():
 			return fail("module " + m.Module + "'s findings are not within their limits")
 		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
 			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):
@@ -636,8 +654,11 @@ type DeviceHardening struct {
 	JobID     *uuid.UUID         `json:"jobId"`
 	CheckedAt *time.Time         `json:"checkedAt"`
 	// Modules has each module the device was checked for, in the order of
-	// HardeningModules, with the job that last covered it.
+	// its platform's modules, with the job that last covered it.
 	Modules []HardeningModuleState `json:"modules"`
+	// ControlSources are the files a Windows device's related controls
+	// come from (ADR-0054, Frameworks).
+	ControlSources []controls.Source `json:"controlSources,omitempty"`
 }
 
 // HardeningModuleState is a module's state as a job found it.
@@ -645,6 +666,9 @@ type HardeningModuleState struct {
 	HardeningModuleResult
 	JobID     *uuid.UUID `json:"jobId"`
 	CheckedAt time.Time  `json:"checkedAt"`
+	// Related are the controls a Windows module's settings relate to;
+	// never a statement of compliance.
+	Related *controls.Related `json:"related,omitempty"`
 }
 
 // DeviceHardening returns what hardening jobs found on a device. It needs
@@ -670,8 +694,12 @@ func (s *Service) DeviceHardening(ctx context.Context, c access.Caller, deviceID
 			return err
 		}
 		out.Platform, out.CheckedAt = &p, &at
+		order := HardeningModules
+		if p.Family == "windows" {
+			order = WindowsHardeningModules
+		}
 		rows, err := tx.Query(ctx, `SELECT module, state, detail, job_id, checked_at FROM device_hardening
-			WHERE device_id = $1 ORDER BY array_position($2::text[], module)`, deviceID, HardeningModules)
+			WHERE device_id = $1 ORDER BY array_position($2::text[], module)`, deviceID, order)
 		if err != nil {
 			return err
 		}
@@ -681,7 +709,13 @@ func (s *Service) DeviceHardening(ctx context.Context, c access.Caller, deviceID
 			if err := rows.Scan(&m.Module, &m.State, &m.HardeningFinding, &m.JobID, &m.CheckedAt); err != nil {
 				return err
 			}
+			if r, ok := controls.For(m.Module); ok && p.Family == "windows" {
+				m.Related = &r
+			}
 			out.Modules = append(out.Modules, m)
+		}
+		if p.Family == "windows" {
+			out.ControlSources = controls.Sources()
 		}
 		return rows.Err()
 	})

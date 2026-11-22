@@ -7,6 +7,7 @@ import type {
   Device,
   DeviceGroup,
   DeviceMetrics,
+  DiskHealth,
   Inventory,
   Job,
   JobRun,
@@ -78,6 +79,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canRemove: false,
     removal: null,
     hardening: null,
+    diskHealth: null,
     ...extra,
   };
 }
@@ -150,6 +152,7 @@ export function script(id: string, name: string, extra: Partial<Script> = {}): S
     name,
     description: "",
     shell: "bash",
+    pwshFallback: false,
     sha256: "a".repeat(64),
     size: 120,
     timeoutSeconds: 300,
@@ -189,6 +192,7 @@ export function jobRun(id: string, deviceId: string, deviceName: string, status:
     exitCode: status === "succeeded" ? 0 : status === "failed" ? 2 : null,
     error: "",
     cancelRequested: false,
+    program: null,
     canCancel: !finished,
     ...extra,
   };
@@ -203,6 +207,7 @@ export function job(id: string, scriptName: string, extra: Partial<Job> = {}): J
     scriptId: "sc1",
     scriptName,
     shell: "bash",
+    pwshFallback: false,
     sha256: "a".repeat(64),
     timeoutSeconds: 300,
     expiresAt: "2026-11-02T10:00:00Z",
@@ -246,6 +251,31 @@ export function inventory(extra: Partial<Inventory> = {}): Inventory {
     packageManager: "dpkg",
     packageCount: 3,
     receivedAt: T,
+    ...extra,
+  };
+}
+
+/** A healthy NVMe disk, read at the fixtures' time, as GET /devices/{id}/disks lists it (ADR-0065). */
+export function diskHealth(key: string, name: string, extra: Partial<DiskHealth> = {}): DiskHealth {
+  return {
+    key,
+    unstable: false,
+    name,
+    model: "Samsung PM9A3",
+    serial: "S64GNE0R1234",
+    state: "healthy",
+    reason: "",
+    detail: "",
+    latest: { state: "healthy", reason: "", detail: "", readAt: T, receivedAt: T },
+    judgedLevel: "healthy",
+    judgedAt: T,
+    since: 0,
+    missingSince: null,
+    protocol: "nvme",
+    route: "nvme",
+    factsAt: T,
+    facts: [],
+    attributes: [],
     ...extra,
   };
 }
@@ -295,6 +325,7 @@ export function alertPolicy(id: string, name: string, extra: Partial<AlertPolicy
     name,
     description: "",
     kind: "cpu",
+    checkName: null,
     threshold: 95,
     minutes: 15,
     severity: "warning",
@@ -319,10 +350,14 @@ export function alertEntry(id: string, name: string, extra: Partial<AlertEntry> 
     siteName: "Head office",
     name,
     kind: "disk",
+    checkName: null,
     threshold: 90,
     minutes: 5,
     severity: "critical",
     status: "open",
+    subject: "",
+    subjectLabel: "",
+    detail: "",
     value: 93,
     lastValue: 94.4,
     openedAt: T,

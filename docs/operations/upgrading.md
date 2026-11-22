@@ -7,6 +7,28 @@ holds the Compose file, `setup.sh` and the files they use, in the
 repository's layout. An installation from a clone and one from a bundle
 upgrade the same way.
 
+## With the updater
+
+On a host where `setup.sh` installed the [updater](updater.md):
+
+```bash
+sudo easyrmm-updater check             # what the channel offers, verified
+sudo easyrmm-updater upgrade           # the newest; or: upgrade v1.2.3
+sudo easyrmm-updater status
+```
+
+It verifies the release, backs up, upgrades and checks as this page does
+by hand, and when the new version does not start it brings the previous
+one back by itself. `sudo easyrmm-updater rollback` undoes a confirmed
+upgrade within 24 hours. Read the release notes and decide how agents
+follow first, as [below](#before-you-start); the updater takes its own
+backup.
+
+The rest of this page is the manual upgrade. Run as root, its `setup.sh`
+installs the updater on a host that lacks it. While an updater attempt
+runs, `setup.sh` changes nothing and says so: run it again once
+`easyrmm-updater status` shows the attempt has ended.
+
 ## Before you start
 
 1. **Read the release notes**, the release's section of `CHANGELOG.md`.
@@ -32,16 +54,20 @@ From a clone:
 cd /path/to/easyrmm
 git fetch --tags
 git checkout easyrmm-v1.2.3
+make updater    # optional, needs Go: setup.sh then installs the updater
 cd deploy
 ```
 
-From a bundle, unpack it beside the old one and bring the old `.env`
-across:
+From a bundle, unpack it as root into a directory only root can write,
+such as `/opt/easyrmm`, where the [host updater](updater.md) unpacks its
+own, and bring the old `.env` across. Everything in a bundle is root's;
+`setup.sh` and Compose run from it as root, so no one else may change it:
 
 ```bash
-tar -xzf easyrmm-v1.2.3-deploy.tar.gz
-cp easyrmm-v1.2.2/deploy/.env easyrmm-v1.2.3/deploy/.env
-cd easyrmm-v1.2.3/deploy
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v1.2.3-deploy.tar.gz -C /opt/easyrmm
+sudo cp -p /path/to/easyrmm-v1.2.2/deploy/.env /opt/easyrmm/easyrmm-v1.2.3/deploy/.env
+cd /opt/easyrmm/easyrmm-v1.2.3/deploy
 ```
 
 Then, in `deploy/`:

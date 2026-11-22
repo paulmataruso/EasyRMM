@@ -106,4 +106,9 @@ and `/api/v1/patching/reports/monthly` (`POST` with `organizationId`,
 `year`, `month` and `includeEndpointList` to make one; `…/{id}/pdf`,
 `POST …/{id}/send` with `recipients`, `DELETE …/{id}`); schedules from
 `GET /api/v1/patching/report-schedules` and `PUT …/{organizationId}`.
+`GET /api/v1/patching/reports/mail` says, as `withheld`, why the engine
+emails no reports while a Microsoft 365 application signs in to EasyRMM's
+mail server ([Mail](mail.md#microsoft-365)); sending one then answers
+`409 mail_withheld` with that reason, and a report whose email failed for
+it says so in its `lastError`.
 

@@ -7,7 +7,7 @@ listen on loopback; only the server's TLS edge listens publicly.
 | Container | Listens on | Data |
 |---|---|---|
 | `postgres` | `127.0.0.1:15432` | `/srv/easyrmm/postgres` |
-| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server`; `/srv/easyrmm/updater/status`, read-only ([the updater's](#held-by-the-updater)) |
+| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server`; `/srv/easyrmm/updater/status`, read-only ([the updater's](#held-by-the-updater)); `/srv/easyrmm/secrets`, read-only at `/run/secrets/easyrmm` (a Microsoft 365 application's secret or key for mail, [Mail](../operations/mail.md#microsoft-365)) |
 | `meshcentral` | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` (its data), `/srv/easyrmm/meshcentral-config` (configuration written by the server) |
 | `easypatch-api` | `127.0.0.1:18180` | `/srv/easyrmm/easypatch/keys`, `/srv/easyrmm/easypatch/winget`; its database `easypatch` in `postgres` |
 | `easypatch-worker` | `127.0.0.1:18181` (health) | The same, keys read-only; `/srv/easyrmm/updater/status`, read-only |
@@ -46,12 +46,23 @@ sudo docker compose logs -f server
 ```
 
 Without git, download `easyrmm-v<version>-deploy.tar.gz` from a release
-instead, unpack it, and run the same commands from its `deploy/` directory;
-its `.env.example` already names that release's image.
+instead, unpack it as root into a directory only root can write, and run
+the same commands from its `deploy/` directory; its `.env.example` already
+names that release's image:
+
+```bash
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v<version>-deploy.tar.gz -C /opt/easyrmm
+cd /opt/easyrmm/easyrmm-v<version>/deploy
+```
 
 `setup.sh` writes `deploy/.env` (mode 600) with freshly generated database
 passwords and the encryption key, and creates the data directories with the
 ownership the containers expect. It never overwrites an existing `.env`.
+Run as root, it also installs the [host updater](../operations/updater.md),
+which upgrades the deployment and rolls it back; `--no-updater` installs
+none. A bundle carries the updater; from a clone, build it first with
+`make updater` (Go needed), or `setup.sh` says it is missing and goes on.
 
 When the server starts with an empty database it writes a one-time **setup
 token** to `/srv/easyrmm/server/setup-token` and logs where it is. Open
@@ -256,6 +267,7 @@ Authentik holds, `authentik-setup` applies nothing.
 | `EASYRMM_JOB_OUTPUT_RETENTION` | `720h` (30 days), or `EASYRMM_JOB_RETENTION` when that is shorter | How long a run's output is kept after it arrived; then it is emptied and the run kept. At least `24h` and at most `EASYRMM_JOB_RETENTION`. See [Who sees output and arguments](../operations/scripts-and-jobs.md#who-sees-output-and-arguments) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
+| `EASYRMM_HARDWARE_RETENTION` | `17520h` (730 days) | How long one disk health sample per disk and day is kept. Every reading is kept for `EASYRMM_METRICS_RETENTION`, then thinned to the day's worst state, highest temperature and last counts; at least `EASYRMM_METRICS_RETENTION`. See [Disk health](../operations/disk-health.md#history-and-retention) |
 
 ## Patching engine
 
@@ -362,6 +374,16 @@ To upgrade, follow [Upgrading](../operations/upgrading.md). Migrations run at
 start-up under an advisory lock, so several servers starting at once cannot
 race. They only run forward, so take a backup first
 ([backup-restore.md](../operations/backup-restore.md)).
+
+EasyRMM reaches PostgreSQL directly, as the compose file has it. A pooler
+between them must keep each session on one connection to PostgreSQL
+(PgBouncer's `pool_mode = session`): **a pooler in transaction mode, such
+as PgBouncer's `pool_mode = transaction`, is not supported**. Advisory
+locks held by a session belong to the connection to PostgreSQL, and
+EasyRMM's servers choose the one that gives the patching engine its mail
+server with one ([Mail](../operations/mail.md#the-patching-engine)); behind
+such a pooler, the lock would go to whichever session used that
+connection next.
 
 ### Held by the updater
 

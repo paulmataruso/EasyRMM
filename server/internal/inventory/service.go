@@ -80,11 +80,17 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 	for i, p := range pkgs {
 		names[i], versions[i], arches[i], publishers[i] = p.Name, p.Version, p.Arch, p.Publisher
 	}
+	ps7, blocked := powerShell7(inv.PowerShell)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO device_inventory (device_id, hash, data, package_manager, package_count, received_at)
 			VALUES ($1, $2, $3, $4, $5, now())
 			ON CONFLICT (device_id) DO UPDATE SET hash = $2, data = $3, package_manager = $4, package_count = $5, received_at = now()`,
 			deviceID, hash, data, inv.PackageManager, len(pkgs)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET powershell7 = $2, powershell7_blocked = $3
+			WHERE id = $1 AND (powershell7 IS DISTINCT FROM $2 OR powershell7_blocked IS DISTINCT FROM $3)`,
+			deviceID, ps7, blocked); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM device_software WHERE device_id = $1`, deviceID); err != nil {
@@ -102,6 +108,30 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 		return "", fmt.Errorf("inventory: storing: %w", err)
 	}
 	return hash, nil
+}
+
+// powerShell7 is what the device list says of PowerShell 7 from an
+// inventory's PowerShell list (ADR-0064): whether it lists a usable
+// install, nil when it lists no PowerShell; and where none is usable but
+// one is blocked, why a run fails, the first blocked install's reason, or
+// nil.
+func powerShell7(list []agentproto.PowerShellInstall) (usable *bool, blocked *string) {
+	if list == nil {
+		return nil, nil
+	}
+	found := false
+	for _, p := range list {
+		if p.Edition == agentproto.EditionCore && p.Usable {
+			found = true
+			return &found, nil
+		}
+	}
+	for _, p := range list {
+		if p.Edition == agentproto.EditionCore && p.Blocked {
+			return &found, &p.Reason
+		}
+	}
+	return &found, nil
 }
 
 // RecordMetrics stores a heartbeat's metrics as the device's latest and as
@@ -183,14 +213,14 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 		Packages: []agentproto.Package{},
 	}
 	for _, d := range in.Disks {
-		if name := text(d.Name, 64); name != "" && len(out.Disks) < agentproto.MaxListed {
+		if name, model, serial := DiskIdentity(d.Name, d.Model, d.Serial); name != "" && len(out.Disks) < agentproto.MaxListed {
 			kind := d.Kind
 			if kind != "ssd" && kind != "hdd" && kind != "nvme" {
 				kind = ""
 			}
 			out.Disks = append(out.Disks, agentproto.Disk{
-				Name: name, Model: text(d.Model, maxText), Serial: text(d.Serial, maxText),
-				SizeBytes: min(d.SizeBytes, maxBytes), Kind: kind, Removable: d.Removable,
+				Name: name, Model: model, Serial: serial,
+				SizeBytes: min(d.SizeBytes, maxBytes), Kind: kind, Removable: d.Removable, Firmware: firmware(d.Firmware),
 			})
 		}
 	}
@@ -235,7 +265,67 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 			EndpointID: text(e.EndpointID, 64), KeyFingerprint: text(e.KeyFingerprint, 128), Error: text(e.Error, maxLong),
 		}
 	}
+	out.PowerShell = cleanPowerShell(in.PowerShell)
 	return out
+}
+
+// cleanPowerShell keeps the PowerShell installs an agent found (ADR-0064):
+// those with a path and a known edition, at most agentproto.MaxPowerShell.
+// nil, from an agent too old to look, stays nil: not reported.
+func cleanPowerShell(in []agentproto.PowerShellInstall) []agentproto.PowerShellInstall {
+	if in == nil {
+		return nil
+	}
+	out := []agentproto.PowerShellInstall{}
+	for _, p := range in {
+		path := text(p.Path, agentproto.MaxInterpreterPath)
+		if path == "" || (p.Edition != agentproto.EditionDesktop && p.Edition != agentproto.EditionCore) {
+			continue
+		}
+		if len(out) == agentproto.MaxPowerShell {
+			break
+		}
+		arch := p.Arch
+		if arch != agentproto.ArchX64 && arch != agentproto.ArchARM64 && arch != agentproto.ArchX86 {
+			arch = ""
+		}
+		// Only a PowerShell 7 install is blocked, and a blocked one is not
+		// usable.
+		blocked := p.Blocked && p.Edition == agentproto.EditionCore
+		out = append(out, agentproto.PowerShellInstall{
+			Edition: p.Edition, Version: text(p.Version, agentproto.MaxInterpreterVersion), Arch: arch, Path: path,
+			Preview: p.Preview, Store: p.Store, Usable: p.Usable && !blocked, Reason: text(p.Reason, maxLong), Blocked: blocked,
+		})
+	}
+	return out
+}
+
+// DiskIdentity is a disk's name, model and serial as the inventory stores
+// them. A hardware report's disks are cleaned with it too, so that both
+// name a disk the same way (ADR-0065).
+func DiskIdentity(name, model, serial string) (string, string, string) {
+	return text(name, 64), text(model, maxText), text(serial, maxText)
+}
+
+// maxFirmware bounds a disk's firmware revision: eight characters for ATA
+// and NVMe, a little more for others.
+const maxFirmware = 64
+
+// firmware keeps a disk's firmware fact with a known state and reason
+// (ADR-0065); anything else becomes unknown, and an older agent's missing
+// fact stays missing.
+func firmware(f *agentproto.TextFact) *agentproto.TextFact {
+	if f == nil {
+		return nil
+	}
+	switch v := text(f.Value, maxFirmware); {
+	case f.State == agentproto.FactRead && v != "":
+		return &agentproto.TextFact{State: agentproto.FactRead, Value: v}
+	case (f.State == agentproto.FactUnknown || f.State == agentproto.FactUnsupported || f.State == agentproto.FactUnavailable) &&
+		agentproto.KnownReason(f.Reason):
+		return &agentproto.TextFact{State: f.State, Reason: f.Reason}
+	}
+	return &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonInvalidReport}
 }
 
 // cleanMetrics keeps measurements within physical bounds.
@@ -308,8 +398,10 @@ func percent(used, total uint64) float64 {
 	return min(float64(used)/float64(total)*100, 100)
 }
 
-// text strips control characters and invalid UTF-8, trims and cuts to
-// maxRunes.
+// Text cleans text an agent sent as the inventory does: it strips control
+// characters and invalid UTF-8, trims and cuts to maxRunes.
+func Text(s string, maxRunes int) string { return text(s, maxRunes) }
+
 func text(s string, maxRunes int) string {
 	s = strings.ToValidUTF8(s, "")
 	s = strings.Map(func(r rune) rune {

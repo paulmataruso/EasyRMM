@@ -64,11 +64,24 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      # Three modules sigstore-go brings for the host updater carry the
+      # Apache License 2.0 as its short notice ("Licensed under the Apache
+      # License, Version 2.0"), which go-licenses' classifier does not
+      # recognize. They are checked for that notice instead.
       - name: Check Go module licences against the allow-list
         run: |
           go run github.com/google/go-licenses/v2@v2.0.1 check ./... \
             --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0 \
-            --ignore github.com/paulmataruso/easyrmm
+            --ignore github.com/paulmataruso/easyrmm \
+            --ignore github.com/cyberphone/json-canonicalization \
+            --ignore github.com/in-toto/attestation \
+            --ignore github.com/in-toto/in-toto-golang
+          for m in github.com/cyberphone/json-canonicalization github.com/in-toto/attestation github.com/in-toto/in-toto-golang; do
+            if ! grep -q 'Licensed under the Apache License, Version 2.0' "$(go list -m -f '{{.Dir}}' "$m")/LICENSE"; then
+              echo "::error::$m's LICENSE is no longer the Apache License 2.0's notice: read it, and check it against the allow-list"
+              exit 1
+            fi
+          done
       - name: Licence inventory
         run: |
           go run github.com/google/go-licenses/v2@v2.0.1 report ./... \

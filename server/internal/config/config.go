@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/paulmataruso/easyrmm/server/internal/m365"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
 
@@ -87,12 +88,16 @@ type Config struct {
 	// MetricsRetention is how long devices' metric samples are kept.
 	MetricsRetention time.Duration
 	// AlertRetention is how long resolved alerts are kept.
-	AlertRetention   time.Duration
-	PasswordResetTTL time.Duration
-	LogLevel         string
-	LogFormat        string // "json" or "text"
-	ArgonMaxParallel int
-	WebDir           string // optional override of the embedded UI
+	AlertRetention time.Duration
+	// HardwareRetention is how long one disk health sample per disk and day
+	// is kept, once readings older than MetricsRetention are thinned
+	// (ADR-0065).
+	HardwareRetention time.Duration
+	PasswordResetTTL  time.Duration
+	LogLevel          string
+	LogFormat         string // "json" or "text"
+	ArgonMaxParallel  int
+	WebDir            string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
 	AgentDir string
 	// UpdaterStatusDir is the updater's status directory, mounted read-only
@@ -160,7 +165,31 @@ type SMTPConfig struct {
 	From     string
 	// TLS: "starttls" (default), "implicit" or "none" (loopback relays only).
 	TLS string
+	// Auth is how EasyRMM signs in (EASYRMM_SMTP_AUTH): "none", "password"
+	// (the default with a user name) or "microsoft365", with an Entra
+	// application (ADR-0053, slice 2).
+	Auth string
+	// The application's tenant (an ID or a domain name) and application
+	// (client) ID, and its client secret, or certificate and private key
+	// (PEM), each read from the file EASYRMM_SMTP_CLIENT_*_FILE names,
+	// the only form they are taken in.
+	TenantID     string
+	ClientID     string
+	ClientSecret string
+	ClientCert   string
+	ClientKey    string
+	// The files they were read from, for messages.
+	ClientSecretFile, ClientCertFile, ClientKeyFile string
+	// unread is a file that could not be read, already an error.
+	unread bool
 }
+
+// The ways EASYRMM_SMTP_AUTH signs in.
+const (
+	SMTPAuthNone         = "none"
+	SMTPAuthPassword     = "password"
+	SMTPAuthMicrosoft365 = "microsoft365"
+)
 
 // Getenv abstracts environment lookup for tests.
 type Getenv func(string) (string, bool)
@@ -197,6 +226,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		JobRetention:      l.duration("EASYRMM_JOB_RETENTION", 90*24*time.Hour),
 		MetricsRetention:  l.duration("EASYRMM_METRICS_RETENTION", 7*24*time.Hour),
 		AlertRetention:    l.duration("EASYRMM_ALERT_RETENTION", 90*24*time.Hour),
+		HardwareRetention: l.duration("EASYRMM_HARDWARE_RETENTION", 730*24*time.Hour),
 		PasswordResetTTL:  l.duration("EASYRMM_PASSWORD_RESET_TTL", 30*time.Minute),
 		LogLevel:          l.str("EASYRMM_LOG_LEVEL", "info"),
 		LogFormat:         l.str("EASYRMM_LOG_FORMAT", "json"),
@@ -212,7 +242,22 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 			Password: l.secret("EASYRMM_SMTP_PASSWORD"),
 			From:     l.str("EASYRMM_SMTP_FROM", ""),
 			TLS:      l.str("EASYRMM_SMTP_TLS", "starttls"),
+			Auth:     l.str("EASYRMM_SMTP_AUTH", ""),
+			TenantID: l.str("EASYRMM_SMTP_TENANT_ID", ""),
+			ClientID: l.str("EASYRMM_SMTP_CLIENT_ID", ""),
 		},
+	}
+	errs := len(l.errs)
+	c.SMTP.ClientSecretFile, c.SMTP.ClientSecret = l.fileOnly("EASYRMM_SMTP_CLIENT_SECRET")
+	c.SMTP.ClientCertFile, c.SMTP.ClientCert = l.fileOnly("EASYRMM_SMTP_CLIENT_CERT")
+	c.SMTP.ClientKeyFile, c.SMTP.ClientKey = l.fileOnly("EASYRMM_SMTP_CLIENT_KEY")
+	c.SMTP.unread = len(l.errs) > errs
+	if c.SMTP.Auth == "" {
+		// As before slice 2: a password when there is a user name.
+		c.SMTP.Auth = SMTPAuthNone
+		if c.SMTP.Username != "" {
+			c.SMTP.Auth = SMTPAuthPassword
+		}
 	}
 	c.DatabaseMigrationURL = l.secret("EASYRMM_DATABASE_MIGRATION_URL")
 	c.JobOutputRetention = l.duration("EASYRMM_JOB_OUTPUT_RETENTION", min(DefaultJobOutputRetention, c.JobRetention))
@@ -399,6 +444,9 @@ func (c *Config) validate(l *loader) {
 	if c.AlertRetention < 24*time.Hour {
 		add("EASYRMM_ALERT_RETENTION must be at least 24h")
 	}
+	if c.HardwareRetention < c.MetricsRetention {
+		add("EASYRMM_HARDWARE_RETENTION must be at least EASYRMM_METRICS_RETENTION")
+	}
 	if c.PasswordResetTTL < 5*time.Minute || c.PasswordResetTTL > 24*time.Hour {
 		add("EASYRMM_PASSWORD_RESET_TTL must be between 5m and 24h")
 	}
@@ -428,6 +476,7 @@ func (c *Config) validate(l *loader) {
 			add("EASYRMM_SMTP_PORT is out of range")
 		}
 	}
+	c.validateSMTPAuth(add)
 	if c.DevInsecureCookie && c.TLSMode != TLSOffload {
 		add("EASYRMM_DEV_INSECURE_COOKIES is only allowed with EASYRMM_TLS_MODE=offload")
 	}
@@ -568,6 +617,100 @@ func (c *Config) validateMesh(add func(string, ...any)) {
 	}
 }
 
+// validateSMTPAuth checks how .env's mail server signs in: with
+// EASYRMM_SMTP_AUTH=microsoft365, the tenant, the application and one
+// credential, read from its files, and never the rest half set (ADR-0053,
+// slice 2). The certificate's dates are not checked here: an expired one
+// stops mail, not the server, and the server warns of it.
+func (c *Config) validateSMTPAuth(add func(string, ...any)) {
+	s := &c.SMTP
+	app := s.TenantID != "" || s.ClientID != "" || s.ClientSecretFile != "" || s.ClientCertFile != "" || s.ClientKeyFile != ""
+	switch s.Auth {
+	case SMTPAuthNone:
+		// A password alone was ignored before EASYRMM_SMTP_AUTH, and still is.
+		if s.Username != "" {
+			add("EASYRMM_SMTP_AUTH=none takes no EASYRMM_SMTP_USERNAME")
+		}
+	case SMTPAuthPassword:
+		if s.Username == "" {
+			add("EASYRMM_SMTP_AUTH=password needs EASYRMM_SMTP_USERNAME")
+		}
+	case SMTPAuthMicrosoft365:
+		c.validateSMTPApplication(add)
+		return
+	default:
+		add("EASYRMM_SMTP_AUTH must be none, password or microsoft365")
+		return
+	}
+	if app {
+		add("EASYRMM_SMTP_TENANT_ID, EASYRMM_SMTP_CLIENT_ID and EASYRMM_SMTP_CLIENT_*_FILE are read only with EASYRMM_SMTP_AUTH=microsoft365")
+	}
+}
+
+// validateSMTPApplication checks EASYRMM_SMTP_AUTH=microsoft365.
+func (c *Config) validateSMTPApplication(add func(string, ...any)) {
+	s := &c.SMTP
+	if s.Host == "" {
+		add("EASYRMM_SMTP_AUTH=microsoft365 needs EASYRMM_SMTP_HOST (smtp.office365.com)")
+	}
+	switch {
+	case s.TenantID == "":
+		add("EASYRMM_SMTP_TENANT_ID is required with EASYRMM_SMTP_AUTH=microsoft365")
+	case !m365.ValidTenant(s.TenantID):
+		add("EASYRMM_SMTP_TENANT_ID must be the tenant's ID (a GUID) or one of its domain names")
+	}
+	switch {
+	case s.ClientID == "":
+		add("EASYRMM_SMTP_CLIENT_ID is required with EASYRMM_SMTP_AUTH=microsoft365")
+	case !m365.ValidClientID(s.ClientID):
+		add("EASYRMM_SMTP_CLIENT_ID must be the application (client) ID, a GUID")
+	}
+	if s.Username != "" || s.Password != "" {
+		add("EASYRMM_SMTP_AUTH=microsoft365 signs in as EASYRMM_SMTP_FROM's mailbox: remove EASYRMM_SMTP_USERNAME and EASYRMM_SMTP_PASSWORD")
+	}
+	if s.TLS == "none" {
+		add("EASYRMM_SMTP_AUTH=microsoft365 needs EASYRMM_SMTP_TLS=starttls or implicit: a token is sent only over TLS")
+	}
+	cert := s.ClientCertFile != "" || s.ClientKeyFile != ""
+	switch {
+	case s.ClientSecretFile != "" && cert:
+		add("give EASYRMM_SMTP_CLIENT_SECRET_FILE, or EASYRMM_SMTP_CLIENT_CERT_FILE with EASYRMM_SMTP_CLIENT_KEY_FILE, not both")
+	case s.unread:
+		// A file that could not be read is already an error.
+	case s.ClientSecretFile != "":
+		if err := m365.CheckSecret(strings.TrimRight(s.ClientSecret, "\r\n")); err != nil {
+			add("EASYRMM_SMTP_CLIENT_SECRET_FILE: %v", err)
+		}
+	case cert:
+		if s.ClientCertFile == "" || s.ClientKeyFile == "" {
+			add("EASYRMM_SMTP_CLIENT_CERT_FILE and EASYRMM_SMTP_CLIENT_KEY_FILE go together")
+		} else {
+			if _, err := m365.ParseCertificate(s.ClientCert, s.ClientKey); err != nil {
+				add("EASYRMM_SMTP_CLIENT_CERT_FILE and EASYRMM_SMTP_CLIENT_KEY_FILE: %v", err)
+			}
+		}
+	default:
+		add("EASYRMM_SMTP_AUTH=microsoft365 needs EASYRMM_SMTP_CLIENT_SECRET_FILE, or EASYRMM_SMTP_CLIENT_CERT_FILE with EASYRMM_SMTP_CLIENT_KEY_FILE")
+	}
+}
+
+// SMTPApplication is .env's Microsoft 365 application, nil without
+// EASYRMM_SMTP_AUTH=microsoft365. Call it on a configuration Load passed.
+func (s *SMTPConfig) SMTPApplication() (*m365.Credentials, error) {
+	if s.Auth != SMTPAuthMicrosoft365 {
+		return nil, nil
+	}
+	c := &m365.Credentials{TenantID: s.TenantID, ClientID: s.ClientID, Secret: strings.TrimRight(s.ClientSecret, "\r\n")}
+	if s.ClientCertFile != "" {
+		cert, err := m365.ParseCertificate(s.ClientCert, s.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("EASYRMM_SMTP_CLIENT_CERT_FILE: %w", err)
+		}
+		c.Secret, c.Certificate = "", cert
+	}
+	return c, c.Check()
+}
+
 func requireLoopback(add func(string, ...any), key, addr string) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -600,6 +743,25 @@ func (l *loader) orDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// fileOnly reads the file named by KEY_FILE, a secret taken in no other
+// form: KEY itself set is refused, so that the secret is never in .env or
+// the process's environment. It returns the path and the contents.
+func (l *loader) fileOnly(key string) (path, contents string) {
+	if v, ok := l.getenv(key); ok && strings.TrimSpace(v) != "" {
+		l.errs = append(l.errs, fmt.Errorf("%s is not read: put it in a file and name the file in %s_FILE", key, key))
+	}
+	path = l.str(key+"_FILE", "")
+	if path == "" {
+		return "", ""
+	}
+	b, err := l.readFile(path)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Errorf("%s_FILE: %w", key, err))
+		return path, ""
+	}
+	return path, string(b)
 }
 
 // secret reads KEY, or the contents of the file named by KEY_FILE.

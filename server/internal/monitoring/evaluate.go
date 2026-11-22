@@ -29,9 +29,10 @@ type Result struct {
 	Skipped bool
 }
 
-// Evaluate checks every enabled policy against the devices it covers, opens
-// alerts for conditions that hold, updates open alerts' latest values and
-// resolves the alerts whose condition cleared or no longer applies.
+// Evaluate checks every enabled policy against the devices it covers (and
+// their disks, for disk health), opens alerts for conditions that hold,
+// updates open alerts' latest values and resolves the alerts whose
+// condition cleared or no longer applies, or whose disk is gone.
 func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 	var r Result
 	now := s.now()
@@ -47,6 +48,10 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 		}
 		n, err := reconcile(ctx, tx, now, uuid.Nil)
 		if err != nil {
+			return err
+		}
+		r.Resolved += n
+		if n, err = goneDisks(ctx, tx, now); err != nil {
 			return err
 		}
 		r.Resolved += n
@@ -72,7 +77,7 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 				SELECT p.id, x.device_id, p.name, p.kind, p.threshold, p.minutes, p.severity, x.value, x.value, $4
 				FROM unnest($1::uuid[], $2::uuid[], $3::float8[]) AS x(policy_id, device_id, value)
 				JOIN alert_policies p ON p.id = x.policy_id
-				ON CONFLICT (policy_id, device_id) WHERE status <> 'resolved' DO NOTHING`,
+				ON CONFLICT (policy_id, device_id, subject) WHERE status <> 'resolved' DO NOTHING`,
 				opens.a, opens.b, opens.v, now)
 			if err != nil {
 				return err
@@ -98,7 +103,10 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 			}
 			r.Resolved += int(tag.RowsAffected())
 		}
-		return nil
+		opened, resolved, err := evaluateDisks(ctx, tx, now)
+		r.Opened += opened
+		r.Resolved += resolved
+		return err
 	})
 	return r, err
 }
@@ -116,7 +124,8 @@ func (c *changes) add(a, b uuid.UUID, v *float64) {
 }
 
 // reconcile resolves the unresolved alerts whose policy was deleted, turned
-// off or given a different condition, or no longer covers the device, and
+// off or given a different condition (kind, check, threshold or minutes),
+// or no longer covers the device, and
 // brings the rest up to their policy's name and severity. policyID limits
 // it to one policy; uuid.Nil reconciles them all.
 func reconcile(ctx context.Context, tx pgx.Tx, now time.Time, policyID uuid.UUID) (int, error) {
@@ -124,7 +133,8 @@ func reconcile(ctx context.Context, tx pgx.Tx, now time.Time, policyID uuid.UUID
 			SELECT a.id, CASE
 				WHEN p.id IS NULL THEN 'policy_deleted'
 				WHEN NOT p.enabled THEN 'policy_off'
-				WHEN p.kind <> a.kind OR p.threshold IS DISTINCT FROM a.threshold OR p.minutes <> a.minutes THEN 'policy_changed'
+				WHEN p.kind <> a.kind OR p.check_name IS DISTINCT FROM a.check_name OR p.threshold IS DISTINCT FROM a.threshold
+					OR p.minutes <> a.minutes THEN 'policy_changed'
 				WHEN NOT (p.organization_id IS NULL OR (p.organization_id = d.organization_id
 					AND (p.site_id IS NULL OR p.site_id = d.site_id))) THEN 'not_covered'
 			END AS reason
@@ -168,7 +178,7 @@ type facts struct {
 }
 
 // loadFacts reads, for every enabled policy and covered device, what the
-// decision needs. Pairs with no alert whose condition plainly does not hold
+// decision needs; disk health has its own (evaluateDisks). Pairs with no alert whose condition plainly does not hold
 // are left out, offline ones also until the policy's minutes have passed
 // since floor (see decide).
 func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, error) {
@@ -193,7 +203,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 					  AND ms.at > $1::timestamptz - make_interval(mins => p.minutes) AND ms.at <= $1
 				) x
 			) s ON true
-			WHERE p.enabled
+			WHERE p.enabled AND p.kind <> 'disk_health'
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)

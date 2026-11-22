@@ -117,12 +117,17 @@ const ACTIONS: Record<string, string> = {
   "job.cancel": "Stopped script run",
   "job_run.output_view": "Viewed job output",
   "job.arguments_view": "Viewed job arguments",
+  "job.results_export": "Downloaded job results",
   "job_run.output_remove": "Removed job output",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
   "alert_policy.delete": "Deleted alert policy",
   "alert.acknowledge": "Acknowledged alert",
   "alert.resolve": "Resolved alert",
+  "mail_server.update": "Changed the mail server",
+  "mail_server.delete": "Removed the mail server",
+  "mail_server.limits_update": "Changed the mail limits",
+  "mail_server.test": "Sent a test message",
   "audit_forwarding.update": "Changed audit forwarding",
   "audit_forwarding.test": "Tested audit forwarding",
   "easypatch.connection_update": "Changed the patching engine connection",
@@ -173,7 +178,9 @@ const ACTIONS: Record<string, string> = {
   "patch.notifications_update": "Changed patching notification settings",
 };
 
-export function actionLabel(action: string): string {
+/** An action's name; with the entry's details, a read of job output that was a download says so (ADR-0064). */
+export function actionLabel(action: string, details?: Record<string, unknown> | null): string {
+  if (action === "job_run.output_view" && typeof details?.download === "string") return "Downloaded job output";
   return ACTIONS[action] ?? action;
 }
 
@@ -195,6 +202,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["alert_policy", "Alert policies"],
   ["alert", "Alerts"],
   ["user", "Users"],
+  ["mail_server", "Mail server"],
   ["audit_forwarding", "Audit forwarding"],
   ["patch", "Patching"],
   ["easypatch", "Patching engine settings"],
@@ -222,6 +230,11 @@ export function auditTarget(e: AuditEntry): string {
   if (e.targetType === "session") return "Session";
   if (e.targetType === "report") return REPORT_TITLES[e.targetId ?? ""] ?? "Report";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
+  if (e.targetType === "mail_server") {
+    if (e.targetId === "limits") return "Mail limits";
+    if (e.action === "mail_server.test" && typeof d.to === "string") return `To ${d.to} through ${e.targetId ?? "the mail server"}`;
+    return e.targetId ? `Mail server ${e.targetId}` : "Mail server";
+  }
   if (e.action.startsWith("easypatch.organization_") && typeof d.organization === "string") {
     return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
   }

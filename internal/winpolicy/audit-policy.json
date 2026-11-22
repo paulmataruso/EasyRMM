@@ -1,0 +1,49 @@
+{
+  "source": "ADR-0060, Configuring logging: the Windows audit policy table and the other Windows settings",
+  "subcategories": [
+    {"guid": "{0cce923f-69ae-11d9-bed3-505054503030}", "category": "Account Logon", "name": "Credential Validation", "set": "success_failure"},
+    {"guid": "{0cce9242-69ae-11d9-bed3-505054503030}", "category": "Account Logon", "name": "Kerberos Authentication Service", "set": "success_failure", "domainControllersOnly": true},
+    {"guid": "{0cce9240-69ae-11d9-bed3-505054503030}", "category": "Account Logon", "name": "Kerberos Service Ticket Operations", "set": "success_failure", "domainControllersOnly": true},
+    {"guid": "{0cce9236-69ae-11d9-bed3-505054503030}", "category": "Account Management", "name": "Computer Account Management", "set": "success"},
+    {"guid": "{0cce923a-69ae-11d9-bed3-505054503030}", "category": "Account Management", "name": "Other Account Management Events", "set": "success"},
+    {"guid": "{0cce9237-69ae-11d9-bed3-505054503030}", "category": "Account Management", "name": "Security Group Management", "set": "success"},
+    {"guid": "{0cce9235-69ae-11d9-bed3-505054503030}", "category": "Account Management", "name": "User Account Management", "set": "success_failure"},
+    {"guid": "{0cce9248-69ae-11d9-bed3-505054503030}", "category": "Detailed Tracking", "name": "Plug and Play Events", "set": "success"},
+    {"guid": "{0cce922b-69ae-11d9-bed3-505054503030}", "category": "Detailed Tracking", "name": "Process Creation", "set": "success"},
+    {"guid": "{0cce923b-69ae-11d9-bed3-505054503030}", "category": "DS Access", "name": "Directory Service Access", "set": "failure", "domainControllersOnly": true},
+    {"guid": "{0cce923c-69ae-11d9-bed3-505054503030}", "category": "DS Access", "name": "Directory Service Changes", "set": "success", "domainControllersOnly": true},
+    {"guid": "{0cce9217-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Account Lockout", "set": "failure"},
+    {"guid": "{0cce9249-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Group Membership", "set": "success"},
+    {"guid": "{0cce9215-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Logon", "set": "success_failure"},
+    {"guid": "{0cce9216-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Logoff", "set": "left"},
+    {"guid": "{0cce921c-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Other Logon/Logoff Events", "set": "success_failure"},
+    {"guid": "{0cce921b-69ae-11d9-bed3-505054503030}", "category": "Logon/Logoff", "name": "Special Logon", "set": "success"},
+    {"guid": "{0cce9244-69ae-11d9-bed3-505054503030}", "category": "Object Access", "name": "Detailed File Share", "set": "failure"},
+    {"guid": "{0cce9224-69ae-11d9-bed3-505054503030}", "category": "Object Access", "name": "File Share", "set": "success_failure"},
+    {"guid": "{0cce9227-69ae-11d9-bed3-505054503030}", "category": "Object Access", "name": "Other Object Access Events", "set": "success_failure"},
+    {"guid": "{0cce9245-69ae-11d9-bed3-505054503030}", "category": "Object Access", "name": "Removable Storage", "set": "success_failure"},
+    {"guid": "{0cce922f-69ae-11d9-bed3-505054503030}", "category": "Policy Change", "name": "Audit Policy Change", "set": "success"},
+    {"guid": "{0cce9230-69ae-11d9-bed3-505054503030}", "category": "Policy Change", "name": "Authentication Policy Change", "set": "success"},
+    {"guid": "{0cce9231-69ae-11d9-bed3-505054503030}", "category": "Policy Change", "name": "Authorization Policy Change", "set": "success"},
+    {"guid": "{0cce9232-69ae-11d9-bed3-505054503030}", "category": "Policy Change", "name": "MPSSVC Rule-Level Policy Change", "set": "success_failure"},
+    {"guid": "{0cce9234-69ae-11d9-bed3-505054503030}", "category": "Policy Change", "name": "Other Policy Change Events", "set": "failure"},
+    {"guid": "{0cce9228-69ae-11d9-bed3-505054503030}", "category": "Privilege Use", "name": "Sensitive Privilege Use", "set": "success_failure"},
+    {"guid": "{0cce9214-69ae-11d9-bed3-505054503030}", "category": "System", "name": "Other System Events", "set": "success_failure"},
+    {"guid": "{0cce9210-69ae-11d9-bed3-505054503030}", "category": "System", "name": "Security State Change", "set": "success"},
+    {"guid": "{0cce9211-69ae-11d9-bed3-505054503030}", "category": "System", "name": "Security System Extension", "set": "success"},
+    {"guid": "{0cce9212-69ae-11d9-bed3-505054503030}", "category": "System", "name": "System Integrity", "set": "success_failure"}
+  ],
+  "values": [
+    {"id": "legacy-categories-overridden", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa", "name": "SCENoApplyLegacyAuditPolicy", "data": 1},
+    {"id": "process-command-lines", "path": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\Audit", "name": "ProcessCreationIncludeCmdLine_Enabled", "data": 1},
+    {"id": "script-block-logging", "path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging", "name": "EnableScriptBlockLogging", "data": 1},
+    {"id": "script-block-logging-7", "path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\PowerShellCore\\ScriptBlockLogging", "name": "EnableScriptBlockLogging", "data": 1, "onlyWith": "pwsh"}
+  ],
+  "logs": [
+    {"channel": "Security", "minKB": 1024000},
+    {"channel": "System", "minKB": 65536},
+    {"channel": "Application", "minKB": 65536},
+    {"channel": "Microsoft-Windows-PowerShell/Operational", "minKB": 65536},
+    {"channel": "PowerShellCore/Operational", "minKB": 65536, "onlyWith": "pwsh"}
+  ]
+}

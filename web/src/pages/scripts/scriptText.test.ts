@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
+import type { JobRun } from "../../api/types";
 import { counts, device, jobRun, script } from "../../test/fixtures";
 import {
   cannotRunReason,
+  fallbackText,
   formatBytes,
   formatElapsed,
   formatSeconds,
+  installName,
   isOpen,
   jobState,
   parseArgs,
+  programNote,
+  programText,
   runElapsed,
   scriptCovers,
   scriptScope,
@@ -27,7 +32,7 @@ describe("script text", () => {
   });
 
   it("explains why a device cannot run scripts", () => {
-    const agent = { version: "1", arch: "amd64", sha256: "", online: true, lastSeenAt: null, enrolledAt: "2026-10-01T00:00:00Z", update: null };
+    const agent = { version: "1", arch: "amd64", sha256: "", online: true, lastSeenAt: null, enrolledAt: "2026-10-01T00:00:00Z", update: null, accepts: null, powerShell7: null };
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: true }))).toBeNull();
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent: null, canRunScripts: false }))).toMatch(/no EasyRMM agent/);
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: false }))).toMatch(/role/);
@@ -36,6 +41,36 @@ describe("script text", () => {
     expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }), "powershell")).toBeNull();
     expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }), "bash")).toBe("Bash scripts run on Linux devices.");
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: true }), "cmd")).toBe("Command Prompt (cmd) scripts run on Windows devices.");
+    // PowerShell 7 needs an agent whose polls say it runs them (ADR-0064).
+    const pwsh = (accepts: string[] | null) => cannotRunReason(device("d", "x", { platform: "windows", agent: { ...agent, accepts }, canRunScripts: true }), "pwsh");
+    expect(pwsh(["job.pwsh"])).toBeNull();
+    expect(pwsh([])).toBe("The device's agent cannot run PowerShell 7 scripts; update the agent.");
+    expect(pwsh(null)).toMatch(/^The device's agent has not yet said whether it can run PowerShell 7 scripts; try again in a minute/);
+    expect(cannotRunReason(device("d", "x", { platform: "linux", agent: { ...agent, accepts: ["job.pwsh"] }, canRunScripts: true }), "pwsh")).toBe(
+      "PowerShell 7 scripts run on Windows devices.",
+    );
+  });
+
+  it("names the program a run started, and the PowerShell installs found", () => {
+    const at = (program: JobRun["program"], exitCode: number | null = 0) => programText(jobRun("r", "d", "PC", "succeeded", { program, exitCode }));
+    const pwsh = { edition: "Core" as const, version: "7.6.10", arch: "x64" as const, path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" };
+    expect(at(pwsh)).toBe("PowerShell 7.6.10, 64-bit");
+    expect(at({ ...pwsh, arch: "arm64" })).toBe("PowerShell 7.6.10, ARM64");
+    const desktop = { edition: "Desktop" as const, version: "5.1.26100.7019", arch: "x64" as const, path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" };
+    expect(at({ ...desktop, fallback: true })).toBe("Windows PowerShell 5.1.26100.7019, 64-bit");
+    expect(programNote({ ...desktop, fallback: true })).toBe("PowerShell 7 was not found, and this script allows Windows PowerShell.");
+    expect([programNote(desktop), programNote(null)]).toEqual([null, null]);
+    // cmd and the Linux shells report the path only.
+    expect(at({ path: "C:\\Windows\\System32\\cmd.exe" })).toBe("cmd.exe");
+    expect(at({ path: "/usr/bin/bash" })).toBe("bash");
+    // An agent that reports nothing: said so once the run has an exit code, never guessed.
+    expect(at(null)).toBe("Not reported by this agent's version");
+    expect(at(null, null)).toBeNull();
+
+    expect(installName({ edition: "Desktop", version: "5.1.26100.7019", arch: "x64", path: "p", usable: true })).toBe("Windows PowerShell 5.1.26100.7019, 64-bit");
+    expect(installName({ edition: "Core", version: "7.4.6", arch: "x86", path: "p", usable: false })).toBe("PowerShell 7.4.6, 32-bit");
+    expect(installName({ edition: "Core", version: "", arch: "", path: "p", usable: false })).toBe("PowerShell");
+    expect([fallbackText(false), fallbackText(true)]).toEqual(["Fails the run", "Runs in Windows PowerShell 5.1"]);
   });
 
   it("formats durations, sizes and elapsed times", () => {

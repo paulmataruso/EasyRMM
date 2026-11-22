@@ -2,6 +2,8 @@ package easypatch
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -352,11 +354,18 @@ type MailView struct {
 	Security    string `json:"security"`
 	FromAddress string `json:"fromAddress"`
 	FromName    string `json:"fromName"`
+	// Problem says why EasyRMM could not give the engine its mail server,
+	// after several tries in a row, which removed the engine's; "" when it
+	// could.
+	Problem string `json:"problem,omitempty"`
+	// Withheld says why the engine is given no mail server although
+	// EasyRMM has one: it signs in with a Microsoft 365 application.
+	Withheld string `json:"withheld,omitempty"`
 }
 
 // NotificationsView is EasyPatch's notification channels, the mail server
-// its email channels use (EasyRMM's, given at each start), and whether
-// webhooks may go to private networks.
+// its email channels use (EasyRMM's, given to it at start and after every
+// change), and whether webhooks may go to private networks.
 type NotificationsView struct {
 	Channels                    []Channel `json:"channels"`
 	Mail                        MailView  `json:"mail"`
@@ -384,7 +393,21 @@ func (s *Service) Notifications(ctx context.Context, c access.Caller) (Notificat
 		channels[i].EmailRecipients = orEmpty(channels[i].EmailRecipients)
 	}
 	return NotificationsView{Channels: orEmpty(channels), AllowPrivateNetworkWebhooks: m.AllowPrivateNetworkWebhooks,
-		Mail: MailView{Host: m.SMTPHost, Port: m.SMTPPort, Security: m.SMTPSecurity, FromAddress: m.FromAddress, FromName: m.FromName}}, nil
+		Mail: MailView{Host: m.SMTPHost, Port: m.SMTPPort, Security: m.SMTPSecurity, FromAddress: m.FromAddress, FromName: m.FromName,
+			Problem: s.mailProblem(), Withheld: s.mailWithheld(ctx)}}, nil
+}
+
+// mailWithheld is why the engine is given no mail server although this
+// server has one, "" when it is given it or EasyRMM's cannot be read.
+func (s *Service) mailWithheld(ctx context.Context) string {
+	if s.engine == nil || s.engine.mail == nil {
+		return ""
+	}
+	cfg, err := s.engine.mail(ctx)
+	if err != nil {
+		return ""
+	}
+	return cfg.Withheld
 }
 
 // NotificationSettings is what EasyRMM changes of EasyPatch's notification
@@ -394,35 +417,98 @@ type NotificationSettings struct {
 }
 
 // SetNotificationSettings changes whether webhooks may go to private
-// networks, keeping the mail server as it is.
+// networks. EasyPatch replaces its notification settings at once, so the
+// mail server goes with the switch. On the server that gives the engine its
+// mail server, that is EasyRMM's in force, read under the lock syncMail
+// holds, never the engine's copy, which may be a mail server EasyRMM no
+// longer has. Otherwise, and when EasyRMM's cannot be read, it is the
+// engine's own, sent back without a password so that the engine keeps the
+// one it has: the switch never removes the engine's mail server (passes
+// do, when they cannot give it), and another server's own mail server may
+// not be the one given (compareMail). Each server reads and changes the
+// engine's mail settings holding one lock across servers
+// (changeEngineMail), so that no two such changes interleave.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
 	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return NotificationsView{}, err
 	}
-	st := s.everywhere(ctx, c, RoleSuperAdmin)
-	m, err := cl.MailSettings(st)
-	if err != nil {
-		s.noteError(err)
-		return NotificationsView{}, epError(err)
-	}
-	if m.AllowPrivateNetworkWebhooks != in.AllowPrivateNetworkWebhooks {
-		// EasyPatch replaces its notification settings at once; a nil
-		// password keeps the stored one.
-		err := cl.SetMailSettings(st, MailSettingsInput{SMTPHost: m.SMTPHost, SMTPPort: m.SMTPPort, SMTPSecurity: m.SMTPSecurity,
-			SMTPUsername: m.SMTPUsername, FromAddress: m.FromAddress, FromName: m.FromName, SMTPSkipCertificateCheck: m.SMTPSkipCertificateCheck,
-			AllowPrivateNetworkWebhooks: in.AllowPrivateNetworkWebhooks})
-		if err != nil {
-			s.noteError(err)
-			return NotificationsView{}, epError(err)
-		}
-		if err := s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
-			TargetID: "settings", Outcome: audit.Success, Details: map[string]any{"changes": map[string]any{"allowPrivateNetworkWebhooks": map[string]any{
-				"from": m.AllowPrivateNetworkWebhooks, "to": in.AllowPrivateNetworkWebhooks}}}}}); err != nil {
-			return NotificationsView{}, err
-		}
+	if err := s.setPrivateWebhooks(ctx, c, cl, in.AllowPrivateNetworkWebhooks); err != nil {
+		return NotificationsView{}, err
 	}
 	return s.Notifications(ctx, c)
+}
+
+func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *Client, allow bool) error {
+	e := s.engine
+	if err := e.lockMail(ctx); err != nil {
+		return err
+	}
+	defer e.unlockMail()
+	var cfg *MailConfig
+	if e.mail != nil {
+		lead, err := s.leadsMail(ctx)
+		if err != nil {
+			return err
+		}
+		if lead {
+			in, err := e.mail(ctx)
+			if err != nil {
+				problem := fmt.Sprintf("could not read EasyRMM's mail server for the patching engine: %v", err)
+				s.log.Error("patching: " + problem + "; the webhook switch leaves the engine's mail server as it is")
+				e.mu.Lock()
+				e.mailProblem = problem
+				e.mu.Unlock()
+			} else {
+				if in.Withheld != "" {
+					in = MailConfig{Withheld: in.Withheld}
+				}
+				cfg = &in
+			}
+		}
+	}
+	st := s.everywhere(ctx, c, RoleSuperAdmin)
+	var from, changed bool
+	var engineErr error
+	err := s.changeEngineMail(ctx, func() error {
+		m, err := e.mailSettings(st, cl)
+		if err != nil {
+			engineErr = err
+			return err
+		}
+		if from = m.AllowPrivateNetworkWebhooks; from == allow {
+			return nil
+		}
+		put := m.unchanged(allow)
+		if cfg != nil {
+			put = cfg.mailSettings(m)
+			put.AllowPrivateNetworkWebhooks = allow
+		}
+		changed = true
+		engineErr = e.setMailSettings(st, cl, put)
+		return engineErr
+	})
+	switch {
+	case engineErr != nil:
+		s.noteError(engineErr)
+		return epError(engineErr)
+	case errors.Is(err, errEngineMailBusy):
+		return apperr.Conflict("engine_mail_busy", "Another of EasyRMM's servers is changing the patching engine's mail settings. Try again in a moment.")
+	case err != nil:
+		return err
+	case !changed:
+		return nil
+	}
+	if cfg != nil {
+		e.mailGiven = cfg
+	}
+	return s.recordSwitch(ctx, c, from, allow)
+}
+
+func (s *Service) recordSwitch(ctx context.Context, c access.Caller, from, to bool) error {
+	return s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
+		TargetID: "settings", Outcome: audit.Success, Details: map[string]any{"changes": map[string]any{"allowPrivateNetworkWebhooks": map[string]any{
+			"from": from, "to": to}}}}})
 }
 
 // ChannelRequest is a channel as EasyRMM takes it.

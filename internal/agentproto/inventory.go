@@ -40,6 +40,43 @@ type Inventory struct {
 	// EasyPatch is what the device's EasyPatch agent says about itself
 	// (ADR-0030); nil when it is not installed.
 	EasyPatch *EasyPatchAgent `json:"easyPatch,omitempty"`
+	// PowerShell lists Windows PowerShell and the PowerShell 7 installs
+	// the agent found, usable or not (ADR-0064), at most MaxPowerShell;
+	// nil (absent) on Linux and from agents that do not look, empty when
+	// none was found. Added after protocol level 2: sent only to a server
+	// of level 2 or higher.
+	PowerShell []PowerShellInstall `json:"powerShell,omitzero"`
+}
+
+// MaxPowerShell is the most PowerShell installs an inventory lists.
+const MaxPowerShell = 16
+
+// PowerShellInstall is one PowerShell the agent found on Windows.
+type PowerShellInstall struct {
+	// Edition is EditionDesktop (Windows PowerShell) or EditionCore.
+	Edition string `json:"edition"`
+	Version string `json:"version"`
+	// Arch is ArchX64, ArchARM64 or ArchX86, empty when unread.
+	Arch    string `json:"arch"`
+	Path    string `json:"path"`
+	Preview bool   `json:"preview,omitempty"`
+	// Store says it is a Microsoft Store (MSIX) install, reported and
+	// never run.
+	Store bool `json:"store,omitempty"`
+	// Usable says a pwsh run may choose it; Reason says why it may not.
+	Usable bool   `json:"usable"`
+	Reason string `json:"reason,omitempty"`
+	// Blocked says it is not usable, and that a run does not fall back
+	// from it: what a run of it would load from outside it, its module
+	// folders or its configuration, fails the agent's check, or a file of
+	// it is open in another program or has more than one hard link, or its
+	// version is not a version, or it could not be read or checked;
+	// Path is then the folder installs are in where that folder could not
+	// be listed. A run moves to another install only where one passes
+	// every check; otherwise it fails, and a script that allows Windows
+	// PowerShell does not run there instead (ADR-0064). Servers that do not
+	// know it ignore it.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // EasyPatchAgent is the EasyPatch agent's own account of its enrollment, from
@@ -98,6 +135,11 @@ type Disk struct {
 	// Kind is ssd, hdd, nvme or empty when unknown.
 	Kind      string `json:"kind"`
 	Removable bool   `json:"removable"`
+	// Firmware is the drive's firmware revision, a fact with its state
+	// (ADR-0065): fields added from that ADR on say why they are empty,
+	// where the fields above are left empty when unread. nil from agents
+	// older than it.
+	Firmware *TextFact `json:"firmware,omitempty"`
 }
 
 // Interface is a network interface other than loopback.

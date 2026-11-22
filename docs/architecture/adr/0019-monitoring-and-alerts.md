@@ -1,6 +1,10 @@
 # ADR-0019: Monitoring and alerts
 
-* Status: Accepted (2026-11-16).
+* Status: Accepted (2026-11-16). Amended by
+  [ADR-0065](0065-hardware-health.md): an alert kind, `disk_health`, with a
+  check per policy (`check_name`); alerts with a subject, one per disk, so
+  the unique key of an active alert is its policy, device and subject; and
+  the resolution `subject_gone`.
 
 ## Context
 ADR-0018 stores every device's measurements once a minute. Technicians need

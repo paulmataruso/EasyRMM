@@ -6,11 +6,13 @@ import { ApiError } from "./api/client";
 import { AuthProvider } from "./auth/AuthContext";
 import { AppErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
+import { applyAlertFlash, getStoredAlertFlash } from "./lib/alertFlash";
 import { applyTheme, getStoredTheme } from "./lib/theme";
 import { App } from "./App";
 import "./index.css";
 
 applyTheme(getStoredTheme());
+applyAlertFlash(getStoredAlertFlash());
 
 const queryClient = new QueryClient({
   defaultOptions: {

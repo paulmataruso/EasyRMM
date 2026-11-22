@@ -44,14 +44,31 @@ floors=(
   "server/internal/devices                 88"
   # Scripts and jobs, inventory, monitoring and alerts, and their APIs.
   "server/internal/jobs                    85"
+  # Windows hardening (ADR-0054): the ownership reader's package and the
+  # related-controls tables, their generator and extraction.
+  "internal/winpolicy                      95"
+  "server/internal/jobs/hardening/controls 95"
+  "server/internal/jobs/hardening/controls/extract 95"
+  # Its command: run is tested, main only parses flags.
+  "server/internal/jobs/hardening/controls/cmd/gencontrols 50"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
+  # Disk health: what agents read, judged by the server's rules (ADR-0065).
+  "server/internal/hardware                90"
+  "server/internal/httpapi/hardwareapi     90"
   # Audit forwarding: every tenant's records leave the server through it.
   "server/internal/auditfwd                88"
   "server/internal/httpapi/auditfwdapi     90"
+  # The mail server: it holds a password, and its limits keep invitations
+  # and password resets going (ADR-0053).
+  "server/internal/mailserver              88"
+  "server/internal/httpapi/mailserverapi   90"
+  # Microsoft 365's tokens: an application's secret or private key signs
+  # them in to every mailbox it is given.
+  "server/internal/m365                    90"
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"
@@ -79,6 +96,12 @@ floors=(
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
+  # The host updater (ADR-0052): it runs as root, verifies what it
+  # installs, and replaces the whole deployment.
+  "updater/internal/release                90"
+  "updater/internal/fetch                  90"
+  "updater/internal/host                   80"
+  "updater/cmd/easyrmm-updater             75"
   # The endpoint agent. Its end-to-end run in a container is not
   # instrumented; these floors come from its unit tests.
   "agent/client                            90"
@@ -93,6 +116,12 @@ floors=(
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
+  # Finding and choosing PowerShell 7 (ADR-0064): the platform-neutral part;
+  # the Windows part is tested as LocalSystem on CI's Windows runners.
+  "agent/powershell                        95"
+  # Parses what disks answer (ADR-0065); the transports' system calls run
+  # only in the machine tests.
+  "agent/hardware                          97"
 )
 
 if [[ ! -f "$profile" ]]; then

@@ -48,16 +48,21 @@ func scopeOf(c access.Caller, perm rbac.Permission) rbac.Scope {
 }
 
 // readCall runs one of the read functions for the caller. They take the
-// same arguments after the run or job: the caller's job.view and
-// job.view_sensitive scopes, and who reads, as the audit record has it.
-// A refusal is recorded too, so the transaction commits whatever the
-// result; the caller turns the result into an answer.
-func (s *Service) readCall(ctx context.Context, c access.Caller, sql string, id uuid.UUID, dst ...any) error {
+// same arguments after the run or job (and, for output, what is
+// downloaded): the caller's job.view and job.view_sensitive scopes, and who
+// reads, as the audit record has it. A refusal is recorded too, so the
+// transaction commits whatever the result; the caller turns the result into
+// an answer. then, when set, runs in the same transaction after the read.
+func (s *Service) readCall(ctx context.Context, c access.Caller, sql string, lead []any, then func(pgx.Tx) error, dst ...any) error {
 	view, read := scopeOf(c, rbac.PermJobView), scopeOf(c, rbac.PermJobViewSensitive)
 	st := s.audit.Stamp(c.Actor)
+	args := append(lead, view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites,
+		st.At, st.ActorType, st.ActorID, st.ActorLabel, st.SourceIP, st.UserAgent)
 	return s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, sql, id, view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites,
-			st.At, st.ActorType, st.ActorID, st.ActorLabel, st.SourceIP, st.UserAgent).Scan(dst...)
+		if err := tx.QueryRow(ctx, sql, args...).Scan(dst...); err != nil || then == nil {
+			return err
+		}
+		return then(tx)
 	})
 }
 
@@ -85,12 +90,30 @@ func readResult(result string) error {
 // recorded. A caller who sees the run but may not read its output is
 // refused and recorded as denied, within the bound migration 00028 sets.
 func (s *Service) ReadOutput(ctx context.Context, c access.Caller, id uuid.UUID) (*Output, error) {
+	return s.readOutput(ctx, c, id, "", nil)
+}
+
+// readOutput reads a run's output for the caller, recording what is
+// downloaded ("" for the console's page). then runs in the read's
+// transaction once the output was read and recorded.
+func (s *Service) readOutput(ctx context.Context, c access.Caller, id uuid.UUID, download string, then func(pgx.Tx) error) (*Output, error) {
 	var result string
 	var stdout, stderr *string
 	var outCut, errCut *bool
+	var dl *string
+	if download != "" {
+		dl = &download
+	}
+	// Only a read that succeeded goes on; the others answer below.
+	readable := func(tx pgx.Tx) error {
+		if then != nil && (result == "ok" || result == "empty") {
+			return then(tx)
+		}
+		return nil
+	}
 	if err := s.readCall(ctx, c, `SELECT result, out_text, err_text, out_cut, err_cut
-		FROM easyrmm_job_run_output($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::inet, $13)`,
-		id, &result, &stdout, &stderr, &outCut, &errCut); err != nil {
+		FROM easyrmm_job_run_output($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::inet, $14)`,
+		[]any{id, dl}, readable, &result, &stdout, &stderr, &outCut, &errCut); err != nil {
 		return nil, err
 	}
 	if err := readResult(result); err != nil {
@@ -109,7 +132,7 @@ func (s *Service) ReadArguments(ctx context.Context, c access.Caller, id uuid.UU
 	var args []string
 	if err := s.readCall(ctx, c, `SELECT result, job_args
 		FROM easyrmm_job_arguments($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::inet, $13)`,
-		id, &result, &args); err != nil {
+		[]any{id}, nil, &result, &args); err != nil {
 		return nil, err
 	}
 	if err := readResult(result); err != nil {

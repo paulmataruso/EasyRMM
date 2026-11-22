@@ -17,6 +17,21 @@ export function formatDate(value: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
+/** A moment in a few words, with its year only when that is not this year's: "2 May 14:30", as the browser's language
+ * writes it. */
+export function formatShortDateTime(value: string | null | undefined, now: Date = new Date()): string {
+  const d = parseDate(value);
+  if (!d) return "—";
+  return d.toLocaleString(undefined, { day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() && { year: "numeric" }), hour: "numeric", minute: "2-digit" });
+}
+
+/** A day in a few words, with its year only when that is not this year's: "3 May". */
+export function formatShortDate(value: string | null | undefined, now: Date = new Date()): string {
+  const d = parseDate(value);
+  if (!d) return "—";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() && { year: "numeric" }) });
+}
+
 const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 31_536_000],
   ["month", 2_592_000],

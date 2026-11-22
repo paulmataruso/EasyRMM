@@ -12,11 +12,14 @@ package secrets
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -48,7 +51,10 @@ type Key struct {
 // Sealer seals and opens values with a key ring.
 type Sealer struct {
 	primary string
-	aeads   map[string]cipher.AEAD
+	// derive are the keys, the primary first, which DeriveKeys derives
+	// keys from.
+	derive []Key
+	aeads  map[string]cipher.AEAD
 }
 
 // NewSealer builds a Sealer. The first key is the primary key used for new
@@ -77,6 +83,7 @@ func NewSealer(keys ...Key) (*Sealer, error) {
 			return nil, fmt.Errorf("secrets: key %q: %w", k.ID, err)
 		}
 		s.aeads[k.ID] = aead
+		s.derive = append(s.derive, Key{ID: k.ID, Raw: slices.Clone(k.Raw)})
 	}
 	return s, nil
 }
@@ -114,6 +121,24 @@ func (s *Sealer) Open(sealed string, associatedData []byte) ([]byte, error) {
 		return nil, ErrDecrypt
 	}
 	return plaintext, nil
+}
+
+// DeriveKeys derives a 32-byte key for one use, named by info, from each
+// key with HKDF-SHA-256, so that the keys themselves are never used for
+// anything but sealing. Each use has its own info, and so its own keys.
+// The primary key's comes first, named by its ID, then the previous keys'
+// in their order: a value made with a previous key's can still be checked
+// while the keys rotate.
+func (s *Sealer) DeriveKeys(info string) ([]Key, error) {
+	out := make([]Key, 0, len(s.derive))
+	for _, k := range s.derive {
+		raw, err := hkdf.Key(sha256.New, k.Raw, nil, info, KeySize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Key{ID: k.ID, Raw: raw})
+	}
+	return out, nil
 }
 
 // NeedsReseal reports whether a sealed value was produced by a key other than

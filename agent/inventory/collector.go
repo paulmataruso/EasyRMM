@@ -30,6 +30,50 @@ type Collector struct {
 	LookPath func(name string) (string, error)
 }
 
+// Storage is what the agent's hardware reader (agent/hardware, ADR-0065)
+// takes from the inventory, so that its readings name each disk as the
+// inventory does: the disks and the machine's virtualization.
+type Storage struct {
+	// Virtualization is the inventory's SystemInfo.Virtualization.
+	Virtualization string
+	Disks          []ListedDisk
+}
+
+// ListedDisk is one of the inventory's disks, with what the hardware reader
+// needs to tell what the disk is and where to ask it.
+type ListedDisk struct {
+	agentproto.Disk
+	// Bus is the disk's STORAGE_BUS_TYPE on Windows; 0 on Linux.
+	Bus uint32
+	// Controllers are the NVMe controllers that serve the disk on Linux
+	// (nvme0), found through sysfs; empty for other disks.
+	Controllers []string
+}
+
+// disks are the inventory's disks of a listing.
+func disks(list []ListedDisk) []agentproto.Disk {
+	out := make([]agentproto.Disk, len(list))
+	for i, d := range list {
+		out[i] = d.Disk
+	}
+	return out
+}
+
+// firmwareNotExposed is the firmware fact of a disk whose revision the
+// system does not give (ADR-0065).
+func firmwareNotExposed() *agentproto.TextFact {
+	return &agentproto.TextFact{State: agentproto.FactUnavailable, Reason: agentproto.ReasonNotExposed}
+}
+
+// firmwareRead is a firmware revision read, or not exposed when empty.
+func firmwareRead(rev string) *agentproto.TextFact {
+	rev = strings.Join(strings.Fields(rev), " ")
+	if rev == "" {
+		return firmwareNotExposed()
+	}
+	return &agentproto.TextFact{State: agentproto.FactRead, Value: rev}
+}
+
 // placeholders are what firmware vendors leave in fields they never filled.
 var placeholders = map[string]bool{
 	"to be filled by o.e.m.": true, "default string": true, "system serial number": true, "system product name": true,

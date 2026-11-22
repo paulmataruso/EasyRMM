@@ -9,6 +9,7 @@ import { Button, Card, cx, Dot, EmptyState, ErrorState, PageHeader, Spinner, Sta
 import { canQuickConnect, QuickConnectPanel } from "../nav/QuickConnect";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../lib/format";
 import { AlertActions, useAlertAction } from "./alerts/AlertActions";
+import { AlertLink } from "./alerts/alertLink";
 import { SeverityBadge, valueText } from "./alerts/alertText";
 
 export function DashboardPage() {
@@ -190,12 +191,15 @@ function ActiveAlertsCard({ total }: { total: number }) {
             <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-sm">
               <SeverityBadge severity={a.severity} />
               <span className="min-w-0 flex-1">
-                <span className="font-medium">{a.name}</span>
+                <AlertLink id={a.id} label={`${a.name} on ${a.deviceName}, details`} title="Show the alert's details" className="font-medium hover:text-accent">
+                  {a.name}
+                </AlertLink>
                 <span className="text-muted"> on </span>
                 <Link to={`/devices/${a.deviceId}`} className="font-medium break-words hover:text-accent">
                   {a.deviceName}
                 </Link>
                 <span className="block text-xs text-muted">
+                  {a.kind === "disk_health" && a.subjectLabel && <>{a.subjectLabel} · </>}
                   <span className="tabular-nums">{valueText(a)}</span> ·{" "}
                   <span title={formatDateTime(a.openedAt)}>opened {formatRelative(a.openedAt)}</span>
                   {a.status === "acknowledged" && " · acknowledged"}
@@ -261,7 +265,7 @@ function RecentActivity({ className }: { className?: string }) {
                     {formatRelative(e.occurredAt)}
                   </td>
                   <td className="max-w-48 truncate">{e.actorLabel || <span className="text-muted">{e.actorType}</span>}</td>
-                  <td className="whitespace-nowrap">{actionLabel(e.action)}</td>
+                  <td className="whitespace-nowrap">{actionLabel(e.action, e.details)}</td>
                   <td className="max-w-56 truncate text-muted">{auditTarget(e)}</td>
                   <td className="text-right">
                     <OutcomeBadge outcome={e.outcome} />

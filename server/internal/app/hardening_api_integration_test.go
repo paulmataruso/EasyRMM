@@ -115,7 +115,7 @@ func TestHardeningAPI(t *testing.T) {
 		t.Errorf("arguments %+v", args)
 	}
 
-	poll, err := ac.Poll(ctx)
+	poll, err := ac.Poll(ctx, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}
@@ -230,7 +230,7 @@ func TestHardeningAPI(t *testing.T) {
 
 	// Once the kernel module is in place too, nothing needs attention.
 	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"kernel"}}, &job)
-	poll, err = ac.Poll(ctx)
+	poll, err = ac.Poll(ctx, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

@@ -138,6 +138,161 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Hardening checks for Windows computers and servers, through the API**
+  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
+  W1; [guide](docs/operations/hardening.md#windows-computers-and-servers)).
+  `POST /api/v1/jobs/hardening` takes `"platform": "windows"` and checks 23
+  modules, from accounts and the firewall to BitLocker and LAPS, with
+  Windows PowerShell 5.1 as LocalSystem. A check changes nothing it
+  reports on. For each setting it reports the value, what EasyRMM wants,
+  and who else owns it: Group Policy (read from Windows' own record of what
+  it applied), registry preference items, an MDM, Defender for Endpoint, a
+  Configuration Manager client, DSC, Azure machine configuration, OSConfig,
+  Tamper Protection, or another antivirus or firewall (on servers, another
+  vendor's filtering platform provider). A value a Group Policy object
+  deletes is Group Policy's. Where EasyRMM cannot tell, the setting is
+  *check only*, with the reason, a record that could not be read
+  included. What the check could not read is never taken for an answer:
+  such a setting is *unknown* with the error, a module none of whose
+  settings could be read (or whose Defender or BitLocker state could not
+  be) *failed*, and a role or join Windows did not report *unknown*, which
+  makes the computer check only and what turns on whether it is a domain
+  controller *unknown* too. On a computer enrolled in an MDM every value
+  no other owner holds is *check only*, until the MDM reader is proven on
+  an Intune-enrolled computer. The accounts module reports whether the
+  computer is exposed: failed sign-ins from public addresses, or 10 or
+  more for one account within 15 minutes. The platform says which
+  Windows it is, its role, how it is joined, and whether apply will be
+  supported there. Each module lists
+  the NIST SP 800-53, SP 800-171 and ISO/IEC 27001 controls that DISA's and
+  NIST's published mappings relate it to, with their sources. Every run
+  first checks `%ProgramData%\EasyRMM\Hardening`, where apply will keep its
+  record. It refuses a folder that someone other than SYSTEM or
+  Administrators could write to, or that is reached through a link. The
+  console's **Hardening** tab and its check dialog stay Linux's until W3;
+  a checked Windows device's summary shows in **Devices**. Applying and
+  undoing come with W2.
+- **Downloading a job's output and results** (ADR-0064, slice 1). A run's
+  page offers **Download** beside **Copy** on each stream, and
+  **Download run** (the run as JSON, both streams with it); a job's page
+  offers **Download output (ZIP)**, a folder for each finished run the
+  user may read and `runs.csv` saying for every run whether its output is
+  in, and **Download results (CSV)**, every run's status, exit code, error
+  and times without output. Each is shown only where it can work. Output
+  downloads go through ADR-0063's reads: `job.view_sensitive` at the run's
+  site, and each recorded as *Downloaded job output* with what was
+  downloaded, in the same transaction. The archive records every run it
+  holds and commits those records before the first byte is sent; if they
+  cannot be written nothing is sent, and output removed in between is
+  listed as removed. Each person may download six archives at once, then
+  one every 10 seconds (up to 11 in the first minute, six a minute after,
+  counted by each server process); another is answered 429 with
+  `Retry-After`. The results need only
+  `job.view`, are recorded as
+  *Downloaded job results* (`job.results_export`), and neutralize formula
+  cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
+  `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
+  ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
+- **PowerShell 7 scripts** (ADR-0064, slice 1). A script's shell can be
+  **PowerShell 7** (`pwsh`); `powershell` scripts still run in Windows
+  PowerShell 5.1, unchanged, and the console now names that shell
+  *Windows PowerShell 5.1*. Run as LocalSystem, the agent uses only a
+  PowerShell 7 no standard user can change: it looks in Program Files and
+  Program Files (x86) only, never the `PATH` or a user's folders, takes the
+  newest stable 7 or later built for the processor, and before each run
+  checks that the install, the folders above it, the module folders and
+  configuration files the run reads can be changed only by Administrators,
+  SYSTEM and TrustedInstaller and hold no links or junctions (except the
+  hard links Windows keeps in Windows PowerShell's own module folders). A
+  module an installer left open to users fails the run, naming it. Previews,
+  32-bit builds, PowerShell 6 and Microsoft Store installs (winget's
+  default since PowerShell 7.6) are listed and never run. Runs get the
+  system's module folders only, and PowerShell 7's telemetry and update
+  check off. Where no usable PowerShell 7 is found the run fails without
+  running the script, unless its author set **Where PowerShell 7 is
+  missing** to Windows PowerShell 5.1 (`pwshFallback`, copied into each
+  job). The check also refuses a folder above the install or a module
+  folder that someone else could replace, a module folder the
+  configuration names that does not exist, and a file open in another
+  program that may write it; files Windows compressed or deduplicated are
+  plain files. A run holds `pwsh.exe` and the install's libraries open,
+  unwritable, until its process is created. After fixing an install's
+  permissions, restart the computer. An install whose module folders or
+  configuration fail, with a file open in another program or with more
+  than one hard link, whose version is not a version, or that could
+  not be read or checked (a `Program Files\PowerShell` that cannot be
+  listed included, shown as *could not be checked*, not as PowerShell 7
+  missing) is *found, not usable*: runs use another install that passes
+  every check, or fail, naming the blocked install the Hardware tab lists
+  first, without falling back to Windows PowerShell 5.1,
+  which loads from the same module folders and to which anyone who may
+  read a file could otherwise send scripts. A script that falls back runs
+  Windows PowerShell with a module path of checked folders only, never the
+  computer's, written so that Windows PowerShell adds no folder of its own
+  (with Windows' default `PSModulePath`, CI's runners showed it adding a
+  relative one); a `PSModulePath` in the registry that names a variable
+  the agent cannot expand as Windows PowerShell would stops PowerShell 7
+  runs and the fallback. Migration 00033 adds the shell and the new
+  columns, its checks unvalidated; migration 00034 validates them and
+  fills each device's PowerShell 7 flag and blocked reason from its stored
+  inventory
+  ([guide](docs/operations/scripts-and-jobs.md#powershell-7)).
+- **Every run records the program it used**: edition, version,
+  architecture and path, read from the file just before it starts, and
+  whether a PowerShell 7 script fell back to 5.1. Shown on the run's page
+  ("PowerShell 7.6.10, 64-bit"), as the **Program** column of a job's runs,
+  and in the results CSV and downloads, to everyone with `job.view`. Runs
+  from agents of earlier releases say *Not reported by this agent's
+  version*.
+- **A Windows device's PowerShell installs**: the inventory lists Windows
+  PowerShell and each PowerShell 7 found, and the **Hardware** tab shows
+  which one PowerShell 7 scripts run in and why each other is not used,
+  or *Found, not usable* with the reason. The run dialog warns how many
+  chosen devices reported no usable PowerShell 7 and what the script does
+  there.
+- **Agents say which jobs they take.** The agent's poll lists the job
+  capabilities its build takes (`accepts`; `job.pwsh` from Windows agents),
+  kept on the device for that build. A PowerShell 7 job is sent only to an
+  agent that listed it; starting one on a device whose agent cannot, or has
+  not said, is refused with the reason, the device picker leaves such
+  devices out, and a run left waiting says why and expires with that
+  reason, as does a run the agent took before changing versions. The agent
+  sends the list, its PowerShell installs and a run's program only to a
+  server of protocol level 2 or higher (ADR-0009); a result waits at most
+  until 30 seconds after the agent started to learn the level.
+  **Agents of 1.0.0-rc.4 and earlier never list it: update them to run
+  PowerShell 7 scripts.** Every other job runs on them as before: the
+  integration tests run the rc.4 agent, built from its tag, on Linux
+  through Bash, sh and Python scripts with arguments and exit codes, a
+  timeout and a cancel.
+- **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
+  own health record every 30 minutes, NVMe's health log and ATA's SMART
+  with a fixed list of read-only commands, on Windows and Linux, and sends
+  it in a report of its own (`POST /api/agent/v1/hardware`, one in 10
+  minutes per device with bursts of 6). The server judges every reading
+  with one set of rules: *Healthy*, *Warning*, *Failing*, *Unknown*,
+  *Unavailable* or *Unsupported*, each with a reason; a disk is never
+  shown healthy because something could not be read. A device's
+  **Hardware** tab shows each disk's health and firmware, and a disk's
+  panel its facts, ATA attributes, last 30 days and open alerts;
+  **Devices** gains a *Disk health* column and filter. Disks behind a
+  hardware RAID controller, SAS and USB disks show *Unavailable* until
+  later slices read them. See [Disk health](docs/operations/disk-health.md).
+  - **Disk health alerts**, one per disk: a `disk_health` policy watches
+    one check, *failing*, *errors*, *pending*, *wear* or *temperature*,
+    and resolves after two readings in a row clear it. Five shared
+    policies come with it, only **Disk failing** turned on. A disk that
+    disappears keeps its alerts; they resolve on their own (*Disk gone*,
+    `subject_gone`) once it has been missing from the device's disk
+    readings for 14 days. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
+  - **History**: every reading for `EASYRMM_METRICS_RETENTION`, then one
+    row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
+    730 days, by default, at least the metrics retention). About 0.3 MiB
+    per disk in the database and its backups.
+  - **Each disk's firmware revision** is in the inventory, and on Linux a
+    SATA disk's whole model (40 characters, where the kernel's listing
+    holds the first 16). Every device uploads its inventory once after
+    its agent is updated.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version
@@ -145,9 +300,8 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-- **The server can be held by the updater** (ADR-0052's server side; the
-  updater itself is not built yet). `setup.sh` makes
-  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+- **The server can be held by the updater** (ADR-0052's server side).
+  `setup.sh` makes `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
   server and the engine's worker mount read-only at
   `/run/easyrmm-updater`. While a file
   named `hold` exists there, the server answers its health check and
@@ -228,6 +382,58 @@ All notable changes to this project are documented here. The format follows
   device's **Hardening** tab shows the state each leaves; starting them
   from the console comes next. See
   [Hardening Linux computers](docs/operations/hardening.md).
+- **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
+  root, `setup.sh` installs it with a systemd service and a timer (hourly,
+  and five minutes after the host starts),
+  configured in `/etc/easyrmm/updater.conf` (`--no-updater` installs
+  none; `--auto-upgrade` turns automatic upgrades on, which are off
+  otherwise). `easyrmm-updater upgrade [version]` verifies the release or
+  edge build against its Sigstore attestation for this repository's
+  workflow, checks the bundle and every image against its manifest, pulls
+  while the server runs, stops it, backs up the data root (PostgreSQL's
+  whole cluster with it, so Authentik's database too where it is
+  installed) and the deployment, checking each copy against its source,
+  sets the new bundle up with its `setup.sh --upgrade`,
+  starts it held and confirms it; when the new version does not start, it
+  restores the backup and records the rollback in the audit log.
+  `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
+  after saying what it loses; `status` and `check` change nothing. A
+  version whose manifest names a required upgrade stop (`upgradeFrom`)
+  above the lowest of the running server's version, `.env`'s, the
+  updater's record and the updater's own is refused before anything
+  stops, naming the version to install first; automatic upgrades install
+  that stop first, and never go below the highest of the first three. An
+  attempt cut short (killed, or the host restarted) is finished by the
+  next run from what it recorded, which is on the disk before each step
+  begins. A command of its killed by a signal brings the previous version
+  back at once without counting against the version, and the updater's
+  own process ending during the stop or the backup is finished so by the
+  next run; after two attempts at one version cut short so, automatic
+  upgrades wait for an operator, and `status` says why, so that no version
+  takes the server down every night. A step it cannot record from step 5 on, a command
+  killed once a stop was asked for, or bringing the previous version back
+  cut short, stops it where it is, the server held, for the next run.
+  systemd's stop (`KillMode=mixed`) and Ctrl-C reach the updater alone,
+  which runs on to the attempt's end for up to 30 minutes. After a
+  rollback that failed the updater does nothing until it is run with
+  `--deployment-repaired`. It refuses, before anything stops, a data root
+  holding links at its top, links anywhere that lead out of it (a mount's
+  way included) or mount points, a host without room on each disk for
+  everything that goes on it, a `.env` it could read otherwise than
+  Compose does or that sets a Compose setting but `COMPOSE_PROFILES`,
+  another Compose file beside `docker-compose.yml`, and a volume a backup
+  would not hold. `.env` is read by Compose's rules, by the updater and
+  `setup.sh` alike, so a quoted value, such as a sender with a name
+  (`EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"`), is read as Compose
+  reads it. A version that ran out of room once the deployment stopped
+  waits for an operator, and `status` says how many bytes it was short.
+  Run as root, `setup.sh` holds the updater's lock for its whole run, and
+  changes nothing while an attempt runs. The updater unpacks bundles into
+  `/opt/easyrmm`, root's, through links only root can change, and removes
+  only those. Each
+  bundle carries it; a clone builds it with `make updater`. Guide:
+  [the host updater](docs/operations/updater.md). The console's requests
+  (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
@@ -257,8 +463,168 @@ All notable changes to this project are documented here. The format follows
   kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
   hardening jobs *Hardening job*. See
   [Hardening Linux computers](docs/operations/hardening.md).
+- **The mail server in the console** (ADR-0053, slice 1). Super
+  administrators set it under **Settings → Notifications → Mail server**:
+  host, port, STARTTLS, TLS or none (only to a relay on the same machine),
+  signing in with a password or not at all, and the sender's address and
+  name. The password is sealed with `EASYRMM_SECRET_KEY`, write-only, and
+  kept while the host, port, security and user name stay the same. It
+  applies at once, without a restart: to invitations, password resets,
+  whether password reset is offered, and the patching engine, which
+  EasyRMM now gives the mail server on every change rather than once per
+  start. `EASYRMM_SMTP_*` in `.env` still works and wins: the console then
+  shows it read-only, and a mail server saved in the console before can
+  still be removed. **Send test message** tries the form's settings, saved
+  or not, one every 30 seconds, and shows the mail server's answer without
+  repeating what a server that is not a mail server said. **Limits**, 30
+  messages a minute and 9,000 a day by default, hold across servers:
+  invitations and password resets go first, the last 10% of the day is
+  kept for resets people ask for, and other mail stops at 80%. Every
+  change and test is audited (`mail_server.*`), from and to. See
+  [Mail](docs/operations/mail.md).
+- **Signing in to Microsoft 365 with an application** (ADR-0053, slice 2),
+  ahead of Microsoft turning password sign-in to Exchange Online's SMTP
+  off by default at the end of December 2026. The mail server signs in
+  with an Entra application's token (`AUTH XOAUTH2`, only over STARTTLS or
+  TLS) to the sender's mailbox, from the application's tenant ID, client
+  ID and client secret, or its certificate and RSA private key. Set it in
+  the console (Settings → Notifications → Mail server, which fills in
+  `smtp.office365.com`), in `.env` (`EASYRMM_SMTP_AUTH=microsoft365`, the
+  IDs, and the secret or key only in files named by
+  `EASYRMM_SMTP_CLIENT_*_FILE`), or with `setup.sh --smtp-tenant-id` and
+  the other `--smtp-*` options, which copy the secret or key into
+  `${EASYRMM_DATA_ROOT}/secrets` (`root:65532`, 0750 and 0440) and may be
+  given alone on an existing `.env`. The secret and the key are sealed and
+  never returned; tokens are kept in memory until 5 minutes before they
+  expire and never logged. Microsoft's and Exchange's refusals are
+  explained: SMTP AUTH off for the tenant or the mailbox, security
+  defaults, a missing permission or service principal, a wrong secret, and
+  sending over the rate: a password reset someone asked for is tried again
+  a minute later, and an invitation or password link comes back to the
+  administrator at once (the replies' texts come from Microsoft's
+  documentation, not yet checked against a real tenant). The certificate
+  must be PEM certificates alone, and only they are stored. `setup.sh`
+  leaves the settings it keeps as `.env` has them, writes `.env` whole and
+  renames it into place, and refuses a data root others can change, a
+  linked `secrets` directory, hard-linked files in it, and a `$` in a mail
+  setting (Compose reads it as a variable). **While an
+  application signs in, the patching engine is given no mail server, so
+  patching sends no email or monthly reports** until a later release; the
+  mail server page, Settings → Patching (Notifications and Reports),
+  Reports → Monthly patch reports, a report's failed email and the log say
+  so. For patching's email meanwhile, use a relay or a password. See
+  [Mail](docs/operations/mail.md#microsoft-365).
+- **`easyrmm-server mail check`** connects to the mail server in force
+  and signs in, getting a token first with an application, and quits
+  without sending; it prints the answer and exits 1 on failure. The server
+  runs the same check at start, after every change and daily, logs it, and
+  the mail server page shows the last one, with the application's
+  certificate and its end date, warned of from 30 days before.
+- **Active alerts pulse in red in the console.** On a device's page,
+  every active alert in the **Alerts** card pulses slowly in red (a
+  resolved one never does), and the card's title shows how many are
+  active. On the **Alerts** page and in the menu's **Alerts** tree, the
+  name of a device with an active critical alert pulses too, with the
+  critical icon beside it. One cycle takes 1.8 seconds, only text colour
+  and a soft tint change, every state keeps 4.5:1 contrast in both themes,
+  and with reduce motion turned on the red holds still. **Stop flashing**,
+  on the Alerts page and a device's Alerts card, holds it still in this
+  browser too. A disk's panel on the Hardware tab pulses and counts its
+  open alerts the same way. Severity badges, icons and counts keep saying
+  the same in words. See
+  [What pulses in red](docs/operations/alerts.md#what-pulses-in-red).
+- **A detailed card for every alert.** Select an alert's name wherever
+  alerts are listed (the **Alerts** page, a device's **Alerts** card, the
+  dashboard and a disk's panel) for everything recorded about it: its
+  device, site and organization; the condition, policy and values that
+  opened it; a chart of the measurement around it with the threshold and
+  the time it was open; for disk health, the disk's facts; its times and
+  acknowledgement; what it means and what to do next; the policy's other
+  alerts on the device; and the raw JSON to copy. The card has its own
+  address; **Close**, Escape and **Back** close it. An alert older than
+  the measurements kept charts what is kept, and says so. Patching alerts
+  get a card too: select a title under **Patching → Alerts** for its
+  device or organization, times, what it means, what to do next and its
+  JSON ([Patching alerts](docs/operations/patching.md#alerts)). The API adds
+  `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
+  on `GET /api/v1/alerts`. See
+  [An alert's card](docs/operations/alerts.md#an-alerts-card).
 
 ### Changed
+
+- **Upgrading adds five shared alert policies** for disk health, only
+  **Disk failing** turned on. **Where a shared policy already has one of
+  their names** (case aside), the new one is added as *… (disk health)*,
+  for example *Disk failing (disk health)*; where both names are taken, no
+  policy for that check is added. Check the **Policies** tab after the
+  upgrade if you named policies that way.
+- **An alert can be about one part of a device.** Alerts gain `checkName`,
+  `subject`, `subjectLabel` and `detail` in the API, and a device can have
+  one active alert per policy and disk. Changing a policy's check resolves
+  its alerts as a changed condition (`policy_changed`), as changing its
+  kind, threshold or minutes does.
+- **Invitations and password reset emails come in HTML and text**, from a
+  new mailer that sends each recipient a message of their own, can carry
+  attachments, checks the mail server's certificate against the system's
+  authorities with TLS 1.2 or later, and dials through the same address
+  checks as EasyRMM's other outbound connections. When an invitation's or
+  password link's email does not go, the console now says why: no mail
+  server, or the mail server did not take it.
+- **Invitations and password emails are limited**, so that no one
+  administrator, organization or attacker can use up the mail server's
+  day: per administrator an hour, per organization a day, per account
+  (3 at once, then one every 20 minutes, resets and administrators' links
+  together), and password resets people ask for per organization and on
+  the whole platform, by the hour only, so that no one can keep them
+  refused for a day. Each limit is the smaller of a fixed number and a share of
+  the day's limit, and all are counted in the database, across servers
+  (see the [Mail](docs/operations/mail.md#limits-on-invitations-and-password-emails)
+  guide for the numbers). Past the administrator's own limit, an
+  invitation or link is refused with `429` and a message that says when
+  to try again, and the refusal is audited; past the account's or the
+  organization's, it comes back to the administrator unsent, with the
+  reason. A super administrator's invitations and links count only
+  against their own limit. Without a mail server, links come back as
+  before, unlimited.
+- **Every `429` carries `Retry-After`.**
+- **The patching engine's mail server comes from EasyRMM alone**: a mail
+  server set in the engine itself is overwritten within a minute, and
+  when EasyRMM cannot give the engine its own three passes in a row, the
+  engine's is removed and Patching → Notifications says why. With several
+  servers, one at a time gives it; another whose mail server differs logs
+  an error and says so, rather than giving the engine its own in turn.
+  A server that stops gives the work up at once, and another takes over
+  at its next pass; a server whose connection to PostgreSQL died without
+  a word is noticed in about 30 seconds, and another takes over; a
+  pooler in transaction mode (PgBouncer's) is not supported. Servers compare theirs with a
+  keyed HMAC of the one given, from which the password cannot be
+  guessed, and change the engine's mail settings one at a time. The
+  webhook switch no longer fails when EasyRMM's mail server cannot be
+  read, leaves the engine's as it is then, and an engine that hangs no
+  longer holds it up.
+- **`.env`'s SMTP password and sender's name are checked** against the
+  lengths the patching engine takes. Longer, EasyRMM still starts and
+  sends, logs an error and shows it on the Mail server page.
+- **A key rotation no longer makes servers say their mail server differs
+  from the patching engine's.** The record of the mail server given to the
+  engine is kept under each secret key, and servers compare under a key
+  they have in common. A server that waits for another's change of the
+  engine's mail settings tries again at its next pass, counting no failure
+  and never removing the engine's mail server for it. One account's
+  password emails are now limited exactly as the guide says, however old
+  its earlier emails: before, emails over a day old were left out, which let
+  an account get about two more a day.
+- **`docker-compose.yml` mounts `${EASYRMM_DATA_ROOT}/secrets`** read-only
+  in the server, and `setup.sh` (`--upgrade` included) creates it,
+  `root:65532` with mode 0750. Back it up with `.env`
+  ([Backup and restore](docs/operations/backup-restore.md)).
+- **Password reset checks the address's limit before anything else**, and
+  whether reset is offered is kept for five seconds, so requests anyone
+  may send seldom reach the database. A reset takes its room under the
+  limits before its link is made and never holds one database connection
+  while it waits for another, so that many resets at once for one address
+  cannot use up the server's connections; a reset refused under a limit
+  makes no new link, so the last one sent still works.
 
 - **CI and releases build the server image once.** Both platforms, amd64
   and arm64, are scanned and their agents checked against a release's

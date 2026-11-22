@@ -25,7 +25,8 @@ import (
 
 // Client is the part of the server client the worker uses.
 type Client interface {
-	Poll(ctx context.Context) (*agentproto.PollResponse, error)
+	// Poll sends the capabilities this build accepts (Accepts).
+	Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error)
 	Start(ctx context.Context, runID string) (*agentproto.StartResponse, error)
 	Result(ctx context.Context, runID string, r agentproto.ResultRequest) error
 }
@@ -163,7 +164,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 		w.flush(ctx)
-		resp, err := w.Client.Poll(ctx)
+		resp, err := w.Client.Poll(ctx, Accepts())
 		switch {
 		case err == nil:
 			failures = 0

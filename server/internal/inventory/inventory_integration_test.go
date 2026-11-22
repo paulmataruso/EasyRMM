@@ -212,6 +212,148 @@ func TestRecordCleansAndReplaces(t *testing.T) {
 	}
 }
 
+// TestPowerShellInstalls: the inventory's powerShell (ADR-0064) is kept,
+// cleaned and bounded; without it, it reads as not reported. The device
+// keeps what the device list says of it: a usable PowerShell 7 or not, and
+// why a run fails where none is usable and one is blocked.
+func TestPowerShellInstalls(t *testing.T) {
+	f := newFixture(t)
+	pc := f.device(f.acme, f.hq, "HQ-WIN")
+	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	flags := func() string {
+		t.Helper()
+		return f.str(`SELECT coalesce(powershell7::text, 'null') || ' ' || coalesce(powershell7_blocked, 'null') FROM devices WHERE id = $1`, pc)
+	}
+
+	f.record(pc, agentproto.Inventory{PackageManager: "windows"})
+	if got, _ := f.svc.Get(f.ctx, super, pc); got == nil || got.Inventory == nil || got.Inventory.PowerShell != nil {
+		t.Fatalf("an inventory without powerShell = %+v", got)
+	}
+	if fl := flags(); fl != "null null" {
+		t.Errorf("without powerShell: %q", fl)
+	}
+
+	list := []agentproto.PowerShellInstall{
+		{Edition: "Desktop", Version: "5.1.26100.1", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true},
+		{Edition: "Core", Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Usable: true},
+		{Edition: "Core", Version: "7.6.10\x00", Arch: "mips", Path: `C:\Program Files (x86)\PowerShell\7\pwsh.exe`, Reason: "An x86 build.\n" + strings.Repeat("r", 600)},
+		{Edition: "Core", Version: "7.6.0", Arch: "x64", Path: `C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.0.0_x64__8wekyb3d8bbwe\pwsh.exe`, Store: true, Reason: "A Store install."},
+		{Edition: "Other", Version: "1", Path: `C:\x.exe`},
+		{Edition: "Core", Version: "7", Path: "  "},
+	}
+	for i := range 20 {
+		list = append(list, agentproto.PowerShellInstall{Edition: "Core", Version: fmt.Sprintf("8.%d", i), Path: fmt.Sprintf(`C:\Program Files\PowerShell\8-%d\pwsh.exe`, i)})
+	}
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: list})
+	got, err := f.svc.Get(f.ctx, super, pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := got.Inventory.PowerShell
+	if len(ps) != agentproto.MaxPowerShell {
+		t.Fatalf("%d installs kept, want %d: %+v", len(ps), agentproto.MaxPowerShell, ps)
+	}
+	if ps[0].Edition != "Desktop" || ps[0].Version != "5.1.26100.1" || !ps[0].Usable || ps[1].Path != `C:\Program Files\PowerShell\7\pwsh.exe` {
+		t.Errorf("kept as sent: %+v %+v", ps[0], ps[1])
+	}
+	if x := ps[2]; x.Arch != "" || x.Version != "7.6.10" || x.Usable || len([]rune(x.Reason)) != 500 || strings.ContainsRune(x.Reason, '\n') {
+		t.Errorf("cleaned: %+v", x)
+	}
+	if !ps[3].Store || ps[3].Usable || ps[4].Version != "8.0" {
+		t.Errorf("a Store install, then the unknown edition and the empty path dropped: %+v %+v", ps[3], ps[4])
+	}
+	if fl := flags(); fl != "true null" {
+		t.Errorf("with a usable PowerShell 7: %q", fl)
+	}
+
+	// Blocked: its module folders fail the agent's check. Never usable, and
+	// never Windows PowerShell; the first one's reason is kept for the list.
+	why := "PowerShell 7 would load modules from C:\\Program Files\\PowerShell\\Modules, and it can be changed by BUILTIN\\Users: not used.\n" + strings.Repeat("b", 600)
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: []agentproto.PowerShellInstall{
+		{Edition: "Desktop", Version: "5.1.26100.1", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true, Blocked: true},
+		{Edition: "Core", Version: "7.6.10", Arch: "x86", Path: `C:\Program Files (x86)\PowerShell\7\pwsh.exe`, Reason: "An x86 build."},
+		{Edition: "Core", Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Usable: true, Blocked: true, Reason: why},
+		{Edition: "Core", Version: "7.5.4", Arch: "x64", Path: `C:\Program Files\PowerShell\7.5\pwsh.exe`, Blocked: true, Reason: "Another."},
+	}})
+	got, _ = f.svc.Get(f.ctx, super, pc)
+	ps = got.Inventory.PowerShell
+	if len(ps) != 4 || !ps[0].Usable || ps[0].Blocked || ps[1].Blocked || ps[2].Usable || !ps[2].Blocked || !ps[3].Blocked {
+		t.Errorf("blocked installs kept: %+v", ps)
+	}
+	kept := text(why, 500)
+	if fl := flags(); fl != "false "+kept || len([]rune(kept)) != 500 {
+		t.Errorf("with a blocked PowerShell 7: %q", fl)
+	}
+	// Another install usable: runs use it, and nothing is blocked.
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: append(ps[:3:3],
+		agentproto.PowerShellInstall{Edition: "Core", Version: "7.5.4", Arch: "x64", Path: `C:\Program Files\PowerShell\7.5\pwsh.exe`, Usable: true})})
+	if fl := flags(); fl != "true null" {
+		t.Errorf("with a usable PowerShell 7 beside a blocked one: %q", fl)
+	}
+
+	// An empty list is kept as reported: none found.
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: []agentproto.PowerShellInstall{}})
+	if got, _ := f.svc.Get(f.ctx, super, pc); got.Inventory.PowerShell == nil || len(got.Inventory.PowerShell) != 0 {
+		t.Errorf("an empty list = %#v", got.Inventory.PowerShell)
+	}
+	if fl := flags(); fl != "false null" {
+		t.Errorf("none found: %q", fl)
+	}
+}
+
+// TestDiskFirmware: a disk's firmware is a fact under ADR-0065's rule. The
+// server keeps a known state and reason, makes anything else unknown, and
+// hashes the body as sent; a server from before the field decodes the same
+// body, ignoring the field, and stores the same hash.
+func TestDiskFirmware(t *testing.T) {
+	f := newFixture(t)
+	pc := f.device(f.acme, f.hq, "HQ-PC")
+	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	fw := func(state, reason, value string) *agentproto.TextFact {
+		return &agentproto.TextFact{State: state, Reason: reason, Value: value}
+	}
+	inv := agentproto.Inventory{Disks: []agentproto.Disk{
+		{Name: "nvme0n1", Model: "Example NVMe 1TB", Serial: "N1", Firmware: fw(agentproto.FactRead, "", " 3B2QGXA7\x00 ")},
+		{Name: "sda", Firmware: fw(agentproto.FactUnavailable, agentproto.ReasonUSBBridge, "")},
+		{Name: "sdb", Firmware: fw("broken", "", "")},
+		{Name: "sdc", Firmware: fw(agentproto.FactUnknown, "made_up", "")},
+		{Name: "sdd", Firmware: fw(agentproto.FactRead, "", "  ")},
+		{Name: "sde", Firmware: fw(agentproto.FactRead, "", strings.Repeat("9", 100))},
+		{Name: "sdf"},
+	}}
+	body, _ := json.Marshal(inv)
+	hash, err := f.svc.Record(f.ctx, pc, body)
+	if err != nil || hash != inv.Hash() {
+		t.Fatalf("record %q %v, want %q", hash, err, inv.Hash())
+	}
+	// The release before: its disk has no firmware field.
+	var before struct {
+		Disks []struct {
+			Name, Model, Serial string
+		} `json:"disks"`
+	}
+	if err := json.Unmarshal(body, &before); err != nil || len(before.Disks) != 7 || before.Disks[0].Serial != "N1" {
+		t.Fatalf("the earlier decoder: %+v %v", before, err)
+	}
+	got, err := f.svc.Get(f.ctx, super, pc)
+	if err != nil || got.Inventory == nil || len(got.Inventory.Disks) != 7 {
+		t.Fatalf("get %+v %v", got, err)
+	}
+	invalid := agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonInvalidReport}
+	for i, want := range []*agentproto.TextFact{
+		{State: agentproto.FactRead, Value: "3B2QGXA7"},
+		{State: agentproto.FactUnavailable, Reason: agentproto.ReasonUSBBridge},
+		&invalid, &invalid, &invalid,
+		{State: agentproto.FactRead, Value: strings.Repeat("9", 64)},
+		nil,
+	} {
+		d := got.Inventory.Disks[i]
+		if (d.Firmware == nil) != (want == nil) || want != nil && *d.Firmware != *want {
+			t.Errorf("%s firmware %+v, want %+v", d.Name, d.Firmware, want)
+		}
+	}
+}
+
 func TestMetricsAndHistory(t *testing.T) {
 	f := newFixture(t)
 	pc := f.device(f.acme, f.hq, "HQ-PC")

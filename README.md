@@ -153,8 +153,9 @@ host's IP address.
 
 ```bash
 curl -LO https://github.com/paulmataruso/EasyRMM/releases/download/easyrmm-v1.0.0-rc.4/easyrmm-v1.0.0-rc.4-deploy.tar.gz
-tar -xzf easyrmm-v1.0.0-rc.4-deploy.tar.gz
-cd easyrmm-v1.0.0-rc.4/deploy
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v1.0.0-rc.4-deploy.tar.gz -C /opt/easyrmm
+cd /opt/easyrmm/easyrmm-v1.0.0-rc.4/deploy
 sudo ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
 sudo docker compose up -d
 ```
@@ -192,7 +193,7 @@ design, and every decision has an ADR in
 | | |
 |---|---|
 | **Deploy** | [Docker deployment](docs/deployment/docker.md) · [Behind NGINX](docs/deployment/nginx.md) · [Installing the agent](docs/deployment/agents.md) · [Upgrading](docs/operations/upgrading.md) · [Backup and restore](docs/operations/backup-restore.md) |
-| **Use** | [Patching](docs/operations/patching.md) · [Alerts](docs/operations/alerts.md) · [Scripts and jobs](docs/operations/scripts-and-jobs.md) · [Software](docs/operations/software.md) · [Inventory](docs/operations/inventory.md) · [Reports](docs/operations/reports.md) · [Audit forwarding](docs/operations/audit-forwarding.md) |
+| **Use** | [Patching](docs/operations/patching.md) · [Alerts](docs/operations/alerts.md) · [Scripts and jobs](docs/operations/scripts-and-jobs.md) · [Software](docs/operations/software.md) · [Inventory](docs/operations/inventory.md) · [Disk health](docs/operations/disk-health.md) · [Reports](docs/operations/reports.md) · [Audit forwarding](docs/operations/audit-forwarding.md) |
 | **Secure** | [Signing in](docs/security/sign-in.md) · [Single sign-on](docs/security/single-sign-on.md) · [Roles and permissions](docs/security/rbac.md) · [Threat model](docs/security/threat-model.md) |
 | **Understand** | [Architecture](docs/architecture/overview.md) · [Network and ports](docs/architecture/network.md) · [Database](docs/architecture/database.md) · [Decisions (ADRs)](docs/architecture/adr/) |
 | **Develop** | [Development guide](docs/development/README.md) · [Contributing](CONTRIBUTING.md) · [Releasing](docs/development/releasing.md) |

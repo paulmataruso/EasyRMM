@@ -29,6 +29,7 @@ colors:
   sidebar: "#080b12"
   sidebar-fg: "#a3aec0"
   sidebar-active: "#172033"
+  sidebar-danger: "#f87171"
   # Chart series (EasyRMM addition), validated for colour-vision deficiency in this order
   series-1: "#3987e5"
   series-2: "#d95926"
@@ -60,6 +61,7 @@ colors:
   sidebar-light: "#0f172a"
   sidebar-fg-light: "#cbd5e1"
   sidebar-active-light: "#1e293b"
+  sidebar-danger-light: "#f87171"
   series-1-light: "#2a78d6"
   series-2-light: "#eb6834"
   series-3-light: "#1baf7a"
@@ -270,6 +272,7 @@ One restrained blue accent over cool slate neutrals, with four semantic status t
 - **Line / Line Strong** (line, line-strong): every border and divider.
 - **Foreground / Muted / Subtle** (fg, muted, subtle): primary text; secondary text, labels and table heads; hints, placeholders, empty-state icons.
 - **Navy Sidebar** (sidebar, sidebar-fg, sidebar-active): the sidebar is dark in both themes; active and hovered items sit on sidebar-active with white text.
+- **Sidebar Danger** (sidebar-danger, EasyRMM addition): danger red for text on the navy sidebar, the same in both themes, 4.5:1 or more on sidebar and sidebar-active, where the light theme's danger is not.
 
 ### Chart series (EasyRMM addition)
 - **Series 1 / 2 / 3** (series-1, series-2, series-3): blue, orange and aqua lines in charts, in that order only, each its own step per theme. The three pass a colour-vision-deficiency check against each other on both surfaces (ΔE ≥ 9 for every pair). Light aqua is under 3:1 on white, so every chart keeps a legend and a data table. Series colours mark lines and legend keys, never text, and never status: a value running out wears warn or danger, not a series colour. 
@@ -396,6 +399,9 @@ Centered, quiet: a subtle 32px icon, a medium fg title and muted body, optional 
 ### Device tree dock (EasyRMM addition)
 A **Tree** toggle (pressed state in accent-soft with a 40% accent border) in the devices pages' header opens a 20rem dock at the right of the page: surface, line border on its left, no shadow, entering over 180ms (12px slide, none under reduced motion). It holds a header (title, Collapse all, close), a filter with a live count, an **All devices** row, and the WAI-ARIA tree of organizations, sites and devices: 28px rows indented 16px a level, chevrons, building, pin and status-dot icons, online/total counts in muted tabular figures, the row for the page's organization, site or device in accent-soft and medium weight. From `lg` it sits beside the page and is remembered in the browser; below `lg` it opens over the page as a drawer with a scrim and closes after a choice.
 
+### Active alerts pulse (EasyRMM addition)
+One class, `alert-active-pulse` in `web/src/index.css`, marks what needs attention: an active alert's row in the device page's Alerts card and in a disk panel's Open alerts (with `--row`: a steady 3px danger edge on its left and a danger-soft tint at the peak), the count of active alerts beside those titles (with `--filled`), and the name of a device with an active critical alert on the Alerts page and in the menu's alerts tree (with `--sidebar`, sidebar-fg to sidebar-danger, white on the chosen row). It eases text colour, and a tint where there is one, from the normal colour to danger and back over 1.8s: never more than three flashes a second (WCAG 2.3.1), never a large area, 4.5:1 or more in every state of both themes. Red is never the only sign: the severity badge, the critical icon or the count says the same in words, and nothing announces the pulse. Under reduced motion it holds still at the red state, and so it does when someone presses **Stop flashing** (a ghost button with a pause icon on the Alerts page header and the device's Alerts card, kept per browser as `data-alert-flash="off"` on the root), because the pulse runs as long as the alert does (WCAG 2.2.2).
+
 ### Code and script output (EasyRMM addition)
 Scripts and their output are the content of the scripts and jobs pages, so they are shown as code, never restyled as prose.
 - **Code view:** a script on raised with a line border and 6px radius, 12px mono at relaxed leading, line numbers in a subtle right-aligned gutter that selection skips, lines never wrapped (the block scrolls sideways, at most 36rem tall), and the copy button at top right.
@@ -406,7 +412,7 @@ Scripts and their output are the content of the scripts and jobs pages, so they 
 ### Usage meters and charts (EasyRMM addition)
 Device health is shown as data, with no decoration.
 - **Usage meter:** a muted label at the left, the percentage in semibold tabular figures at the right with an optional muted detail ("12 GiB of 30 GiB"), and below them an 8px fully rounded bar. The fill carries severity: accent below 80%, warn from 80% and danger from 90%, each on its own `-soft` track. From 80% a triangle icon sits before the percentage, so state never depends on colour. In a table row whose header names it, the label is visually hidden.
-- **Time chart:** one percentage axis (0–100%) with hairline `line` gridlines and subtle 11px tabular tick labels; time ticks fall on round local times and thin out to stay 76px apart. Lines are 2px with round joins in the series colours, broken where the device was silent for more than two intervals; the newest point carries a 4px dot with a 2px surface ring. A legend above the plot pairs a short line key, the series name and its latest value in fg. Hover or focus brings a `line-strong` crosshair snapping to the nearest point and a raised tooltip (line border, `shadow-md`) with each series' value in semibold over its muted name. Arrow keys, Home, End and Page Up/Down move along the chart and a live region reads the values. **Show as a table** opens the values in a scrolling table. While a new period loads the previous chart stays at 60% opacity.
+- **Time chart:** one percentage axis (0–100%) with hairline `line` gridlines and subtle 11px tabular tick labels; time ticks fall on round local times and thin out to stay 76px apart. Lines are 2px with round joins in the series colours, broken where the device was silent for more than two intervals; the newest point carries a 4px dot with a 2px surface ring. A legend above the plot pairs a short line key, the series name and its latest value in fg. Hover or focus brings a `line-strong` crosshair snapping to the nearest point and a raised tooltip (line border, `shadow-md`) with each series' value in semibold over its muted name. Arrow keys, Home, End and Page Up/Down move along the chart and a live region reads the values. **Show as a table** opens the values in a scrolling table. While a new period loads the previous chart stays at 60% opacity. An alert's card adds two marks, each named in the legend so neither rests on colour: the policy's threshold as a 1.5px dashed `fg` line across the plot (a legend key of the same dash), and the time the alert was open as a `danger-soft` band behind the grid (a soft square key with a `danger` hairline).
 - **Segmented control:** a radio group of two to four short choices in a raised, line-bordered 6px track with 2px padding; the chosen one is a surface chip with `shadow-xs` and fg text, the others muted. Arrow keys move the choice. Used for a chart's period in its card header.
 
 ### Navigation

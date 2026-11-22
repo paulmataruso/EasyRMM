@@ -204,6 +204,27 @@ func (a Assignment) Kind() ScopeKind {
 	}
 }
 
+// Placement is where a person with the assignments as belongs: the one
+// organization all of them are in, and, with only one assignment, its
+// site. It is uuid.Nil when they have none, one on the whole platform, or
+// assignments in several organizations; the order of as does not matter.
+// Audit records about the person go there, so that its administrators
+// see them, and the person's account mail counts against its limits.
+func Placement(as []Assignment) (org, site uuid.UUID) {
+	if len(as) == 0 {
+		return uuid.Nil, uuid.Nil
+	}
+	for _, a := range as {
+		if a.OrganizationID == uuid.Nil || a.OrganizationID != as[0].OrganizationID {
+			return uuid.Nil, uuid.Nil
+		}
+	}
+	if len(as) == 1 {
+		return as[0].OrganizationID, as[0].SiteID
+	}
+	return as[0].OrganizationID, uuid.Nil
+}
+
 // ErrInvalidAssignment reports an assignment whose scope does not suit its role.
 var ErrInvalidAssignment = errors.New("rbac: invalid role assignment")
 

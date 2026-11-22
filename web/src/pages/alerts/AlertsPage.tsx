@@ -1,15 +1,16 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { BellRing, CheckCircle2, Plus } from "lucide-react";
-import { useList } from "../../api/hooks";
+import { BellRing, CheckCircle2, OctagonAlert, Plus } from "lucide-react";
+import { useDeviceAlertCounts, useList } from "../../api/hooks";
 import type { AlertEntry, AlertPolicy } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { DeviceScope, OrganizationSelect, SiteSelect } from "../../components/Filters";
-import { Badge, Button, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
+import { Badge, Button, cx, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { AlertActions, useAlertAction } from "./AlertActions";
-import { conditionText, policyScope, resolutionText, SeverityBadge, valueText } from "./alertText";
+import { AlertLink } from "./alertLink";
+import { AlertFlashToggle, conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
 import { PolicyDialog, useCanWritePolicies } from "./PolicyDialog";
 
 export function AlertsPage() {
@@ -30,12 +31,16 @@ export function AlertsPage() {
             : "Policies decide what raises an alert. Shared policies cover every device; organization and site policies cover only theirs."
         }
         actions={
-          tab === "policies" && canWrite ? (
-            <Button variant="primary" onClick={() => setEditing("new")}>
-              <Plus className="size-4" aria-hidden />
-              New policy
-            </Button>
-          ) : undefined
+          tab === "policies" ? (
+            canWrite ? (
+              <Button variant="primary" onClick={() => setEditing("new")}>
+                <Plus className="size-4" aria-hidden />
+                New policy
+              </Button>
+            ) : undefined
+          ) : (
+            <AlertFlashToggle />
+          )
         }
       />
       <Tabs
@@ -81,6 +86,10 @@ function AlertList() {
     { keepPrevious: true, refetchInterval: 30_000 },
   );
   const actions = useAlertAction();
+  // Whether each device has an active critical alert, whatever this page shows: one request for every row, shared
+  // with the menu's alerts tree.
+  const counts = useDeviceAlertCounts(true);
+  const critical = useMemo(() => new Set(counts.items.filter((c) => c.critical > 0).map((c) => c.deviceId)), [counts.items]);
   const filtered = Boolean(organizationId || siteId || severity || deviceId);
   const anyActions = list.items.some((a) => a.canManage && a.status !== "resolved");
 
@@ -158,17 +167,19 @@ function AlertList() {
                       <div className="mb-1 sm:hidden">
                         <SeverityBadge severity={a.severity} />
                       </div>
-                      <p className="font-medium">{a.name}</p>
+                      <AlertLink id={a.id} label={`${a.name} on ${a.deviceName}, details`} title="Show the alert's details" className="font-medium break-words hover:text-accent">
+                        {a.name}
+                      </AlertLink>
+                      <DiskSubject alert={a} />
                       <p className="text-xs text-muted">{conditionText(a)}</p>
+                      {a.canManage && risingHint(a) && <p className="mt-0.5 max-w-md text-xs text-muted">{risingHint(a)}</p>}
                       <p className="mt-0.5 text-xs text-muted sm:hidden">
                         <StatusText alert={a} />
                       </p>
                       <AlertActions alert={a} actions={actions} align="start" className="mt-2 sm:hidden" />
                     </td>
                     <td className="min-w-32">
-                      <Link to={`/devices/${a.deviceId}`} className="font-medium break-words hover:text-accent">
-                        {a.deviceName}
-                      </Link>
+                      <DeviceName alert={a} critical={critical.has(a.deviceId)} />
                       <p className="text-xs break-words text-muted">
                         {a.organizationName} / {a.siteName}
                       </p>
@@ -211,6 +222,21 @@ function AlertList() {
         </>
       )}
     </>
+  );
+}
+
+/** The device's name, linked; it pulses in red, with the critical icon, while the device has an active critical alert. */
+function DeviceName({ alert: a, critical }: { alert: AlertEntry; critical: boolean }) {
+  return (
+    <Link
+      to={`/devices/${a.deviceId}`}
+      title={critical ? `${a.deviceName} has an active critical alert` : undefined}
+      aria-label={critical ? `${a.deviceName}, active critical alert` : undefined}
+      className={cx("font-medium break-words", critical ? "alert-active-pulse rounded-sm hover:underline" : "hover:text-accent")}
+    >
+      {critical && <OctagonAlert className="mr-1 inline size-3.5 align-[-2px]" aria-hidden />}
+      {a.deviceName}
+    </Link>
   );
 }
 
