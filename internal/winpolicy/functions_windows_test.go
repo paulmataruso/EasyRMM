@@ -249,6 +249,35 @@ ConvertTo-Json -Compress -Depth 4 @($out | ForEach-Object { $a = @{ result = $_.
 		}
 	}
 
+	// Another antivirus owns the values it takes over, before Group Policy;
+	// Tamper Protection owns those it guards where no policy holds them;
+	// where Defender's status could not be read, those are unreadable.
+	var products []answer
+	runFunctions(t, r, `
+$c = New-ErPolicyContext ''
+$c.GpRecordRead = $true
+$c.Products.antivirus = @('Contoso Antivirus', 'Another Antivirus')
+$c.GpRegistry[(Get-ErRegistryKey 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender' 'PUAProtection')] = @{ Value = '1'; Policy = 'Defender policy' }
+$out = @(
+    (Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender' 'PUAProtection' -Product antivirus),
+    (Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender' 'PUAProtection')
+)
+$c.Products.antivirus = @()
+$c.TamperProtected = $true
+$out += Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' 'DisableRealtimeMonitoring' -Product antivirus -Tamper
+$c.TamperProtected = $false
+$c.Unreadable.tamper = $true
+$out += Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' 'DisableRealtimeMonitoring' -Product antivirus -Tamper
+ConvertTo-Json -Compress -Depth 4 @($out | ForEach-Object { @{ result = $_.Result; owner = $_.Owner; policy = $_.Policy; value = $_.Value; reasons = @($_.Reasons) } })`, &products)
+	wantProducts := []string{"owner security_product Another Antivirus, Contoso Antivirus on", "owner group_policy Defender policy 1",
+		"owner tamper_protection Tamper Protection", "cannot_tell    unreadable"}
+	for i, a := range products {
+		if got := strings.Join([]string{a.Result, a.Owner, a.Policy, a.Value, strings.Join(a.Reasons, ",")}, " "); i >= len(wantProducts) ||
+			strings.TrimSpace(got) != wantProducts[i] {
+			t.Errorf("products %d: %q, want %q", i, got, wantProducts[i])
+		}
+	}
+
 	// netsh's filtering platform state, with what it writes after the
 	// document: only another vendor's provider with inbound filters counts.
 	state := filepath.Join(t.TempDir(), "wfpstate.xml")
