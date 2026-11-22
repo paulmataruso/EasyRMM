@@ -32,12 +32,14 @@ type fixture struct {
 	acme, hq, branch uuid.UUID
 	globex, plant    uuid.UUID
 	super            access.Caller
+	// dsn connects to the test database as the superuser.
+	dsn string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB}
+	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, dsn: inst.SuperDSN}
 	f.svc = New(inst.DB, audit.New(inst.DB, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	// A server that has served agents for a day: devices count as seen when
 	// they last checked in (TestOfflineAfterStart tests the start).

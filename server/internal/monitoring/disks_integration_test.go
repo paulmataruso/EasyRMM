@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 )
 
@@ -239,6 +242,98 @@ func TestDiskCountAlerts(t *testing.T) {
 	if w := f.diskAlert(dev, "Disk wearing out", "nvme0n1 · Example NVMe 1TB"); w == nil || w.Value != 91 ||
 		w.Detail != "91% of rated endurance used" {
 		t.Fatalf("wear alert %+v", w)
+	}
+}
+
+// diskFactsPlan is loadDiskFacts' query plan as the evaluation sees it:
+// the runtime role, under row-level security, with the system scope.
+// Sequential scans are put off, so that the few rows here are read through
+// the index as a fleet's are.
+func diskFactsPlan(f *diskFixture) string {
+	f.t.Helper()
+	var plan []string
+	if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(f.ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+			return err
+		}
+		rows, err := tx.Query(f.ctx, `EXPLAIN `+diskFactsSQL, time.Now(), openWindow.Seconds())
+		if err != nil {
+			return err
+		}
+		plan, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		return err
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	return strings.Join(plan, "\n")
+}
+
+// TestDiskReadingsBoundInIndex: the readings' lower bound is a condition
+// of the index scan, not a filter after it. Row-level security lets only
+// leakproof expressions reach the index; written with coalesce the bound
+// was a filter, and each disk's whole history was read back every minute
+// all the same (TestDiskFactsAtScale measures it).
+func TestDiskReadingsBoundInIndex(t *testing.T) {
+	f := newDiskFixture(t)
+	f.enable(CheckFailing)
+	plan := diskFactsPlan(f)
+	var bound bool
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.Contains(line, "Index Cond:") && strings.Contains(line, "opened_at IS NULL") {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Fatalf("the bound is not an index condition:\n%s", plan)
+	}
+}
+
+// Each disk's readings are read back only as far as its check needs: a day
+// without an alert, since it opened with one.
+func TestDiskReadingsBound(t *testing.T) {
+	f := newDiskFixture(t)
+	f.enable(CheckFailing)
+	dev := f.device(f.acme, f.hq, "srv-01", 0)
+	f.report(dev, nvmeDisk("nvme0n1", "N1", 1))
+	reading := func(ago, state string) {
+		f.exec(`INSERT INTO device_disk_health_samples (device_id, disk_key, at, state, judged)
+			SELECT device_id, disk_key, now() - $2::interval, $3, true FROM device_disk_health WHERE device_id = $1`, dev, ago, state)
+	}
+	// The failing reading a day and an hour old: too old to open on.
+	f.exec(`DELETE FROM device_disk_health_samples WHERE device_id = $1`, dev)
+	reading("25 hours", "failing")
+	if r := f.evaluate(); r.Opened != 0 {
+		t.Fatalf("opened on a reading older than a day: %+v", r)
+	}
+	reading("23 hours", "failing")
+	if r := f.evaluate(); r.Opened != 1 {
+		t.Fatalf("not opened on a reading within the day: %+v", r)
+	}
+	a := f.diskAlert(dev, "Disk failing", "nvme0n1 · Example NVMe 1TB")
+	if a == nil {
+		t.Fatal("no alert")
+	}
+	// Readings from before it opened neither resolve nor change it.
+	reading("2 hours", "healthy")
+	reading("1 hour", "healthy")
+	if r := f.evaluate(); r.Resolved != 0 {
+		t.Fatalf("resolved by readings from before it opened: %+v", r)
+	}
+	if got := f.diskAlert(dev, "Disk failing", a.SubjectLabel); got == nil || got.Detail != a.Detail || got.LastValue != 1 {
+		t.Fatalf("changed by readings from before it opened: %+v", got)
+	}
+	f.report(dev, nvmeDisk("nvme0n1", "N1", 0))
+	f.report(dev, nvmeDisk("nvme0n1", "N1", 0))
+	if r := f.evaluate(); r.Resolved != 1 {
+		t.Fatalf("not resolved by two readings since it opened: %+v", r)
+	}
+	// A disk never judged has nothing to read.
+	f.report(dev, asleepDisk("sda", "Example SSD 500GB", "A1"))
+	if n := f.count(`SELECT count(*) FROM device_disk_health WHERE device_id = $1 AND judged_at IS NULL`, dev); n != 1 {
+		t.Fatalf("%d disks never judged", n)
+	}
+	if r := f.evaluate(); r.Opened != 0 || r.Resolved != 0 {
+		t.Fatalf("a disk never judged: %+v", r)
 	}
 }
 

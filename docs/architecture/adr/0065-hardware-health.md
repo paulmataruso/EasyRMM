@@ -1119,6 +1119,18 @@ numbers.
 * **Evaluated in `monitoring.Evaluate`**, each minute, under its lock,
   from `device_disk_health` and the samples, with the policies'
   coverage and reconciliation as for every kind.
+  *Amended 2026-11-22, decided in review:* each disk's readings are read
+  back only as far as its check needs, since its open alert opened, or
+  without one the last day, which a sleeping disk is still read within;
+  missing disks and disks never judged are not read at all. The bound is
+  an index condition (a `CASE`: under row-level security PostgreSQL
+  keeps a `coalesce` out of the index). On 10,000 disks with 1,066 rows
+  each and every check on, the query read about 890,000 buffers in 28
+  to 63 seconds before, mostly over the 30-second statement timeout,
+  and 300,000 to 400,000 in 3.2 to 7.8 seconds after, once its pages
+  were cached (21 to 37 seconds on the first run after a `VACUUM`); a
+  partial index on full judged readings changed neither, so none was
+  added (`TestDiskFactsAtScale`).
 * **Added by a migration** as five shared policies, **only *Disk
   failing* turned on**, the other four added turned off for each MSP
   to turn on (owner question 2 asks the owner to confirm this

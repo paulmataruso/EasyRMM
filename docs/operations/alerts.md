@@ -82,6 +82,9 @@ two alerts, and acknowledging one leaves the other open.
   verdict and the facts the check watches. A disk that was asleep, timed
   out, or could not be read changes nothing: its alert stays as it is, and
   nothing opens on it.
+* An alert opens only on a complete reading **from the last day**, which
+  a disk that sleeps is still read within, and resolves only on readings
+  taken **after it opened**.
 * With **the drive's own limit**, a temperature check judges only drives
   that report one (NVMe's warning temperature, ATA's specified maximum);
   give a temperature in °C to cover the others.

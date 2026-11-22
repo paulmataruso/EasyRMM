@@ -34,8 +34,6 @@ type diskFacts struct {
 	subject, name, model string
 	check                string
 	threshold            *int
-	// missing: the device's latest report did not list the disk.
-	missing bool
 	// judgedDetail says in words why the last judged reading was failing
 	// or warning.
 	judgedDetail string
@@ -67,13 +65,53 @@ type diskReading struct {
 	Temperature   *int64    `json:"temperature"`
 }
 
+// openWindow is how old the latest complete reading may be for an alert
+// to open on it: a day, which a disk asleep since its last reading is
+// still read within.
+const openWindow = 24 * time.Hour
+
 // loadDiskFacts reads, for every enabled disk health policy and every disk
 // of a device it covers, what decideDisk needs. Disks with no alert whose
-// condition does not hold are left out.
+// condition does not hold are left out, and so are disks decideDisk would
+// do nothing with: missing ones, and ones never judged. Each disk's
+// readings are read back only as far as its check needs: since its alert
+// opened (two readings after that resolve it), or, without one, openWindow.
+// The time bound keeps a disk whose readings never hold the check's facts,
+// such as pending sectors on NVMe, from being read back through its whole
+// history every minute.
 func loadDiskFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]diskFacts, error) {
-	rows, err := tx.Query(ctx, `SELECT * FROM (
+	rows, err := tx.Query(ctx, diskFactsSQL, now, openWindow.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []diskFacts
+	for rows.Next() {
+		var (
+			f        diskFacts
+			readings []byte
+		)
+		if err := rows.Scan(&f.policyID, &f.deviceID, &f.subject, &f.name, &f.model, &f.check, &f.threshold,
+			&f.judgedDetail, &f.alertID, &f.openedAt, &readings, &f.n, &f.over); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(readings, &f.readings); err != nil {
+			return nil, fmt.Errorf("monitoring: reading a disk's readings: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// diskFactsSQL is loadDiskFacts' query: $1 is now, $2 openWindow in
+// seconds. The readings' lower bound is a CASE, not coalesce: under the
+// samples' row-level security only an expression PostgreSQL knows to be
+// leakproof reaches the index, and it does not take coalesce for one. With
+// coalesce the bound was a filter, and each disk's history was read back
+// whole all the same (measured: TestDiskFactsAtScale).
+const diskFactsSQL = `SELECT * FROM (
 			SELECT p.id AS policy_id, d.id AS device_id, h.disk_key, h.name, h.model, p.check_name, p.threshold,
-				h.missing_since IS NOT NULL AS missing, h.judged_detail, a.id AS alert_id, a.opened_at,
+				h.judged_detail, a.id AS alert_id, a.opened_at,
 				coalesce(r.readings, '[]') AS readings, w.n, coalesce(w.over, false) AS over
 			FROM alert_policies p
 			JOIN devices d ON p.organization_id IS NULL
@@ -94,6 +132,7 @@ func loadDiskFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]diskFacts, 
 						s.reallocated, s.media_errors, s.pending, s.uncorrectable, s.wear, s.temperature
 					FROM device_disk_health_samples s
 					WHERE s.device_id = d.id AND s.disk_key = h.disk_key AND NOT s.daily AND s.judged AND s.at <= $1
+					  AND s.at > CASE WHEN a.opened_at IS NULL THEN $1::timestamptz - make_interval(secs => $2) ELSE a.opened_at END
 					  AND CASE p.check_name
 						WHEN 'failing' THEN true
 						WHEN 'errors' THEN s.reallocated IS NOT NULL OR s.media_errors IS NOT NULL
@@ -110,38 +149,17 @@ func loadDiskFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]diskFacts, 
 				  AND s.temperature IS NOT NULL AND coalesce(p.threshold, s.temperature_limit) IS NOT NULL
 				  AND s.at > $1::timestamptz - make_interval(mins => p.minutes) AND s.at <= $1
 			) w ON true
-			WHERE p.enabled AND p.kind = 'disk_health'
+			WHERE p.enabled AND p.kind = 'disk_health' AND h.missing_since IS NULL AND h.judged_at IS NOT NULL
 		) f
-		WHERE alert_id IS NOT NULL OR (NOT missing AND CASE check_name
+		WHERE alert_id IS NOT NULL OR CASE check_name
 			WHEN 'temperature' THEN n >= 2 AND over
-			ELSE (readings->0->>'v')::float8 >= (readings->0->>'lim')::float8 END)`, now)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []diskFacts
-	for rows.Next() {
-		var (
-			f        diskFacts
-			readings []byte
-		)
-		if err := rows.Scan(&f.policyID, &f.deviceID, &f.subject, &f.name, &f.model, &f.check, &f.threshold,
-			&f.missing, &f.judgedDetail, &f.alertID, &f.openedAt, &readings, &f.n, &f.over); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(readings, &f.readings); err != nil {
-			return nil, fmt.Errorf("monitoring: reading a disk's readings: %w", err)
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
-}
+			ELSE (readings->0->>'v')::float8 >= (readings->0->>'lim')::float8 END`
 
 // decideDisk turns a disk's facts into what to do with its alert, and the
-// reading that gives the value and detail. A missing disk, or one without
-// a complete reading, changes nothing.
+// reading that gives the value and detail. A disk without a complete
+// reading in its bound changes nothing (missing disks are not loaded).
 func decideDisk(f *diskFacts) (action, *diskReading) {
-	if f.missing || len(f.readings) == 0 {
+	if len(f.readings) == 0 {
 		return actNone, nil
 	}
 	latest := &f.readings[0]
