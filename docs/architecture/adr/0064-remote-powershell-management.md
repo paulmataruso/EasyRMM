@@ -995,7 +995,28 @@ run read.
     written to the client, so a slow client holds no database
     connection or snapshot. A run whose output is removed between its
     record and its read is listed in `runs.csv` as removed, without its
-    files; its record stays.
+    files; its record stays. *Decided in review (slice 1):* so is a run
+    purged, or moved where the caller may no longer read it, meanwhile.
+  * **Each read is held to its record**, by the database: the record must
+    be of that run, by that caller, with `download: "zip"`, and at most a
+    day old by the database's clock (`clock_timestamp()`, and no more
+    than 5 minutes ahead of it, should that clock be set back). *Decided
+    in review (slice 1):* the server passes no time to that read, so it
+    cannot stretch the day; and the database's clock dates the record
+    too, so a server whose clock is ahead of the database's cannot date
+    the records out of their day and have every run listed as removed.
+  * **Locks**: the transaction that records the runs holds them `FOR
+    SHARE` until it commits, taken in the order canceling a job takes
+    them (device name, then run), so a download and a cancel of the same
+    job wait for each other at most and never deadlock. *Decided in
+    review (slice 1).*
+  * **Load**: one archive appends up to 500 audit records, under the
+    audit chain's lock. *Decided in review (slice 1):* each person may
+    download six archives at once, then one every 10 seconds: up to 11
+    in the first minute, six a minute after that. Another is answered
+    `429` with `Retry-After: 10` before anything is read or recorded. The
+    limit is kept by each server process, in memory: a restart starts it
+    again, and with several servers each allows that much.
   * Names in the archive are made of letters, digits, `-`, `_` and `.`,
     never absolute and never `..`.
 * **The job's results without output**: `GET /api/v1/jobs/{id}/runs.csv`,

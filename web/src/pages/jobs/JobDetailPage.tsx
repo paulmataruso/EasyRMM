@@ -1,13 +1,13 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { CircleStop, RotateCcw } from "lucide-react";
-import { api } from "../../api/client";
+import { CircleStop, Download, RotateCcw } from "lucide-react";
+import { api, API_BASE } from "../../api/client";
 import { auditedRead, useApi, useApiMutation, usePrefetch } from "../../api/hooks";
 import type { HardeningJob, Job, JobArguments, JobRun, Script, SoftwareAction } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Button, Card, ErrorState, KeyValueList, Mono, PageHeader, Spinner } from "../../components/ui";
+import { Button, buttonClasses, Card, ErrorState, KeyValueList, Mono, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { CodeView, JobStateBadge, RunStatusBadge, StatusBreakdown } from "../scripts/parts";
@@ -75,7 +75,26 @@ export function JobDetailPage() {
 
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
         <div className="flex min-w-0 flex-col gap-5 xl:col-span-2">
-          <Card title="Devices" padded={false}>
+          <Card
+            title="Devices"
+            padded={false}
+            actions={
+              // The results hold no output, so everyone who sees the job may have them; the archive only when it would hold
+              // a finished run's output the caller may read (ADR-0064).
+              <div className="flex flex-wrap items-center gap-1.5">
+                <a href={`${API_BASE}/jobs/${encodeURIComponent(j.id)}/runs.csv`} download className={buttonClasses("secondary", "sm")}>
+                  <Download className="size-3.5" aria-hidden />
+                  Download results (CSV)
+                </a>
+                {j.canDownloadOutput && (
+                  <a href={`${API_BASE}/jobs/${encodeURIComponent(j.id)}/output.zip`} download className={buttonClasses("secondary", "sm")}>
+                    <Download className="size-3.5" aria-hidden />
+                    Download output (ZIP)
+                  </a>
+                )}
+              </div>
+            }
+          >
             <RunsTable jobId={j.id} runs={runs} />
           </Card>
           <Card title="Script as run">

@@ -138,6 +138,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Downloading a job's output and results** (ADR-0064, slice 1). A run's
+  page offers **Download** beside **Copy** on each stream, and
+  **Download run** (the run as JSON, both streams with it); a job's page
+  offers **Download output (ZIP)**, a folder for each finished run the
+  user may read and `runs.csv` saying for every run whether its output is
+  in, and **Download results (CSV)**, every run's status, exit code, error
+  and times without output. Each is shown only where it can work. Output
+  downloads go through ADR-0063's reads: `job.view_sensitive` at the run's
+  site, and each recorded as *Downloaded job output* with what was
+  downloaded, in the same transaction. The archive records every run it
+  holds and commits those records before the first byte is sent; if they
+  cannot be written nothing is sent, and output removed in between is
+  listed as removed. Each person may download six archives at once, then
+  one every 10 seconds (up to 11 in the first minute, six a minute after,
+  counted by each server process); another is answered 429 with
+  `Retry-After`. The results need only
+  `job.view`, are recorded as
+  *Downloaded job results* (`job.results_export`), and neutralize formula
+  cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
+  `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
+  ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends
