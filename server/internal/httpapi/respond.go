@@ -12,7 +12,9 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 )
@@ -39,6 +41,21 @@ type Error struct {
 	Code    string
 	Message string
 	Fields  map[string]string
+	// RetryAfter, for a 429, is how long until trying again may succeed;
+	// 0 gives defaultRetryAfter.
+	RetryAfter time.Duration
+}
+
+// defaultRetryAfter is a 429's Retry-After when nothing says how long the
+// limit lasts: every 429 carries one.
+const defaultRetryAfter = time.Minute
+
+// setRetryAfter gives a 429 its Retry-After, in whole seconds, rounded up.
+func setRetryAfter(w http.ResponseWriter, d time.Duration) {
+	if d <= 0 {
+		d = defaultRetryAfter
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10))
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -49,7 +66,7 @@ var (
 	ErrForbidden       = &Error{Status: http.StatusForbidden, Code: "forbidden", Message: "You do not have permission to do that."}
 	ErrNotFound        = &Error{Status: http.StatusNotFound, Code: "not_found", Message: "The requested item does not exist or you do not have access to it."}
 	ErrCSRF            = &Error{Status: http.StatusForbidden, Code: "csrf_failed", Message: "The request could not be verified. Reload the page and try again."}
-	ErrTooMany         = &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "Too many attempts. Wait a moment and try again."}
+	ErrTooMany         = &Error{Status: http.StatusTooManyRequests, Code: "rate_limited", Message: "Too many attempts. Wait a moment and try again.", RetryAfter: 10 * time.Second}
 )
 
 // Validation builds a 422 error with per-field messages.
@@ -89,6 +106,9 @@ const StatusClientClosedRequest = 499
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	var apiErr *Error
 	if errors.As(err, &apiErr) {
+		if apiErr.Status == http.StatusTooManyRequests {
+			setRetryAfter(w, apiErr.RetryAfter)
+		}
 		WriteJSON(w, apiErr.Status, ErrorBody{Error: ErrorDetail{Code: apiErr.Code, Message: apiErr.Message, Fields: apiErr.Fields}})
 		return
 	}
@@ -107,6 +127,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			status = http.StatusServiceUnavailable
 		case apperr.KindTooMany:
 			status = http.StatusTooManyRequests
+			setRetryAfter(w, ae.RetryAfter)
 		}
 		if status != http.StatusInternalServerError {
 			WriteJSON(w, status, ErrorBody{Error: ErrorDetail{Code: ae.Code, Message: ae.Message, Fields: ae.Fields}})

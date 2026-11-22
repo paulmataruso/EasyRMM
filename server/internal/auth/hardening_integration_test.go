@@ -5,6 +5,8 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -163,65 +165,132 @@ func TestReauthentication(t *testing.T) {
 	}
 }
 
+// The limit on one account holds across servers: five requests, on two
+// servers, send three.
 func TestResetEmailIsLimitedPerAccount(t *testing.T) {
 	e := newEnv(t, func(c *auth.Config) { c.RequireMFA = false })
 	ctx := context.Background()
 	e.createUser(t, "many@example.com")
-	for range 5 {
-		if err := e.svc.RequestPasswordReset(ctx, "many@example.com", meta); err != nil {
+	servers := []*auth.Service{e.svc, e.server(t)}
+	for i := range 5 {
+		if err := servers[i%2].RequestPasswordReset(ctx, "many@example.com", meta); err != nil {
 			t.Fatal(err)
 		}
+		servers[i%2].Wait()
 	}
-	e.svc.Wait()
 	if sent := e.mp.Received("many@example.com"); len(sent) != 3 {
 		t.Fatalf("sent %d e-mails, want 3", len(sent))
 	}
-	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 2 || denied[0]["reason"] != "rate_limited" {
+	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 2 || denied[0]["reason"] != "rate_limited" ||
+		denied[0]["limit"] != mailer.LimitAccount {
 		t.Fatalf("limited requests not audited: %v", denied)
 	}
 }
 
+// Resets to one organization's accounts are limited together, across
+// servers and client addresses, so that someone who knows, or made, many
+// of its addresses cannot spend the platform's mail; other organizations'
+// resets still go.
+func TestResetEmailIsLimitedPerOrganization(t *testing.T) {
+	e := newEnv(t, func(c *auth.Config) { c.RequireMFA = false })
+	ctx := context.Background()
+	var acme, globex uuid.UUID
+	if err := e.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`).Scan(&acme); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO organizations (name) VALUES ('Globex') RETURNING id`).Scan(&globex)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	member := func(email string, org uuid.UUID) {
+		id := e.createUser(t, email)
+		if err := e.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `INSERT INTO role_assignments (user_id, role, organization_id) VALUES ($1, 'technician', $2)`, id, org)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 12 {
+		member(fmt.Sprintf("p%d@acme.example", i), acme)
+	}
+	member("p@globex.example", globex)
+	servers := []*auth.Service{e.svc, e.server(t)}
+	for i := range 12 {
+		m := auth.RequestMeta{IP: netip.AddrFrom4([4]byte{198, 51, 100, byte(i)}), UserAgent: "go-test"}
+		if err := servers[i%2].RequestPasswordReset(ctx, fmt.Sprintf("p%d@acme.example", i), m); err != nil {
+			t.Fatal(err)
+		}
+		servers[i%2].Wait()
+	}
+	sent := 0
+	for i := range 12 {
+		sent += len(e.mp.Received(fmt.Sprintf("p%d@acme.example", i)))
+	}
+	if sent != 10 {
+		t.Fatalf("%d resets to Acme's accounts, want 10 (its hour)", sent)
+	}
+	denied := e.audits(t, "auth.password_reset_request", "denied")
+	if len(denied) != 2 || denied[0]["limit"] != mailer.LimitOrganizationResets {
+		t.Fatalf("denied: %v", denied)
+	}
+	if err := e.svc.RequestPasswordReset(ctx, "p@globex.example", meta); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Wait()
+	if len(e.mp.Received("p@globex.example")) != 1 {
+		t.Fatal("Globex's reset did not go")
+	}
+}
+
 // An administrator's password links count against the same limit on one
-// account as resets the person asks for, and against the mail server's
-// limits on one administrator: past either, the link is refused with a 429
-// before it is made.
+// account as resets the person asks for. Past it, the link is not refused,
+// so that no one can keep an administrator from helping someone: it is
+// made, and comes back unsent with the reason. Only the administrator's
+// own limit refuses a link, with a 429 that says when to try again.
 func TestAdminLinksAreLimited(t *testing.T) {
 	e := newEnv(t, func(c *auth.Config) { c.RequireMFA = false })
 	ctx := context.Background()
 	id := e.createUser(t, "linked@example.com")
-	by := mailer.AccountMail{Admin: uuid.New()}
+	by := mailer.AccountMail{Admin: uuid.New(), Account: id}
+	letter := mailer.Letter{Subject: "Reset your EasyRMM password", Link: &mailer.Link{Label: "Choose", URL: "https://rmm.example.com/reset-password#token=x"}}
 	for range 3 {
-		if err := e.svc.AdminLinkRoom(ctx, by, id); err != nil {
+		if err := e.svc.AdminLinkRoom(ctx, by); err != nil {
 			t.Fatal(err)
 		}
+		if got, why := e.svc.EmailLink(ctx, "linked@example.com", letter, by); got != "" {
+			t.Fatalf("a link: %s %s", got, why)
+		}
 	}
-	err := e.svc.AdminLinkRoom(ctx, by, id)
-	var ae *apperr.Error
-	if !errors.Is(err, auth.ErrAccountMailLimited) || !errors.As(err, &ae) || ae.Kind != apperr.KindTooMany {
-		t.Fatalf("a fourth link: %v", err)
+	if err := e.svc.AdminLinkRoom(ctx, by); err != nil {
+		t.Fatalf("a fourth link is refused: %v", err)
+	}
+	got, why := e.svc.EmailLink(ctx, "linked@example.com", letter, by)
+	if got != auth.MailNotSent || !strings.HasPrefix(why, "This account has been emailed 3 password emails in the last hour") {
+		t.Fatalf("a fourth link: %q %q", got, why)
 	}
 	// The person's own reset is limited with them.
 	if err := e.svc.RequestPasswordReset(ctx, "linked@example.com", meta); err != nil {
 		t.Fatal(err)
 	}
 	e.svc.Wait()
-	if len(e.mp.Received("linked@example.com")) != 0 {
+	if len(e.mp.Received("linked@example.com")) != 3 {
 		t.Fatal("a reset past the account's limit was sent")
 	}
-	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 1 {
+	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 1 || denied[0]["limit"] != mailer.LimitAccount {
 		t.Fatalf("denied: %v", denied)
 	}
-	// A new account has no such limit, but the administrator's hour has.
-	if err := e.svc.AdminLinkRoom(ctx, by, uuid.Nil); err != nil {
-		t.Fatal(err)
-	}
+	// The administrator's hour refuses, with when to try again.
 	if err := e.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO mail_sends (kind, sent_by) SELECT 'admin', $1 FROM generate_series(1, 60)`, by.Admin)
+		_, err := tx.Exec(ctx, `INSERT INTO mail_sends (kind, sent_by) SELECT 'admin', $1 FROM generate_series(1, 57)`, by.Admin)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.AdminLinkRoom(ctx, by, uuid.Nil); !errors.As(err, &ae) || ae.Code != "admin_mail_limited" {
+	var ae *apperr.Error
+	if err := e.svc.AdminLinkRoom(ctx, mailer.AccountMail{Admin: by.Admin}); !errors.As(err, &ae) || ae.Kind != apperr.KindTooMany ||
+		ae.Code != mailer.LimitAdmin || ae.RetryAfter < 59*time.Minute {
 		t.Fatalf("past the administrator's hour: %v", err)
 	}
 }

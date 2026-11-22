@@ -122,7 +122,8 @@ func TestNoMailServerAtFirst(t *testing.T) {
 	if v.InForce != FromNowhere || v.Env != nil || v.Console != nil {
 		t.Fatalf("view %+v", v)
 	}
-	if v.Limits.PerMinute != 30 || v.Limits.PerDay != 9000 || v.Limits.AdminPerHour != 60 || v.Limits.OrganizationPerDay != 500 ||
+	if v.Limits.PerMinute != 30 || v.Limits.PerDay != 9000 || v.Limits.Account != (AccountLimits{AdminPerHour: 60, OrganizationPerDay: 500,
+		AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 30, OrganizationResetsPerHour: 10, OrganizationResetsPerDay: 90}) ||
 		v.Usage != (Usage{AdminDayLimit: 8100, OtherDayLimit: 7200}) {
 		t.Fatalf("limits %+v, usage %+v", v.Limits, v.Usage)
 	}
@@ -548,6 +549,36 @@ func (f *fixture) adminSends(n int, ago time.Duration, admin, org uuid.UUID) {
 		SELECT clock_timestamp() - make_interval(secs => $1), 'admin', $2, $3 FROM generate_series(1, $4)`, ago.Seconds(), admin, o, n)
 }
 
+// resetSends records n resets people asked for, sent ago to account
+// (uuid.Nil for a different one each) of org (uuid.Nil for none).
+func (f *fixture) resetSends(n int, ago time.Duration, account, org uuid.UUID) {
+	f.t.Helper()
+	var a, o *uuid.UUID
+	if account != uuid.Nil {
+		a = &account
+	}
+	if org != uuid.Nil {
+		o = &org
+	}
+	f.exec(`INSERT INTO mail_sends (sent_at, kind, account_id, organization_id)
+		SELECT clock_timestamp() - make_interval(secs => $1), 'reset', coalesce($2, gen_random_uuid()), $3 FROM generate_series(1, $4)`,
+		ago.Seconds(), a, o, n)
+}
+
+// limited is the limit err names, "" for none; it fails on anything else.
+func limited(t *testing.T, err error) string {
+	t.Helper()
+	var le *LimitError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &le):
+		return le.Code
+	}
+	t.Fatal(err)
+	return ""
+}
+
 var (
 	resetMail = charge{kind: kindReset}
 	otherMail = charge{kind: kindOther}
@@ -574,7 +605,7 @@ func TestLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.take(f.ctx, otherMail); !errors.As(err, &le) || le.Day || le.RetryAfter <= 0 || le.RetryAfter > time.Minute ||
+	if _, err := f.svc.take(f.ctx, otherMail); !errors.As(err, &le) || le.Code != mailer.LimitMinute || le.RetryAfter <= 0 || le.RetryAfter > time.Minute ||
 		!strings.Contains(le.Error(), "limit of 2 messages a minute") {
 		t.Fatalf("third in a minute: %v", err)
 	}
@@ -611,7 +642,7 @@ func TestLimits(t *testing.T) {
 	// Nor longer than accountWait.
 	f.exec(`DELETE FROM mail_sends`)
 	f.sends(2, -10*time.Second, kindOther)
-	if _, err := f.svc.take(f.ctx, resetMail); !errors.As(err, &le) || le.Day || le.Kind != "reset" {
+	if _, err := f.svc.take(f.ctx, resetMail); !errors.As(err, &le) || le.Code != mailer.LimitMinute || le.Kind != "reset" {
 		t.Fatalf("account mail with no room for over a minute: %v", err)
 	}
 
@@ -629,21 +660,25 @@ func TestLimits(t *testing.T) {
 	// reset at 10.
 	f.exec(`DELETE FROM mail_sends`)
 	f.sends(8, time.Hour, kindOther)
-	if _, err := f.svc.take(f.ctx, otherMail); !errors.As(err, &le) || !le.Day || le.Kind != "other" ||
+	if _, err := f.svc.take(f.ctx, otherMail); !errors.As(err, &le) || le.Code != mailer.LimitDay || le.Kind != "other" ||
 		!strings.Contains(le.Error(), "reach 8, 80% of the limit of 10 a day; the rest is kept for invitations and password resets") {
 		t.Fatalf("other mail at 80%%: %v", err)
 	}
 	if _, err := f.svc.take(f.ctx, admin); err != nil {
 		t.Fatalf("an administrator's at 80%%: %v", err)
 	}
-	if _, err := f.svc.take(f.ctx, admin); !errors.As(err, &le) || !le.Day || le.Kind != "admin" ||
+	// Another administrator: at a day of 10, each may send one an hour.
+	if _, err := f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Admin: uuid.New()})); !errors.As(err, &le) || le.Code != mailer.LimitDay || le.Kind != "admin" ||
 		!strings.Contains(le.Error(), "reach 9, 90% of the limit of 10 a day; the rest is kept for password resets people ask for") {
 		t.Fatalf("an administrator's at 90%%: %v", err)
 	}
 	if _, err := f.svc.take(f.ctx, resetMail); err != nil {
 		t.Fatalf("a reset at 90%%: %v", err)
 	}
-	if _, err := f.svc.take(f.ctx, resetMail); !errors.As(err, &le) || !le.Day || le.Kind != "reset" ||
+	// At a day of 10, one reset an hour: the day full of other mail instead.
+	f.exec(`DELETE FROM mail_sends WHERE kind = 'reset'`)
+	f.sends(1, time.Minute, kindOther)
+	if _, err := f.svc.take(f.ctx, resetMail); !errors.As(err, &le) || le.Code != mailer.LimitDay || le.Kind != "reset" ||
 		!strings.Contains(le.Error(), "limit of 10 messages a day is reached") {
 		t.Fatalf("a reset at 100%%: %v", err)
 	}
@@ -706,7 +741,7 @@ func TestOtherMailStandsBackAcrossServers(t *testing.T) {
 	// Room comes, and the second server's other mail still stands back.
 	f.exec(`DELETE FROM mail_sends`)
 	var le *LimitError
-	if _, err := second.take(f.ctx, otherMail); !errors.As(err, &le) || !le.AccountWaiting || !strings.Contains(le.Error(), "go first") {
+	if _, err := second.take(f.ctx, otherMail); !errors.As(err, &le) || le.Code != mailer.LimitAccountWaiting || !strings.Contains(le.Error(), "go first") {
 		t.Fatalf("other mail on another server while a reset waits: %v", err)
 	}
 	if err := <-done; err != nil {
@@ -719,69 +754,267 @@ func TestOtherMailStandsBackAcrossServers(t *testing.T) {
 
 // No administrator or organization uses up the platform's mail: each
 // administrator emails at most AdminPerHour invitations and password links
-// an hour, and each organization's accounts get at most
-// OrganizationPerDay a day. Asked before a link is made, the answer is a
-// 429 that says when to try again; the same limits hold as each message
-// goes. Resets people ask for and other mail are not counted against them.
+// an hour, and each organization's accounts get at most OrganizationPerDay
+// a day from administrators other than super administrators. Room says so
+// before a link is made, and the same limits hold as each message goes.
+// Resets people ask for and other mail are not counted against them.
 func TestAdminLimits(t *testing.T) {
 	f := newFixture(t, nil)
 	if _, err := f.svc.SetLimits(f.ctx, f.admin, LimitsInput{PerMinute: 10_000, PerDay: 100_000}); err != nil {
 		t.Fatal(err)
 	}
+	l := accountLimits(100_000)
 	acme, globex, colleague := uuid.New(), uuid.New(), uuid.New()
 	by := mailer.AccountMail{Admin: f.admin.ID, Organization: acme}
-	if err := f.svc.AdminRoom(f.ctx, by); err != nil {
-		t.Fatal(err)
+	room := func(by mailer.AccountMail) *LimitError {
+		t.Helper()
+		var le *LimitError
+		if err := f.svc.Room(f.ctx, by); err != nil && !errors.As(err, &le) {
+			t.Fatal(err)
+		}
+		return le
 	}
-	if err := f.svc.AdminRoom(f.ctx, mailer.AccountMail{Self: true}); err != nil {
-		t.Fatal(err)
+	if le := room(by); le != nil {
+		t.Fatal(le)
+	}
+	if le := room(mailer.AccountMail{Self: true}); le != nil {
+		t.Fatal(le)
 	}
 
 	// An hour's worth by this administrator, the oldest 50 minutes ago.
 	f.adminSends(1, 50*time.Minute, f.admin.ID, globex)
-	f.adminSends(AdminPerHour-1, time.Minute, f.admin.ID, uuid.Nil)
-	f.sends(100, time.Minute, kindReset)
-	err := f.svc.AdminRoom(f.ctx, by)
-	var ae *apperr.Error
-	if !errors.As(err, &ae) || ae.Kind != apperr.KindTooMany || ae.Code != "admin_mail_limited" ||
-		ae.Message != "You have emailed 60 invitations and password links in the last hour, the most one administrator may. Try again in 10 minutes." {
-		t.Fatalf("an administrator's hour: %v", err)
+	f.adminSends(l.AdminPerHour-1, time.Minute, f.admin.ID, uuid.Nil)
+	f.sends(100, time.Minute, kindOther)
+	f.resetSends(20, time.Minute, uuid.Nil, acme)
+	le := room(by)
+	var limit mailer.Limited = le
+	if le == nil || limit.LimitCode() != mailer.LimitAdmin || limit.RetryIn() < 9*time.Minute || limit.RetryIn() > 10*time.Minute ||
+		le.Error() != "You have emailed 60 invitations and password links in the last hour, the most one administrator may. Try again in 10 minutes." {
+		t.Fatalf("an administrator's hour: %v", le)
 	}
-	var le *LimitError
-	if _, err := f.svc.take(f.ctx, accountCharge(by)); !errors.As(err, &le) || !le.Admin {
+	if _, err := f.svc.take(f.ctx, accountCharge(by)); limited(t, err) != mailer.LimitAdmin {
 		t.Fatalf("as the message goes: %v", err)
 	}
 	// Another administrator still may; and older than an hour does not count.
-	if err := f.svc.AdminRoom(f.ctx, mailer.AccountMail{Admin: colleague, Organization: acme}); err != nil {
-		t.Fatal(err)
+	if le := room(mailer.AccountMail{Admin: colleague, Organization: acme}); le != nil {
+		t.Fatal(le)
 	}
 	f.exec(`DELETE FROM mail_sends WHERE sent_by = $1`, f.admin.ID)
-	f.adminSends(AdminPerHour, 61*time.Minute, f.admin.ID, acme)
-	if err := f.svc.AdminRoom(f.ctx, by); err != nil {
-		t.Fatal(err)
+	f.adminSends(l.AdminPerHour, 61*time.Minute, f.admin.ID, acme)
+	if le := room(by); le != nil {
+		t.Fatal(le)
 	}
 
 	// A day's worth for Acme's accounts, from several administrators.
 	f.exec(`DELETE FROM mail_sends`)
 	f.adminSends(1, 21*time.Hour, colleague, acme)
-	f.adminSends(OrganizationPerDay-1, time.Hour, uuid.New(), acme)
+	f.adminSends(l.OrganizationPerDay-1, time.Hour, uuid.New(), acme)
 	f.adminSends(10, time.Hour, colleague, globex)
-	err = f.svc.AdminRoom(f.ctx, by)
-	if !errors.As(err, &ae) || ae.Kind != apperr.KindTooMany || ae.Code != "organization_mail_limited" ||
-		ae.Message != "This organization's accounts have been emailed 500 invitations and password links in the last 24 hours, the most one organization may. Try again in 3 hours." {
-		t.Fatalf("an organization's day: %v", err)
+	f.resetSends(50, 2*time.Hour, uuid.Nil, acme)
+	le = room(by)
+	if le == nil || le.Code != mailer.LimitOrganization || le.RetryAfter < 2*time.Hour ||
+		le.Error() != "This organization's accounts have been emailed 500 invitations and password links in the last 24 hours, the most one organization may; more can be emailed in 3 hours." {
+		t.Fatalf("an organization's day: %v", le)
 	}
-	if _, err := f.svc.take(f.ctx, accountCharge(by)); !errors.As(err, &le) || !le.Organization {
+	if _, err := f.svc.take(f.ctx, accountCharge(by)); limited(t, err) != mailer.LimitOrganization {
 		t.Fatalf("as the message goes: %v", err)
 	}
-	// Globex's accounts, and accounts of no organization, still may.
+	// Globex's accounts, accounts of no organization, and a super
+	// administrator's mail, which no organization's limit counts, still may.
 	for _, org := range []uuid.UUID{globex, uuid.Nil} {
-		if err := f.svc.AdminRoom(f.ctx, mailer.AccountMail{Admin: f.admin.ID, Organization: org}); err != nil {
-			t.Fatal(err)
+		if le := room(mailer.AccountMail{Admin: f.admin.ID, Organization: org}); le != nil {
+			t.Fatal(le)
 		}
 	}
-	if _, err := f.svc.take(f.ctx, resetMail); err != nil {
+	if _, err := f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Admin: f.admin.ID})); err != nil {
+		t.Fatalf("a super administrator's: %v", err)
+	}
+	if _, err := f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: uuid.New(), Organization: acme})); err != nil {
 		t.Fatalf("a reset: %v", err)
+	}
+}
+
+// Every limit on account mail but an account's is the smaller of a number
+// and a share of the day's limit, and at least one, so that a low day's
+// limit keeps them small: one administrator at it all day uses at most 16%
+// of the day, one organization's administrators 5.6%, one organization's
+// resets 1%, and resets everywhere, all day, 8%, under the 10% kept for
+// them (once the day allows one reset an hour, from 300 a day).
+func TestAccountLimitsFollowTheDay(t *testing.T) {
+	for perDay, want := range map[int]AccountLimits{
+		9000:    {AdminPerHour: 60, OrganizationPerDay: 500, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 30, OrganizationResetsPerHour: 10, OrganizationResetsPerDay: 90},
+		500:     {AdminPerHour: 3, OrganizationPerDay: 27, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 1, OrganizationResetsPerHour: 1, OrganizationResetsPerDay: 5},
+		100_000: {AdminPerHour: 60, OrganizationPerDay: 500, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 60, OrganizationResetsPerHour: 20, OrganizationResetsPerDay: 100},
+		1:       {AdminPerHour: 1, OrganizationPerDay: 1, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 1, OrganizationResetsPerHour: 1, OrganizationResetsPerDay: 1},
+	} {
+		if got := accountLimits(perDay); got != want {
+			t.Errorf("at %d a day: %+v, want %+v", perDay, got, want)
+		}
+	}
+	for perDay := 300; perDay <= 1_000_000; perDay += 7 {
+		l := accountLimits(perDay)
+		if 24*l.AdminPerHour*100 > perDay*16 || l.OrganizationPerDay*18 > perDay || l.OrganizationResetsPerDay*100 > perDay ||
+			24*l.ResetsPerHour*100 > perDay*8 || l.OrganizationResetsPerHour != max(1, l.ResetsPerHour/3) {
+			t.Fatalf("at %d a day: %+v", perDay, l)
+		}
+	}
+}
+
+// Resets people ask for are limited per account (with administrators'
+// links to it), per organization (accounts in no one organization
+// together) and on the whole platform, in the database, so that the limits
+// hold whichever server takes the request.
+func TestResetLimits(t *testing.T) {
+	f := newFixture(t, nil)
+	other, err := New(f.db, f.audit, f.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SetLimits(f.ctx, f.admin, LimitsInput{PerMinute: 1000, PerDay: 9000}); err != nil {
+		t.Fatal(err)
+	}
+	acme, globex := uuid.New(), uuid.New()
+	servers := []*Service{f.svc, other}
+	reset := func(i int, account, org uuid.UUID) string {
+		t.Helper()
+		_, err := servers[i%2].take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: account, Organization: org}))
+		return limited(t, err)
+	}
+
+	// One account: three an hour, from either server, an administrator's
+	// link among them; then neither goes.
+	alice := uuid.New()
+	link := accountCharge(mailer.AccountMail{Admin: f.admin.ID, Account: alice, Organization: acme})
+	if reset(0, alice, acme) != "" || reset(1, alice, acme) != "" || limited(t, second(other.take(f.ctx, link))) != "" {
+		t.Fatal("the first three")
+	}
+	var le *LimitError
+	_, err = f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: alice, Organization: acme}))
+	if !errors.As(err, &le) || le.Code != mailer.LimitAccount || !le.Hour || le.RetryAfter <= 59*time.Minute ||
+		le.Error() != "This account has been emailed 3 password emails in the last hour, the most one account may; more can be emailed in 60 minutes." {
+		t.Fatalf("a fourth reset: %v", err)
+	}
+	if got := limited(t, second(f.svc.take(f.ctx, link))); got != mailer.LimitAccount {
+		t.Fatalf("a fourth, an administrator's link: %s", got)
+	}
+	// Ten a day.
+	f.exec(`DELETE FROM mail_sends`)
+	f.resetSends(10, 2*time.Hour, alice, acme)
+	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: alice, Organization: acme}); !errors.As(err, &le) ||
+		le.Code != mailer.LimitAccount || le.Hour || !strings.Contains(le.Error(), "10 password emails in the last 24 hours") {
+		t.Fatalf("an eleventh in a day: %v", err)
+	}
+
+	// One organization: ten an hour, however many accounts and servers;
+	// others still have room.
+	f.exec(`DELETE FROM mail_sends`)
+	for i := range 10 {
+		if got := reset(i, uuid.New(), acme); got != "" {
+			t.Fatalf("reset %d: %s", i, got)
+		}
+	}
+	if got := reset(0, uuid.New(), acme); got != mailer.LimitOrganizationResets {
+		t.Fatalf("an eleventh for Acme in an hour: %s", got)
+	}
+	if got := reset(1, uuid.New(), globex); got != "" {
+		t.Fatalf("Globex: %s", got)
+	}
+	// Accounts in no one organization count together, as one.
+	for i := range 10 {
+		if got := reset(i, uuid.New(), uuid.Nil); got != "" {
+			t.Fatalf("reset %d outside organizations: %s", i, got)
+		}
+	}
+	if got := reset(0, uuid.New(), uuid.Nil); got != mailer.LimitOrganizationResets {
+		t.Fatalf("an eleventh outside organizations: %s", got)
+	}
+	// Ninety a day.
+	f.exec(`DELETE FROM mail_sends`)
+	f.resetSends(90, 2*time.Hour, uuid.Nil, acme)
+	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: uuid.New(), Organization: acme}); !errors.As(err, &le) ||
+		le.Code != mailer.LimitOrganizationResets || !strings.Contains(le.Error(), "(10 an hour, 90 a day)") {
+		t.Fatalf("Acme's day: %v", err)
+	}
+
+	// The platform: thirty an hour, whatever the organizations; neither
+	// administrators' mail nor other mail counts against it.
+	f.exec(`DELETE FROM mail_sends`)
+	f.adminSends(50, time.Minute, f.admin.ID, acme)
+	f.sends(50, time.Minute, kindOther)
+	for i := range 30 {
+		if got := reset(i, uuid.New(), uuid.New()); got != "" {
+			t.Fatalf("reset %d: %s", i, got)
+		}
+	}
+	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: uuid.New(), Organization: uuid.New()}); !errors.As(err, &le) ||
+		le.Code != mailer.LimitResets || le.Error() != "Password resets reach the limit of 30 an hour; more can be sent in 60 minutes." {
+		t.Fatalf("a 31st reset in an hour: %v", err)
+	}
+	// ...which is no limit on administrators' links.
+	if _, err := f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Admin: f.admin.ID, Account: uuid.New(), Organization: acme})); err != nil {
+		t.Fatalf("an administrator's link: %v", err)
+	}
+}
+
+// second is the error of a pair.
+func second[T any](_ T, err error) error { return err }
+
+// The review's flood (#82, NEW-1): an organization's administrator invites
+// a hundred and ten addresses they control, and resets are asked for every
+// one of them, on two servers at once. Exactly the organization's hour of
+// resets goes, and another organization's still do.
+func TestResetFloodAcrossServers(t *testing.T) {
+	f := newFixture(t, nil)
+	other, err := New(f.db, f.audit, f.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SetLimits(f.ctx, f.admin, LimitsInput{PerMinute: 1000, PerDay: 9000}); err != nil {
+		t.Fatal(err)
+	}
+	acme, globex := uuid.New(), uuid.New()
+	const accounts = 110
+	codes := make(chan string, 2*accounts)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range 2 * accounts {
+		svc := f.svc
+		if i%2 == 1 {
+			svc = other
+		}
+		account := uuid.NewSHA1(acme, []byte(strconv.Itoa(i/2)))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: account, Organization: acme}))
+			var le *LimitError
+			switch {
+			case err == nil:
+				codes <- ""
+			case errors.As(err, &le):
+				codes <- le.Code
+			default:
+				codes <- err.Error()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(codes)
+	got := map[string]int{}
+	for c := range codes {
+		got[c]++
+	}
+	l := accountLimits(9000)
+	if got[""] != l.OrganizationResetsPerHour || got[mailer.LimitOrganizationResets] != 2*accounts-l.OrganizationResetsPerHour {
+		t.Fatalf("outcomes %v, want %d sent", got, l.OrganizationResetsPerHour)
+	}
+	if n := f.str(`SELECT count(*)::text FROM mail_sends`); n != strconv.Itoa(l.OrganizationResetsPerHour) {
+		t.Fatalf("%s counted", n)
+	}
+	if _, err := other.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: uuid.New(), Organization: globex})); err != nil {
+		t.Fatalf("another organization's reset: %v", err)
 	}
 }
 
@@ -822,7 +1055,7 @@ func TestLimitsAcrossServers(t *testing.T) {
 		switch {
 		case err == nil:
 			taken++
-		case !errors.As(err, &le) || le.Day:
+		case !errors.As(err, &le) || le.Code != mailer.LimitMinute:
 			t.Fatalf("refusal %v, want the minute's limit", err)
 		}
 	}

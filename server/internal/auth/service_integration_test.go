@@ -37,6 +37,8 @@ type env struct {
 	svc    *auth.Service
 	audit  *audit.Logger
 	hasher *auth.Hasher
+	sealer *secrets.Sealer
+	cfg    auth.Config
 	now    time.Time
 	// mail sends through mp, a real SMTP server (Mailpit).
 	mail *mailserver.Service
@@ -72,12 +74,23 @@ func newEnv(t *testing.T, mutate func(*auth.Config)) *env {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now()}
+	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now(), sealer: sealer, cfg: cfg}
 	e.mail, e.mp = newMail(t, inst.DB, e.audit, sealer)
 	e.hasher = auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 4)
 	e.svc = auth.NewService(inst.DB, e.audit, e.hasher, sealer, e.mail, cfg)
 	e.svc.SetClock(func() time.Time { return e.now })
 	return e
+}
+
+// server is another of EasyRMM's servers on the same database, with its
+// own mail server service and its own memory.
+func (e *env) server(t *testing.T) *auth.Service {
+	t.Helper()
+	mail, err := mailserver.New(e.db, e.audit, e.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return auth.NewService(e.db, e.audit, e.hasher, e.sealer, mail, e.cfg)
 }
 
 func (e *env) createUser(t *testing.T, email string) uuid.UUID {
@@ -642,17 +655,18 @@ func TestEmailLink(t *testing.T) {
 	letter := mailer.Letter{Subject: "You have been invited to EasyRMM", Before: []string{"Welcome."},
 		Link: &mailer.Link{Label: "Set up your account", URL: "https://rmm.example.com/welcome#token=abc"}}
 	by := mailer.AccountMail{Admin: uuid.New()}
-	if got := e.svc.EmailLink(ctx, to, letter, by); got != "" {
-		t.Fatalf("EmailLink: %q", got)
+	if got, why := e.svc.EmailLink(ctx, to, letter, by); got != "" || why != "" {
+		t.Fatalf("EmailLink: %q %q", got, why)
 	}
 	if sent := e.mp.Wait(to, 1); sent[0].Subject != letter.Subject || !strings.Contains(sent[0].HTML, `href="https://rmm.example.com/welcome#token=abc"`) {
 		t.Fatalf("e-mail %+v", sent[0])
 	}
-	if got := e.svc.EmailLink(ctx, testmail.Refused, letter, by); got != auth.MailNotSent {
-		t.Fatalf("EmailLink to a refused recipient: %q", got)
+	// The mail server's reply is logged, not given as the reason.
+	if got, why := e.svc.EmailLink(ctx, testmail.Refused, letter, by); got != auth.MailNotSent || why != "" {
+		t.Fatalf("EmailLink to a refused recipient: %q %q", got, why)
 	}
 	letter.Link.URL = "javascript:alert(1)"
-	if got := e.svc.EmailLink(ctx, to, letter, by); got != auth.MailNotSent {
+	if got, _ := e.svc.EmailLink(ctx, to, letter, by); got != auth.MailNotSent {
 		t.Fatalf("EmailLink with a bad link: %q", got)
 	}
 	if len(e.mp.Received(to)) != 1 {
@@ -675,7 +689,7 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 		t.Fatalf("want ErrResetUnavailable, got %v", err)
 	}
 	letter := mailer.Letter{Subject: "s", Link: &mailer.Link{Label: "x", URL: "https://rmm.example.com/welcome#token=x"}}
-	if got := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); got != auth.MailNotConfigured {
+	if got, _ := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); got != auth.MailNotConfigured {
 		t.Fatalf("EmailLink without a mailer: %q", got)
 	}
 	// A mail server service with no mail server set: none in force.
@@ -684,7 +698,7 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc = auth.NewService(inst.DB, audit.New(inst.DB, nil), hasher, sealer, none, auth.DefaultConfig())
-	if svc.ResetAvailable(ctx) || svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}) != auth.MailNotConfigured {
+	if got, _ := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); svc.ResetAvailable(ctx) || got != auth.MailNotConfigured {
 		t.Fatal("reset reported available without a mail server")
 	}
 	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrResetUnavailable) {
@@ -704,7 +718,7 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 	}
 	// Nothing limits links that come back to the administrator.
 	for range 5 {
-		if err := svc.AdminLinkRoom(ctx, mailer.AccountMail{Admin: uuid.New()}, uuid.New()); err != nil {
+		if err := svc.AdminLinkRoom(ctx, mailer.AccountMail{Admin: uuid.New(), Account: uuid.New()}); err != nil {
 			t.Fatal(err)
 		}
 	}

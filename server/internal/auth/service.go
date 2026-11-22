@@ -103,12 +103,12 @@ type Mailer interface {
 	// Available reports whether a mail server is in force.
 	Available(ctx context.Context) bool
 	// SendAccountMail sends msg to one person, ahead of other mail,
-	// counted against by.
+	// counted against by; a limit that stops it is a mailer.Limited.
 	SendAccountMail(ctx context.Context, to string, msg mailer.Message, by mailer.AccountMail) error
-	// AdminRoom says whether an administrator's invitation or password
-	// link has room under the limits on one administrator and one
-	// organization: nil, or an error that says when to try again.
-	AdminRoom(ctx context.Context, by mailer.AccountMail) error
+	// Room says whether account mail counted against by has room under
+	// the limits now: nil, a mailer.Limited naming the limit reached, or
+	// an error reading them.
+	Room(ctx context.Context, by mailer.AccountMail) error
 }
 
 // RequestMeta describes the client making a request.
@@ -187,9 +187,7 @@ type Service struct {
 	now      func() time.Time
 	ipLimit  *KeyedLimiter
 	mfaLimit *KeyedLimiter
-	// resetLimit caps reset e-mail per account, whoever asks for it.
-	resetLimit *KeyedLimiter
-	log        *slog.Logger
+	log      *slog.Logger
 	// background tracks reset e-mail still being sent.
 	background sync.WaitGroup
 	// wa is nil when security keys and passkeys are unavailable (ADR-0032).
@@ -204,9 +202,7 @@ func NewService(db *database.DB, auditLog *audit.Logger, hasher *Hasher, sealer 
 		// 10 attempts at once, then one every 6 seconds, per client address.
 		ipLimit:  NewKeyedLimiter(6*time.Second, 10, 100_000),
 		mfaLimit: NewKeyedLimiter(6*time.Second, 10, 100_000),
-		// Three at once, then one every 20 minutes.
-		resetLimit: NewKeyedLimiter(20*time.Minute, 3, 100_000),
-		log:        slog.Default(),
+		log:      slog.Default(),
 	}
 	s.configureWebAuthn()
 	return s
@@ -1089,50 +1085,52 @@ const (
 	MailNotSent = "not_sent"
 )
 
-// ErrAccountMailLimited is an administrator's password link to an account
-// that has had several password emails in a short time, whoever asked for
-// them: the limit self-service reset has (resetLimit).
-var ErrAccountMailLimited = apperr.TooMany("account_mail_limited",
-	"This account has been emailed several password links in a short time. Try again in 20 minutes.")
-
 // AdminLinkRoom says whether an administrator may email an invitation or a
-// password link now, before it is made: under the mail server's limits on
-// one administrator and one organization (by), and, for an existing
-// account (not uuid.Nil), under the limit on password emails to one
-// account that self-service reset has too. Without a mail server in force,
-// the link comes back to the administrator, and nothing limits it. It
-// returns nil, or a 429 error that says when to try again.
-func (s *Service) AdminLinkRoom(ctx context.Context, by mailer.AccountMail, account uuid.UUID) error {
+// password link now, before it is made: nil, or a 429 error that says when
+// to try again, only for the administrator's own limit. Any other limit
+// (the organization's, the account's, the day's) does not stop the link:
+// it is made, and comes back unsent with the reason (EmailLink), so that
+// no one else can keep an administrator from helping someone. Without a
+// mail server in force, the link comes back to the administrator, and
+// nothing limits it.
+func (s *Service) AdminLinkRoom(ctx context.Context, by mailer.AccountMail) error {
 	if s.mailer == nil || !s.mailer.Available(ctx) {
 		return nil
 	}
-	if err := s.mailer.AdminRoom(ctx, by); err != nil {
-		return err
+	err := s.mailer.Room(ctx, by)
+	var lim mailer.Limited
+	switch {
+	case errors.As(err, &lim) && lim.LimitCode() == mailer.LimitAdmin:
+		return apperr.TooMany(lim.LimitCode(), lim.Error(), lim.RetryIn())
+	case lim != nil:
+		return nil
 	}
-	if account != uuid.Nil && !s.resetLimit.Allow(account.String()) {
-		return ErrAccountMailLimited
-	}
-	return nil
+	return err
 }
 
 // EmailLink sends l to the owner of an account, as account mail counted
 // against by. It returns "" when the mail server took it, and otherwise why
-// not (MailNotConfigured or MailNotSent), so that the administrator can
-// deliver the link another way; a failure is logged, never shown, since the
-// mail server's reply is for super administrators.
-func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter, by mailer.AccountMail) string {
+// not (MailNotConfigured or MailNotSent), with the limit that stopped it in
+// words when one did, so that the administrator can deliver the link
+// another way; any other failure is logged, never shown, since the mail
+// server's reply is for super administrators.
+func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter, by mailer.AccountMail) (problem, reason string) {
 	if s.mailer == nil || !s.mailer.Available(ctx) {
-		return MailNotConfigured
+		return MailNotConfigured, ""
 	}
 	msg, err := l.Message()
 	if err == nil {
 		err = s.mailer.SendAccountMail(ctx, to, msg, by)
 	}
-	if err != nil {
-		s.log.Error("account e-mail failed", "subject", l.Subject, "error", oneLine(err.Error()))
-		return MailNotSent
+	if err == nil {
+		return "", ""
 	}
-	return ""
+	var lim mailer.Limited
+	if errors.As(err, &lim) {
+		return MailNotSent, lim.Error()
+	}
+	s.log.Error("account e-mail failed", "subject", l.Subject, "error", oneLine(err.Error()))
+	return MailNotSent, ""
 }
 
 // oneLine keeps a logged value on one line: a mail error can carry the
@@ -1145,8 +1143,9 @@ func oneLine(s string) string {
 // active account. It always appears to succeed, and it answers before
 // looking the address up: the lookup and the e-mail happen in the
 // background, so how long the answer takes says nothing about whether the
-// account exists. Each account gets at most a few links an hour, however
-// many addresses ask.
+// account exists. The mail server's limits on resets hold across servers:
+// a few an hour to one account, however many addresses ask, and limits per
+// organization and on the whole platform (mailserver.AccountLimits).
 func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta RequestMeta) error {
 	// The limit first: whether reset is available reads the database.
 	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
@@ -1178,6 +1177,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta R
 func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestMeta) error {
 	var link string
 	var invited bool
+	var by mailer.AccountMail
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var userID uuid.UUID
 		var hasPassword bool
@@ -1189,10 +1189,21 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 		if err != nil {
 			return err
 		}
+		org, err := accountOrganization(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		by = mailer.AccountMail{Self: true, Account: userID, Organization: org}
 		event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
-		if !s.resetLimit.Allow(userID.String()) {
-			event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited"}
+		// Under the limits, before a link is made: a new one ends the last.
+		err = s.mailer.Room(ctx, by)
+		var lim mailer.Limited
+		if errors.As(err, &lim) {
+			event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited", "limit": lim.LimitCode()}
 			return s.audit.Write(ctx, tx, event)
+		}
+		if err != nil {
+			return err
 		}
 		invited = !hasPassword
 		if invited {
@@ -1229,7 +1240,27 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 	if err != nil {
 		return err
 	}
-	return s.mailer.SendAccountMail(ctx, email, msg, mailer.AccountMail{Self: true})
+	return s.mailer.SendAccountMail(ctx, email, msg, by)
+}
+
+// accountOrganization is the organization whose limits an account's mail
+// counts against: the one organization of all its roles, or uuid.Nil when
+// it has roles in none or several, as audit records place it.
+func accountOrganization(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT organization_id FROM role_assignments WHERE user_id = $1`, userID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	orgs, err := pgx.CollectRows(rows, pgx.RowTo[*uuid.UUID])
+	if err != nil || len(orgs) == 0 {
+		return uuid.Nil, err
+	}
+	for _, o := range orgs {
+		if o == nil || *o != *orgs[0] {
+			return uuid.Nil, nil
+		}
+	}
+	return *orgs[0], nil
 }
 
 // DurationWords says d in words for a message: "30 minutes", "72 hours".

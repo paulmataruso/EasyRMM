@@ -93,16 +93,30 @@ type InviteResult struct {
 	Link    string `json:"link,omitempty"`
 	Emailed bool   `json:"emailed"`
 	// MailProblem says why the link was not e-mailed: no_mail_server, or
-	// not_sent when the mail server did not take it.
+	// not_sent when the mail server did not take it or a limit stopped it.
 	MailProblem string `json:"mailProblem,omitempty"`
+	// MailReason is the limit that stopped it, in words, when one did.
+	MailReason string `json:"mailReason,omitempty"`
 }
 
-// emailed records how e-mailing link went: problem is EmailLink's answer.
-func (r *InviteResult) emailed(link, problem string) {
-	r.Emailed, r.MailProblem = problem == "", problem
+// emailed records how e-mailing link went: problem and reason are
+// EmailLink's answer.
+func (r *InviteResult) emailed(link, problem, reason string) {
+	r.Emailed, r.MailProblem, r.MailReason = problem == "", problem, reason
 	if !r.Emailed {
 		r.Link = link
 	}
+}
+
+// accountMail is whom an administrator's invitation or password link to
+// account counts against: the caller, and the account's organization org,
+// except for a super administrator, whom only their own limit counts.
+func (s *Service) accountMail(c access.Caller, account, org uuid.UUID) mailer.AccountMail {
+	by := mailer.AccountMail{Admin: s.callerID(c), Account: account, Organization: org}
+	if c.Principal != nil && c.Principal.IsSuperAdmin() {
+		by.Organization = uuid.Nil
+	}
+	return by
 }
 
 // ListQuery filters the user list.
@@ -495,8 +509,7 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		return nil, err
 	}
 	org, site := auditOrg(grants)
-	by := mailer.AccountMail{Admin: s.callerID(c), Organization: org}
-	if err := s.auth.AdminLinkRoom(ctx, by, uuid.Nil); err != nil {
+	if err := s.auth.AdminLinkRoom(ctx, s.accountMail(c, uuid.Nil, org)); err != nil {
 		s.refused(ctx, c, "user.invite", org, site, "", map[string]any{"email": email}, err)
 		return nil, err
 	}
@@ -524,13 +537,14 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		return nil, err
 	}
 	res := &InviteResult{}
-	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, mailer.Letter{
+	problem, reason := s.auth.EmailLink(context.WithoutCancel(ctx), email, mailer.Letter{
 		Subject: "You have been invited to EasyRMM",
 		Before: []string{"You have been invited to EasyRMM by " + c.Actor.Label + ".",
 			"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password and set up two-factor sign-in:"},
 		Link:  &mailer.Link{Label: "Set up your account", URL: link},
 		After: []string{"If you were not expecting this, you can ignore this message."},
-	}, by))
+	}, s.accountMail(c, id, org))
+	res.emailed(link, problem, reason)
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}
@@ -538,17 +552,20 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 }
 
 // refused records an invitation or a password link refused under the
-// limits on account mail, at most one a minute per administrator and limit.
+// limits on account mail, or because they could not be read, at most one a
+// minute per administrator and limit (or error).
 func (s *Service) refused(ctx context.Context, c access.Caller, action string, org, site uuid.UUID, target string, details map[string]any, err error) {
-	limit := "rate_limited"
-	if ae, ok := apperr.As(err); ok {
-		limit = ae.Code
+	outcome, key := audit.Failure, "error"
+	if ae, ok := apperr.As(err); ok && ae.Kind == apperr.KindTooMany {
+		outcome, key = audit.Denied, ae.Code
+		details["reason"], details["limit"] = "rate_limited", ae.Code
+	} else {
+		details["error"] = "the limits on account mail could not be read"
 	}
-	if !s.refusals.Allow(c.Actor.ID.String() + " " + limit) {
+	if !s.refusals.Allow(c.Actor.ID.String() + " " + key) {
 		return
 	}
-	details["reason"], details["limit"] = "rate_limited", limit
-	ev := audit.Event{Actor: c.Actor, Action: action, Outcome: audit.Denied, OrganizationID: org, SiteID: site, Details: details}
+	ev := audit.Event{Actor: c.Actor, Action: action, Outcome: outcome, OrganizationID: org, SiteID: site, Details: details}
 	if target != "" {
 		ev.TargetType, ev.TargetID = "user", target
 	}
@@ -761,9 +778,9 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 		return nil, err
 	}
 	org, site := auditOrg(target.all)
-	by := mailer.AccountMail{Admin: s.callerID(c), Organization: org}
+	by := s.accountMail(c, id, org)
 	if target.CanManage && !target.IsSelf && target.Status == "active" {
-		if err := s.auth.AdminLinkRoom(ctx, by, id); err != nil {
+		if err := s.auth.AdminLinkRoom(ctx, by); err != nil {
 			s.refused(ctx, c, "user.password_link", org, site, id.String(), map[string]any{"email": target.Email}, err)
 			return nil, err
 		}
@@ -810,7 +827,8 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 		}
 	}
 	res := &InviteResult{}
-	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, l, by))
+	problem, reason := s.auth.EmailLink(context.WithoutCancel(ctx), email, l, by)
+	res.emailed(link, problem, reason)
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}

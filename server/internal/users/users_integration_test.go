@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -44,6 +45,8 @@ type env struct {
 	// environment has no mail server.
 	mp  *testmail.Mailpit
 	sys access.Caller
+	// superDSN connects as the superuser, to break the database on purpose.
+	superDSN string
 
 	orgA, orgB, siteA, siteA2, siteB uuid.UUID
 }
@@ -59,7 +62,7 @@ func newEnv(t *testing.T, withMail bool) *env {
 	}
 	cfg := auth.DefaultConfig()
 	cfg.PublicURL = "https://rmm.example.com"
-	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), sys: access.System("test")}
+	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), sys: access.System("test"), superDSN: inst.SuperDSN}
 	e.hash = auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 4)
 	mail, err := mailserver.New(inst.DB, e.audit, sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -839,13 +842,16 @@ func TestIssuePasswordLink(t *testing.T) {
 	}
 }
 
-// No administrator or organization uses up the platform's mail: past an
-// administrator's hour or an organization's day, an invitation or a
-// password link is refused with a 429 before anything is made, and the
-// refusal is audited, at most once a minute per administrator. A password
-// link counts against the account's limit, which the person's own resets
-// share. Without a mail server, links come back to the administrator, and
-// nothing limits them.
+// No administrator or organization uses up the platform's mail, and no one
+// can keep an administrator from helping someone. Past the administrator's
+// own hour, an invitation or a password link is refused with a 429 that
+// says when to try again, before anything is made, and the refusal is
+// audited, at most once a minute per administrator and limit. Past the
+// account's limit, which the person's own resets share, or the
+// organization's day, the link is made and comes back unsent, with the
+// reason. A super administrator's mail is not counted against an
+// organization. Without a mail server, links come back to the
+// administrator, and nothing limits them.
 func TestAccountMailLimits(t *testing.T) {
 	e := newEnv(t, true)
 	ctx := context.Background()
@@ -853,6 +859,8 @@ func TestAccountMailLimits(t *testing.T) {
 	oaID := e.user(t, "olivia@acme.example", false, orgRole(rbac.RoleOrgAdmin, e.orgA))
 	oa := e.caller(t, oaID)
 	ob := e.caller(t, e.user(t, "oscar@globex.example", false, orgRole(rbac.RoleOrgAdmin, e.orgB)))
+	superID := e.user(t, "super@msp.example", false, rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	super := e.caller(t, superID)
 	in := func(email string, org uuid.UUID) users.InviteInput {
 		return users.InviteInput{Email: email, DisplayName: "New Person", Assignments: []users.Assignment{grant(rbac.RoleTechnician, org, uuid.Nil)}}
 	}
@@ -863,18 +871,21 @@ func TestAccountMailLimits(t *testing.T) {
 		return n
 	}
 
-	// The account's limit, shared with its own resets: three, then 429.
+	// The account's limit, shared with its own resets: three, then the
+	// link comes back unsent, with the reason; nobody gets a 429 for it.
 	existing := e.user(t, "old@acme.example", false, orgRole(rbac.RoleTechnician, e.orgA))
 	for range 3 {
 		if res, err := e.svc.IssuePasswordLink(ctx, oa, existing, meta); err != nil || !res.Emailed {
 			t.Fatalf("link: %+v %v", res, err)
 		}
 	}
-	tokens := count(`SELECT count(*) FROM password_reset_tokens WHERE user_id = $1`, existing)
-	_, err := e.svc.IssuePasswordLink(ctx, oa, existing, meta)
-	wantKind(t, err, apperr.KindTooMany, "account_mail_limited", "a fourth link")
-	if n := count(`SELECT count(*) FROM password_reset_tokens WHERE user_id = $1`, existing); n != tokens || len(e.mp.Received("old@acme.example")) != 3 {
-		t.Fatalf("a refused link was made (%d tokens, were %d) or sent", n, tokens)
+	res, err := e.svc.IssuePasswordLink(ctx, oa, existing, meta)
+	if err != nil || res.Emailed || res.Link == "" || res.MailProblem != auth.MailNotSent ||
+		!strings.HasPrefix(res.MailReason, "This account has been emailed 3 password emails in the last hour") {
+		t.Fatalf("a fourth link: %+v %v", res, err)
+	}
+	if len(e.mp.Received("old@acme.example")) != 3 {
+		t.Fatal("a fourth link was emailed")
 	}
 
 	// The administrator's hour, sent before the last minute so that the
@@ -883,40 +894,81 @@ func TestAccountMailLimits(t *testing.T) {
 		FROM generate_series(1, 57)`, oaID)
 	_, err = e.svc.Invite(ctx, oa, in("first@acme.example", e.orgA), meta)
 	wantKind(t, err, apperr.KindTooMany, "admin_mail_limited", "past the hour")
+	if ae, _ := apperr.As(err); ae.RetryAfter < 57*time.Minute || ae.RetryAfter > time.Hour {
+		t.Fatalf("retry after %s", ae.RetryAfter)
+	}
 	if n := count(`SELECT count(*) FROM users WHERE email = 'first@acme.example'`); n != 0 {
 		t.Fatal("a refused invitation made an account")
 	}
 	_, err = e.svc.Invite(ctx, oa, in("second@acme.example", e.orgA), meta)
 	wantKind(t, err, apperr.KindTooMany, "admin_mail_limited", "again")
+	_, err = e.svc.IssuePasswordLink(ctx, oa, existing, meta)
+	wantKind(t, err, apperr.KindTooMany, "admin_mail_limited", "a link past the hour")
 	// Audited once a minute per limit, with the limit, in the organization.
-	entries, err := e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "user.password_link"})
-	if err != nil || len(entries) != 4 || entries[0].Outcome != audit.Denied || entries[0].Details["limit"] != "account_mail_limited" ||
-		entries[0].TargetID != existing.String() {
-		t.Fatalf("link refusal audit: %v %+v", err, entries)
-	}
-	entries, err = e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "user.invite"})
+	entries, err := e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "user.invite"})
 	if err != nil || len(entries) != 1 || entries[0].Outcome != audit.Denied || entries[0].Details["reason"] != "rate_limited" ||
 		entries[0].Details["limit"] != "admin_mail_limited" || entries[0].Details["email"] != "first@acme.example" ||
 		entries[0].OrganizationID == nil || *entries[0].OrganizationID != e.orgA {
 		t.Fatalf("refusal audit: %v %+v", err, entries)
+	}
+	if entries, err = e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "user.password_link"}); err != nil || len(entries) != 4 ||
+		entries[0].Outcome != audit.Success {
+		t.Fatalf("link audit (one refusal a minute per limit): %v %+v", err, entries)
 	}
 	// Another administrator still may.
 	if res, err := e.svc.Invite(ctx, ob, in("new@globex.example", e.orgB), meta); err != nil || !res.Emailed {
 		t.Fatalf("another administrator: %+v %v", res, err)
 	}
 
-	// The organization's day, whoever sends.
+	// The organization's day, whoever sends: the invitation is made and
+	// comes back unsent, with the reason.
 	e.exec(t, `DELETE FROM mail_sends`)
 	e.exec(t, `INSERT INTO mail_sends (sent_at, kind, sent_by, organization_id)
 		SELECT clock_timestamp() - interval '2 minutes', 'admin', gen_random_uuid(), $1 FROM generate_series(1, 500)`, e.orgB)
-	_, err = e.svc.Invite(ctx, ob, in("more@globex.example", e.orgB), meta)
-	wantKind(t, err, apperr.KindTooMany, "organization_mail_limited", "past the organization's day")
+	res, err = e.svc.Invite(ctx, ob, in("more@globex.example", e.orgB), meta)
+	if err != nil || res.Emailed || res.Link == "" || res.User == nil || res.MailProblem != auth.MailNotSent ||
+		!strings.HasPrefix(res.MailReason, "This organization's accounts have been emailed 500 invitations and password links in the last 24 hours") {
+		t.Fatalf("past the organization's day: %+v %v", res, err)
+	}
+	// A super administrator's invitation is not counted against it.
+	if res, err := e.svc.Invite(ctx, super, in("hired@globex.example", e.orgB), meta); err != nil || !res.Emailed {
+		t.Fatalf("a super administrator's: %+v %v", res, err)
+	}
 	if res, err := e.svc.Invite(ctx, oa, in("next@acme.example", e.orgA), meta); err != nil || !res.Emailed {
 		t.Fatalf("another organization: %+v %v", res, err)
 	}
-	// What went is counted against the administrator and the organization.
-	if n := count(`SELECT count(*) FROM mail_sends WHERE kind = 'admin' AND sent_by = $1 AND organization_id = $2`, oaID, e.orgA); n != 1 {
-		t.Fatalf("%d counted", n)
+	// What went is counted against the administrator, the organization
+	// (not for a super administrator) and the account.
+	if n := count(`SELECT count(*) FROM mail_sends m JOIN users u ON u.id = m.account_id
+		WHERE kind = 'admin' AND sent_by = $1 AND organization_id = $2 AND u.email = 'next@acme.example'`, oaID, e.orgA); n != 1 {
+		t.Fatalf("%d counted for Acme", n)
+	}
+	if n := count(`SELECT count(*) FROM mail_sends m JOIN users u ON u.id = m.account_id
+		WHERE kind = 'admin' AND sent_by = $1 AND organization_id IS NULL AND u.email = 'hired@globex.example'`, superID); n != 1 {
+		t.Fatalf("%d counted for the super administrator", n)
+	}
+
+	// When the limits cannot be read, the refusal is audited as a failure,
+	// not as a limit.
+	super2, err := pgx.Connect(ctx, e.superDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer super2.Close(ctx)
+	if _, err := super2.Exec(ctx, `ALTER TABLE mail_sends RENAME TO mail_sends_away`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.Invite(ctx, ob, in("broken@globex.example", e.orgB), meta)
+	if _, err2 := super2.Exec(ctx, `ALTER TABLE mail_sends_away RENAME TO mail_sends`); err2 != nil {
+		t.Fatal(err2)
+	}
+	if _, ok := apperr.As(err); err == nil || ok {
+		t.Fatalf("with the limits unreadable: %v", err)
+	}
+	entries, err = e.audit.List(ctx, database.System, audit.Query{ActionPrefix: "user.invite"})
+	if err != nil || entries[0].Outcome != audit.Failure || entries[0].Details["limit"] != nil || entries[0].Details["reason"] != nil ||
+		entries[0].Details["email"] != "broken@globex.example" {
+		t.Fatalf("failure audit: %v %+v", err, entries[0])
 	}
 
 	// Without a mail server, nothing limits the links that come back.

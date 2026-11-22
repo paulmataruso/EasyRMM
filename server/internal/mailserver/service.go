@@ -134,16 +134,14 @@ type Server struct {
 }
 
 // Limits are the messages a minute and a day sent through the mail server
-// in force, and the fixed limits on administrators' account mail.
+// in force, and the limits on account mail they make, for the console to
+// show.
 type Limits struct {
-	PerMinute int        `json:"perMinute"`
-	PerDay    int        `json:"perDay"`
-	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
-	UpdatedBy string     `json:"updatedBy,omitempty"`
-	// AdminPerHour and OrganizationPerDay are AdminPerHour and
-	// OrganizationPerDay, for the console to show.
-	AdminPerHour       int `json:"adminPerHour"`
-	OrganizationPerDay int `json:"organizationPerDay"`
+	PerMinute int           `json:"perMinute"`
+	PerDay    int           `json:"perDay"`
+	UpdatedAt *time.Time    `json:"updatedAt,omitempty"`
+	UpdatedBy string        `json:"updatedBy,omitempty"`
+	Account   AccountLimits `json:"account"`
 }
 
 // Usage is the messages sent in the last minute and the last 24 hours, and
@@ -239,8 +237,7 @@ func (s *Service) Get(ctx context.Context) (View, error) {
 			return err
 		}
 		v.Console = r.server()
-		v.Limits = Limits{PerMinute: r.perMinute, PerDay: r.perDay, UpdatedAt: r.limitsUpdatedAt, AdminPerHour: AdminPerHour,
-			OrganizationPerDay: OrganizationPerDay}
+		v.Limits = Limits{PerMinute: r.perMinute, PerDay: r.perDay, UpdatedAt: r.limitsUpdatedAt, Account: accountLimits(r.perDay)}
 		if r.limitsUpdatedBy != nil {
 			v.Limits.UpdatedBy = *r.limitsUpdatedBy
 		}

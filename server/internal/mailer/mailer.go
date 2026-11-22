@@ -155,11 +155,49 @@ type AccountMail struct {
 	// may use the share of the day's limit kept for that alone.
 	Self bool
 	// Admin is the administrator who sent it (an invitation, a password
-	// link); Organization the organization of the account it goes to,
-	// uuid.Nil for none or several.
-	Admin        uuid.UUID
+	// link).
+	Admin uuid.UUID
+	// Account is the account it goes to; Organization that account's
+	// organization, uuid.Nil for none or several, and for an
+	// administrator's mail uuid.Nil when a super administrator sends it,
+	// which no organization's limit counts.
+	Account      uuid.UUID
 	Organization uuid.UUID
 }
+
+// Limited is account mail the limits did not let go (ADR-0053): which
+// limit, in words, and when there will be room.
+type Limited interface {
+	error
+	// LimitCode names the limit: one of the Limit codes.
+	LimitCode() string
+	// RetryIn is how long until there is room, 0 when unknown.
+	RetryIn() time.Duration
+}
+
+// The limits a message can reach, as Limited names them.
+const (
+	// LimitAdmin: the administrator's own, an hour.
+	LimitAdmin = "admin_mail_limited"
+	// LimitOrganization: administrators' mail to one organization's
+	// accounts, a day.
+	LimitOrganization = "organization_mail_limited"
+	// LimitAccount: password emails to one account, whoever asks.
+	LimitAccount = "account_mail_limited"
+	// LimitOrganizationResets: password resets people ask for, to one
+	// organization's accounts.
+	LimitOrganizationResets = "organization_resets_limited"
+	// LimitResets: password resets people ask for, on the whole platform,
+	// an hour.
+	LimitResets = "resets_limited"
+	// LimitDay: the day's limit, or the share of it this mail may use.
+	LimitDay = "day_limited"
+	// LimitMinute: the minute's limit.
+	LimitMinute = "minute_limited"
+	// LimitAccountWaiting: other mail standing back while account mail
+	// waits.
+	LimitAccountWaiting = "account_mail_waiting"
+)
 
 // Gate is asked before each message is sent. It may wait for room under a
 // limit, or refuse; release is called when the mail server did not take the

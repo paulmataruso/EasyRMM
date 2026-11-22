@@ -5,7 +5,6 @@ package mailserverapi
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
@@ -89,8 +88,8 @@ func (a *API) test(w http.ResponseWriter, r *http.Request) error {
 	res, err := a.svc.Test(r.Context(), httpapi.Actor(r), in)
 	var soon *mailserver.TooSoonError
 	if errors.As(err, &soon) {
-		w.Header().Set("Retry-After", strconv.Itoa(soon.Seconds()))
-		return &httpapi.Error{Status: http.StatusTooManyRequests, Code: "test_rate_limited", Message: soon.Error()}
+		return &httpapi.Error{Status: http.StatusTooManyRequests, Code: "test_rate_limited", Message: soon.Error(),
+			RetryAfter: soon.RetryAfter}
 	}
 	if err != nil {
 		return err

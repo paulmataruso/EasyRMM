@@ -43,24 +43,29 @@ CREATE TABLE mail_server (
 INSERT INTO mail_server (id) VALUES (true);
 
 -- Each message sent, or being sent, in the last 24 hours: what the limits
--- count, and against whom. kind is reset for a password reset the person
--- asked for, which may use the whole day's limit; admin for an invitation
--- or a password link an administrator sent (sent_by), which stops at 90%
--- of it, at 60 an hour per administrator and 500 a day per organization of
--- the account it went to (organization_id; null for none or several); and
--- other for the rest, which stops at 80%. Rows are taken under an advisory
--- lock and removed after 24 hours.
+-- count, and against whom (the numbers are in the service, mailserver).
+-- kind is reset for a password reset the person asked for, which may use
+-- the whole day's limit; admin for an invitation or a password link an
+-- administrator sent (sent_by), which stops at 90% of it; and other for
+-- the rest, which stops at 80%. account_id is the account an invitation
+-- or password email went to, whoever asked; organization_id its
+-- organization (null for none or several), and for admin mail null when a
+-- super administrator sent it. Rows are taken under an advisory lock and
+-- removed after 24 hours.
 CREATE TABLE mail_sends (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     sent_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
     kind            text NOT NULL CHECK (kind IN ('reset', 'admin', 'other')),
     sent_by         uuid,
     organization_id uuid,
-    CHECK (kind = 'admin' OR (sent_by IS NULL AND organization_id IS NULL))
+    account_id      uuid,
+    CHECK (kind = 'admin' OR sent_by IS NULL),
+    CHECK (kind <> 'other' OR (organization_id IS NULL AND account_id IS NULL))
 );
 CREATE INDEX mail_sends_sent_at ON mail_sends (sent_at);
 CREATE INDEX mail_sends_sent_by ON mail_sends (sent_by, sent_at) WHERE kind = 'admin';
-CREATE INDEX mail_sends_organization ON mail_sends (organization_id, sent_at) WHERE kind = 'admin';
+CREATE INDEX mail_sends_organization ON mail_sends (organization_id, sent_at) WHERE kind <> 'other';
+CREATE INDEX mail_sends_account ON mail_sends (account_id, sent_at) WHERE account_id IS NOT NULL;
 
 -- Account mail waiting for room under the minute's limit, on any of
 -- EasyRMM's servers: other mail stands back while one waits. A server that
