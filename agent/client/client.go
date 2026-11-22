@@ -313,6 +313,17 @@ func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRe
 	return resp.Body.Close()
 }
 
+// Hardware sends a hardware report, already encoded (ADR-0065). A server
+// without the endpoint answers 404, an *Error the caller may drop.
+func (c *Client) Hardware(ctx context.Context, body []byte) error {
+	resp, err := c.do(ctx, http.MethodPost, agentproto.PathHardware, body, true)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	return resp.Body.Close()
+}
+
 // Removed reports how uninstalling the agent on the server's instruction
 // went (ADR-0050).
 func (c *Client) Removed(ctx context.Context, r agentproto.RemovedReport) error {

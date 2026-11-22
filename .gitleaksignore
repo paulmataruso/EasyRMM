@@ -17,3 +17,7 @@ ce67feb1650acbb4e827f6f71e38426f0a73a48a:web/src/pages/devices/addDevices.test.t
 # The SHA-256 of a NIST spreadsheet the related-controls extraction
 # checks before reading it (ADR-0054).
 255b9a4da605bf89e905e783b9214d82da9707fe:server/internal/jobs/hardening/controls/extract/sources.go:generic-api-key:52
+# Disk keys in the console tests: made-up hex, the shape of a disk key.
+ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:22
+ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:23
+ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:24

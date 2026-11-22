@@ -7,6 +7,7 @@ import type {
   Device,
   DeviceGroup,
   DeviceMetrics,
+  DiskHealth,
   Inventory,
   Job,
   JobRun,
@@ -77,6 +78,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canRemove: false,
     removal: null,
     hardening: null,
+    diskHealth: null,
     ...extra,
   };
 }
@@ -249,6 +251,31 @@ export function inventory(extra: Partial<Inventory> = {}): Inventory {
   };
 }
 
+/** A healthy NVMe disk, read at the fixtures' time, as GET /devices/{id}/disks lists it (ADR-0065). */
+export function diskHealth(key: string, name: string, extra: Partial<DiskHealth> = {}): DiskHealth {
+  return {
+    key,
+    unstable: false,
+    name,
+    model: "Samsung PM9A3",
+    serial: "S64GNE0R1234",
+    state: "healthy",
+    reason: "",
+    detail: "",
+    latest: { state: "healthy", reason: "", detail: "", readAt: T, receivedAt: T },
+    judgedLevel: "healthy",
+    judgedAt: T,
+    since: 0,
+    missingSince: null,
+    protocol: "nvme",
+    route: "nvme",
+    factsAt: T,
+    facts: [],
+    attributes: [],
+    ...extra,
+  };
+}
+
 /** The latest measurements of a busy server whose /var is nearly full. */
 export function metrics(extra: Partial<DeviceMetrics> = {}): DeviceMetrics {
   return {
@@ -294,6 +321,7 @@ export function alertPolicy(id: string, name: string, extra: Partial<AlertPolicy
     name,
     description: "",
     kind: "cpu",
+    checkName: null,
     threshold: 95,
     minutes: 15,
     severity: "warning",
@@ -318,10 +346,14 @@ export function alertEntry(id: string, name: string, extra: Partial<AlertEntry> 
     siteName: "Head office",
     name,
     kind: "disk",
+    checkName: null,
     threshold: 90,
     minutes: 5,
     severity: "critical",
     status: "open",
+    subject: "",
+    subjectLabel: "",
+    detail: "",
     value: 93,
     lastValue: 94.4,
     openedAt: T,

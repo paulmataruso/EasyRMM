@@ -62,7 +62,7 @@ func TestCountRelations(t *testing.T) {
 }
 
 func TestParseStorageDescriptor(t *testing.T) {
-	desc := func(vendor, product, serial string, bus uint32, removable bool) []byte {
+	desc := func(vendor, product, serial string, bus uint32, removable bool, revision ...string) []byte {
 		b := make([]byte, 40)
 		add := func(field int, s string) {
 			if s == "" {
@@ -74,15 +74,21 @@ func TestParseStorageDescriptor(t *testing.T) {
 		add(12, vendor)
 		add(16, product)
 		add(24, serial)
+		for _, r := range revision {
+			add(20, r)
+		}
 		binary.LittleEndian.PutUint32(b[28:], bus)
 		if removable {
 			b[10] = 1
 		}
 		return b
 	}
-	d, ok := parseStorageDescriptor(desc("", "Samsung SSD 980 PRO 1TB", "S5GXNF0R  ", busNVMe, false))
-	if !ok || d.Model != "Samsung SSD 980 PRO 1TB" || d.Serial != "S5GXNF0R" || d.Bus != busNVMe || d.Removable {
+	d, ok := parseStorageDescriptor(desc("", "Samsung SSD 980 PRO 1TB", "S5GXNF0R  ", busNVMe, false, "5B2QGXA7"))
+	if !ok || d.Model != "Samsung SSD 980 PRO 1TB" || d.Serial != "S5GXNF0R" || d.Revision != "5B2QGXA7" || d.Bus != busNVMe || d.Removable {
 		t.Errorf("NVMe = %+v", d)
+	}
+	if firmwareRead(d.Revision).Value != "5B2QGXA7" || firmwareRead("  ").Reason != agentproto.ReasonNotExposed {
+		t.Error("firmware facts")
 	}
 	d, _ = parseStorageDescriptor(desc("SanDisk ", "Ultra   Fit", "4C530001.", busUSB, false))
 	if d.Model != "SanDisk Ultra Fit" || d.Serial != "4C530001" || !d.Removable {

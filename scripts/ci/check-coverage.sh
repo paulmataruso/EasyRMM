@@ -56,6 +56,9 @@ floors=(
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
+  # Disk health: what agents read, judged by the server's rules (ADR-0065).
+  "server/internal/hardware                90"
+  "server/internal/httpapi/hardwareapi     90"
   # Audit forwarding: every tenant's records leave the server through it.
   "server/internal/auditfwd                88"
   "server/internal/httpapi/auditfwdapi     90"
@@ -104,6 +107,9 @@ floors=(
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
+  # Parses what disks answer (ADR-0065); the transports' system calls run
+  # only in the machine tests.
+  "agent/hardware                          97"
 )
 
 if [[ ! -f "$profile" ]]; then

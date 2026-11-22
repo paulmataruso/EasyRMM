@@ -74,6 +74,16 @@ jobs:
         run: go test -count=1 -v ./agent/... ./internal/agentproto/...
       - name: Windows software scripts
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/
+      # ADR-0065: the disk reader on the runner's disks, through the same
+      # IOCTLs the agent sends. They are Azure virtual disks: NVMe ones,
+      # which the NVMe path reads, or, on some runners, Hyper-V's virtual
+      # SCSI disks, whose driver refuses both pass-throughs; so the ATA path
+      # is not exercised here. The runner's user is an elevated
+      # administrator, not LocalSystem as the agent's service is.
+      - name: Disk health on the runner's disks
+        env:
+          EASYRMM_TEST_HARDWARE: "1"
+        run: go test -count=1 -v -run '^TestMachine$' ./agent/hardware/
       # ADR-0056, slice 0. These tests change the computer (a local user,
       # the agent's folders and service), so they run only here, on a runner
       # made for the job. The update starts from main as it was before the
