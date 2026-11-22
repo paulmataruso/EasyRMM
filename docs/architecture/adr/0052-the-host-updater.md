@@ -843,9 +843,19 @@ two automatic runs, the fourth first, its service stopped with
 and what tidying left. The third bundle's server fails its health check,
 not a held port: a server that cannot bind restarts until the 20-minute
 limit. It has run on an emulated machine only (no KVM on the host). On the
-code as reviewed a second time, it passed whole on 22 November 2026
-without Authentik, in 3 hours 48 minutes (run 9), as it had on the code
-reviewed the first time on 21 November (run 8, 3 hours 28 minutes). The
+code as reviewed a third time (commit 0605dba), it passed whole on 22
+November 2026 without Authentik, in 3 hours 57 minutes (run 11), the
+service's stop seen to land during the backup step; run 10, on the same
+commit, failed before the updater ran, the emulated machine's kernel
+stalled at boot (an RCU stall, the host busy). It had passed on the code
+reviewed a second time (run 9, 3 hours 48 minutes) and the first time on
+21 November (run 8, 3 hours 28 minutes). The later fixes (650c925,
+2da4e90) change code the run goes through (`setup.sh`'s `env_value` and
+`fill_secret`, the records the updater writes) but not what it does on
+any path the run takes: they differ only when a value is quoted with
+escapes, a `status.json` write fails, the updater's own process ends
+during the stop or the backup, or a stop kills a command in the check,
+none of which the run does; it was not run again on them. The
 two runs before run 8 with Authentik failed at the test's own
 install, before the updater ran: once the engine's migration crashed
 (exit 139, a segmentation fault) on the emulated processor, once
