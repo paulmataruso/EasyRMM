@@ -2,11 +2,23 @@ import { useState, type ReactNode } from "react";
 import { Send, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { MailSecurity, MailServer, MailServerInput, MailServerTest, MailServerTestInput, MailServerView, MailSignIn } from "../../api/types";
+import type {
+  MailApplication,
+  MailCertificate,
+  MailCheck,
+  MailCredential,
+  MailSecurity,
+  MailServer,
+  MailServerInput,
+  MailServerTest,
+  MailServerTestInput,
+  MailServerView,
+  MailSignIn,
+} from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Badge, Button, Card, Dot, ErrorState, InlineError, KeyValueList, Mono, SelectField, Spinner, TextField } from "../../components/ui";
+import { Alert, Badge, Button, Card, Dot, ErrorState, InlineError, KeyValueList, Mono, SelectField, Spinner, TextareaField, TextField } from "../../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 
 const PATH = "/settings/mail-server";
@@ -19,7 +31,7 @@ const SECURITY: Record<MailSecurity, string> = {
   none: "None (a relay on this machine)",
 };
 
-const FIELDS = ["host", "port", "security", "signIn", "username", "password", "fromAddress", "fromName", "to"];
+const FIELDS = ["host", "port", "security", "signIn", "username", "password", "fromAddress", "fromName", "to", "tenantId", "clientId", "credential", "clientSecret", "certificate", "certificateKey"];
 
 /**
  * Settings → Notifications (ADR-0053). Its first part is the mail server, for super administrators: the one set here,
@@ -34,6 +46,12 @@ export function NotificationsTab() {
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <div className="space-y-5 xl:col-span-2">
         <InForce view={v} />
+        {v.engineWithheld && (
+          <Alert tone="warn" title="Patching sends no email">
+            {v.engineWithheld}
+          </Alert>
+        )}
+        <LastCheck check={v.check} />
         {v.inForce === "env" && v.env ? (
           <>
             {v.envProblem && (
@@ -58,8 +76,9 @@ function InForce({ view }: { view: MailServerView }) {
     case "env":
       return (
         <Alert tone="info" title="The mail server comes from .env">
-          EASYRMM_SMTP_HOST is set in .env, and wins over the console: invitations, password resets and the patching engine&apos;s email go through it. To set the mail server here,
-          remove the EASYRMM_SMTP_ settings from .env and restart EasyRMM.
+          EASYRMM_SMTP_HOST is set in .env, and wins over the console: invitations, password resets
+          {view.engineWithheld ? "" : " and the patching engine's email"} go through it. To set the mail server here, remove the EASYRMM_SMTP_ settings from .env and restart
+          EasyRMM.
         </Alert>
       );
     case "none":
@@ -73,11 +92,39 @@ function InForce({ view }: { view: MailServerView }) {
   }
 }
 
+/** This server's last check of the mail server in force: at start, after every change, and daily. */
+function LastCheck({ check }: { check?: MailCheck }) {
+  if (!check) return null;
+  return (
+    <Alert tone={check.ok ? "ok" : "danger"} title={check.ok ? "The mail server passed this server's check" : "This server's check of the mail server failed"}>
+      <span className="block break-words">{check.message}</span>
+      <span className="mt-1 block text-xs">
+        Checked <span title={formatDateTime(check.at)}>{formatRelative(check.at)}</span> by connecting and signing in, sending nothing: at start, after every change and
+        daily. To check now, run <Mono>docker compose exec server easyrmm-server mail check</Mono>.
+      </span>
+    </Alert>
+  );
+}
+
+/** The application's certificate has ended, or ends within 30 days. */
+function CertificateWarning({ app }: { app?: MailApplication }) {
+  if (!app?.certificateWarning) return null;
+  const ended = !!app.certificate && new Date(app.certificate.notAfter).getTime() <= Date.now();
+  return (
+    <Alert tone={ended ? "danger" : "warn"} title={ended ? "The application's certificate cannot sign in" : "The application's certificate ends soon"}>
+      {app.certificateWarning}
+    </Alert>
+  );
+}
+
 /** .env's mail server, read-only, with its test message. */
 function EnvServer({ server }: { server: MailServer }) {
   return (
     <Card title="Mail server">
-      <KeyValueList narrow items={serverItems(server)} />
+      <div className="space-y-4">
+        <CertificateWarning app={server.application} />
+        <KeyValueList narrow items={serverItems(server)} />
+      </div>
       <div className="mt-4 border-t border-line pt-4">
         <TestMessage input={() => undefined} />
       </div>
@@ -120,19 +167,68 @@ function UnusedConsoleServer({ server }: { server: MailServer }) {
         loading={remove.isPending}
         error={remove.error}
       >
-        Its settings and stored password are deleted. This does not change the mail server in force: .env&apos;s stays, and mail goes on as before.
+        Its settings and stored password, secret or key are deleted. This does not change the mail server in force: .env&apos;s stays, and mail goes on as before.
       </ConfirmDialog>
     </Card>
   );
 }
 
+function signsIn(s: MailServer): ReactNode {
+  switch (s.signIn) {
+    case "password":
+      return (
+        <span key="u">
+          as <Mono>{s.username}</Mono>
+          {s.passwordSet ? ", with a password" : ""}
+        </span>
+      );
+    case "microsoft365":
+      return (
+        <span key="u">
+          to <Mono>{s.fromAddress}</Mono>, with a Microsoft 365 application&apos;s token
+        </span>
+      );
+    default:
+      return "No";
+  }
+}
+
+function CertificateSummary({ cert }: { cert: MailCertificate }) {
+  return (
+    <span>
+      A certificate, thumbprint <Mono>{cert.thumbprint}</Mono>
+      <span className="mt-1 block text-xs break-words text-muted">
+        {cert.subject}; valid until {formatDateTime(cert.notAfter)}
+      </span>
+    </span>
+  );
+}
+
 function serverItems(s: MailServer): [string, ReactNode][] {
-  return [
+  const items: [string, ReactNode][] = [
     ["Server", <Mono key="h">{s.host.includes(":") ? `[${s.host}]:${s.port}` : `${s.host}:${s.port}`}</Mono>],
     ["Security", SECURITY[s.security]],
-    ["Signs in", s.signIn === "password" ? <span key="u">as <Mono>{s.username}</Mono>{s.passwordSet ? ", with a password" : ""}</span> : "No"],
-    ["Sends as", s.fromName ? `${s.fromName} <${s.fromAddress}>` : s.fromAddress],
+    ["Signs in", signsIn(s)],
   ];
+  const app = s.application;
+  if (app) {
+    items.push(
+      ["Tenant", <Mono key="t">{app.tenantId}</Mono>],
+      ["Application", <Mono key="a">{app.clientId}</Mono>],
+      [
+        "Credential",
+        app.credential === "certificate" && app.certificate ? (
+          <CertificateSummary key="c" cert={app.certificate} />
+        ) : app.secretSet ? (
+          "A client secret, never shown"
+        ) : (
+          "A client secret"
+        ),
+      ],
+    );
+  }
+  items.push(["Sends as", s.fromName ? `${s.fromName} <${s.fromAddress}>` : s.fromAddress]);
+  return items;
 }
 
 interface FormState {
@@ -144,6 +240,12 @@ interface FormState {
   password: string;
   fromAddress: string;
   fromName: string;
+  tenantId: string;
+  clientId: string;
+  credential: MailCredential;
+  clientSecret: string;
+  certificate: string;
+  certificateKey: string;
 }
 
 function fromServer(s?: MailServer): FormState {
@@ -156,8 +258,17 @@ function fromServer(s?: MailServer): FormState {
     password: "",
     fromAddress: s?.fromAddress ?? "",
     fromName: s?.fromName ?? "EasyRMM",
+    tenantId: s?.application?.tenantId ?? "",
+    clientId: s?.application?.clientId ?? "",
+    credential: s?.application?.credential ?? "secret",
+    clientSecret: "",
+    certificate: "",
+    certificateKey: "",
   };
 }
+
+/** Exchange Online's client submission, which a Microsoft 365 application signs in to. */
+const EXCHANGE = { host: "smtp.office365.com", port: "587", security: "starttls" as MailSecurity };
 
 function MailServerForm({ view }: { view: MailServerView }) {
   const toast = useToast();
@@ -166,14 +277,20 @@ function MailServerForm({ view }: { view: MailServerView }) {
   const [removing, setRemoving] = useState(false);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const password = form.signIn === "password";
+  const application = form.signIn === "microsoft365";
+  const sameServer =
+    !!stored && stored.host.toLowerCase() === form.host.trim().toLowerCase() && stored.port === Number(form.port) && stored.security === form.security;
   // A stored password is kept only while the host, the port, the security and the user name stay the same.
-  const keepsPassword =
-    !!stored?.passwordSet &&
-    stored.host.toLowerCase() === form.host.trim().toLowerCase() &&
-    stored.port === Number(form.port) &&
-    stored.security === form.security &&
-    stored.username === form.username.trim() &&
-    password;
+  const keepsPassword = !!stored?.passwordSet && sameServer && stored.username === form.username.trim() && password;
+  // A stored secret, or certificate and key, only while the server, the tenant, the application and the credential's kind do.
+  const storedApp = stored?.signIn === "microsoft365" ? stored.application : undefined;
+  const keepsApp =
+    !!storedApp &&
+    application &&
+    sameServer &&
+    storedApp.tenantId.toLowerCase() === form.tenantId.trim().toLowerCase() &&
+    storedApp.clientId.toLowerCase() === form.clientId.trim().toLowerCase() &&
+    storedApp.credential === form.credential;
 
   const input = (): MailServerInput => ({
     host: form.host.trim(),
@@ -184,17 +301,25 @@ function MailServerForm({ view }: { view: MailServerView }) {
     password: password ? form.password : "",
     fromAddress: form.fromAddress.trim(),
     fromName: form.fromName.trim(),
+    ...(application && {
+      tenantId: form.tenantId.trim(),
+      clientId: form.clientId.trim(),
+      credential: form.credential,
+      clientSecret: form.credential === "secret" ? form.clientSecret.trim() : "",
+      certificate: form.credential === "certificate" ? form.certificate.trim() : "",
+      certificateKey: form.credential === "certificate" ? form.certificateKey.trim() : "",
+    }),
   });
 
   const save = useApiMutation((body: MailServerInput) => api.put<MailServerView>(PATH, body), {
-    invalidate: [PATH, "/audit", "/auth/options"],
+    invalidate: [PATH, "/audit", "/auth/options", "/patching/notifications"],
     onSuccess: (v) => {
       setForm(fromServer(v.console));
       toast.success(`Saved. EasyRMM sends mail through ${v.console?.host ?? form.host.trim()}.`);
     },
   });
   const remove = useApiMutation(() => api.del<MailServerView>(PATH), {
-    invalidate: [PATH, "/audit", "/auth/options"],
+    invalidate: [PATH, "/audit", "/auth/options", "/patching/notifications"],
     onSuccess: () => {
       setRemoving(false);
       setForm(fromServer());
@@ -205,6 +330,13 @@ function MailServerForm({ view }: { view: MailServerView }) {
 
   const changeSecurity = (s: MailSecurity) =>
     setForm((f) => ({ ...f, security: s, port: f.port === "" || Number(f.port) === DEFAULT_PORT[f.security] ? String(DEFAULT_PORT[s]) : f.port }));
+  // An application signs in only over TLS: a blank server becomes Exchange Online's, and no encryption STARTTLS.
+  const changeSignIn = (s: MailSignIn) =>
+    setForm((f) => {
+      if (s !== "microsoft365") return { ...f, signIn: s };
+      if (f.host.trim() === "") return { ...f, signIn: s, ...EXCHANGE };
+      return f.security === "none" ? { ...f, signIn: s, security: "starttls", port: EXCHANGE.port } : { ...f, signIn: s };
+    });
 
   return (
     <Card title="Mail server">
@@ -217,12 +349,14 @@ function MailServerForm({ view }: { view: MailServerView }) {
         }}
       >
         <p className="text-sm text-muted">
-          Invitations, password resets and the patching engine&apos;s email and monthly reports go through it, as soon as it is saved. Each recipient gets a message of their own.
+          Invitations, password resets{application ? "" : " and the patching engine's email and monthly reports"} go through it, as soon as it is saved. Each recipient gets a
+          message of their own.
         </p>
+        <CertificateWarning app={storedApp} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_7rem]">
           <TextField
             label="Server"
-            hint="Host name or IP address of your mail server or relay."
+            hint={application ? "Exchange Online's is smtp.office365.com, port 587, STARTTLS." : "Host name or IP address of your mail server or relay."}
             placeholder="smtp.example.com"
             value={form.host}
             onChange={(e) => set("host", e.target.value)}
@@ -247,10 +381,13 @@ function MailServerForm({ view }: { view: MailServerView }) {
           >
             <option value="starttls">STARTTLS (usually port 587)</option>
             <option value="tls">TLS from the first byte (usually port 465)</option>
-            <option value="none">None (a relay on this machine)</option>
+            <option value="none" disabled={application}>
+              None (a relay on this machine)
+            </option>
           </SelectField>
-          <SelectField label="Sign in" value={form.signIn} onChange={(e) => set("signIn", e.target.value as MailSignIn)} error={err("signIn")}>
+          <SelectField label="Sign in" value={form.signIn} onChange={(e) => changeSignIn(e.target.value as MailSignIn)} error={err("signIn")}>
             <option value="password">With a user name and password</option>
+            <option value="microsoft365">With a Microsoft 365 application</option>
             <option value="none">Not at all</option>
           </SelectField>
         </div>
@@ -276,6 +413,7 @@ function MailServerForm({ view }: { view: MailServerView }) {
             />
           </div>
         )}
+        {application && <ApplicationFields form={form} set={set} err={err} storedApp={storedApp} keeps={keepsApp} />}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <TextField
             label="Send from"
@@ -284,7 +422,7 @@ function MailServerForm({ view }: { view: MailServerView }) {
             value={form.fromAddress}
             onChange={(e) => set("fromAddress", e.target.value)}
             error={err("fromAddress")}
-            hint="The address messages come from. Your mail server must allow it."
+            hint={application ? "The mailbox the application signs in to and sends as. It must be given to the application in Exchange Online." : "The address messages come from. Your mail server must allow it."}
             spellCheck={false}
             required
           />
@@ -339,6 +477,123 @@ function MailServerForm({ view }: { view: MailServerView }) {
         stop. The limits stay.
       </ConfirmDialog>
     </Card>
+  );
+}
+
+/**
+ * A Microsoft 365 application's sign-in (ADR-0053, slice 2): the Entra application, with its client secret or its
+ * certificate and private key, which are stored encrypted and never shown. Warned before saving: the patching engine
+ * cannot sign in this way, so it is given no mail server.
+ */
+function ApplicationFields({
+  form,
+  set,
+  err,
+  storedApp,
+  keeps,
+}: {
+  form: FormState;
+  set: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
+  err: (field: string) => string | null | undefined;
+  storedApp?: MailApplication;
+  keeps: boolean;
+}) {
+  const storedCert = keeps ? storedApp?.certificate : undefined;
+  return (
+    <div className="space-y-4">
+      <Alert tone="warn" title="Patching's email stops while an application signs in">
+        The patching engine cannot sign in with a Microsoft 365 application, so once this is saved it is given no mail server: patching sends no email and no monthly reports
+        until a later release moves them to EasyRMM. For patching&apos;s email meanwhile, send through a relay, or sign in with a password.
+      </Alert>
+      <p className="text-sm text-muted">
+        An application registered in Microsoft Entra, with the Office 365 Exchange Online permission SMTP.SendAsApp, admin consent, and the Send from mailbox given to it in
+        Exchange Online. EasyRMM gets a token for it and signs in with XOAUTH2. The steps are in the operations guide, docs/operations/mail.md.
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <TextField
+          label="Directory (tenant) ID"
+          value={form.tenantId}
+          onChange={(e) => set("tenantId", e.target.value)}
+          error={err("tenantId")}
+          hint="From the application's Overview page, or a domain name of the tenant."
+          placeholder="00000000-0000-0000-0000-000000000000"
+          autoComplete="off"
+          spellCheck={false}
+          required
+        />
+        <TextField
+          label="Application (client) ID"
+          value={form.clientId}
+          onChange={(e) => set("clientId", e.target.value)}
+          error={err("clientId")}
+          hint="From the application's Overview page."
+          placeholder="00000000-0000-0000-0000-000000000000"
+          autoComplete="off"
+          spellCheck={false}
+          required
+        />
+      </div>
+      <SelectField
+        label="Credential"
+        value={form.credential}
+        onChange={(e) => set("credential", e.target.value as MailCredential)}
+        error={err("credential")}
+        hint="A certificate is the stronger: its key never leaves this server, and Microsoft never sees it."
+      >
+        <option value="secret">A client secret</option>
+        <option value="certificate">A certificate and its private key</option>
+      </SelectField>
+      {form.credential === "secret" ? (
+        <TextField
+          label="Client secret"
+          type="password"
+          value={form.clientSecret}
+          onChange={(e) => set("clientSecret", e.target.value)}
+          error={err("clientSecret")}
+          autoComplete="new-password"
+          maxLength={1024}
+          placeholder={keeps && storedApp?.secretSet ? "Stored" : ""}
+          hint={
+            keeps && storedApp?.secretSet
+              ? "A secret is stored, encrypted. Leave this empty to keep it."
+              : "The secret's Value from Certificates & secrets, not its Secret ID. Stored encrypted and never shown again."
+          }
+        />
+      ) : (
+        <>
+          {storedCert && (
+            <p className="text-sm">
+              Stored: <CertificateSummary cert={storedCert} />
+            </p>
+          )}
+          <TextareaField
+            label="Certificate (PEM)"
+            rows={4}
+            value={form.certificate}
+            onChange={(e) => set("certificate", e.target.value)}
+            error={err("certificate")}
+            placeholder="-----BEGIN CERTIFICATE-----"
+            spellCheck={false}
+            hint={
+              storedCert
+                ? "Leave this empty to keep the stored certificate, or paste its renewal: a renewal on the same key needs no key."
+                : "The certificate uploaded to the application under Certificates & secrets."
+            }
+          />
+          <TextareaField
+            label="Private key (PEM)"
+            rows={4}
+            value={form.certificateKey}
+            onChange={(e) => set("certificateKey", e.target.value)}
+            error={err("certificateKey")}
+            placeholder="-----BEGIN PRIVATE KEY-----"
+            autoComplete="off"
+            spellCheck={false}
+            hint={keeps ? "A key is stored, encrypted. Leave this empty to keep it." : "The certificate's RSA private key, not encrypted. Stored encrypted and never shown again."}
+          />
+        </>
+      )}
+    </div>
   );
 }
 

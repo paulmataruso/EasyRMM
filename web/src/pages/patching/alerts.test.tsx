@@ -560,6 +560,19 @@ describe("Settings → Patching → Notifications", () => {
     expect(main().queryByText("The patching engine does not have EasyRMM's mail server")).not.toBeInTheDocument();
   });
 
+  it("says the engine has no mail server while a Microsoft 365 application signs in to EasyRMM's", async () => {
+    const withheld = "EasyRMM's mail server signs in with a Microsoft 365 application, which the patching engine cannot do.";
+    installFakeApi(
+      settingsRoutes(SUPER, { "GET /patching/notifications": ok({ channels: CHANNELS, mail: { ...MAIL, host: "", port: 0, withheld }, allowPrivateNetworkWebhooks: false }) }),
+    );
+    await open("/settings?tab=patching&view=notifications");
+    const alert = (await main().findByText("Patching sends no email: the engine has no mail server")).closest<HTMLElement>(".rounded-md")!;
+    expect(within(alert).getByText(new RegExp(withheld))).toBeInTheDocument();
+    expect(within(alert).getByText(/Email channels and monthly reports do not send meanwhile/)).toBeInTheDocument();
+    // Instead of the warning that there is no mail server at all; the email channel's badge stays.
+    expect(main().getAllByText("No mail server")).toHaveLength(1);
+  });
+
   it("says why the engine does not have EasyRMM's mail server", async () => {
     const problem = "could not read EasyRMM's mail server for the patching engine: the stored password cannot be opened";
     installFakeApi(settingsRoutes(SUPER, { "GET /patching/notifications": ok({ channels: CHANNELS, mail: { ...MAIL, host: "", port: 0, problem }, allowPrivateNetworkWebhooks: false }) }));

@@ -396,7 +396,11 @@ function Delivery({ view }: { view: PatchNotifications }) {
             until it can. EasyRMM tries again every minute. The last try: {mail.problem}
           </Alert>
         )}
-        {mail.host ? (
+        {mail.withheld ? (
+          <Alert tone="warn" title="Patching sends no email: the engine has no mail server">
+            {mail.withheld} Email channels and monthly reports do not send meanwhile. Microsoft 365 application sign-in for the patching engine comes in a later release.
+          </Alert>
+        ) : mail.host ? (
           <p className="max-w-3xl">
             Email channels send through EasyRMM&apos;s mail server, <Mono>{`${mail.host}:${mail.port}`}</Mono> ({SECURITY[mail.security] ?? mail.security}),
             from {mail.fromName ? `${mail.fromName} <${mail.fromAddress}>` : mail.fromAddress}. A super administrator sets it under Settings → Notifications → Mail server, and

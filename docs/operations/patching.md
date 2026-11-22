@@ -619,6 +619,9 @@ the one that also sends invitations and password resets: the console's
 (Settings → **Notifications** → Mail server) or `.env`'s `EASYRMM_SMTP_*`
 settings, which win when `EASYRMM_SMTP_HOST` is set ([Mail](mail.md)). It
 gives it at start and again at once after every change, without a restart.
+While a Microsoft 365 application signs in to that mail server, the engine,
+which cannot sign in that way, is given none, and Settings → **Patching** →
+Notifications says so ([Mail](mail.md#microsoft-365)).
 Without a mail server, **Email** and schedules say that EasyRMM has no mail
 server to send reports with. The engine sends reports only over STARTTLS
 or TLS, so a mail server without encryption is refused for reports.

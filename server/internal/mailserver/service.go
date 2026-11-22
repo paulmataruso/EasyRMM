@@ -1,7 +1,9 @@
-// Package mailserver is EasyRMM's mail server (ADR-0053, slice 1): the one
-// set in the console by super administrators, or EASYRMM_SMTP_* in .env,
-// which wins; the limits on the mail sent through it, account mail first;
-// its test message; and account mail (invitations, password resets).
+// Package mailserver is EasyRMM's mail server (ADR-0053, slices 1 and 2):
+// the one set in the console by super administrators, or EASYRMM_SMTP_* in
+// .env, which wins, signing in with a password or a Microsoft 365
+// application; the limits on the mail sent through it, account mail first;
+// its test message and its check; and account mail (invitations, password
+// resets).
 package mailserver
 
 import (
@@ -25,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/m365"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
@@ -78,7 +81,20 @@ type Service struct {
 	// nothing.
 	env        *mailer.Config
 	envProblem string
-	log        *slog.Logger
+	// envApp is .env's Microsoft 365 application, when env signs in with
+	// one.
+	envApp *m365.Credentials
+	log    *slog.Logger
+	// authority is where applications ask for tokens: Microsoft's when
+	// empty. tokens keeps their tokens, one per application.
+	authority string
+	tokens    *m365.Cache
+	// rateRetry is how long account mail refused for the mail server's
+	// rate waits before it is tried once more.
+	rateRetry time.Duration
+	// checked is Run's last check; kick wakes Run after a change.
+	checked lastCheck
+	kick    chan struct{}
 
 	// available caches Available for availableFor, so that the sign-in
 	// page and reset requests, which anyone may send, seldom reach the
@@ -96,10 +112,36 @@ type Service struct {
 // another server is seen within it.
 const availableFor = 5 * time.Second
 
+// rateRetry is how long account mail refused for the mail server's rate
+// waits before it is tried once more: Exchange Online counts its rate by
+// the minute.
+const rateRetry = time.Minute
+
 // New builds the service. env is .env's mail server, or nil; it is checked
 // here, so that the server does not start with a mail server it cannot use.
-func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, env *mailer.Config, log *slog.Logger) (*Service, error) {
-	s := &Service{db: db, audit: auditLog, sealer: sealer, env: env, log: log}
+// With EnvApplication, it signs in with that application.
+func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, env *mailer.Config, log *slog.Logger, opts ...Option) (*Service, error) {
+	s := &Service{db: db, audit: auditLog, sealer: sealer, log: log, tokens: m365.NewCache(log), rateRetry: rateRetry, kick: make(chan struct{}, 1)}
+	for _, o := range opts {
+		o(s)
+	}
+	if s.envApp != nil {
+		if env == nil {
+			return nil, errors.New("EASYRMM_SMTP_*: a Microsoft 365 application without EASYRMM_SMTP_HOST")
+		}
+		if err := s.envApp.Check(); err != nil {
+			return nil, fmt.Errorf("EASYRMM_SMTP_*: %w", err)
+		}
+		if s.authority != "" {
+			app := *s.envApp
+			app.Authority = s.authority
+			s.envApp = &app
+		}
+		c := *env
+		s.signInWith(&c, s.envApp)
+		env = &c
+	}
+	s.env = env
 	if env != nil {
 		if _, err := mailer.New(*env); err != nil {
 			return nil, fmt.Errorf("EASYRMM_SMTP_*: %w", err)
@@ -140,24 +182,32 @@ func (s *Service) changed() {
 	s.availableAt = time.Time{}
 	s.changes++
 	s.availableMu.Unlock()
+	// The last check was of the mail server before; Run checks again.
+	s.checked.set(nil)
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
 	for _, f := range s.onChange {
 		f()
 	}
 }
 
-// Server is a mail server as the console shows it. The password is never
-// shown.
+// Server is a mail server as the console shows it. The password, the
+// client secret and the certificate's key are never shown.
 type Server struct {
-	Host        string     `json:"host"`
-	Port        int        `json:"port"`
-	Security    string     `json:"security"`
-	SignIn      string     `json:"signIn"`
-	Username    string     `json:"username"`
-	PasswordSet bool       `json:"passwordSet"`
-	FromAddress string     `json:"fromAddress"`
-	FromName    string     `json:"fromName"`
-	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
-	UpdatedBy   string     `json:"updatedBy,omitempty"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Security    string `json:"security"`
+	SignIn      string `json:"signIn"`
+	Username    string `json:"username"`
+	PasswordSet bool   `json:"passwordSet"`
+	// Application is the Microsoft 365 application it signs in with.
+	Application *Application `json:"application,omitempty"`
+	FromAddress string       `json:"fromAddress"`
+	FromName    string       `json:"fromName"`
+	UpdatedAt   *time.Time   `json:"updatedAt,omitempty"`
+	UpdatedBy   string       `json:"updatedBy,omitempty"`
 }
 
 // Limits are the messages a minute and a day sent through the mail server
@@ -197,44 +247,63 @@ type View struct {
 	// EnvProblem is what of .env's mail server the patching engine will
 	// not take, "" when nothing.
 	EnvProblem string `json:"envProblem,omitempty"`
+	// EngineWithheld says the patching engine is given no mail server, as
+	// the one in force signs in with an application.
+	EngineWithheld string `json:"engineWithheld,omitempty"`
+	// Check is this server's last check of the mail server in force (Run).
+	Check *CheckResult `json:"check,omitempty"`
 }
 
 // row is the stored settings.
 type row struct {
 	host, security, signIn, username, sealed, fromAddress, fromName string
-	port, perMinute, perDay                                         int
-	updatedAt, limitsUpdatedAt                                      *time.Time
-	updatedBy, limitsUpdatedBy                                      *string
+	// The application's: tenantID, clientID, credential (secret or
+	// certificate), the sealed secret, the certificate (PEM), the sealed
+	// key.
+	tenantID, clientID, credential, secretSealed, certificate, keySealed string
+	port, perMinute, perDay                                              int
+	updatedAt, limitsUpdatedAt                                           *time.Time
+	updatedBy, limitsUpdatedBy                                           *string
 }
 
 func loadRow(ctx context.Context, tx pgx.Tx, lock bool) (*row, error) {
 	q := `SELECT m.host, m.port, m.security, m.sign_in, m.username, m.password_sealed, m.from_address, m.from_name,
-		m.per_minute, m.per_day, m.updated_at, u.email, m.limits_updated_at, l.email
+		m.per_minute, m.per_day, m.updated_at, u.email, m.limits_updated_at, l.email,
+		m.tenant_id, m.client_id, m.client_credential, m.client_secret_sealed, m.client_certificate, m.client_key_sealed
 		FROM mail_server m LEFT JOIN users u ON u.id = m.updated_by LEFT JOIN users l ON l.id = m.limits_updated_by`
 	if lock {
 		q += ` FOR UPDATE OF m`
 	}
 	var r row
 	err := tx.QueryRow(ctx, q).Scan(&r.host, &r.port, &r.security, &r.signIn, &r.username, &r.sealed, &r.fromAddress, &r.fromName,
-		&r.perMinute, &r.perDay, &r.updatedAt, &r.updatedBy, &r.limitsUpdatedAt, &r.limitsUpdatedBy)
+		&r.perMinute, &r.perDay, &r.updatedAt, &r.updatedBy, &r.limitsUpdatedAt, &r.limitsUpdatedBy,
+		&r.tenantID, &r.clientID, &r.credential, &r.secretSealed, &r.certificate, &r.keySealed)
 	return &r, err
 }
 
 // config is the console's mail server as the mailer takes it, nil when none
-// is set.
-func (r *row) config(sealer *secrets.Sealer) (*mailer.Config, error) {
+// is set, and the application it signs in with, if any.
+func (s *Service) config(r *row) (*mailer.Config, *m365.Credentials, error) {
 	if r.host == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	cfg := &mailer.Config{Host: r.host, Port: r.port, Security: r.security, FromAddress: r.fromAddress, FromName: r.fromName}
-	if r.signIn == SignInPassword {
-		pw, err := sealer.Open(r.sealed, passwordAD)
+	switch r.signIn {
+	case SignInPassword:
+		pw, err := s.sealer.Open(r.sealed, passwordAD)
 		if err != nil {
-			return nil, errors.New("the mail server's stored password cannot be opened with this server's secret key; enter it again under Settings → Notifications → Mail server")
+			return nil, nil, errors.New("the mail server's stored password cannot be opened with this server's secret key; enter it again under Settings → Notifications → Mail server")
 		}
 		cfg.Username, cfg.Password = r.username, string(pw)
+	case SignInMicrosoft365:
+		app, err := s.credentials(r)
+		if err != nil {
+			return nil, nil, err
+		}
+		s.signInWith(cfg, app)
+		return cfg, app, nil
 	}
-	return cfg, nil
+	return cfg, nil, nil
 }
 
 func (r *row) server() *Server {
@@ -242,14 +311,18 @@ func (r *row) server() *Server {
 		return nil
 	}
 	sv := &Server{Host: r.host, Port: r.port, Security: r.security, SignIn: r.signIn, Username: r.username, PasswordSet: r.sealed != "",
-		FromAddress: r.fromAddress, FromName: r.fromName, UpdatedAt: r.updatedAt}
+		Application: r.application(), FromAddress: r.fromAddress, FromName: r.fromName, UpdatedAt: r.updatedAt}
 	if r.updatedBy != nil {
 		sv.UpdatedBy = *r.updatedBy
 	}
 	return sv
 }
 
-func envServer(c *mailer.Config) *Server {
+func envServer(c *mailer.Config, app *m365.Credentials) *Server {
+	if app != nil {
+		return &Server{Host: c.Host, Port: c.Port, Security: c.Security, SignIn: SignInMicrosoft365, Application: envApplication(app),
+			FromAddress: c.FromAddress, FromName: c.FromName}
+	}
 	signIn := SignInNone
 	if c.Username != "" {
 		signIn = SignInPassword
@@ -276,33 +349,52 @@ func (s *Service) Get(ctx context.Context) (View, error) {
 	})
 	switch {
 	case s.env != nil:
-		v.InForce, v.Env, v.EnvProblem = FromEnv, envServer(s.env), s.envProblem
+		v.InForce, v.Env, v.EnvProblem = FromEnv, envServer(s.env, s.envApp), s.envProblem
+		if s.envApp != nil {
+			v.EngineWithheld = EngineWithheld
+		}
 	case v.Console != nil:
 		v.InForce = FromConsole
+		if v.Console.SignIn == SignInMicrosoft365 {
+			v.EngineWithheld = EngineWithheld
+		}
 	default:
 		v.InForce = FromNowhere
 	}
+	v.Check = s.checked.get()
 	return v, err
 }
 
 // InForce is the mail server in force: .env's when set, else the
 // console's; nil when there is none.
 func (s *Service) InForce(ctx context.Context) (*mailer.Config, error) {
+	cfg, _, err := s.inForce(ctx)
+	return cfg, err
+}
+
+// inForce is InForce, with the application it signs in with, if any.
+func (s *Service) inForce(ctx context.Context) (*mailer.Config, *m365.Credentials, error) {
 	if s.env != nil {
 		c := *s.env
-		return &c, nil
+		return &c, s.envApp, nil
 	}
 	var cfg *mailer.Config
+	var app *m365.Credentials
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		r, err := loadRow(ctx, tx, false)
 		if err != nil {
 			return err
 		}
-		cfg, err = r.config(s.sealer)
+		cfg, app, err = s.config(r)
 		return err
 	})
-	return cfg, err
+	return cfg, app, err
 }
+
+// WithholdsFromEngine reports whether cfg, the mail server in force, signs
+// in with an application, which the patching engine cannot use
+// (EngineWithheld).
+func WithholdsFromEngine(cfg *mailer.Config) bool { return cfg != nil && cfg.OAuth != nil }
 
 // Available reports whether a mail server is in force, for password reset
 // to offer itself, as read within availableFor. A failure to read the
@@ -350,6 +442,27 @@ type Input struct {
 	Password    string `json:"password"`
 	FromAddress string `json:"fromAddress"`
 	FromName    string `json:"fromName"`
+	// A Microsoft 365 application's, signing in as the sender's mailbox:
+	// the tenant, the application (client) ID, and its credential, secret
+	// or certificate. ClientSecret and CertificateKey are write-only. Left
+	// empty, the stored secret, or certificate and key, are kept while the
+	// host, the port, the security, the tenant, the application and the
+	// kind of credential stay the same; a certificate given alone may take
+	// the stored key, when it is the key's (a renewed certificate).
+	TenantID       string `json:"tenantId"`
+	ClientID       string `json:"clientId"`
+	Credential     string `json:"credential"`
+	ClientSecret   string `json:"clientSecret"`
+	Certificate    string `json:"certificate"`
+	CertificateKey string `json:"certificateKey"`
+}
+
+// checked is a form checked: the mailer's configuration, and the
+// application it signs in with, with the key (PEM) to seal.
+type checked struct {
+	cfg    mailer.Config
+	app    *m365.Credentials
+	keyPEM string
 }
 
 var hostLabel = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
@@ -395,8 +508,9 @@ func keepsPassword(in *Input, stored *row) bool {
 }
 
 // check validates in, cleaning it, and works out the mailer's configuration,
-// using the stored password when in gives none and keepsPassword allows.
-func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
+// using the stored password when in gives none and keepsPassword allows,
+// and the stored secret or key when keepsApplication does.
+func (s *Service) check(in *Input, stored *row) (checked, error) {
 	f := apperr.Fields{}
 	in.Host = strings.TrimSpace(in.Host)
 	if strings.HasPrefix(in.Host, "[") && strings.HasSuffix(in.Host, "]") {
@@ -418,6 +532,7 @@ func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 		f.Add("security", "Choose STARTTLS, TLS or none.")
 	}
 	cfg := mailer.Config{Host: in.Host, Port: in.Port, Security: in.Security, FromAddress: in.FromAddress, FromName: in.FromName}
+	var out checked
 	switch in.SignIn {
 	case SignInNone:
 		f.Check(in.Username == "" && in.Password == "", "username", "A user name and password are used only when signing in with a password.")
@@ -442,8 +557,12 @@ func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 		default:
 			f.Add("password", "Enter the password. A stored password is kept only while the server, the port, the security and the user name stay the same.")
 		}
+	case SignInMicrosoft365:
+		f.Check(in.Username == "" && in.Password == "", "username",
+			"An application signs in to the sender's mailbox with its token; it takes no user name or password.")
+		out.app, out.keyPEM = s.checkApplication(f, in, stored)
 	default:
-		f.Add("signIn", "Choose to sign in with a password, or not at all.")
+		f.Add("signIn", "Choose to sign in with a password, with a Microsoft 365 application, or not at all.")
 	}
 	switch {
 	case in.FromAddress == "":
@@ -453,7 +572,14 @@ func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 	}
 	f.Check(utf16Len(in.FromName) <= maxFromName && !strings.ContainsFunc(in.FromName, unicode.IsControl), "fromName",
 		"Enter a name of at most 100 characters, on one line.")
-	return cfg, f.Err()
+	if err := f.Err(); err != nil {
+		return checked{}, err
+	}
+	if out.app != nil {
+		s.signInWith(&cfg, out.app)
+	}
+	out.cfg = cfg
+	return out, nil
 }
 
 func actorID(a audit.Actor) *uuid.UUID {
@@ -474,31 +600,60 @@ func (s *Service) Update(ctx context.Context, actor audit.Actor, in Input) (View
 		if err != nil {
 			return err
 		}
-		cfg, err := s.check(&in, stored)
+		c, err := s.check(&in, stored)
 		if err != nil {
 			return err
 		}
-		sealed := ""
-		if in.SignIn == SignInPassword {
-			if sealed, err = s.sealer.Seal([]byte(cfg.Password), passwordAD); err != nil {
+		var sealed, tenant, client, credential, secretSealed, certificate, keySealed, thumbprint string
+		switch {
+		case in.SignIn == SignInPassword:
+			if sealed, err = s.sealer.Seal([]byte(c.cfg.Password), passwordAD); err != nil {
+				return err
+			}
+		case c.app != nil:
+			tenant, client, credential = c.app.TenantID, c.app.ClientID, c.app.Kind()
+			if c.app.Certificate != nil {
+				certificate, thumbprint = c.app.Certificate.PEM, c.app.Certificate.Info().Thumbprint
+				keySealed, err = s.sealer.Seal([]byte(c.keyPEM), clientKeyAD)
+			} else {
+				secretSealed, err = s.sealer.Seal([]byte(c.app.Secret), clientSecretAD)
+			}
+			if err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE mail_server SET host = $1, port = $2, security = $3, sign_in = $4, username = $5,
-			password_sealed = $6, from_address = $7, from_name = $8, updated_at = now(), updated_by = $9`,
-			in.Host, in.Port, in.Security, in.SignIn, in.Username, sealed, in.FromAddress, in.FromName, actorID(actor)); err != nil {
+			password_sealed = $6, from_address = $7, from_name = $8, updated_at = now(), updated_by = $9,
+			tenant_id = $10, client_id = $11, client_credential = $12, client_secret_sealed = $13, client_certificate = $14, client_key_sealed = $15`,
+			in.Host, in.Port, in.Security, in.SignIn, in.Username, sealed, in.FromAddress, in.FromName, actorID(actor),
+			tenant, client, credential, secretSealed, certificate, keySealed); err != nil {
 			return err
 		}
-		// From and to, as for the limits; never the password, only whether
-		// it changed: a new one, or the stored one removed.
+		// From and to, as for the limits; never the password, the secret or
+		// the key, only whether each changed: a new one, or the stored one
+		// removed. The certificate by its thumbprint.
 		change := func(from, to any) map[string]any { return map[string]any{"from": from, "to": to} }
+		storedThumbprint := ""
+		if a := stored.application(); a != nil && a.Certificate != nil {
+			storedThumbprint = a.Certificate.Thumbprint
+		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "mail_server.update", Outcome: audit.Success,
 			TargetType: "mail_server", TargetID: net.JoinHostPort(in.Host, strconv.Itoa(in.Port)),
-			Details: map[string]any{"host": change(stored.host, in.Host), "port": change(stored.port, in.Port),
-				"security": change(stored.security, in.Security), "signIn": change(stored.signIn, in.SignIn),
-				"username": change(stored.username, in.Username), "fromAddress": change(stored.fromAddress, in.FromAddress),
-				"fromName":        change(stored.fromName, in.FromName),
-				"passwordChanged": in.Password != "" || (stored.sealed != "" && sealed == "")}})
+			Details: map[string]any{
+				"host":                  change(stored.host, in.Host),
+				"port":                  change(stored.port, in.Port),
+				"security":              change(stored.security, in.Security),
+				"signIn":                change(stored.signIn, in.SignIn),
+				"username":              change(stored.username, in.Username),
+				"fromAddress":           change(stored.fromAddress, in.FromAddress),
+				"fromName":              change(stored.fromName, in.FromName),
+				"passwordChanged":       in.Password != "" || (stored.sealed != "" && sealed == ""),
+				"tenantId":              change(stored.tenantID, tenant),
+				"clientId":              change(stored.clientID, client),
+				"credential":            change(stored.credential, credential),
+				"clientSecretChanged":   in.ClientSecret != "" || (stored.secretSealed != "" && secretSealed == ""),
+				"certificate":           change(storedThumbprint, thumbprint),
+				"certificateKeyChanged": in.CertificateKey != "" || (stored.keySealed != "" && keySealed == "")}})
 	})
 	if err != nil {
 		return View{}, err
@@ -520,7 +675,9 @@ func (s *Service) Delete(ctx context.Context, actor audit.Actor) (View, error) {
 			return apperr.NotFound()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE mail_server SET host = '', port = 587, security = 'starttls', sign_in = 'none', username = '',
-			password_sealed = '', from_address = '', from_name = '', updated_at = now(), updated_by = $1`, actorID(actor)); err != nil {
+			password_sealed = '', from_address = '', from_name = '', updated_at = now(), updated_by = $1,
+			tenant_id = '', client_id = '', client_credential = '', client_secret_sealed = '', client_certificate = '', client_key_sealed = ''`,
+			actorID(actor)); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "mail_server.delete", Outcome: audit.Success,

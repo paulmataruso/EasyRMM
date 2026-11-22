@@ -383,7 +383,7 @@ the mail EasyRMM sends through whichever mail server is in force
 |---|---|
 | `mail_server` | Always one row (`id` is always true), so the limits hold before anyone sets them. The console's mail server, if any (an empty `host` means none): port, security (`starttls`, `tls`, or `none`, which the service allows only to loopback), how it signs in (`none` or `password`), the user name, the password sealed with `EASYRMM_SECRET_KEY` (additional data: the column), the sender's address and name, and who changed it and when. The limits, 30 a minute and 9,000 a day by default, with who changed them and when; and when the last test message went (one every 30 seconds). `.env`'s mail server is never stored. Platform scope only |
 | `mail_sends` | One row per message sent, or being sent, in the last 24 hours: when, and its `kind`: `reset` for a password reset the person asked for, which may use the whole day's limit; `admin` for an invitation or a password link an administrator sent (`sent_by`), which stops at 90% of it; `other`, which stops at 80%. Invitations and password emails record the `account_id` they went to and its `organization_id` (null for none or several, and for admin mail when a super administrator sent it), which the limits per account, per organization and per administrator count ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)). Taken under an advisory lock across servers; a message the mail server refuses is removed again, and rows older than 24 hours are deleted. No foreign keys: a row outlives a deleted user or organization for at most a day. `easyrmm_app` cannot change a row. Platform scope only |
-| `mail_engine_given` | One row: an HMAC-SHA-256 of the mail server the patching engine is given, keyed by a key derived from `EASYRMM_SECRET_KEY`, by the one of EasyRMM's servers that gives it (under a session advisory lock), and when it was recorded; never the mail server or its password. The other servers compare theirs with it. Platform scope only |
+| `mail_engine_given` | One row: an HMAC-SHA-256 of the mail server the patching engine is given, keyed by a key derived from `EASYRMM_SECRET_KEY`, by the one of EasyRMM's servers that gives it (under a session advisory lock), and when it was recorded; never the mail server or its password. The other servers compare theirs with it. Since migration 00035, one digest per secret key. Platform scope only |
 | `mail_waits` | One row per message to someone's own account waiting for room under the minute's limit, on any server, until when it gives up: other mail stands back while one waits. Removed when the wait ends; a row a stopped server leaves runs out at `until` and is deleted. Platform scope only |
 
 ## Disk health (migration 00031)
@@ -399,6 +399,24 @@ rules, and disk health alerts with one alert per disk (ADR-0065).
 | `easyrmm_disk_state(missing_since, state, judged_level, judged_at)` | What the console shows for a disk: `unknown` when missing; the latest reading's `unsupported` or `unavailable`; the last judged `failing` or `warning`, however old; `healthy` when judged so within 2 hours; else `unknown`. The Devices list sums it per device |
 | `alert_policies.check_name` | The disk health check (`failing`, `errors`, `pending`, `wear`, `temperature`) of a `disk_health` policy, NULL for the other kinds. `failing` takes no threshold, `temperature` may take none (each drive's own limit), the others need one; a `disk_health` policy watches at least 30 minutes, the reading interval, and a `temperature` one at least 60, so that its window holds two readings. The migration adds five shared policies, only *Disk failing* enabled; a name already taken at platform level is tried once with " (disk health)" appended |
 | `alerts.check_name`, `subject`, `subject_label`, `detail` | The check, the disk's identity, its name for people (never the serial) and what holds. `subject` is `''` for the other kinds; the partial unique index `alerts_active_key` is now on (policy, device, subject), so each disk has its own alert and the other kinds still have one per policy and device. Resolution `subject_gone`: the disk has been missing for 14 days, so no hardware report since has listed it; its `device_disk_health` row goes with it |
+
+## Signing in to Microsoft 365 for mail (migration 00035)
+
+A Microsoft 365 application as the console's mail server's sign-in, and two
+follow-ups from slice 1's review (ADR-0053, slice 2;
+[Mail](../operations/mail.md#microsoft-365)).
+
+| Table or column | Notes |
+|---|---|
+| `mail_server.sign_in` | Takes `microsoft365` too. Then `tenant_id` (a GUID or a domain name, at most 253 characters), `client_id` (a GUID) and `client_credential` (`secret` or `certificate`) are set, and the others are empty; `security` is never `none` |
+| `mail_server.client_secret_sealed`, `client_key_sealed` | The client secret, or the certificate's private key, sealed with `EASYRMM_SECRET_KEY` (additional data: the column). Set exactly when `client_credential` says so; never returned by the API |
+| `mail_server.client_certificate` | The certificate (PEM, with any chain after it), not secret: the console shows its subject, thumbprint and dates. At most 64 KiB |
+| `mail_engine_given.digests` | Replaces `digest`: a JSON object of hex HMAC-SHA-256 digests keyed by secret key ID, one for each key the recording server has (`EASYRMM_SECRET_KEY` and `EASYRMM_SECRET_KEYS_PREVIOUS`), so that during a rotation servers compare under a key they have in common. The migration drops the old digest; the server that gives the engine its mail server records the new ones at its next pass |
+| `mail_account_buckets` | One row per account whose password emails have left `mail_sends`: when its bucket of 3 at once, then one every 20 minutes, is full again (`full_at`). Rows leaving `mail_sends` are folded into it under the same advisory lock, so the account's limit holds exactly however old its emails are; a row more than a day past is deleted. No foreign key, as for `mail_sends`. Platform scope only |
+
+Down removes a console mail server that signs in with an application, as
+**Remove** does, keeping its limits, and makes `mail_engine_given` as
+migration 00030 did.
 
 ## Backups
 

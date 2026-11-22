@@ -4,10 +4,7 @@ package mailer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,19 +14,6 @@ import (
 
 // These tests send through real SMTP servers: Mailpit, plain on loopback,
 // with STARTTLS and with TLS from the first byte (make test-mail).
-
-func TestMain(m *testing.M) {
-	// The TLS servers' certificate is trusted as a system root, as a public
-	// mail server's would be: the mailer trusts the system's roots only. It
-	// is read on first use of the system pool; nothing has used it yet.
-	if dir := os.Getenv(testmail.DirEnv); dir != "" {
-		var env testmail.Env
-		if b, err := os.ReadFile(filepath.Join(dir, "env.json")); err == nil && json.Unmarshal(b, &env) == nil {
-			_ = os.Setenv("SSL_CERT_FILE", env.CA)
-		}
-	}
-	os.Exit(m.Run())
-}
 
 func mailpitMailer(t *testing.T, mp *testmail.Mailpit, security string, mutate ...func(*Config)) *SMTP {
 	t.Helper()
@@ -239,5 +223,25 @@ func TestSendRecipientWithLineBreak(t *testing.T) {
 	mp.Wait(a, 1)
 	if n := len(mp.Received(b)); n != 0 {
 		t.Fatalf("%d messages to the added recipient", n)
+	}
+}
+
+// Check signs in with a password as a message would, over STARTTLS, and
+// shows the mail server's answer; a refusal is its error.
+func TestCheckWithPassword(t *testing.T) {
+	mp := testmail.Mode(t, testmail.StartTLS)
+	answer, err := mailpitMailer(t, mp, StartTLS).Check(context.Background())
+	if err != nil || !strings.Contains(answer, "(STARTTLS) and signed in as "+mp.Username+" with a password: 235 ") {
+		t.Fatalf("check: %q, %v", answer, err)
+	}
+	var re *ReplyError
+	if _, err := mailpitMailer(t, mp, StartTLS, func(c *Config) { c.Password = "wrong" }).Check(context.Background()); !errors.As(err, &re) ||
+		re.Step != "sign-in" || re.Code != 535 {
+		t.Fatalf("a wrong password: %v", err)
+	}
+	plain := testmail.New(t)
+	answer, err = mailpitMailer(t, plain, None, func(c *Config) { c.Username, c.Password = "", "" }).Check(context.Background())
+	if err != nil || !strings.Contains(answer, "(no encryption, on loopback); it was not asked to sign in") {
+		t.Fatalf("no sign-in: %q, %v", answer, err)
 	}
 }

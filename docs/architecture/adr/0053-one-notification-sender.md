@@ -1,7 +1,9 @@
 # ADR-0053: One notification sender, and notifications for device alerts
 
-* Status: Proposed (2026-11-21). Slice 1 implemented (PR #82); the other
-  slices not implemented.
+* Status: Proposed (2026-11-21). Slice 1 implemented (PR #82). Slice 2
+  implemented (2026-11-22), verified by its tests against stand-ins for
+  Microsoft, not yet by hand against a real Microsoft 365 tenant. The
+  other slices not implemented.
 * Revised after two independent reviews and a check of the second
   revision (2026-11-21). Decisions made in review on sharing platform
   channels, `alerts.acknowledged`, `.env`'s mail server, the old signature

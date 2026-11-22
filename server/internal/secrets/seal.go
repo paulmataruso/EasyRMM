@@ -51,8 +51,9 @@ type Key struct {
 // Sealer seals and opens values with a key ring.
 type Sealer struct {
 	primary string
-	// derive is the primary key, which DeriveKey derives keys from.
-	derive []byte
+	// derive are the keys, the primary first, which DeriveKeys derives
+	// keys from.
+	derive []Key
 	aeads  map[string]cipher.AEAD
 }
 
@@ -62,7 +63,7 @@ func NewSealer(keys ...Key) (*Sealer, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("secrets: at least one key is required")
 	}
-	s := &Sealer{primary: keys[0].ID, derive: slices.Clone(keys[0].Raw), aeads: make(map[string]cipher.AEAD, len(keys))}
+	s := &Sealer{primary: keys[0].ID, aeads: make(map[string]cipher.AEAD, len(keys))}
 	for _, k := range keys {
 		if !keyIDPattern.MatchString(k.ID) {
 			return nil, fmt.Errorf("secrets: invalid key id %q (want 1-16 lowercase letters or digits)", k.ID)
@@ -82,6 +83,7 @@ func NewSealer(keys ...Key) (*Sealer, error) {
 			return nil, fmt.Errorf("secrets: key %q: %w", k.ID, err)
 		}
 		s.aeads[k.ID] = aead
+		s.derive = append(s.derive, Key{ID: k.ID, Raw: slices.Clone(k.Raw)})
 	}
 	return s, nil
 }
@@ -121,11 +123,22 @@ func (s *Sealer) Open(sealed string, associatedData []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// DeriveKey derives a 32-byte key for one use, named by info, from the
-// primary key with HKDF-SHA-256, so that the key itself is never used for
-// anything but sealing. Each use has its own info, and so its own key.
-func (s *Sealer) DeriveKey(info string) ([]byte, error) {
-	return hkdf.Key(sha256.New, s.derive, nil, info, KeySize)
+// DeriveKeys derives a 32-byte key for one use, named by info, from each
+// key with HKDF-SHA-256, so that the keys themselves are never used for
+// anything but sealing. Each use has its own info, and so its own keys.
+// The primary key's comes first, named by its ID, then the previous keys'
+// in their order: a value made with a previous key's can still be checked
+// while the keys rotate.
+func (s *Sealer) DeriveKeys(info string) ([]Key, error) {
+	out := make([]Key, 0, len(s.derive))
+	for _, k := range s.derive {
+		raw, err := hkdf.Key(sha256.New, k.Raw, nil, info, KeySize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Key{ID: k.ID, Raw: raw})
+	}
+	return out, nil
 }
 
 // NeedsReseal reports whether a sealed value was produced by a key other than
