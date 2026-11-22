@@ -50,14 +50,19 @@ func TestHardeningAPI(t *testing.T) {
 
 	var dev struct {
 		CanCheckHardening bool `json:"canCheckHardening"`
+		CanHarden         bool `json:"canHarden"`
 	}
 	tech.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
-	if !dev.CanCheckHardening {
-		t.Error("a technician may not check the device's hardening")
+	if !dev.CanCheckHardening || dev.CanHarden {
+		t.Errorf("a technician: %+v; checks, and does not apply", dev)
 	}
 	viewer.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
-	if dev.CanCheckHardening {
-		t.Error("a read-only user may check hardening")
+	if dev.CanCheckHardening || dev.CanHarden {
+		t.Errorf("a read-only user: %+v", dev)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
+	if !dev.CanCheckHardening || !dev.CanHarden {
+		t.Errorf("the administrator: %+v", dev)
 	}
 
 	var empty struct {
@@ -78,6 +83,9 @@ func TestHardeningAPI(t *testing.T) {
 	}
 	r = tech.do("POST", path, map[string]any{"deviceIds": []string{device}, "mode": "apply", "modules": []string{"ssh"}})
 	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(r.body), "You cannot apply hardening on srv-01.") {
+		t.Errorf("technician's apply: %s", r.body)
+	}
 	r = viewer.do("POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"ssh"}})
 	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
 	if !strings.Contains(string(r.body), "You cannot check hardening on srv-01.") {
@@ -96,14 +104,14 @@ func TestHardeningAPI(t *testing.T) {
 	}
 	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"kernel", "ssh"}}, &job)
 	if job.Kind != "hardening" || job.ScriptName != "Check hardening: ssh, kernel" || job.Hardening == nil || job.Hardening.Mode != "check" ||
-		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || job.ArgCount != 2 {
+		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || job.ArgCount != 3 {
 		t.Errorf("job %+v", job)
 	}
 	var args struct {
 		Args []string `json:"args"`
 	}
 	tech.expect(http.StatusOK, "GET", "/api/v1/jobs/"+job.ID+"/arguments", nil, &args)
-	if !slices.Equal(args.Args, []string{"check", "ssh,kernel"}) {
+	if !slices.Equal(args.Args, []string{"check", "ssh,kernel", "time-limit=1800"}) {
 		t.Errorf("arguments %+v", args)
 	}
 
@@ -115,7 +123,7 @@ func TestHardeningAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, []string{"check", "ssh,kernel"}) {
+	if p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, []string{"check", "ssh,kernel", "time-limit=1800"}) || p.TimeoutSeconds != 1800 {
 		t.Errorf("payload: shell %s, args %q", p.Shell, p.Args)
 	}
 	if st, err := ac.Start(ctx, p.RunID); err != nil || !st.Proceed {

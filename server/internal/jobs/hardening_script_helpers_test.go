@@ -21,11 +21,13 @@ var families = map[string]string{
 }
 
 // The platforms the script reports full support for, by os-release ID: an
-// independent copy of the script's table, for the images and machines tested here.
+// independent copy of the script's table, for the images and machines tested
+// here. It is exactly the releases CI's machine tests apply and undo every
+// module on (internal/vmtest's images); the rest are checked only.
 var fullSupport = map[string][]string{
 	"debian": {"12", "13"}, "ubuntu": {"22.04", "24.04", "26.04"},
-	"rocky": {"8", "9", "10"}, "almalinux": {"8", "9", "10"}, "rhel": {"8", "9", "10"},
-	"fedora": {"43", "44", "45"},
+	"rocky": {"8", "9", "10"}, "almalinux": {"9", "10"},
+	"fedora": {"45"},
 }
 
 // fullySupported reports whether the table above lists a release, whole
@@ -47,13 +49,21 @@ func scriptModule(t *testing.T, r *hardeningResult, name string) HardeningModule
 	return HardeningModuleResult{}
 }
 
-// parseScriptResult reads the result as the server does, and checks what
-// the server's parser leaves to the script: empty values left out, the
-// container's kind, a reason where the state needs one, and the modules in
-// the script's order.
+// parseScriptResult reads a check's result as the server does; see
+// parseScriptOutcome.
 func parseScriptResult(t *testing.T, stdout string, wantModules []string) *hardeningResult {
 	t.Helper()
-	r, err := parseHardeningResult(stdout, Hardening{Mode: HardeningCheck, Modules: wantModules})
+	return parseScriptOutcome(t, stdout, HardeningCheck, wantModules)
+}
+
+// parseScriptOutcome reads the result of MODE as the server does, and
+// checks what the server's parser leaves to the script: empty values left
+// out, the container's kind, a reason where the state or the outcome needs
+// one, what apply did where it applied, and the modules in the script's
+// order.
+func parseScriptOutcome(t *testing.T, stdout, mode string, wantModules []string) *hardeningResult {
+	t.Helper()
+	r, err := parseHardeningResult(stdout, Hardening{Mode: mode, Modules: wantModules})
 	if err != nil {
 		t.Fatalf("the server would refuse the result: %v\n%s", err, stdout)
 	}
@@ -78,6 +88,21 @@ func parseScriptResult(t *testing.T, stdout string, wantModules []string) *harde
 			if len(m.Missing) == 0 {
 				t.Errorf("%s is partly in place with nothing missing", m.Module)
 			}
+		}
+		switch m.Outcome {
+		case HardeningSkipped, HardeningRefused, HardeningOutcomeFailed, HardeningNothingToUndo, HardeningNotRun:
+			if m.OutcomeReason == "" {
+				t.Errorf("%s: %s without a reason", m.Module, m.Outcome)
+			}
+		case HardeningApplied, HardeningUndone, HardeningPartlyUndone:
+			if len(m.Done) == 0 {
+				t.Errorf("%s: %s, and nothing said what", m.Module, m.Outcome)
+			}
+		}
+		// Skipped exactly when the check rules the module out.
+		notHere := slices.Contains([]string{HardeningNotApplicable, HardeningManagedElsewhere, HardeningNotSupported}, m.State)
+		if mode == HardeningApply && m.Outcome != HardeningNotRun && notHere != (m.Outcome == HardeningSkipped) {
+			t.Errorf("%s: %s, and apply's outcome is %s", m.Module, m.State, m.Outcome)
 		}
 	}
 	if !slices.Equal(got, wantModules) {

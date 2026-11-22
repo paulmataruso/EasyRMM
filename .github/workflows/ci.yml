@@ -607,17 +607,19 @@ jobs:
   # under QEMU with KVM and is driven over a virtio-serial channel, not its
   # network: scripts as root, a file, sshd through a forwarded port, a
   # restart (internal/vmtest; ADR-0051). QEMU's user networking only, never
-  # a bridge. One job per image, in parallel.
+  # a bridge. One job per image, in parallel. Hardening's apply and undo
+  # install packages from the distribution's mirrors, build an AIDE baseline
+  # and restart the machine twice: most of the time limit is theirs.
   machines:
     name: Machines (${{ matrix.image }})
     needs: changes
     if: needs.changes.outputs.machines == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        image: [debian-12, debian-13, ubuntu-22.04, ubuntu-24.04, rocky-8, rocky-9, alma-9, fedora-45]
+        image: [debian-12, debian-13, ubuntu-22.04, ubuntu-24.04, ubuntu-26.04, rocky-8, rocky-9, rocky-10, alma-9, alma-10, fedora-45]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -664,7 +666,7 @@ jobs:
         env:
           EASYRMM_VM_IMAGE: ${{ matrix.image }}
           EASYRMM_VM_LOG_DIR: ${{ runner.temp }}/vm-logs
-        run: make test-vm VM_TEST_TIMEOUT=25m
+        run: make test-vm VM_TEST_TIMEOUT=65m
       - name: Upload the serial console
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -112,7 +112,7 @@ describe("a device's hardening", () => {
     expect(within(last).getByRole("link", { name: "Check hardening: ssh, firewall, sudo" })).toHaveAttribute("href", "/jobs/j2");
     expect(within(last).getByText("Ubuntu 26.10")).toBeInTheDocument();
     expect(within(last).getByText("Check only")).toBeInTheDocument();
-    expect(within(last).getByText(/^Not supported on this version: the release is newer than those/)).toBeInTheDocument();
+    expect(within(last).getByText(/^Not supported on this version: apply and undo are not tested on this release/)).toBeInTheDocument();
     expect(within(last).getByText("LXC container")).toBeInTheDocument();
     expect(within(last).getByText(/belong to the host/)).toBeInTheDocument();
 

@@ -446,10 +446,15 @@ test("a hardening check runs through the device's agent; its findings show on th
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Checking hardening", { exact: true })).toBeVisible();
 
-  // The device's agent picks the check up: EasyRMM's own script, with every module the console sent as an argument.
+  // The device's agent picks the check up: EasyRMM's own script, with every module the console sent as an argument,
+  // and the job's time limit, which the script works to.
   const [job] = await agent.poll();
   expect(job?.shell).toBe("sh");
-  expect(job?.args).toEqual(["check", "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity"]);
+  expect(job?.args).toEqual([
+    "check",
+    "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity",
+    "time-limit=1800",
+  ]);
   expect(job?.script).toContain("EASYRMM-HARDENING-RESULT-V1");
   expect(await agent.start(job!.runId)).toBe(true);
   await expect(page.getByRole("heading", { name: "Checks" }).locator("xpath=ancestor::section").getByText("Running")).toBeVisible();

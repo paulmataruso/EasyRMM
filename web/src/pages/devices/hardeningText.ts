@@ -175,7 +175,7 @@ export const SUPPORT: Record<HardeningPlatform["support"], StateMeta> = {
     label: "Check only",
     tone: "warn",
     title:
-      "Not supported on this version: the release is newer than those EasyRMM's hardening is tested on, or out of its standard support (Debian 11, Ubuntu 20.04), which needs upgrading first. Checks report on it; no module is applied or undone here.",
+      "Not supported on this version: apply and undo are not tested on this release (one EasyRMM's machine tests do not cover, or newer than those they do), or it is out of its standard support (Debian 11, Ubuntu 20.04) and needs upgrading first. Checks report on it; no module is applied or undone here.",
   },
   unsupported: {
     label: "Not supported",

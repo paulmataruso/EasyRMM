@@ -29,9 +29,15 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
-      # The machine harness's runner runs under each distribution's sh.
-      - name: shellcheck the machine harness's runner
-        run: shellcheck -s sh internal/vmtest/runner.sh
+      # The scripts that run under each distribution's sh: the machine
+      # harness's runner and the hardening script (ADR-0051). ShellCheck
+      # pinned, as releases before 0.10 take the functions a trap runs
+      # for unreachable code (SC2317).
+      - name: shellcheck the scripts that run under sh
+        run: >-
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt
+          koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+          -s sh internal/vmtest/runner.sh server/internal/jobs/hardening/linux.sh
       - name: shellcheck setup.sh and its mail options
         run: shellcheck -x deploy/scripts/setup.sh deploy/scripts/setup-mail.sh deploy/scripts/setup-mail_test.sh
       # Workflow files are code too: actionlint (with shellcheck) catches
