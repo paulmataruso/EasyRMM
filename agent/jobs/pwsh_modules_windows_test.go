@@ -318,12 +318,13 @@ func setPath(t *testing.T, root registry.Key, path, value string) {
 		}
 		_ = k.Close()
 	})
-	if value == "" {
-		if had {
-			err = k.DeleteValue("PSModulePath")
-		}
-	} else {
+	switch {
+	case value != "":
 		err = k.SetExpandStringValue("PSModulePath", value)
+	case had:
+		err = k.DeleteValue("PSModulePath")
+	default:
+		return // none to remove
 	}
 	if err != nil {
 		t.Fatal(err)
