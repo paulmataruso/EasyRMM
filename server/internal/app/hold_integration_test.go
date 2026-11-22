@@ -34,7 +34,7 @@ func TestRunHeld(t *testing.T) {
 	inst := testdb.New(t)
 	cfg := runConfig(t, inst)
 	cfg.MeshPublicURL, _ = url.Parse("https://mesh.rmm.test")
-	meshInternal, _ := url.Parse("http://" + freeAddr(t)) // MeshCentral is not running
+	meshInternal, _ := url.Parse("http://" + unusedAddr(t)) // MeshCentral is not running
 	cfg.Mesh = config.MeshConfig{Enabled: true, InternalURL: meshInternal, ConfigDir: t.TempDir(), CertURL: "https://127.0.0.1:443"}
 	authentik := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "authentik")

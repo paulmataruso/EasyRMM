@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -653,7 +652,7 @@ func serveHealth(ctx context.Context, addr string, db *database.DB, hold *update
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	ln, err := listen(ctx, addr)
 	if err != nil {
 		return fmt.Errorf("health listener: %w", err)
 	}
