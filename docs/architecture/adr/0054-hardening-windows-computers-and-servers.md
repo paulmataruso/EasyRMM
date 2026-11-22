@@ -363,13 +363,21 @@ reason above for its not naming CIS recommendations.
   together. **As built in W1, decided in review:** what the script could
   not read is never taken for an answer. A role or join Windows did not
   report is *unknown*, an enrolment that could not be read is null, and
-  such a computer is check only (`unreadable`); a setting whose value
-  could not be read (a registry value, Defender's preferences, a log, a
-  WMI provider's answer) is *unknown* with the error, never *not set* and
-  so in place or not; a module none of whose settings could be read, or
-  whose state could not be (Defender's status, BitLocker's), *failed*
-  with the reason. *Not installed* is said only where the feature's
-  service, WMI namespace or class is absent.
+  such a computer is check only (`unreadable`); what turns on whether the
+  computer is a domain controller (the settings they are exempt from, the
+  audit subcategories set only on them, whether a running Print Spooler
+  counts) is then *unknown* too, never taken as not one. A setting whose
+  value could not be read (a registry value, Defender's preferences, a
+  log, a WMI provider's answer, an audit subcategory auditpol's backup
+  lacks) is *unknown* with the error, never *not set* and so in place or
+  not; a registry key its parent lists that will not open is a read that
+  failed, not an absent key, and an auditpol backup not in its form is
+  none. A module none of whose settings could be read, or whose state
+  could not be (Defender's status, BitLocker's), *failed* with the
+  reason. *Not installed* is said only where the feature's service, WMI
+  namespace or class is absent: a service Get-Service does not find by
+  name is checked against Windows' list of services, since Get-Service
+  answers the same for one it could not query.
 * **Only tighter**, as on Linux: a value stricter than EasyRMM's is left
   (UAC that asks for credentials stays; a lockout threshold of 3 stays 3).
 * **One change at a time on a device.** ADR-0017 lets the agent run four
@@ -1802,9 +1810,10 @@ As in ADR-0051, with Windows' places and tools:
       `AsSystem` tests passed on both, and `TestQueryDomainAsSystem` named
       each policy's owner, and *cannot tell* with Group Policy's record
       off (see docs/development/machine-tests.md). OSConfig's baseline was
-      applied there too (see OSConfig, above). That first run was before
-      the review's fixes; the domain was rebuilt and the scenario run
-      again at 3d8bfb6, after the second review's, with the same results.
+      applied there too (see OSConfig, above). That first run ended at
+      e1ad681, before the review's fixes; the domain was rebuilt and the
+      scenario run again at 3d8bfb6, after the second review's, with the
+      same results.
       The reader's tests that expect no domain policy skip there.
     * What CI should do: build the images in each run on GitHub's Ubuntu
       runners with KVM, in jobs that run on pushes to `main` and on a

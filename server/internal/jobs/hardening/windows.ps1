@@ -484,21 +484,45 @@ function Get-ErSecurityPolicy {
 }
 
 # auditpol's backup: each subcategory's setting by GUID (0 none, 1 success,
-# 2 failure, 3 both).
+# 2 failure, 3 both); $null where auditpol failed or its backup is not in
+# its form.
 function Get-ErAuditPolicy {
     if ($ErCache.ContainsKey('auditpol')) { return $ErCache.auditpol }
     $file = Join-Path $ErWork 'audit.csv'
     $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\auditpol.exe') @('/backup', "/file:$file") 60
     $a = $null
     if ($run.ExitCode -eq 0 -and (Test-Path -LiteralPath $file)) {
-        $a = @{}
-        foreach ($row in @(Import-Csv -LiteralPath $file)) {
-            $g = [string]$row.'Subcategory GUID'
-            if ($g -match '^\{[0-9A-Fa-f-]{36}\}$') { $a[$g.ToLowerInvariant()] = [int]$row.'Setting Value' }
-        }
+        $a = ConvertFrom-ErAuditBackup $file
         Remove-Item -LiteralPath $file -Force
     }
     $ErCache.auditpol = $a
+    return $a
+}
+
+# ConvertFrom-ErAuditBackup: auditpol's backup file as each subcategory's
+# setting by GUID, in lower case with its braces; $null where it is not in
+# auditpol's form, as Read-ErAuditCopy checks the audit policy extension's
+# copy: no Subcategory GUID and Setting Value columns, a subcategory's row
+# that cannot be read, or no subcategory at all. Rows without a GUID are
+# auditpol's options.
+function ConvertFrom-ErAuditBackup {
+    param([string]$Path)
+    try {
+        $header = [string](Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop)
+        $rows = @(Import-Csv -LiteralPath $Path -ErrorAction Stop)
+    } catch {
+        return $null
+    }
+    if ($header -notmatch '(^|,)"?Subcategory GUID"?(,|$)' -or $header -notmatch '(^|,)"?Setting Value"?(,|$)') { return $null }
+    $a = @{}
+    foreach ($row in $rows) {
+        $g = ([string]$row.'Subcategory GUID').Trim()
+        if (-not $g) { continue }
+        $v = ([string]$row.'Setting Value').Trim()
+        if ($g -notmatch '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$' -or $v -notmatch '^[0-3]$') { return $null }
+        $a[$g.ToLowerInvariant()] = [int]$v
+    }
+    if ($a.Count -eq 0) { return $null }
     return $a
 }
 
@@ -541,21 +565,22 @@ function Get-ErMpStatus {
 }
 
 # Get-ErServiceState: a service's status and start type, telling a service
-# that is not installed from one that could not be read. Windows
-# PowerShell gives an empty start type, not an error, where the service's
-# configuration may not be queried.
+# that is not installed from one that could not be read (Get-ErService).
+# Windows PowerShell gives an empty start type, not an error, where the
+# service's configuration may not be queried.
 function Get-ErServiceState {
     param([string]$Name)
+    $r = Get-ErService $Name
+    if ($r.Error) { return @{ Installed = $true; Read = $false; Error = $r.Error } }
+    if ($null -eq $r.Service) { return @{ Installed = $false; Read = $true } }
     try {
-        $s = Get-Service -Name $Name -ErrorAction Stop
-        $status = [string]$s.Status
-        $start = [string]$s.StartType
-        if (-not $status -or -not $start) { return @{ Installed = $true; Read = $false; Error = 'its status or start type could not be read' } }
-        return @{ Installed = $true; Read = $true; Status = $status; StartType = $start }
+        $status = [string]$r.Service.Status
+        $start = [string]$r.Service.StartType
     } catch {
-        if ($_.FullyQualifiedErrorId -like 'NoServiceFoundForGivenName*') { return @{ Installed = $false; Read = $true } }
         return @{ Installed = $true; Read = $false; Error = $_.Exception.Message }
     }
+    if (-not $status -or -not $start) { return @{ Installed = $true; Read = $false; Error = 'its status or start type could not be read' } }
+    return @{ Installed = $true; Read = $true; Status = $status; StartType = $start }
 }
 
 # ---------------------------------------------------------------------------
@@ -645,14 +670,27 @@ function Complete-ErSetting {
     return $Setting
 }
 
-function Test-ErApplies {
+# Get-ErApplies: whether a setting applies to this computer: '' where it
+# does, 'not_applicable' where it does not, and 'unknown' where that turns
+# on the computer's role and Windows did not report it.
+function Get-ErApplies {
     param($Def)
     $o = $Def.only
-    if ($null -eq $o) { return $true }
-    if ($null -ne $o.client -and [bool]$o.client -ne $ErPlatform.Client) { return $false }
-    if ($o.notRoles -and @($o.notRoles) -contains $ErPlatform.Role) { return $false }
-    if ($o.minBuild -and $ErPlatform.Build -lt [int]$o.minBuild) { return $false }
-    return $true
+    if ($null -eq $o) { return '' }
+    if ($null -ne $o.client -and [bool]$o.client -ne $ErPlatform.Client) { return 'not_applicable' }
+    if ($o.minBuild -and $ErPlatform.Build -lt [int]$o.minBuild) { return 'not_applicable' }
+    if ($o.notRoles) {
+        if ($ErPlatform.Role -eq 'unknown') { return 'unknown' }
+        if (@($o.notRoles) -contains $ErPlatform.Role) { return 'not_applicable' }
+    }
+    return ''
+}
+
+# The note of a setting that turns on whether the computer is a domain
+# controller, where Windows did not report its role (Get-ErPlatform): such
+# a setting is unknown, never taken as either.
+function Get-ErRoleUnknownNote {
+    return 'Windows did not report the computer''s role, and this turns on whether it is a domain controller.'
 }
 
 # A registry setting: the value in effect, compared; absent is in place
@@ -998,7 +1036,10 @@ function Test-ErSpooler {
         if ($f['Print-Server']) { $why += 'has the Print Server role' }
         if ($f['RDS-RD-Server']) { $why += 'is a Remote Desktop session host' }
         if ($why.Count -gt 0) { return New-ErSetting $Def 'not_applicable' $shown '' ('Left: this server ' + ($why -join ', ') + '.') }
-        if (-not $counted) { return New-ErSetting $Def 'reported' $shown '' 'Stopped on domain controllers, and on other servers only with spooler-off.' }
+        if (-not $counted) {
+            if ($ErPlatform.Role -eq 'unknown') { return New-ErSetting $Def 'unknown' $shown 'stopped and disabled' (Get-ErRoleUnknownNote) }
+            return New-ErSetting $Def 'reported' $shown '' 'Stopped on domain controllers, and on other servers only with spooler-off.'
+        }
     }
     return New-ErSetting $Def $(if ($off) { 'in_place' } else { 'not_in_place' }) $shown 'stopped and disabled'
 }
@@ -1101,10 +1142,21 @@ function Test-ErAuditSubcategories {
     $out = @()
     foreach ($row in @($ErAudit.subcategories)) {
         if ($row.set -eq 'left') { continue }
-        if ($row.domainControllersOnly -and $ErPlatform.Role -ne 'domain_controller') { continue }
+        $unknown = ''
+        if ($row.domainControllersOnly -and $ErPlatform.Role -ne 'domain_controller') {
+            if ($ErPlatform.Role -ne 'unknown') { continue }
+            $unknown = Get-ErRoleUnknownNote
+        }
         $v = $a[[string]$row.guid]
+        if (-not $unknown -and $null -eq $v) { $unknown = 'auditpol''s backup has no row for this subcategory.' }
+        if ($unknown) {
+            $s = New-ErSetting $Def 'unknown' $null $row.set $unknown
+            $s.item = [string]$row.guid
+            $out += $s
+            continue
+        }
         $want = $bits[[string]$row.set]
-        $s = New-ErSetting $Def $(if ($null -ne $v -and ($v -band $want) -eq $want) { 'in_place' } else { 'not_in_place' }) (ConvertTo-ErAuditSetting ([int]$v)) $row.set
+        $s = New-ErSetting $Def $(if (($v -band $want) -eq $want) { 'in_place' } else { 'not_in_place' }) (ConvertTo-ErAuditSetting ([int]$v)) $row.set
         $s.item = [string]$row.guid
         $owner = Resolve-ErAuditOwner $ErPolicy ([string]$row.guid)
         $out += Complete-ErSetting $s $owner $Module
@@ -1335,8 +1387,13 @@ function Invoke-ErModule {
         return $m
     }
     foreach ($def in @($ErSettings | Where-Object { $_.module -eq $Name })) {
-        if (-not (Test-ErApplies $def)) {
+        $applies = Get-ErApplies $def
+        if ($applies -eq 'not_applicable') {
             $m.settings += New-ErSetting $def 'not_applicable' $null ''
+            continue
+        }
+        if ($applies -eq 'unknown') {
+            $m.settings += New-ErSetting $def 'unknown' $null '' (Get-ErRoleUnknownNote)
             continue
         }
         $d = Get-ErOptionDef $def

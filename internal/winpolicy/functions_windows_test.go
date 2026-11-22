@@ -15,6 +15,8 @@ import (
 	"unicode/utf16"
 
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/paulmataruso/easyrmm/internal/wintest"
 )
 
 // The reader's functions one by one, with Windows PowerShell 5.1, on the
@@ -425,5 +427,75 @@ ConvertTo-Json -Compress -Depth 4 @{ Unreadable = $c.Unreadable; Notes = @($c.No
 	if !tamper.Unreadable["tamper"] || !tamper.hasNote("Tamper Protection") || tamper.Realtime.Result != ResultCannotTell ||
 		!slices.Contains(tamper.Realtime.Reasons, ReasonUnreadable) {
 		t.Errorf("Defender's status unread: %+v", tamper)
+	}
+
+	// Configuration Manager's and Azure machine configuration's services,
+	// where Windows' list of services does not answer (stand-in: Get-Service
+	// is sent to a computer that does not exist): not "not installed", but
+	// every value cannot_tell (unreadable). Get-Service by name answers
+	// "not found" for a service it could not query as well.
+	var services unreadRecord
+	runFunctions(t, r, `$PSDefaultParameterValues['Get-Service:ComputerName'] = 'easyrmm-no-such-host.invalid'
+$c = Get-ErPolicyContext ''
+ConvertTo-Json -Compress @{ Unreadable = $c.Unreadable; Notes = @($c.Notes) }`, &services)
+	if !services.Unreadable["all"] || !services.hasNote("Configuration Manager's client") ||
+		!services.hasNote("service GCArcService") || !services.hasNote("service GCService") {
+		t.Errorf("services unread: %+v", services)
+	}
+	// And where it answers: one not installed, and one that is.
+	var found []struct {
+		Found bool
+		Error string
+	}
+	runFunctions(t, r, `ConvertTo-Json -Compress @('EasyRMMNoSuchService', 'EventLog' | ForEach-Object {
+    $s = Get-ErService $_
+    @{ Found = $null -ne $s.Service; Error = $s.Error }
+})`, &found)
+	if len(found) != 2 || found[0].Found || found[0].Error != "" || !found[1].Found || found[1].Error != "" {
+		t.Errorf("services read: %+v, want EasyRMMNoSuchService not installed and EventLog installed", found)
+	}
+}
+
+// TestReaderRegistryLinkOnWindows: a key its parent lists that will not
+// open, though not for want of access (a registry link to a key that does
+// not exist), is a value that could not be read, never an absent one; a
+// key that does not exist is absent, and a link to one that does is read
+// through.
+func TestReaderRegistryLinkOnWindows(t *testing.T) {
+	const base = `SOFTWARE\EasyRMM-Test-Links`
+	wintest.Plant(t, base+`\Target`, map[string]any{"Value": uint32(7)})
+	wintest.Link(t, base+`\Followed`, base+`\Target`)
+	wintest.Link(t, base+`\Dangling`, `SOFTWARE\EasyRMM-Test-No-Such-Key`)
+	var got []struct {
+		Exists bool
+		Data   any
+		Error  string
+	}
+	runFunctions(t, Reader(), `$base = 'HKLM\`+base+`'
+ConvertTo-Json -Compress @(
+    (Get-ErRegistryValue "$base\Target" 'Value'),
+    (Get-ErRegistryValue "$base\Followed" 'Value'),
+    (Get-ErRegistryValue "$base\Missing" 'Value'),
+    (Get-ErRegistryValue "$base\Missing\Below" 'Value'),
+    (Get-ErRegistryValue "$base\Dangling" 'Value'),
+    (Get-ErRegistryValue "$base\Dangling\Below" 'Value')
+)`, &got)
+	if len(got) != 6 {
+		t.Fatalf("%d answers: %+v", len(got), got)
+	}
+	for i, g := range got[:2] {
+		if !g.Exists || g.Data != float64(7) || g.Error != "" {
+			t.Errorf("a key, and a link to it (%d): %+v", i, g)
+		}
+	}
+	for i, g := range got[2:4] {
+		if g.Exists || g.Error != "" {
+			t.Errorf("a key that does not exist (%d): %+v", i, g)
+		}
+	}
+	for i, g := range got[4:] {
+		if g.Exists || !strings.Contains(g.Error, `EasyRMM-Test-Links\Dangling is listed by its parent but could not be opened`) {
+			t.Errorf("a link to a key that does not exist (%d): %+v, want the error", i, g)
+		}
 	}
 }

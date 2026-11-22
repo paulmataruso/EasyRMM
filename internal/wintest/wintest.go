@@ -2,16 +2,19 @@
 
 // Package wintest is what the Windows tests that change the computer share
 // (internal/winpolicy's and Windows hardening's, ADR-0054): keys planted
-// under HKLM and removed when the test ends, and access lists that let an
-// account, or no one, read a key, file or folder, for the reads that fail,
-// set back when the test ends. Only tests that run on computers made for
+// under HKLM and removed when the test ends; registry links to keys that do
+// not exist, and access lists that let an account, or no one, read a key,
+// file or folder, for the reads that fail, undone when the test ends. Only tests that run on computers made for
 // them (CI's runners, test guests) use it.
 package wintest
 
 import (
 	"errors"
 	"strings"
+	"syscall"
 	"testing"
+	"unicode/utf16"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -88,6 +91,76 @@ func DeleteTree(t testing.TB, path string) {
 	}
 	if err := registry.DeleteKey(registry.LOCAL_MACHINE, path); err != nil && !errors.Is(err, registry.ErrNotExist) {
 		t.Errorf(`delete HKLM\%s: %v`, path, err)
+	}
+}
+
+var (
+	advapi32        = windows.NewLazySystemDLL("advapi32.dll")
+	regCreateKeyExW = advapi32.NewProc("RegCreateKeyExW")
+	regSetValueExW  = advapi32.NewProc("RegSetValueExW")
+	ntDeleteKey     = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtDeleteKey")
+)
+
+// Registry link options (winnt.h): a volatile key, made as a link, opened
+// as the link rather than its target.
+const (
+	regOptionVolatile   = 0x1
+	regOptionCreateLink = 0x2
+	regOptionOpenLink   = 0x8
+)
+
+// Link makes a key under HKLM that does not exist yet, whose parent does, a
+// registry link to target, a key under HKLM that need not exist, and
+// removes it when the test ends. Windows opens the target in its place: a
+// link to a key that does not exist is listed by its parent and will not
+// open, though not for want of access. The link is volatile, so that a test
+// that does not end leaves none past the next start.
+func Link(t testing.TB, path, target string) {
+	t.Helper()
+	if KeyExists(path) {
+		t.Fatalf(`HKLM\%s exists already`, path)
+	}
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k windows.Handle
+	if r, _, _ := regCreateKeyExW.Call(uintptr(windows.HKEY_LOCAL_MACHINE), uintptr(unsafe.Pointer(p)), 0, 0,
+		regOptionVolatile|regOptionCreateLink, windows.KEY_ALL_ACCESS, 0, uintptr(unsafe.Pointer(&k)), 0); r != 0 {
+		t.Fatalf(`link HKLM\%s: %v`, path, syscall.Errno(r))
+	}
+	defer func() { _ = windows.RegCloseKey(k) }()
+	t.Cleanup(func() { unlink(t, path) })
+	name, err := windows.UTF16PtrFromString("SymbolicLinkValue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The target's kernel name, without a terminating null.
+	to := utf16.Encode([]rune(`\REGISTRY\MACHINE\` + target))
+	if r, _, _ := regSetValueExW.Call(uintptr(k), uintptr(unsafe.Pointer(name)), 0, windows.REG_LINK,
+		uintptr(unsafe.Pointer(&to[0])), uintptr(len(to)*2)); r != 0 {
+		t.Fatalf(`link HKLM\%s to %s: %v`, path, target, syscall.Errno(r))
+	}
+}
+
+// unlink deletes a registry link, not its target.
+func unlink(t testing.TB, path string) {
+	t.Helper()
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	var k windows.Handle
+	if err := windows.RegOpenKeyEx(windows.HKEY_LOCAL_MACHINE, p, regOptionOpenLink, windows.DELETE, &k); err != nil {
+		if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+			t.Errorf(`open the link HKLM\%s to delete it: %v`, path, err)
+		}
+		return
+	}
+	defer func() { _ = windows.RegCloseKey(k) }()
+	if status, _, _ := ntDeleteKey.Call(uintptr(k)); status != 0 {
+		t.Errorf(`delete the link HKLM\%s: NTSTATUS %#x`, path, status)
 	}
 }
 

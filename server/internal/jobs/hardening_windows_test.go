@@ -279,12 +279,14 @@ func TestWindowsHardeningUnreadableAsSystem(t *testing.T) {
 	r := checkAll(t)
 	for k, ids := range keys {
 		for _, id := range ids {
-			// A module that does not apply here (UAC on Server Core) reads
-			// nothing.
+			// UAC's module does not apply on Server Core, and reads nothing
+			// there; every other module reads its keys.
 			module := windowsSettings[slices.IndexFunc(windowsSettings, func(s windowsSetting) bool { return s.ID == id })].Module
-			if i := slices.IndexFunc(r.Modules, func(m HardeningModuleResult) bool { return m.Module == module }); i >= 0 && r.Modules[i].State == "not_applicable" {
-				t.Logf("%s: %s is not applicable here (%s)", id, module, r.Modules[i].Reason)
-				continue
+			if module == "uac" && r.Platform.Windows != nil && r.Platform.Windows.InstallationType == "Server Core" {
+				if i := slices.IndexFunc(r.Modules, func(m HardeningModuleResult) bool { return m.Module == module }); i >= 0 && r.Modules[i].State == "not_applicable" {
+					t.Logf("%s: UAC's module is not applicable on Server Core (%s)", id, r.Modules[i].Reason)
+					continue
+				}
 			}
 			if s := setting(r, module, id); s == nil || s.State != "unknown" || !strings.Contains(s.Note, "could not be read") {
 				t.Errorf(`%s, with HKLM\%s unreadable: %+v, want unknown with the error`, id, k, s)

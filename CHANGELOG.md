@@ -156,7 +156,8 @@ All notable changes to this project are documented here. The format follows
   such a setting is *unknown* with the error, a module none of whose
   settings could be read (or whose Defender or BitLocker state could not
   be) *failed*, and a role or join Windows did not report *unknown*, which
-  makes the computer check only. On a computer enrolled in an MDM every value no other owner
+  makes the computer check only and what turns on whether it is a domain
+  controller *unknown* too. On a computer enrolled in an MDM every value no other owner
   holds is *check only*, until the MDM reader is proven on an
   Intune-enrolled computer. The accounts module reports whether the
   computer is exposed: failed sign-ins from public addresses, or 10 or

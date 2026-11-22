@@ -192,6 +192,26 @@ func TestQueryAuditHistoryAsSystem(t *testing.T) {
 		}
 	}
 
+	// With the copy back, a policy's record the history lists that will not
+	// open, though not for want of access (a registry link to a key that
+	// does not exist): every audit subcategory cannot_tell (unreadable), not
+	// the other policy's.
+	if err := os.WriteFile(copyFile, []byte(header+",System,Audit Logon,{0cce9215-69ae-11d9-bed3-505054503030},Success and Failure,,3\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wintest.Link(t, history+`\1`, `SOFTWARE\EasyRMM-Test-No-Such-Key`)
+	if code, a = ask(t, baseRequest); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	for i, x := range a.Audit {
+		if x.Result != ResultCannotTell || strings.Join(x.Reasons, ",") != ReasonUnreadable {
+			t.Errorf("audit %d with a policy's record that will not open: %v", i, x)
+		}
+	}
+	if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, `\1 is listed but could not be opened`) }) {
+		t.Errorf("notes %q", a.Notes)
+	}
+
 	wintest.DenyKeyRead(t, history+`\0`)
 	if code, a = ask(t, baseRequest); code != 0 {
 		t.Fatalf("exit code %d", code)

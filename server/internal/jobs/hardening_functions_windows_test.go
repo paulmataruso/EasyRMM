@@ -97,8 +97,8 @@ func TestHardeningServiceStateOnWindows(t *testing.T) {
 		}
 	}
 	type state struct {
-		Installed, Read   bool
-		Status, StartType string
+		Installed, Read          bool
+		Status, StartType, Error string
 	}
 	var states map[string]state
 	read := func() {
@@ -124,6 +124,153 @@ func TestHardeningServiceStateOnWindows(t *testing.T) {
 	read()
 	if p := states["planted"]; !p.Installed || p.Read {
 		t.Errorf("a service that cannot be read: %+v", p)
+	}
+
+	// Where Windows' list of services does not answer, a service Get-Service
+	// does not find by name is not "not installed": Get-Service answers so
+	// for a service it could not query as well.
+	var unread state
+	hardeningFunctions(t, standInService+`ConvertTo-Json -Compress (Get-ErServiceState 'EasyRMMNoSuchService')`, &unread)
+	if unread.Read || unread.Error == "" {
+		t.Errorf("a service, with the list of services unread: %+v, want not read, with the error", unread)
+	}
+}
+
+// TestHardeningRoleUnknownOnWindows: where Windows does not report the
+// computer's role (stand-in: Get-CimInstance is sent to a computer that
+// does not exist while the platform is read), what turns on whether it is
+// a domain controller is unknown, with why, never taken as not one: the
+// settings domain controllers are exempt from, the audit subcategories set
+// only on them, and whether a running Print Spooler counts.
+func TestHardeningRoleUnknownOnWindows(t *testing.T) {
+	const why = "Windows did not report the computer's role, and this turns on whether it is a domain controller."
+	var got struct {
+		Role    string
+		DCOnly  []string
+		Modules map[string]struct{ Settings []HardeningSetting }
+		Spooler struct {
+			Installed         bool
+			Status, StartType string
+		}
+	}
+	hardeningFunctions(t, standInCim+hardeningGlobals+`$ErPlatform = Get-ErPlatform
+$PSDefaultParameterValues.Remove('Get-CimInstance:ComputerName')
+$ErWork = '`+t.TempDir()+`'
+$modules = @{}
+foreach ($name in 'anonymous', 'device-guard', 'printing', 'audit') { $modules[$name] = Invoke-ErModule $name }
+ConvertTo-Json -Compress -Depth 8 @{
+    Role = $ErPlatform.Role
+    DCOnly = @($ErAudit.subcategories | Where-Object { $_.domainControllersOnly } | ForEach-Object { [string]$_.guid })
+    Modules = $modules
+    Spooler = Get-ErServiceState 'Spooler'
+}`, &got)
+	if got.Role != "unknown" {
+		t.Fatalf("role %q with Win32_ComputerSystem unread", got.Role)
+	}
+	find := func(module, id, item string) *HardeningSetting {
+		for i, s := range got.Modules[module].Settings {
+			if s.ID == id && s.Item == item {
+				return &got.Modules[module].Settings[i]
+			}
+		}
+		return nil
+	}
+	for _, id := range [][2]string{{"anonymous", "anonymous-remote-sam"}, {"device-guard", "device-guard-credential-guard"}} {
+		if s := find(id[0], id[1], ""); s == nil || s.State != "unknown" || s.Note != why {
+			t.Errorf("%s, which domain controllers are exempt from: %+v, want unknown with why", id[1], s)
+		}
+	}
+	if len(got.DCOnly) == 0 {
+		t.Fatal("no audit subcategory set only on domain controllers")
+	}
+	for _, guid := range got.DCOnly {
+		if s := find("audit", "audit-subcategories", guid); s == nil || s.State != "unknown" || s.Note != why {
+			t.Errorf("audit subcategory %s, set only on domain controllers: %+v, want unknown with why", guid, s)
+		}
+	}
+	for _, s := range got.Modules["audit"].Settings {
+		if s.Note == why && !slices.Contains(got.DCOnly, s.Item) {
+			t.Errorf("audit subcategory %s, set on every computer: %+v", s.Item, s)
+		}
+	}
+	if sp := got.Spooler; !sp.Installed || (sp.Status == "Stopped" && sp.StartType == "Disabled") {
+		t.Logf("the Print Spooler is %+v here: whether a running one counts is not checked", sp)
+	} else if s := find("printing", "printing-spooler", ""); s == nil {
+		t.Error("no printing-spooler")
+	} else if s.State == "not_applicable" {
+		t.Logf("the Print Spooler is left here: %s", s.Note)
+	} else if s.State != "unknown" || s.Note != why {
+		t.Errorf("a running Print Spooler: %+v, want unknown with why", s)
+	}
+}
+
+// TestHardeningAuditBackupOnWindows: auditpol's backup read as auditpol
+// writes it, a subcategory it lacks unknown; and one not in its form
+// (empty, without its columns, with a GUID or a setting it cannot read, or
+// without a subcategory) as no backup, the audit table unknown, never "not
+// in place".
+func TestHardeningAuditBackupOnWindows(t *testing.T) {
+	const (
+		header = "Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value\r\n"
+		logon  = "{0cce9215-69ae-11d9-bed3-505054503030}"
+		option = ",,Option:CrashOnAuditFail,,Disabled,,0\r\n"
+	)
+	backups := map[string]string{
+		"good":                     header + ",System,Logon," + logon + ",Success and Failure,,3\r\n" + option,
+		"empty":                    "",
+		"without its columns":      "Machine Name,Policy Target,Subcategory\r\n,System,Logon\r\n",
+		"a GUID it cannot read":    header + ",System,Logon,{0cce9215-69ae-11d9},Success,,1\r\n",
+		"a setting it cannot read": header + ",System,Logon," + logon + ",Success,,7\r\n",
+		"without a subcategory":    header + option,
+	}
+	dir := t.TempDir()
+	var list strings.Builder
+	for name, text := range backups {
+		file := filepath.Join(dir, strconv.Itoa(list.Len())+".csv")
+		if err := os.WriteFile(file, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		list.WriteString("@('" + name + "', '" + file + "'), ")
+	}
+	var got map[string]struct {
+		Parsed   map[string]int
+		Settings []HardeningSetting
+	}
+	hardeningFunctions(t, hardeningGlobals+`$ErPlatform = @{ Client = $false; Build = 26100; Role = 'member_server' }
+$out = @{}
+foreach ($b in @(`+strings.TrimSuffix(list.String(), ", ")+`)) {
+    $ErCache = @{ auditpol = (ConvertFrom-ErAuditBackup $b[1]) }
+    $s = Test-ErAuditSubcategories (Get-TestDef 'audit-subcategories') $m
+    $out[$b[0]] = @{ Parsed = $ErCache.auditpol; Settings = @($s) }
+}
+ConvertTo-Json -Compress -Depth 6 $out`, &got)
+	if len(got) != len(backups) {
+		t.Fatalf("%d backups read, want %d: %+v", len(got), len(backups), got)
+	}
+	good := got["good"]
+	if len(good.Parsed) != 1 || good.Parsed[logon] != 3 {
+		t.Errorf("a backup in auditpol's form: %v", good.Parsed)
+	}
+	for _, s := range good.Settings {
+		switch {
+		case s.Item == logon:
+			if s.State != "in_place" {
+				t.Errorf("Logon, success and failure: %+v", s)
+			}
+		case s.State != "unknown" || s.Note != "auditpol's backup has no row for this subcategory.":
+			t.Errorf("a subcategory the backup lacks: %+v, want unknown", s)
+		}
+	}
+	if len(good.Settings) < 2 {
+		t.Errorf("settings %+v", good.Settings)
+	}
+	for name, b := range got {
+		if name == "good" {
+			continue
+		}
+		if b.Parsed != nil || len(b.Settings) != 1 || b.Settings[0].State != "unknown" || b.Settings[0].Note != "auditpol did not report the audit policy." {
+			t.Errorf("a backup %s: %+v, want none, and the audit table unknown", name, b)
+		}
 	}
 }
 
@@ -241,6 +388,7 @@ ConvertTo-Json -Compress @(
 const (
 	standInCim      = `$PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
 	standInWinEvent = `$PSDefaultParameterValues['Get-WinEvent:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
+	standInService  = `$PSDefaultParameterValues['Get-Service:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
 	// Defender's cmdlets are CIM cmdlets: they take a session, here one to
 	// that computer, made without testing it.
 	standInMp = `$PSDefaultParameterValues['Get-MpComputerStatus:CimSession'] = New-CimSession -ComputerName 'easyrmm-no-such-host.invalid' -SkipTestConnection` + "\n"

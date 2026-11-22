@@ -134,8 +134,10 @@ runner's administrator: the reader's functions and the hardening
 script's one by one (`functions_windows_test.go`,
 `hardening_functions_windows_test.go`), on what is hard to make in a
 whole run: `Registry.pol` files, filtering platform states, text with
-control characters, a service that cannot be read, and failed sign-ins
-(made with `LogonUser`) for the exposure rule.
+control characters, a service that cannot be read, registry links to keys
+that do not exist, auditpol backups not in its form, a computer whose
+role Windows does not report, and failed sign-ins (made with
+`LogonUser`) for the exposure rule.
 
 Runners have no domain, so the domain scenario runs on Windows guests
 under KVM, not on GitHub yet (ADR-0054 says why, and what CI should do).
@@ -166,8 +168,10 @@ W1 ran it on a Proxmox VE host with Windows Server 2025's evaluation media:
    the member back to the snapshot taken before.
 
 W1 ran it twice on 2026-11-22. The first run, between about 02:00 and
-03:30 UTC, used the reader and the script as they were before the
-review's fixes (c27b0b4 and after). The domain was rebuilt
+03:50 UTC, built its tests from the work in progress, fixing what it
+found as it went; its last builds were of e1ad681's reader, hardening
+script and tests, unchanged until the first review's fixes (c27b0b4).
+The domain was rebuilt
 and the scenario run again at 3d8bfb6, whose reader and hardening script
 are those of 5682775, the second review's fixes:
 

@@ -142,7 +142,9 @@ function Get-ErPolicyContext {
     if ($atp.Exists -and "$($atp.Data)" -eq '1') { $c.DefenderForEndpoint = $true }
     if ($atp.Error) { Add-ErUnreadable $c @('defender') $atp.Error }
 
-    if (Get-Service -Name 'CcmExec' -ErrorAction SilentlyContinue) { $c.ConfigMgr = $true }
+    $ccm = Get-ErService 'CcmExec'
+    if ($ccm.Service) { $c.ConfigMgr = $true }
+    if ($ccm.Error) { Add-ErUnreadable $c @('all') "Whether Configuration Manager's client is installed could not be read: $($ccm.Error)" }
 
     # DSC corrects drift only in ApplyAndAutoCorrect, and only with a
     # configuration to apply.
@@ -160,7 +162,11 @@ function Get-ErPolicyContext {
     # Azure machine configuration, by its services, which only an
     # administrator can register: the Arc agent's on an Azure Arc server,
     # the guest configuration extension's on an Azure virtual machine.
-    if (Get-Service -Name 'GCArcService', 'GCService' -ErrorAction SilentlyContinue) { $c.AzureMachineConfiguration = $true }
+    foreach ($name in 'GCArcService', 'GCService') {
+        $gc = Get-ErService $name
+        if ($gc.Service) { $c.AzureMachineConfiguration = $true }
+        if ($gc.Error) { Add-ErUnreadable $c @('all') "Whether Azure machine configuration's service $name is installed could not be read: $($gc.Error)" }
+    }
 
     Read-ErOSConfig $c
 
@@ -493,11 +499,12 @@ function Read-ErAuditCopy {
     $names = @()
     $k = $null
     try {
-        $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($history, $false)
+        $k = Open-ErRegistryKey $history
         if ($null -eq $k) { return }
         foreach ($s in @($k.GetSubKeyNames())) {
+            # Listed, so a $null is a read that failed (Open-ErRegistryKey).
             $sub = $k.OpenSubKey($s, $false)
-            if ($null -eq $sub) { continue }
+            if ($null -eq $sub) { throw "HKLM\$history\$s is listed but could not be opened." }
             try { $n = [string]$sub.GetValue('DisplayName') } finally { $sub.Close() }
             if ($n -and $names -notcontains $n) { $names += $n }
         }
@@ -1136,6 +1143,60 @@ function Test-ErPolicyPath {
     return ($Path -match '^HKLM\\SOFTWARE\\(WOW6432Node\\)?Policies\\')
 }
 
+# Open-ErRegistryKey: a key under HKLM (its path without the hive), opened
+# to read, or $null where it does not exist; it throws where the key could
+# not be read. .NET's OpenSubKey throws only for access denied and answers
+# $null for any other failure, as for a key that does not exist; so a $null
+# is checked a level at a time from the hive, and a key its parent lists
+# that will not open is a read that failed.
+function Open-ErRegistryKey {
+    param([string]$Path)
+    $hklm = [Microsoft.Win32.Registry]::LocalMachine
+    $k = $hklm.OpenSubKey($Path, $false)
+    if ($null -ne $k) { return $k }
+    $parent = $hklm
+    $at = 'HKLM'
+    try {
+        foreach ($part in @($Path.Split('\') | Where-Object { $_ })) {
+            $at += '\' + $part
+            if (@($parent.GetSubKeyNames()) -notcontains $part) { return $null }
+            $next = $parent.OpenSubKey($part, $false)
+            if ($null -eq $next) { throw "$at is listed by its parent but could not be opened." }
+            if (-not [object]::ReferenceEquals($parent, $hklm)) { $parent.Close() }
+            $parent = $next
+        }
+        # Every level opened, this time.
+        $k = $parent
+        $parent = $hklm
+        return $k
+    } finally {
+        if (-not [object]::ReferenceEquals($parent, $hklm)) { $parent.Close() }
+    }
+}
+
+# Get-ErService: a service by its name, or $null where it is not installed;
+# Error where that could not be told. Get-Service by name answers
+# NoServiceFoundForGivenName for a service it could not query as for one
+# that is not installed, so that answer is checked against Windows' whole
+# list of services, which fails as a read does. (The list leaves out a
+# service whose status the caller may not query; LocalSystem may query
+# every service unless one's access list shuts it out.)
+function Get-ErService {
+    param([string]$Name)
+    try {
+        return @{ Service = (Get-Service -Name $Name -ErrorAction Stop); Error = '' }
+    } catch {
+        if ($_.FullyQualifiedErrorId -notlike 'NoServiceFoundForGivenName*') { return @{ Service = $null; Error = $_.Exception.Message } }
+    }
+    try {
+        $listed = @(Get-Service -ErrorAction Stop | Where-Object { $_.Name -eq $Name })
+    } catch {
+        return @{ Service = $null; Error = "Windows' list of services could not be read: $($_.Exception.Message)" }
+    }
+    if ($listed.Count -gt 0) { return @{ Service = $null; Error = "Windows lists the service $Name, but it could not be queried." } }
+    return @{ Service = $null; Error = '' }
+}
+
 # Get-ErRegistryValue: a value under HKLM, without following anything: its
 # existence, data and kind; or, where it could not be read, Error, which
 # names it: such a value is neither absent nor present, and every caller
@@ -1145,7 +1206,7 @@ function Get-ErRegistryValue {
     $sub = $Path -replace '^HKLM\\', ''
     $k = $null
     try {
-        $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub, $false)
+        $k = Open-ErRegistryKey $sub
         if ($null -eq $k) { return @{ Exists = $false; Data = $null; Kind = ''; Error = '' } }
         if (@($k.GetValueNames()) -notcontains $Name) { return @{ Exists = $false; Data = $null; Kind = ''; Error = '' } }
         $kind = $k.GetValueKind($Name).ToString()
