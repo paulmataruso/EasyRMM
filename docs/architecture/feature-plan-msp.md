@@ -1643,78 +1643,135 @@ slice 1; F5's approvals for slice 4.
 
 **Asked by the owner on 2026-11-22**
 ([quoted](requirements/2026-11-21-msp-features.md#a-software-section-and-a-quick-uninstall)).
-Today a software job starts from a device's *Software* tab, or from
-*Jobs*, with a package ID typed by hand. Linux rows in a device's list
-have *Update* and *Uninstall* buttons. Windows rows have none, because
-Windows lists programs by display name, not by winget or Chocolatey ID.
+**How software jobs start today:** from a device's *Software* tab, or
+from *Jobs*, with a package ID typed by hand.
+* **Linux:** on a device whose inventory comes from dpkg or RPM, each row
+  of its software list has *Update* and *Uninstall* buttons, for whoever
+  has `software.manage`.
+* **Windows:** rows have no buttons. Windows lists programs by display
+  name, not by winget or Chocolatey ID, and the `software` kind accepts
+  only IDs (`server/internal/jobs/software.go`).
 
-* **A Software section of its own, with search as you type.** The
-  console's main menu gains a *Software* entry beside *Patching* and
-  *Scripts*, shown with `software.view`. It has three parts, **Install**,
-  **Update** and **Remove**, each for one device or many, chosen as
-  *Jobs* chooses them today. How the search works was decided in review:
+* **A Software section of its own, with search as you type.**
+  * **Where it is:** a *Software* entry in the console's main menu,
+    beside *Patching* and *Scripts*, shown to anyone with
+    `software.view`.
+  * **What it has:** three parts, **Install**, **Update** and
+    **Remove**. Each works on one device or many, chosen the way *Jobs*
+    chooses them today.
+
+  How the search works was decided in review:
   * **Every keystroke searches a copy on the server, never a device.**
-    * Results come while the technician types: debounced, and limited
+    * Results arrive while the technician types, debounced and limited
       in number.
     * A match can be anywhere in the name, the package ID or the
-      package's other names, and case doesn't matter. Typing "notepad"
-      finds Notepad++ (`Notepad++.Notepad++`) and everything else with
-      notepad in it.
-    * Each result shows the name, the ID, the publisher, where it comes
-      from (the catalog, winget, Chocolatey or a Linux distribution) and
-      the latest version known.
+      package's other names, and case is ignored. Typing "notepad" finds
+      Notepad++ (`Notepad++.Notepad++`) and everything else with notepad
+      in it.
+    * Each result shows the name, the ID, the publisher, the source (the
+      catalog, winget, Chocolatey or a Linux distribution) and the
+      latest version known.
   * **What Install searches**, in this order:
-    1. the catalog's entries (slice 1);
-    2. winget's community source: the server downloads its index the way
-       winget does, checks Microsoft's signature on it, and refreshes it
-       daily;
-    3. Chocolatey's community repository, if its terms and rate limits
-       allow a copy; if they don't, it isn't searched, and an MSP's own
-       feed comes in a later slice;
-    4. for Linux, the package names in the supported distributions'
-       repositories, from the repositories' own signed indexes. If that
-       proves too heavy, the search runs on one online device of that
-       distribution instead, and is shown as slower.
+    1. **The catalog's entries** (slice 1).
+    2. **winget's community source.** The server downloads its index the
+       way winget does, checks Microsoft's signature on it, and refreshes
+       it daily.
+    3. **Chocolatey's community repository**, if its terms and rate
+       limits allow a copy. If they don't, it isn't searched; an MSP's
+       own feed comes in a later slice.
+    4. **For Linux, the package names in the supported distributions'
+       repositories.** How far each index can be trusted differs:
+       * apt's `InRelease` and zypper's `repomd.xml` are signed;
+       * dnf's `repomd.xml` often isn't, and relies on the metalink's
+         checksums over HTTPS.
 
-    The ADR settles which of these is built, and verifies each index's
-    format and signature. None of this has been tried yet.
-  * **What Update and Remove search**: the software the chosen devices
-    report as installed (the inventory), with how many devices have
-    each, and, for Update, whether a newer version is known.
-  * **Only a choice from the list reaches a job, never free text.** The
-    chosen package's source and ID go into the existing `software` job,
-    whose checks on every argument stay as they are. Names from the
-    public sources are only ever shown as text.
-* **A quick uninstall on each row of a device's software list.** An icon
-  sits beside the program's name. It asks for confirmation, naming the
-  program, the version and the device, then starts an uninstall job. It
-  shows for whoever may manage that device's software. On Linux rows it
-  replaces the *Uninstall* button. Windows rows need more, decided in
-  review:
-  * **What the inventory records:** for each Windows program, the agent
-    records where its entry is (the hive, the 32- or 64-bit view and the
-    key's name). It also records whether the program is a Windows
-    Installer product, in which case the key's name is its ProductCode,
-    and whether it has a quiet uninstall command.
-  * **What the job carries:** only that identity. When the job runs, the
-    agent reads the command from the registry itself and checks that the
-    entry still has the name and version shown. It never takes a command
-    line from the server.
+       If copying these proves too heavy, the search runs on one online
+       device of that distribution instead, and is shown as slower.
+
+    The ADR settles which of these is built, what each index is trusted
+    on, and verifies each format. None of this has been tried yet.
+  * **What Update and Remove search:** the software the chosen devices
+    report as installed (the inventory). Each result shows how many
+    devices have it and, for Update, whether a newer version is known.
+  * **Only a choice from the list reaches a job, never free text.**
+    * **Install, and Linux's Update and Remove:** the chosen package's
+      source and ID go into the existing `software` job. Its checks on
+      every argument stay as they are.
+    * **Windows' Remove:** uses the quick uninstall's action (below), so
+      it ships with it. One program can sit under a different key on each
+      device, so the server resolves each chosen device's own entry by
+      name and publisher, and the job carries that device's identity.
+    * **Windows' Update:** offered only for a program that matches a
+      catalog entry or a winget ID, by its ProductCode, or by its name
+      and publisher the way winget matches installed programs. The ADR
+      verifies how. Other programs show no update.
+    * **Names from the public sources** are only ever shown as text.
+* **A quick uninstall on each row of a device's software list.**
+  * **What it does:** an icon beside the program's name. It asks for
+    confirmation, naming the program, the version and the device, then
+    starts an uninstall job.
+  * **Who sees it:** whoever may manage that device's software.
+  * **Linux:** the icon replaces the *Uninstall* button.
+
+  Windows needs more, decided in review:
+  * **What the inventory records**, for each Windows program:
+    * where its entry is: the hive, the 32- or 64-bit view, and the
+      key's name;
+    * whether it is a Windows Installer product, in which case the key's
+      name is its ProductCode;
+    * whether it has a quiet uninstall command.
+  * **What the job carries:** only that identity, never a command line
+    from the server. When the job runs, the agent reads the command from
+    the registry itself, and checks that the entry still has the name
+    and version shown.
+  * **The entry itself must be trusted.**
+    * Some installers set permissions on their own Uninstall key that
+      let users write to it. Such a user could point the command at a
+      trusted program, such as `cmd.exe` or `msiexec /i` with a share,
+      and have it run as SYSTEM.
+    * So the key must pass the same owner and permissions test as the
+      files (below), and must not be a registry link.
   * **Windows Installer products** are removed silently with `msiexec /x`
-    and their ProductCode. msiexec's codes are read as slice 3 reads
-    them, and 1605 means *already removed*.
-  * **Other programs** are removed only if they have a
-    `QuietUninstallString`. It is started directly, never through
-    `cmd.exe`, and only if nobody but administrators and SYSTEM can
-    write to the uninstaller or its folder. This is the same check
-    [ADR-0064](adr/0064-remote-powershell-management.md) makes for PowerShell 7's files.
+    and their ProductCode, which must be a GUID.
+    * msiexec's codes are mapped as the EasyPatch agent's install maps
+      them (`agent/easypatch/system_windows.go`).
+    * **1605** (`ERROR_UNKNOWN_PRODUCT`) means the entry is there but
+      Windows Installer doesn't know the product. It is reported as an
+      orphaned entry, never as removed.
+    * **1641** is a restart the uninstaller made. It is expected as a
+      planned restart once ADR-0053's planned restarts exist (step 10).
+      Until then it is shown as *removed, the uninstaller restarted the
+      computer*.
+  * **Other programs** are removed only through their
+    `QuietUninstallString`, read with these rules:
+    * A `REG_EXPAND_SZ` value is expanded before anything is checked.
+    * The program's path is parsed out first. It must be absolute and
+      name an existing file. An unquoted path with spaces that could be
+      read two ways (`C:\Program Files\…` as `C:\Program.exe`) is
+      refused.
+    * The path is passed to `CreateProcess` as the application name. The
+      rest of the string is passed unchanged as the command line, since
+      uninstallers read their own raw command line. In Go that means
+      `SysProcAttr.CmdLine`, not `exec.Command`'s quoting.
+    * Never through `cmd.exe`.
+    * Command interpreters and script hosts are refused as the program:
+      `cmd.exe`, PowerShell, `wscript`, `cscript`, `mshta`, `rundll32`
+      and `regsvr32`. So is `msiexec` with anything but `/x` and a GUID.
+      The ADR decides between a list of refusals and a list of allowed
+      forms.
+    * The uninstaller, the files beside it and its folders up to the
+      root must each pass the test ADR-0064 uses for PowerShell 7
+      (`trustedEntry` in `agent/host/system_windows.go`): the owner, who
+      may write, reparse points and hard links.
   * **Only machine-wide entries (`HKLM`).** A user can write their own
-    per-user entry (`HKCU`). Running its command as SYSTEM would let that
-    user run anything as SYSTEM.
-  * **Where the icon is disabled:** on per-user entries and on programs
-    with no silent uninstall. It stays visible there, with the reason.
+    per-user entry (`HKCU`), and running its command as SYSTEM would let
+    that user run anything as SYSTEM.
+  * **Where the icon is disabled:** per-user entries, programs with no
+    silent uninstall, and entries that fail the checks. The icon stays
+    visible there, with the reason.
   * **Left to the ADR:** whether this is a new action of the `software`
-    kind or one of F2's fixed kinds.
+    kind (which needs nothing earlier) or one of F2's fixed kinds (step
+    15).
 
 **How it relates.** ADR-0028, the patching engine (one updater), F3 and
 feature 11 (scheduled installs), feature 3 (install and uninstall steps),
@@ -1751,8 +1808,9 @@ signed with the job key).
 4. Prohibited software and its reports; removal only when chosen.
 5. Dependencies, enforced versions, **the newest version a package manager
    offers** for each package-manager entry (requirement 5's "Track
-   available software versions"), read by a fixed query on a device of
-   each platform, rollback where the installer allows it, and the
+   available software versions"), taken from the search's copies of the
+   indexes where they have it, otherwise read by a fixed query on a
+   device of each platform, rollback where the installer allows it, and the
    one-updater rule with the engine.
 
 **Windows and Linux.**
@@ -1785,8 +1843,9 @@ catalog and the inventory are still searched.
   text, an ID is checked by the `software` kind's patterns, and an
   index's signature is checked before it is used;
 * **uninstall commands from the registry run as SYSTEM**: only
-  machine-wide entries, the uninstaller and its folder checked, and
-  started without a shell (above);
+  machine-wide entries; the key, the uninstaller, the files beside it and
+  its folders checked; interpreters and script hosts refused; the path
+  parsed strictly and started without a shell (above);
 * **storage**: today's limit is 64 MiB in PostgreSQL, and Office or Adobe
   installers are larger; slice 3's ADR decides where installers live and
   what that does to backups and the updater's copy;
@@ -2026,7 +2085,7 @@ need nothing, go ahead of it.
 | 20 | 2 Posture, P1 | This | Reads hardening's results (Linux's from step 3, Windows' from W1 at step 7) and patching; no new collection, and nothing from feature 8 until P2 and P3 |
 | 21 | 12 AD health, slice 1, with F1's domain-controller part | This | On F2 (step 15) and W1's Windows machines under KVM with their domain (step 7) |
 | 22 | 11 Scheduled tasks, with F3 and F4 | This | Needs ADR-0053's windows, notices and planned restarts (step 10), step-up (step 17), and for its slice 4 the approvals (step 19) |
-| 23 | 5 Software catalog, with the owner's *Software* section, search as you type and quick uninstall (2026-11-22) | This | Its bundles use feature 11's scheduler and targets; shared entries need step-up (step 17). The section, its search and the quick uninstall need nothing from earlier steps, so they can move ahead if the owner asks |
+| 23 | 5 Software catalog, with the owner's *Software* section, search as you type and quick uninstall (2026-11-22) | This | Its bundles use feature 11's scheduler and targets; shared entries need step-up (step 17). The section and its search need nothing from earlier steps, and neither does the quick uninstall as an action of the `software` kind (1641's planned restart waits for step 10), so they can move ahead if the owner asks |
 | 24 | 3 Automation, slices 1 to 3 | This | On feature 11's engine, ADR-0053's journal and planned restarts, feature 10's health report (step 12), and for its slice 3 the approvals (step 19) |
 | 25 | ADR-0057, ADR-0058, ADR-0059 (earlier step 10) | Earlier | Before automation's settings action (feature 3, slice 4); in the earlier plan's own order |
 | 26 | Log collection (earlier step 11) | Earlier | Needs W1's ownership reader (step 7); before the slices that read collected events (below) |

@@ -844,7 +844,7 @@ typed input not recorded. Both are in the
 
 ## A Software section, and a quick uninstall
 
-On 2026-11-22, about requirement 5:
+On 2026-11-22 (placed under requirement 5 in review):
 
 > One thing to add. We should have a seperate navbar for Install, update or remove software. also when a user types a package name, it should automaticly show matchins names. So if i start typeing Notepad, it should should all possable matchs(Like Notepad++) got it? add that to the plan
 
