@@ -1,7 +1,7 @@
 # ADR-0065: Hardware diagnostics and health monitoring
 
-* Status: Accepted (2026-11-21, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-21, after an independent review); slice 1
+  implemented in PR #86, the later slices not yet.
 * Revised after an independent review (2026-11-21): commands allowed
   whole rather than by opcode, kernel default timeouts, failing disks
   that stay in view, and the review's other findings, each in its
