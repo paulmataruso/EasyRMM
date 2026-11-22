@@ -371,13 +371,20 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
     with a prerelease label for previews), not by starting it;
   * the architecture from the file's PE header (x64, ARM64 or x86);
   * *preview* from the folder's name or the prerelease label;
-  * for Windows PowerShell 5.1, the version from
+  * for Windows PowerShell 5.1, the major and minor version from
     `HKLM\SOFTWARE\Microsoft\PowerShell\3\PowerShellEngine`
-    (`PowerShellVersion`).
+    (`PowerShellVersion`), with the build and revision of its engine's
+    file version (`System.Management.Automation.dll` in the .NET
+    Framework's assembly cache, `GAC_MSIL`).
 
   Slice 1 checks on the CI runners that both agree with
   `$PSVersionTable.PSVersion` as each PowerShell prints it. If either
   does not, another source is chosen there and this section amended.
+  *Amended in slice 1:* the registry's value alone did not agree on
+  2026-11-22: on `windows-11-arm` it was 5.1.26100.9818 while
+  `$PSVersionTable.PSVersion` was 5.1.26100.9974 (on `windows-latest`
+  both were 5.1.26100.33822). The engine's build and revision agree on
+  both runners, as the test as LocalSystem asserts.
 * **Which one a `pwsh` run uses**: a usable, stable install of version 7
   or later in the computer's own architecture (x64 on x64; ARM64 on
   ARM64, then x64, which ARM64 Windows emulates), the newest version
