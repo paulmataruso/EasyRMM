@@ -2722,16 +2722,22 @@ pkg_remove() {
 	shift
 	PKG_ERR=
 	pr_rc=0
+	pr_min=15
 	case $FAMILY in
 	debian)
 		t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=300 remove "$@" || pr_rc=$?
-		# shellcheck disable=SC2046 # package names, one word each
-		[ "$pr_rc" -ne 0 ] || [ -z "$pr_purge" ] || t 900 dpkg --purge $(printf '%s' "$pr_purge" | tr ',' ' ') || pr_rc=$?
+		# The purge gets the installation's limit: aide-common's undoes, one
+		# file at a time, what its configuration did.
+		if [ "$pr_rc" -eq 0 ] && [ -n "$pr_purge" ]; then
+			pr_min=25
+			# shellcheck disable=SC2046 # package names, one word each
+			t 1500 dpkg --purge $(printf '%s' "$pr_purge" | tr ',' ' ') || pr_rc=$?
+		fi
 		;;
 	*) t 900 rpm -e "$@" || pr_rc=$? ;;
 	esac >"$TX_DIR/pkg.log" 2>&1
 	[ "$pr_rc" -eq 0 ] || {
-		pkg_failed "$pr_rc" 15
+		pkg_failed "$pr_rc" "$pr_min"
 		return 1
 	}
 }
