@@ -310,7 +310,10 @@ All notable changes to this project are documented here. The format follows
   them. Other spellings the system opens as the same zone, such as
   `Europe//London` or `./Europe/London`, were accepted and are now refused
   with the field named; upgrading rewrites any stored one as the name it
-  stood for.
+  stood for. Names held only by the server image's own zone files, such
+  as `right/Europe/London` or `posixrules`, are left as stored and must be
+  changed the next time that organization or site is edited: the console
+  shows the error under the time zone field.
 - **A downloaded report's audit record no longer quotes a search that can
   name a person.** For **Device inventory**, whose names are often their
   users', the two patch reports and **Contacts**, the record says

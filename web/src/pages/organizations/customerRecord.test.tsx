@@ -144,6 +144,45 @@ describe("the organization's record", () => {
     expect(hours).toHaveAccessibleDescription("Periods of opening overlap. Make each end before the next begins.");
   });
 
+  it("shows the server's refusal of an email address under the field, in both forms", async () => {
+    const user = userEvent.setup();
+    const refusal = "Enter one email address, such as help@example.com.";
+    const server = installFakeApi({
+      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...DOC] })),
+      "GET /organizations/:id": ok(NORTHWIND),
+      "GET /organizations/:id/sites": ok({ items: [] }),
+      "GET /organizations/:id/contacts": ok({ items: [] }),
+      "PUT /organizations/:id/details": fail(422, "validation_failed", "Check the details.", { mainEmail: refusal }),
+      "POST /organizations/:id/contacts": fail(422, "validation_failed", "Check the details.", { email: refusal }),
+    });
+    // What the server judges reaches it, whatever a browser would think of it,
+    // and its message shows under the field it is about.
+    const refused = async (form: HTMLElement, label: string, save: string) => {
+      const field = within(form).getByLabelText(label);
+      await user.clear(field);
+      await user.type(field, "help desk");
+      await user.click(within(form).getByRole("button", { name: save }));
+      const message = await within(form).findByText(refusal);
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field.parentElement).toContainElement(message);
+      expect(field.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+
+    renderApp("/organizations/o1");
+    const card = (await screen.findByRole("heading", { name: /Contact information/ })).closest("section")!;
+    await user.click(within(card).getByRole("button", { name: "Edit" }));
+    await refused(await dialog("Edit contact information"), "Main email", "Save");
+    expect((server.call("PUT /organizations/:id/details").body as { mainEmail: string }).mainEmail).toBe("help desk");
+    await user.click(within(await dialog("Edit contact information")).getByRole("button", { name: "Cancel" }));
+
+    await user.click(await screen.findByRole("tab", { name: "Contacts" }));
+    await user.click(await screen.findByRole("button", { name: "Add contact" }));
+    const form = await dialog("New contact");
+    await user.type(within(form).getByLabelText(/^Name/), "Kim Example");
+    await refused(form, "Email", "Add contact");
+    expect((server.call("POST /organizations/:id/contacts").body as { email: string }).email).toBe("help desk");
+  });
+
   it("lists contacts a page at a time and adds one to a site", async () => {
     const user = userEvent.setup();
     let added: Contact | null = null;

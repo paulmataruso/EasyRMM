@@ -27,9 +27,12 @@ func TestZone(t *testing.T) {
 	if Zone("Mars/Olympus_Mons") != time.UTC {
 		t.Error("an unknown zone is not UTC")
 	}
-	// The system opens these as Europe/London; they are read, not kept.
+	// A host with zone files of its own opens these as Europe/London, under
+	// the name given; one without them has only the embedded database, which
+	// does not know them, so they are UTC. Either way they are read, not
+	// kept, and never answered with the kept zone.
 	for _, name := range []string{"Europe//London", "Europe/./London", "./Europe/London"} {
-		if got := Zone(name); got == first || got.String() != name {
+		if got := Zone(name); got == first || (got != time.UTC && got.String() != name) {
 			t.Errorf("Zone(%q) = %v", name, got)
 		}
 		if ValidZone(name) {

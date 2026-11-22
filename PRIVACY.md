@@ -57,17 +57,18 @@ described in the row on accounts above. Only people with `doc.view` at
 the customer's organization, or at the contact's site, can read contacts;
 a site's people see that site's contacts and not the organization's own.
 
-The audit log records each contact added, changed or deleted, by its ID:
-which fields were set or changed, the contact's priority (primary,
-secondary or none) and whether they are an emergency contact, but not
-their name, job title, email address, phone numbers or note. When a
-contact becomes the primary one, the contact it replaces gets a record of
-its own for its change to secondary. Contacts deleted with their site or
-organization get no records of their own; the record of that deletion
-keeps how many contacts and places were deleted with it, and nothing else
-about them. Changes to the rest of the customer record are recorded by
-the names of the fields that changed, not their values; a place's record
-keeps its kind and the ID of the place it is inside, not its name.
+The audit log records each contact added, changed or deleted on its own,
+by its ID: which fields were set or changed, the contact's priority
+(primary, secondary or none) and whether they are an emergency contact,
+but not their name, job title, email address, phone numbers or note.
+When a contact becomes the primary one, the contact it replaces gets a
+record of its own for its change to secondary. Contacts deleted with
+their site or organization get no records of their own; the record of
+that deletion keeps how many contacts and places were deleted with it,
+and nothing else about them. Changes to the rest of the customer record
+are recorded by the names of the fields that changed, not their values;
+a place's record keeps its kind and the ID of the place it is inside,
+not its name.
 
 Contacts are kept until someone deletes them, or deletes their site or
 organization, and can be exported with the **Contacts** report; the
@@ -80,10 +81,11 @@ the audit log are kept for the periods set in the deployment's `.env`
 `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default, `EASYRMM_JOB_RETENTION`,
 `EASYRMM_AUDIT_RETENTION`), and devices and accounts until someone removes
 them. A run's output can also be removed at once from its page.
-EasyRMM makes no backups of its own. A backup the operator makes
-([Backup and restore](docs/operations/backup-restore.md)) keeps the data
-as it was when the backup was made, including contacts deleted since,
-until the operator deletes that backup.
+A backup of the deployment, whether one the operator makes
+([Backup and restore](docs/operations/backup-restore.md)) or one EasyRMM
+takes automatically, such as before an upgrade, keeps the data as it was
+when it was made, including contacts deleted since, until that backup is
+deleted.
 
 ## Connections it makes on its own
 
