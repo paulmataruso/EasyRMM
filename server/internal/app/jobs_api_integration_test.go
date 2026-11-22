@@ -45,6 +45,7 @@ type jobView struct {
 	ID               string         `json:"id"`
 	ArgCount         int            `json:"argCount"`
 	CanViewArguments bool           `json:"canViewArguments"`
+	CanDownload      bool           `json:"canDownloadOutput"`
 	Counts           map[string]int `json:"counts"`
 	Total            int            `json:"total"`
 	Finished         bool           `json:"finished"`

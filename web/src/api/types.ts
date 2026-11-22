@@ -869,6 +869,11 @@ export interface Job {
   argCount?: number;
   /** Whether the caller may read the values: they hold job.view_sensitive where one of the runs they see is. */
   canViewArguments?: boolean;
+  /**
+   * Only in the response for one job: whether GET /jobs/{id}/output.zip would hold something, a finished run the caller
+   * sees at a site where they hold job.view_sensitive (ADR-0064).
+   */
+  canDownloadOutput?: boolean;
   canCancel: boolean;
 }
 
@@ -985,6 +990,20 @@ export interface HardeningPorts {
   unknown?: string[];
 }
 
+/** Failed sign-ins in a Windows computer's Security log (ADR-0054, Accounts). */
+export interface HardeningExposure {
+  /** Failed sign-ins from public addresses, or 10 or more for one account within 15 minutes. */
+  exposed: boolean;
+  /** The failed sign-ins from public addresses: the accounts tried and the addresses. */
+  accounts: string[];
+  addresses: string[];
+  /** Accounts with 10 or more failed sign-ins within 15 minutes. */
+  bursts?: string[];
+  /** How far back the log was read; null, with sinceReason, where the oldest record read is dated after the check. */
+  since: string | null;
+  sinceReason?: string;
+}
+
 /** One module as the job that last covered it found it. */
 export interface HardeningModule {
   module: string;
@@ -996,6 +1015,8 @@ export interface HardeningModule {
   changes?: string[];
   /** The firewall's only. */
   ports?: HardeningPorts;
+  /** Windows' accounts module only. */
+  exposure?: HardeningExposure;
   /** Null once the job is deleted. */
   jobId: string | null;
   checkedAt: string;
@@ -1358,6 +1379,19 @@ export interface AlertEntry {
   resolvedBy?: string;
   resolution?: AlertResolution;
   canManage: boolean;
+}
+
+/** The measurement a processor, memory or disk use alert watches, around its window (GET /alerts/{id}/metrics): from
+ * the policy's minutes before it opened until it resolved or now, with some time either side. */
+export interface AlertMetrics {
+  metric: "cpu" | "memory" | "disk";
+  threshold: number | null;
+  from: string;
+  to: string;
+  bucketSeconds: number;
+  /** The window starts later than the alert's: earlier measurements are no longer kept. */
+  trimmed: boolean;
+  samples: { at: string; value: number }[];
 }
 
 /** Active alerts on one device (GET /alerts/devices), for the alerts tree. */

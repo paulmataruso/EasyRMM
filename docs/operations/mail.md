@@ -23,8 +23,19 @@ Mail server** says which:
   patching engine counts them (UTF-16 units), does not stop the server
   from starting or sending, so that a deployment that had one survives an
   upgrade; but the engine cannot be given it, so the server logs an error
-  at start and the page shows it. Shorten it and restart. A Microsoft 365
-  application signs in from `.env` too (see [Microsoft 365](#microsoft-365)).
+  at start and the page shows it. Shorten it and restart. Write a sender
+  with a name in double quotes:
+
+  ```sh
+  EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"
+  ```
+
+  Unquoted reads the same. Inside double quotes, write `\"` for a quote,
+  `\\` for a backslash and `$$` for a `$`; inside single quotes, everything
+  is as written but `\'`, a quote. `.env` is read by Compose's rules
+  ([the updater's guide](updater.md#env)); `setup.sh`'s `--smtp-*`
+  options refuse a `$` in a mail setting. A Microsoft 365 application
+  signs in from `.env` too (see [Microsoft 365](#microsoft-365)).
 * **The console**: otherwise, the mail server a super administrator sets
   under Settings → Notifications. It applies at once, without a restart.
 * **None**: neither is set.

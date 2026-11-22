@@ -73,11 +73,12 @@ deployment() {
   chmod -R a+rX "$d"
   echo "$d"
 }
-# setup DIR ARGS...: setup.sh in DIR's deploy/, its output in DIR/out and DIR/err.
+# setup DIR ARGS...: setup.sh in DIR's deploy/, its output in DIR/out and
+# DIR/err; --no-updater, so that no updater's state is made on this host.
 setup() {
   local d="$1"
   shift
-  (cd "$d/deploy" && PATH="$work/bin:$PATH" ./scripts/setup.sh "$@") > "$d/out" 2> "$d/err" < /dev/null
+  (cd "$d/deploy" && PATH="$work/bin:$PATH" ./scripts/setup.sh "$@" --no-updater) > "$d/out" 2> "$d/err" < /dev/null
 }
 env_of() { sed -n "s/^$2=//p" "$1/deploy/.env" | tail -n 1; }
 owner_mode() { stat -c '%u:%g %a' "$1"; }
@@ -217,6 +218,19 @@ for line in 'EASYRMM_SMTP_FROM="Smith $$ Jones <third@m365.example.com>"' 'EASYR
   [[ $key != EASYRMM_SMTP_FROM ]] || grep -qF "leave it out of the sender's name" "$d/err" || fail "$key with a \$: $(cat "$d/err")"
   cmp -s "$work/env.dollar" "$d/deploy/.env" || fail "$key with a \$: .env changed"
 done
+# A value env_value cannot read as Compose does (an escape in double
+# quotes): its refusal stops setup.sh, wherever the value is read, rather
+# than be taken for an empty value; .env is left as it was.
+# shellcheck disable=SC2016 # The \$ is .env's, not the shell's.
+for line in 'EASYRMM_SMTP_AUTH="x\$y"' 'EASYRMM_SMTP_TLS="start\ttls"' 'EASYRMM_SMTP_HOST="smtp\n.example.com"' \
+  'EASYRMM_SMTP_FROM="it\a@m365.example.com"' 'EASYRMM_SMTP_TENANT_ID="\0"' 'EASYRMM_SMTP_CLIENT_SECRET_FILE="\b"' \
+  'EASYRMM_SMTP_CLIENT_CERT_FILE="\f"'; do
+  key=${line%%=*}
+  { grep -v "^$key=" "$work/env.saved"; printf '%s\n' "$line"; } > "$work/env.escaped"
+  cp "$work/env.escaped" "$d/deploy/.env"
+  refused "$d" "$key's double-quoted value holds" --smtp-client-id "$CLIENT"
+  cmp -s "$work/env.escaped" "$d/deploy/.env" || fail "$key with an escape: .env changed"
+done
 cp -p "$work/env.saved" "$d/deploy/.env"
 
 # --- Root, and --upgrade's owners and modes -----------------------------------
@@ -289,7 +303,7 @@ d=$(deployment asked)
 {
   sleep 3
   printf '%s\n' "$SECRET"
-} | script -qefc "cd '$d/deploy' && PATH='$work/bin:$PATH' ./scripts/setup.sh --hostname 127.0.0.1 --data-root '$d/data' --smtp-from rmm@m365.example.com --smtp-tenant-id $TENANT --smtp-client-id $CLIENT" \
+} | script -qefc "cd '$d/deploy' && PATH='$work/bin:$PATH' ./scripts/setup.sh --hostname 127.0.0.1 --data-root '$d/data' --smtp-from rmm@m365.example.com --smtp-tenant-id $TENANT --smtp-client-id $CLIENT --no-updater" \
   "$d/typescript" > "$d/out" 2>&1 || fail "asked: $(cat "$d/out")"
 grep -qF "client secret (its Value, not shown)" "$d/typescript" || fail "asked: no prompt: $(cat "$d/typescript")"
 grep -qF -- "$SECRET" "$d/typescript" && fail "asked: the secret was echoed"

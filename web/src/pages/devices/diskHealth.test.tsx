@@ -220,8 +220,16 @@ describe("a disk's panel", () => {
     expect(within(days).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Day (UTC)", "Worst state", "Highest temperature", "Wear", "Media errors"]);
     expect(within(days).getAllByRole("row")[1]!.textContent).toBe(`${formatDay("2026-11-01T00:00:00Z")}Failing44 °C12%3`);
 
-    const alerts = within(panel).getByRole("heading", { name: "Open alerts" }).closest("section") as HTMLElement;
-    expect(within(alerts).getByText("Disk failing", { selector: "span.font-medium" })).toBeInTheDocument();
+    // Its open alerts pulse and are counted, as on the Overview's Alerts card.
+    const alerts = within(panel).getByRole("heading", { name: "Open alerts 1 active" }).closest("section") as HTMLElement;
+    expect(within(alerts).getByRole("listitem")).toHaveClass("alert-active-pulse", "alert-active-pulse--row");
+    expect(within(alerts).getByTitle("1 active alert")).toHaveClass("alert-active-pulse");
+    // The alert's name opens its card over the device's page.
+    const link = within(alerts).getByRole("link", { name: "Disk failing, details" });
+    expect(link).toHaveAttribute("href", "/devices/d1?tab=hardware&alert=a9");
+    // The row pulses: hover underlines and keeps the pulse's colours.
+    expect(link).toHaveClass("hover:underline");
+    expect(link.className).not.toMatch(/hover:text-/);
     expect(within(alerts).getByText("Critical")).toBeInTheDocument();
     expect(within(alerts).getByRole("link", { name: "The device's alerts" })).toHaveAttribute("href", "/alerts?deviceId=d1&status=all");
 

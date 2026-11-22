@@ -5,6 +5,7 @@ package app_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -164,6 +165,45 @@ func TestAlertsAPI(t *testing.T) {
 	other.expect(http.StatusOK, "GET", "/api/v1/alerts/devices", nil, &counts)
 	if len(counts.Items) != 0 {
 		t.Fatalf("alerts by device in another organization %+v", counts.Items)
+	}
+
+	// An alert's card: its measurement over its window, and the policy's
+	// openings on the device, for those who see the device's alerts only.
+	var metrics struct {
+		Metric        string
+		Threshold     *int
+		From, To      string
+		BucketSeconds int
+		Trimmed       *bool
+		Samples       []struct {
+			At    string
+			Value float64
+		}
+	}
+	for _, c := range []*client{admin, viewer} {
+		c.expect(http.StatusOK, "GET", "/api/v1/alerts/"+disk.ID+"/metrics", nil, &metrics)
+		if metrics.Metric != "disk" || *metrics.Threshold != 90 || metrics.BucketSeconds != 60 || metrics.Trimmed == nil || *metrics.Trimmed ||
+			len(metrics.Samples) == 0 || metrics.Samples[0].Value != 96 {
+			t.Fatalf("disk alert's measurements %+v", metrics)
+		}
+	}
+	wantStatus(t, other.do("GET", "/api/v1/alerts/"+disk.ID+"/metrics", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("GET", "/api/v1/alerts/nope/metrics", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("GET", "/api/v1/alerts/00000000-0000-0000-0000-000000000001/metrics", nil), http.StatusNotFound, "not_found")
+	other.expect(http.StatusOK, "GET", "/api/v1/alerts?status=all&policyId="+p.ID, nil, &alerts)
+	if len(alerts.Items) != 0 {
+		t.Fatalf("another organization's alerts by policy %+v", alerts.Items)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/alerts?status=all&deviceId="+device.ID+"&policyId="+p.ID, nil, &alerts)
+	if len(alerts.Items) != 1 || alerts.Items[0].Name != "HQ memory" {
+		t.Fatalf("the policy's alerts on the device %+v", alerts.Items)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/alerts?status=all&policyId="+p.ID+"&subject=sda", nil, &alerts)
+	if len(alerts.Items) != 0 {
+		t.Fatalf("another subject's alerts %+v", alerts.Items)
+	}
+	for _, q := range []string{"policyId=x", "subject=" + strings.Repeat("x", 65)} {
+		wantStatus(t, admin.do("GET", "/api/v1/alerts?"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
 	}
 	wantStatus(t, viewer.do("POST", "/api/v1/alerts/"+disk.ID+"/acknowledge", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("PATCH", "/api/v1/alert-policies/"+p.ID, map[string]any{"minutes": 4}), http.StatusForbidden, "forbidden")

@@ -67,11 +67,17 @@ mail_option() {
   mail_args=$((mail_args + 2))
 }
 
-# mail_env_value KEY: KEY's value in .env, empty without one.
-mail_env_value() {
+# mail_read VAR KEY sets VAR to KEY's value in .env, as Compose reads it,
+# empty without one. env_value refuses a value it cannot read as Compose
+# does; that refusal stops setup.sh here, wherever mail_read is called (a
+# condition included), rather than be taken for an empty value, as it
+# would be in a command's argument or inside [[ ]].
+mail_read() {
+  local mail_read_value=""
   if [[ -e .env ]]; then
-    env_value "$1"
+    mail_read_value=$(env_value "$2") || exit 1
   fi
+  printf -v "$1" '%s' "$mail_read_value"
 }
 
 # mail_set KEY VALUE has mail_write_env set KEY to VALUE in .env, unless
@@ -80,8 +86,12 @@ mail_env_value() {
 # that changes was checked first: a host name, a port, an address, a GUID,
 # a keyword or a path, none of which needs quotes in .env.
 mail_set() {
-  if grep -q "^$1=" .env && [[ "$(env_value "$1")" == "$2" ]]; then
-    return 0
+  local kept
+  if grep -q "^$1=" .env; then
+    mail_read kept "$1"
+    if [[ "$kept" == "$2" ]]; then
+      return 0
+    fi
   fi
   mail_keys+=("$1")
   mail_values+=("$2")
@@ -127,8 +137,9 @@ mail_write_env() {
 # mail_kept KEY NAME: whether .env names secrets/NAME for its setting, and the
 # file is there: a credential kept.
 mail_kept() {
-  local key="$1" name="$2"
-  [[ "$(mail_env_value "$key")" == "$mail_container_dir/$name" && -f "$data_root/secrets/$name" && ! -L "$data_root/secrets/$name" ]]
+  local key="$1" name="$2" value
+  mail_read value "$key"
+  [[ "$value" == "$mail_container_dir/$name" && -f "$data_root/secrets/$name" && ! -L "$data_root/secrets/$name" ]]
 }
 
 # mail_check_secret TEXT dies unless TEXT is a client secret: one line of
@@ -193,11 +204,12 @@ mail_validate() {
   mail_no_dollar --smtp-from "$smtp_from" "the address"
   mail_no_dollar --smtp-tenant-id "$smtp_tenant_id"
   mail_no_dollar --smtp-client-id "$smtp_client_id"
-  local key
-  for key in EASYRMM_SMTP_AUTH EASYRMM_SMTP_TLS; do
-    mail_no_dollar "${key} in .env" "$(mail_env_value "$key")"
-  done
-  if [[ -n "$smtp_tenant_id$smtp_client_id$smtp_secret_file$smtp_cert_file$smtp_key_file" || "$(mail_env_value EASYRMM_SMTP_AUTH)" == microsoft365 ]]; then
+  local key value auth tls
+  mail_read auth EASYRMM_SMTP_AUTH
+  mail_read tls EASYRMM_SMTP_TLS
+  mail_no_dollar "EASYRMM_SMTP_AUTH in .env" "$auth"
+  mail_no_dollar "EASYRMM_SMTP_TLS in .env" "$tls"
+  if [[ -n "$smtp_tenant_id$smtp_client_id$smtp_secret_file$smtp_cert_file$smtp_key_file" || "$auth" == microsoft365 ]]; then
     mail_app=true
   fi
   # What is given is checked; what .env has, the server checked.
@@ -206,10 +218,10 @@ mail_validate() {
     die "--smtp-host must be a DNS name such as smtp.example.com, or an IPv4 address"
   [[ -z "$smtp_port" || ( "$smtp_port" =~ ^[0-9]{1,5}$ && "$smtp_port" -ge 1 && "$smtp_port" -le 65535 ) ]] || die "--smtp-port must be a port, 1 to 65535"
   [[ -z "$smtp_from" || "$smtp_from" =~ $mail_address ]] || die "--smtp-from must be an email address such as rmm@example.com"
-  smtp_host=${smtp_host:-$(mail_env_value EASYRMM_SMTP_HOST)}
-  smtp_port=${smtp_port:-$(mail_env_value EASYRMM_SMTP_PORT)}
+  [[ -n "$smtp_host" ]] || mail_read smtp_host EASYRMM_SMTP_HOST
+  [[ -n "$smtp_port" ]] || mail_read smtp_port EASYRMM_SMTP_PORT
   smtp_port=${smtp_port:-587}
-  smtp_from=${smtp_from:-$(mail_env_value EASYRMM_SMTP_FROM)}
+  [[ -n "$smtp_from" ]] || mail_read smtp_from EASYRMM_SMTP_FROM
   # What was given had none, so a $ now came from .env.
   mail_no_dollar "EASYRMM_SMTP_HOST in .env" "$smtp_host"
   mail_no_dollar "EASYRMM_SMTP_PORT in .env" "$smtp_port"
@@ -223,12 +235,13 @@ mail_validate() {
 
   [[ $(id -u) -eq 0 ]] || die "a Microsoft 365 application needs root (sudo): its secret or key goes into ${data_root}/secrets"
   mail_secrets_safe
-  smtp_tenant_id=${smtp_tenant_id:-$(mail_env_value EASYRMM_SMTP_TENANT_ID)}
-  smtp_client_id=${smtp_client_id:-$(mail_env_value EASYRMM_SMTP_CLIENT_ID)}
+  [[ -n "$smtp_tenant_id" ]] || mail_read smtp_tenant_id EASYRMM_SMTP_TENANT_ID
+  [[ -n "$smtp_client_id" ]] || mail_read smtp_client_id EASYRMM_SMTP_CLIENT_ID
   mail_no_dollar "EASYRMM_SMTP_TENANT_ID in .env" "$smtp_tenant_id"
   mail_no_dollar "EASYRMM_SMTP_CLIENT_ID in .env" "$smtp_client_id"
   for key in EASYRMM_SMTP_CLIENT_SECRET_FILE EASYRMM_SMTP_CLIENT_CERT_FILE EASYRMM_SMTP_CLIENT_KEY_FILE; do
-    mail_no_dollar "${key} in .env" "$(mail_env_value "$key")"
+    mail_read value "$key"
+    mail_no_dollar "${key} in .env" "$value"
   done
   [[ -n "$smtp_tenant_id" ]] || die "--smtp-tenant-id is required: the Directory (tenant) ID from the application's Overview page in Entra"
   [[ "$smtp_tenant_id" =~ $mail_guid || ( ${#smtp_tenant_id} -le 253 && "$smtp_tenant_id" =~ $mail_domain ) ]] ||
@@ -258,7 +271,7 @@ mail_validate() {
   fi
   # A token goes only over TLS: STARTTLS unless .env says TLS from the first byte.
   mail_tls=starttls
-  [[ "$(mail_env_value EASYRMM_SMTP_TLS)" != implicit ]] || mail_tls=implicit
+  [[ "$tls" != implicit ]] || mail_tls=implicit
 }
 
 # mail_env writes the mail settings to .env: the files' paths in the
@@ -368,8 +381,7 @@ mail_files() {
 # read from it, and only the mail settings change.
 mail_only() {
   [[ -e .env ]] || die "the --smtp-* options alone need the deployment's .env here; to install, give --hostname too"
-  [[ -r .env ]] || die "cannot read .env: run setup.sh with sudo"
-  data_root=$(env_value EASYRMM_DATA_ROOT)
+  mail_read data_root EASYRMM_DATA_ROOT
   data_root=${data_root:-/srv/easyrmm}
   mail_validate
   mail_env

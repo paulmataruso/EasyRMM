@@ -1,11 +1,12 @@
 // Pieces shared by the script, job and device pages (ADR-0017).
 import { useId, useMemo, useState } from "react";
 import { Link } from "react-router";
+import { Download } from "lucide-react";
 import { useApi } from "../../api/hooks";
 import type { Job, PatchStatus, RunStatus, Script, Shell } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { CopyButton } from "../../components/Copy";
-import { Alert, Badge, cx, Dot, Field, Input, Select } from "../../components/ui";
+import { Alert, Badge, buttonClasses, cx, Dot, Field, Input, Select } from "../../components/ui";
 import { jobState, RUN_STATUS, STATUS_ORDER } from "./scriptText";
 import { selfPatching } from "./selfPatching";
 
@@ -139,8 +140,20 @@ export function CodeView({ code, label, className }: { code: string; label: stri
   );
 }
 
-/** One output stream of a run. */
-export function OutputView({ title, text, truncated, emptyLabel }: { title: string; text: string | undefined; truncated: boolean; emptyLabel: string }) {
+/** One output stream of a run; download is where the server sends it as a file, offered when the stream has something. */
+export function OutputView({
+  title,
+  text,
+  truncated,
+  emptyLabel,
+  download,
+}: {
+  title: string;
+  text: string | undefined;
+  truncated: boolean;
+  emptyLabel: string;
+  download?: string;
+}) {
   const id = useId();
   return (
     <section aria-labelledby={id} className="min-w-0">
@@ -148,7 +161,17 @@ export function OutputView({ title, text, truncated, emptyLabel }: { title: stri
         <h3 id={id} className="text-xs font-medium text-muted">
           {title}
         </h3>
-        {text ? <CopyButton text={text} /> : null}
+        {text ? (
+          <div className="flex items-center gap-1.5">
+            {download && (
+              <a href={download} download aria-label={`Download ${title.toLowerCase()}`} className={buttonClasses("secondary", "sm")}>
+                <Download className="size-3.5" aria-hidden />
+                Download
+              </a>
+            )}
+            <CopyButton text={text} />
+          </div>
+        ) : null}
       </div>
       {text ? (
         <pre

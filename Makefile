@@ -32,6 +32,11 @@ VM_CACHE ?= /var/tmp/easyrmm-vmtest
 VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/ ./agent/hardware/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
+# The updater's machine test (ADR-0052) runs on its own: it builds five
+# server images and bundles, starts the deployment nine times and restarts
+# the machine once. On an emulated machine (no KVM), four of those starts
+# took more than four hours.
+UPDATER_VM_TEST_TIMEOUT ?= 16h
 
 .PHONY: help
 help: ## Show this help
@@ -47,17 +52,19 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-, contract-, bundle- and vm-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract-, bundle-, vm- and updatertest-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
 	$(GO) vet -tags bundle ./server/internal/easypatch/
-	$(GO) vet -tags vm $(VM_PACKAGES)
+	$(GO) vet -tags vm $(VM_PACKAGES) ./updater/machinetest/
+	$(GO) vet -tags updatertest ./updater/...
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
-lint: ## golangci-lint, also over the agent built for Windows
+lint: ## golangci-lint, also over the agent built for Windows and the updater's test build
 	golangci-lint run ./...
+	golangci-lint run --build-tags updatertest ./updater/...
 	GOOS=windows golangci-lint run ./agent/... ./internal/...
 
 .PHONY: test-unit
@@ -125,6 +132,10 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
+.PHONY: test-updater-published
+test-updater-published: ## The host updater against the edge build ghcr.io's edge tag names now: verified against Sigstore's public-good instance, checked as an upgrade's first step, its server image pulled by digest (needs Docker and the internet)
+	EASYRMM_TEST_PUBLISHED=1 $(GO) test -tags integration -count=1 -v -run '^TestPublishedEdge' ./updater/internal/host/
+
 .PHONY: test-contract
 test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh
@@ -133,6 +144,11 @@ test-contract: ## EasyRMM's calls to the patching engine against a real one buil
 test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRMM_VM_IMAGE=debian-12 for one; needs qemu-system-x86_64, qemu-img, and xorriso for rocky-8)
 	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" \
 		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
+
+.PHONY: test-vm-updater
+test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start, an attempt killed and the machine restarted, a required upgrade stop, the service stopped during a backup; EASYRMM_UPDATER_TEST_AUTHENTIK=1 adds Authentik (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
+	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" EASYRMM_VM_IMAGE=debian-12 \
+		$(GO) test -tags vm -count=1 -v -timeout $(UPDATER_VM_TEST_TIMEOUT) ./updater/machinetest/
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
@@ -155,6 +171,12 @@ build-agents: ## Build the Windows and Linux agents into bin/agents (serve them 
 .PHONY: build
 build: ## Build the server binary into bin/
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o bin/easyrmm-server ./server/cmd/easyrmm-server
+
+.PHONY: updater
+updater: ## Build the host updater for this machine into deploy/updater, where setup.sh installs it from (a clone's install)
+	@v=$$(git describe --tags --match 'easyrmm-v*' --always --dirty 2>/dev/null || echo dev); v=$${v#easyrmm-}; \
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
+		-o deploy/updater/easyrmm-updater-linux-$$($(GO) env GOARCH) ./updater/cmd/easyrmm-updater
 
 # --- Web console --------------------------------------------------------------
 

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "version": "v1.0.0-rc.4.edge.174.1",
+  "commit": "8e1abd2fbf36472f106f9f00a98887c965a0a445",
+  "bundle": {
+    "file": "easyrmm-v1.0.0-rc.4.edge.174.1-deploy.tar.gz",
+    "sha256": "dfc51dc8fd138accccc2b08b2945a4a105e887873b802e1deaab6f37e2dbd9f7"
+  },
+  "easyrmm": {
+    "version": "v1.0.0-rc.4.edge.174.1",
+    "image": "ghcr.io/paulmataruso/easyrmm-server:1.0.0-rc.4.edge.174.1@sha256:b8aa1cce040d5ab243d49ca32bedd41002f775421225f659e43e29a6cbb40888"
+  },
+  "easypatch": {
+    "version": "1.12.1",
+    "image": "ghcr.io/paulmataruso/easypatch-server:1.12.1@sha256:013f668d5dbec0c9031b496a274905baeb5378afa5a82fa38b0f8063db2e9b57",
+    "agentPackages": [
+      {
+        "file": "EasyPatchAgent-1.12.1-arm64.deb",
+        "sha256": "6ecec8bae73d4a49ebc00e0f4d764d7207d699195d47bc76e5fbc7e16f04c994"
+      },
+      {
+        "file": "EasyPatchAgent-1.12.1-arm64.msi",
+        "sha256": "8a49b2129f69f5a9742db4d67a533c343e1e0cb3a829c110c279a67de3f582a7"
+      },
+      {
+        "file": "EasyPatchAgent-1.12.1-arm64.rpm",
+        "sha256": "8570924bcde039a3aa0c3eb680ab233a64a6ed92eef66115e2bd2e598d95593e"
+      },
+      {
+        "file": "EasyPatchAgent-1.12.1-x64.deb",
+        "sha256": "071493671b252ec2a26cafb64df0e9c8b7be4d33ec5a8dfaa2c96d4492a69655"
+      },
+      {
+        "file": "EasyPatchAgent-1.12.1-x64.msi",
+        "sha256": "ede359d76ce9e855a513813de0821db0dbae02f9958274d545eebff6218507b3"
+      },
+      {
+        "file": "EasyPatchAgent-1.12.1-x64.rpm",
+        "sha256": "1c3c8cbd94ddbc73cd2b0940af844f3a5568c44a7bed8f18e60e45fbf45d5a98"
+      }
+    ]
+  },
+  "postgres": {
+    "major": 18,
+    "image": "postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b"
+  },
+  "meshcentral": {
+    "image": "ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d"
+  },
+  "authentik": {
+    "included": true,
+    "version": "2026.8.5",
+    "image": "ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5"
+  },
+  "images": [
+    "ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5",
+    "ghcr.io/paulmataruso/easypatch-server:1.12.1@sha256:013f668d5dbec0c9031b496a274905baeb5378afa5a82fa38b0f8063db2e9b57",
+    "ghcr.io/paulmataruso/easyrmm-server:1.0.0-rc.4.edge.174.1@sha256:b8aa1cce040d5ab243d49ca32bedd41002f775421225f659e43e29a6cbb40888",
+    "ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d",
+    "postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b"
+  ]
+}

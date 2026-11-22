@@ -44,6 +44,13 @@ floors=(
   "server/internal/devices                 88"
   # Scripts and jobs, inventory, monitoring and alerts, and their APIs.
   "server/internal/jobs                    85"
+  # Windows hardening (ADR-0054): the ownership reader's package and the
+  # related-controls tables, their generator and extraction.
+  "internal/winpolicy                      95"
+  "server/internal/jobs/hardening/controls 95"
+  "server/internal/jobs/hardening/controls/extract 95"
+  # Its command: run is tested, main only parses flags.
+  "server/internal/jobs/hardening/controls/cmd/gencontrols 50"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
   "server/internal/httpapi/jobsapi         90"
@@ -89,6 +96,12 @@ floors=(
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
+  # The host updater (ADR-0052): it runs as root, verifies what it
+  # installs, and replaces the whole deployment.
+  "updater/internal/release                90"
+  "updater/internal/fetch                  90"
+  "updater/internal/host                   80"
+  "updater/cmd/easyrmm-updater             75"
   # The endpoint agent. Its end-to-end run in a container is not
   # instrumented; these floors come from its unit tests.
   "agent/client                            90"

@@ -138,6 +138,61 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Hardening checks for Windows computers and servers, through the API**
+  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
+  W1; [guide](docs/operations/hardening.md#windows-computers-and-servers)).
+  `POST /api/v1/jobs/hardening` takes `"platform": "windows"` and checks 23
+  modules, from accounts and the firewall to BitLocker and LAPS, with
+  Windows PowerShell 5.1 as LocalSystem. A check changes nothing it
+  reports on. For each setting it reports the value, what EasyRMM wants,
+  and who else owns it: Group Policy (read from Windows' own record of what
+  it applied), registry preference items, an MDM, Defender for Endpoint, a
+  Configuration Manager client, DSC, Azure machine configuration, OSConfig,
+  Tamper Protection, or another antivirus or firewall (on servers, another
+  vendor's filtering platform provider). A value a Group Policy object
+  deletes is Group Policy's. Where EasyRMM cannot tell, the setting is
+  *check only*, with the reason, a record that could not be read
+  included. What the check could not read is never taken for an answer:
+  such a setting is *unknown* with the error, a module none of whose
+  settings could be read (or whose Defender or BitLocker state could not
+  be) *failed*, and a role or join Windows did not report *unknown*, which
+  makes the computer check only and what turns on whether it is a domain
+  controller *unknown* too. On a computer enrolled in an MDM every value
+  no other owner holds is *check only*, until the MDM reader is proven on
+  an Intune-enrolled computer. The accounts module reports whether the
+  computer is exposed: failed sign-ins from public addresses, or 10 or
+  more for one account within 15 minutes. The platform says which
+  Windows it is, its role, how it is joined, and whether apply will be
+  supported there. Each module lists
+  the NIST SP 800-53, SP 800-171 and ISO/IEC 27001 controls that DISA's and
+  NIST's published mappings relate it to, with their sources. Every run
+  first checks `%ProgramData%\EasyRMM\Hardening`, where apply will keep its
+  record. It refuses a folder that someone other than SYSTEM or
+  Administrators could write to, or that is reached through a link. The
+  console's **Hardening** tab and its check dialog stay Linux's until W3;
+  a checked Windows device's summary shows in **Devices**. Applying and
+  undoing come with W2.
+- **Downloading a job's output and results** (ADR-0064, slice 1). A run's
+  page offers **Download** beside **Copy** on each stream, and
+  **Download run** (the run as JSON, both streams with it); a job's page
+  offers **Download output (ZIP)**, a folder for each finished run the
+  user may read and `runs.csv` saying for every run whether its output is
+  in, and **Download results (CSV)**, every run's status, exit code, error
+  and times without output. Each is shown only where it can work. Output
+  downloads go through ADR-0063's reads: `job.view_sensitive` at the run's
+  site, and each recorded as *Downloaded job output* with what was
+  downloaded, in the same transaction. The archive records every run it
+  holds and commits those records before the first byte is sent; if they
+  cannot be written nothing is sent, and output removed in between is
+  listed as removed. Each person may download six archives at once, then
+  one every 10 seconds (up to 11 in the first minute, six a minute after,
+  counted by each server process); another is answered 429 with
+  `Retry-After`. The results need only
+  `job.view`, are recorded as
+  *Downloaded job results* (`job.results_export`), and neutralize formula
+  cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
+  `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
+  ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends
@@ -173,9 +228,8 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-- **The server can be held by the updater** (ADR-0052's server side; the
-  updater itself is not built yet). `setup.sh` makes
-  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+- **The server can be held by the updater** (ADR-0052's server side).
+  `setup.sh` makes `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
   server and the engine's worker mount read-only at
   `/run/easyrmm-updater`. While a file
   named `hold` exists there, the server answers its health check and
@@ -205,6 +259,58 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
+  root, `setup.sh` installs it with a systemd service and a timer (hourly,
+  and five minutes after the host starts),
+  configured in `/etc/easyrmm/updater.conf` (`--no-updater` installs
+  none; `--auto-upgrade` turns automatic upgrades on, which are off
+  otherwise). `easyrmm-updater upgrade [version]` verifies the release or
+  edge build against its Sigstore attestation for this repository's
+  workflow, checks the bundle and every image against its manifest, pulls
+  while the server runs, stops it, backs up the data root (PostgreSQL's
+  whole cluster with it, so Authentik's database too where it is
+  installed) and the deployment, checking each copy against its source,
+  sets the new bundle up with its `setup.sh --upgrade`,
+  starts it held and confirms it; when the new version does not start, it
+  restores the backup and records the rollback in the audit log.
+  `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
+  after saying what it loses; `status` and `check` change nothing. A
+  version whose manifest names a required upgrade stop (`upgradeFrom`)
+  above the lowest of the running server's version, `.env`'s, the
+  updater's record and the updater's own is refused before anything
+  stops, naming the version to install first; automatic upgrades install
+  that stop first, and never go below the highest of the first three. An
+  attempt cut short (killed, or the host restarted) is finished by the
+  next run from what it recorded, which is on the disk before each step
+  begins. A command of its killed by a signal brings the previous version
+  back at once without counting against the version, and the updater's
+  own process ending during the stop or the backup is finished so by the
+  next run; after two attempts at one version cut short so, automatic
+  upgrades wait for an operator, and `status` says why, so that no version
+  takes the server down every night. A step it cannot record from step 5 on, a command
+  killed once a stop was asked for, or bringing the previous version back
+  cut short, stops it where it is, the server held, for the next run.
+  systemd's stop (`KillMode=mixed`) and Ctrl-C reach the updater alone,
+  which runs on to the attempt's end for up to 30 minutes. After a
+  rollback that failed the updater does nothing until it is run with
+  `--deployment-repaired`. It refuses, before anything stops, a data root
+  holding links at its top, links anywhere that lead out of it (a mount's
+  way included) or mount points, a host without room on each disk for
+  everything that goes on it, a `.env` it could read otherwise than
+  Compose does or that sets a Compose setting but `COMPOSE_PROFILES`,
+  another Compose file beside `docker-compose.yml`, and a volume a backup
+  would not hold. `.env` is read by Compose's rules, by the updater and
+  `setup.sh` alike, so a quoted value, such as a sender with a name
+  (`EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"`), is read as Compose
+  reads it. A version that ran out of room once the deployment stopped
+  waits for an operator, and `status` says how many bytes it was short.
+  Run as root, `setup.sh` holds the updater's lock for its whole run, and
+  changes nothing while an attempt runs. The updater unpacks bundles into
+  `/opt/easyrmm`, root's, through links only root can change, and removes
+  only those. Each
+  bundle carries it; a clone builds it with `make updater`. Guide:
+  [the host updater](docs/operations/updater.md). The console's requests
+  (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
@@ -291,6 +397,32 @@ All notable changes to this project are documented here. The format follows
   runs the same check at start, after every change and daily, logs it, and
   the mail server page shows the last one, with the application's
   certificate and its end date, warned of from 30 days before.
+- **Active alerts pulse in red in the console.** On a device's page,
+  every active alert in the **Alerts** card pulses slowly in red (a
+  resolved one never does), and the card's title shows how many are
+  active. On the **Alerts** page and in the menu's **Alerts** tree, the
+  name of a device with an active critical alert pulses too, with the
+  critical icon beside it. One cycle takes 1.8 seconds, only text colour
+  and a soft tint change, every state keeps 4.5:1 contrast in both themes,
+  and with reduce motion turned on the red holds still. **Stop flashing**,
+  on the Alerts page and a device's Alerts card, holds it still in this
+  browser too. A disk's panel on the Hardware tab pulses and counts its
+  open alerts the same way. Severity badges, icons and counts keep saying
+  the same in words. See
+  [What pulses in red](docs/operations/alerts.md#what-pulses-in-red).
+- **A detailed card for every alert.** Select an alert's name wherever
+  alerts are listed (the **Alerts** page, a device's **Alerts** card, the
+  dashboard and a disk's panel) for everything recorded about it: its
+  device, site and organization; the condition, policy and values that
+  opened it; a chart of the measurement around it with the threshold and
+  the time it was open; for disk health, the disk's facts; its times and
+  acknowledgement; what it means and what to do next; the policy's other
+  alerts on the device; and the raw JSON to copy. The card has its own
+  address; **Close**, Escape and **Back** close it. An alert older than
+  the measurements kept charts what is kept, and says so. The API adds
+  `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
+  on `GET /api/v1/alerts`. See
+  [An alert's card](docs/operations/alerts.md#an-alerts-card).
 
 ### Changed
 

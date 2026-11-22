@@ -40,6 +40,11 @@ linters:
       - path: agent/.*windows.*\.go
         linters: [gosec]
         text: "G103:"
+      # So do the Windows tests' helpers, for registry calls x/sys does not
+      # wrap (a registry link). Other gosec rules still apply.
+      - path: internal/wintest/
+        linters: [gosec]
+        text: "G103:"
 
 formatters:
   enable:

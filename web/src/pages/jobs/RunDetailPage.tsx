@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { CircleStop, Trash2 } from "lucide-react";
-import { api } from "../../api/client";
+import { CircleStop, Download, Trash2 } from "lucide-react";
+import { api, API_BASE } from "../../api/client";
 import { auditedRead, useApi, useApiMutation } from "../../api/hooks";
 import type { JobRun, JobRunOutput, RunStatus } from "../../api/types";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Button, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
+import { Alert, Button, buttonClasses, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { OutputView, RunStatusBadge } from "../scripts/parts";
 import { formatElapsed, isOpen, runElapsed } from "../scripts/scriptText";
@@ -69,6 +69,8 @@ export function RunDetailPage() {
   const waiting = waitingFor(r);
   // The server says whether this caller may remove output at the run's site.
   const removable = hasOutput(r) && Boolean(r.canRemoveOutput);
+  // The run as JSON, with both streams: for a finished run whose output the caller may read and was not removed (ADR-0064).
+  const downloadable = Boolean(r.canViewOutput) && !open && !r.outputRemovedAt;
 
   return (
     <>
@@ -117,10 +119,20 @@ export function RunDetailPage() {
           title="Output"
           className="min-w-0 xl:col-span-2"
           actions={
-            removable && (
-              <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
-                Remove output
-              </Button>
+            (downloadable || removable) && (
+              <div className="flex items-center gap-1.5">
+                {downloadable && (
+                  <a href={outputDownload(r.id, "json")} download className={buttonClasses("secondary", "sm")}>
+                    <Download className="size-3.5" aria-hidden />
+                    Download run
+                  </a>
+                )}
+                {removable && (
+                  <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
+                    Remove output
+                  </Button>
+                )}
+              </div>
             )
           }
         >
@@ -215,9 +227,26 @@ function RunOutput({ run: r, open, output }: { run: JobRun; open: boolean; outpu
   const o = output.data;
   return (
     <div className="flex flex-col gap-4">
-      <OutputView title="Standard output" text={o.stdout} truncated={o.stdoutTruncated} emptyLabel="Nothing was written to standard output." />
-      <OutputView title="Standard error" text={o.stderr} truncated={o.stderrTruncated} emptyLabel="Nothing was written to standard error." />
-      <p className="text-xs text-muted">Opening a run&rsquo;s output is recorded in the audit log.</p>
+      <OutputView
+        title="Standard output"
+        text={o.stdout}
+        truncated={o.stdoutTruncated}
+        emptyLabel="Nothing was written to standard output."
+        download={outputDownload(r.id, "stdout")}
+      />
+      <OutputView
+        title="Standard error"
+        text={o.stderr}
+        truncated={o.stderrTruncated}
+        emptyLabel="Nothing was written to standard error."
+        download={outputDownload(r.id, "stderr")}
+      />
+      <p className="text-xs text-muted">Opening or downloading a run&rsquo;s output is recorded in the audit log, each time.</p>
     </div>
   );
+}
+
+/** Where the server sends a run's stream, or the run as JSON, as a file (ADR-0064). */
+function outputDownload(runId: string, what: "stdout" | "stderr" | "json"): string {
+  return `${API_BASE}/job-runs/${encodeURIComponent(runId)}/output?download=${what}`;
 }

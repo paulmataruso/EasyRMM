@@ -97,6 +97,10 @@ type AlertQuery struct {
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
 	Severity       string
+	// PolicyID and Subject narrow to one policy's alerts, and for disk
+	// health to one disk's: an alert's earlier and later openings.
+	PolicyID uuid.UUID
+	Subject  string
 	// Before pages: alerts opened before the one with this cursor.
 	Before int64
 	Limit  int
@@ -118,6 +122,7 @@ func (s *Service) ListAlerts(ctx context.Context, c access.Caller, q AlertQuery)
 	f := apperr.Fields{}
 	f.Check(q.Status == FilterActive || q.Status == FilterResolved || q.Status == FilterAll, "status", "Use active, resolved or all.")
 	f.Check(q.Severity == "" || q.Severity == SeverityWarning || q.Severity == SeverityCritical, "severity", "Use warning or critical.")
+	f.Check(len(q.Subject) <= maxSubject, "subject", "A subject is at most 64 characters.")
 	if err := f.Err(); err != nil {
 		return nil, 0, err
 	}
@@ -131,8 +136,11 @@ func (s *Service) ListAlerts(ctx context.Context, c access.Caller, q AlertQuery)
 			  AND ($4::uuid IS NULL OR d.site_id = $4)
 			  AND ($5 = '' OR a.severity = $5)
 			  AND ($6 = 0 OR a.seq < $6)
+			  AND ($8::uuid IS NULL OR a.policy_id = $8)
+			  AND ($9 = '' OR a.subject = $9)
 			ORDER BY a.seq DESC LIMIT $7`,
-			q.Status, nullUUID(q.DeviceID), nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Severity, q.Before, q.Limit+1)
+			q.Status, nullUUID(q.DeviceID), nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Severity, q.Before, q.Limit+1,
+			nullUUID(q.PolicyID), q.Subject)
 		if err != nil {
 			return err
 		}
