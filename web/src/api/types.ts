@@ -693,7 +693,7 @@ export interface MailServerInput {
   security: MailSecurity;
   signIn: MailSignIn;
   username: string;
-  /** Write-only; empty keeps the stored one while the host and user name stay the same. */
+  /** Write-only; empty keeps the stored one while the host, port, security and user name stay the same. */
   password: string;
   fromAddress: string;
   fromName: string;

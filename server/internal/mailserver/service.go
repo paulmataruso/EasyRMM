@@ -49,8 +49,8 @@ const TestInterval = 30 * time.Second
 var passwordAD = []byte("mail_server.password")
 
 var (
-	// ErrFromEnv is a change to the console's mail server while .env's is in
-	// force.
+	// ErrFromEnv is a change to the console's mail server, or a test of a
+	// form, while .env's is in force. Removing the console's is allowed.
 	ErrFromEnv = apperr.Conflict("mail_server_from_env",
 		"The mail server comes from EASYRMM_SMTP_HOST in .env, which wins over the console. Remove it from .env and restart EasyRMM to set the mail server here.")
 	// ErrNoMailServer is mail to send with no mail server in force.
