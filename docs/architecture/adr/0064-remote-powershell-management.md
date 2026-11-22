@@ -350,7 +350,10 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
     naming the entry. In System32, Windows keeps many of its own files
     as hard links into its component store (`WinSxS`), so there a file
     may have more than one link; owner and access list are checked all
-    the same;
+    the same. *Amended in slice 1:* so does Windows PowerShell's folder
+    in Program Files, `Program Files\WindowsPowerShell\Modules`, whose
+    in-box modules (`Microsoft.PowerShell.Operation.Validation` among
+    them) are hard links too on both CI runners;
   * folders other products added to the machine's `PSModulePath` are
     left out. A script that needs a module from one imports it by its
     full path, in the script, where its reviewer sees it. The guide says

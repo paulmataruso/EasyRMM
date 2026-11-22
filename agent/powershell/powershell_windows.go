@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 	"unsafe"
@@ -429,9 +430,12 @@ func ForRun(roots []string) (*Run, error) {
 		if within(m, install) || strings.EqualFold(filepath.Clean(m), shared) {
 			continue
 		}
-		// System32's files are hard links into the component store, and the
+		// Windows keeps its own files as hard links into its component
+		// store (WinSxS): System32's, and the modules it puts in Windows
+		// PowerShell's folder in Program Files (seen on CI's runners). The
 		// system account's profile is in System32 too.
-		if err := checkIfThere(m, inSystem32(m)); err != nil {
+		links := inSystem32(m) || slices.ContainsFunc(windowsPS, func(w string) bool { return strings.EqualFold(filepath.Clean(m), filepath.Clean(w)) })
+		if err := checkIfThere(m, links); err != nil {
 			return nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w; the script was not run", m, err)
 		}
 	}
