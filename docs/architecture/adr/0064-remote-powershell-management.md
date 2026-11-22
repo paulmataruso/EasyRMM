@@ -390,6 +390,53 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     user who could make runs fall back could choose where SYSTEM's
     scripts run. While they hold the file, `pwsh` runs on that computer
     fail; it gives them no way to change what runs.
+  * **What blocks, and what a run moves to.** *Amended after the third
+    review of PR #90 (decided in review):* a file held open was one way
+    for a user who may read the files to keep the agent from reading
+    them; listing a folder and reading `pwsh.exe` were others, and they
+    let a run fall back. Now only two outcomes leave a `pwsh` script free
+    to fall back to Windows PowerShell 5.1:
+    * nothing there: `Program Files\PowerShell` does not exist
+      (`ERROR_FILE_NOT_FOUND` or `ERROR_PATH_NOT_FOUND`), or a folder in
+      it has no `pwsh.exe`;
+    * a definite reason not to use an install that was read: a Store
+      install, a preview, version 6, an x86 build or one for another
+      architecture, or an entry of the install that others may change,
+      that no trusted account owns, that is a link, junction or other
+      reparse point, that has more than one hard link, or whose access
+      list keeps the agent out, which only its owner can have set.
+
+    Everything else blocks: a file of the install open in another
+    program; `Program Files\PowerShell` that cannot be listed, held open
+    with no sharing for one; a `pwsh.exe` whose version or architecture
+    cannot be read, held open with no sharing or its header locked; a
+    file or folder of the install that cannot be opened or listed while it
+    is checked, a folder held open with no sharing for one; and a module
+    folder or configuration file that fails (below). The inventory lists
+    each as *found, not usable* with its reason, *Could not be checked: …*
+    for what could not be read, and `Program Files\PowerShell` itself
+    where it could not be listed, never as PowerShell 7 not installed.
+    `WindowsApps` is listed for Store installs only, which never run, so
+    one that cannot be listed hides only those.
+
+    A run uses the first install, in the order it prefers them (below),
+    that passes every check, and passes over any that is blocked,
+    wherever that one stands in the order; only where none passes and one
+    is blocked does it fail, naming the first blocked one, whatever the
+    script allows. The install it moves to passed the same check as any
+    it uses, so only administrators can change it: a user who holds a
+    file can make runs use another PowerShell 7 an administrator
+    installed, or fail, but never run in Windows PowerShell instead, nor
+    change what runs, and the run's result names the install it used.
+    Before this amendment, at `7d5b88b`, each of the three tests that
+    show it (`TestPwshUnlistedAsSystem`, `TestPwshUnreadProgramAsSystem`
+    and `TestPwshUncheckedFolderAsSystem`, below) failed on both runners
+    on 2026-11-22: the script, which allows the fallback, ran in Windows
+    PowerShell 5.1 and succeeded, and the inventory listed the folder as
+    nothing, the held `pwsh.exe` as *could not be read* and the copy with
+    a held folder as *could not be checked*, all three *not used*, none
+    *blocked* (CI run 45003440391, of `7d5b88b` with only those tests
+    added).
   * **Files Windows compresses or deduplicates** are reparse points whose
     tag says so: `IO_REPARSE_TAG_WOF` (`compact /exe`, Windows' own
     compression) and `IO_REPARSE_TAG_DEDUP` (Data Deduplication). A file
@@ -437,8 +484,9 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     folder is checked with the folders above it, as the install is;
   * *amended after the review of PR #90 (decided in review):* an install
     whose own files pass while a module folder or configuration file of
-    its run fails is *blocked*: the run fails without falling back to
-    Windows PowerShell 5.1, whatever the script allows. Windows PowerShell
+    its run fails is *blocked*: unless another install passes every check
+    (above), the run fails without falling back to Windows PowerShell
+    5.1, whatever the script allows. Windows PowerShell
     loads from Windows PowerShell's two module folders too, so the
     fallback would load a folder that fails there as well, and one rule
     for every such failure keeps what a run does predictable. Discovery
@@ -490,10 +538,19 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     two joined, each read from the registry and expanded. One equal to any
     of them counts as never changed, and Windows PowerShell puts the
     account's `PSModulePath` in front of it or, where the account has
-    none, the account's `Documents\WindowsPowerShell\Modules`
-    (`ModuleIntrinsics.GetModulePath`, Windows PowerShell's branch, in
-    PowerShell's repository at `v6.0.0-alpha.9`, read for this; CI's
-    runs match it for Windows' default). Windows' default `PSModulePath`,
+    none, the account's `Documents\WindowsPowerShell\Modules`. The
+    evidence is CI's runs on 2026-11-22, on Windows Server 2025
+    (10.0.26100, `windows-latest`, Windows PowerShell 5.1.26100.33822) and
+    Windows 11 (10.0.26200, `windows-11-arm`, 5.1.26100.9974), with
+    Windows' default set (below). The source read for this,
+    `ModuleIntrinsics.GetModulePath` in Windows PowerShell's branch of
+    PowerShell's repository at `v6.0.0-alpha.9`, compares the whole path,
+    ignoring case and trimming nothing, which agrees; but that code also
+    holds `NeedToClearProcessModulePath`, which PowerShell 6 added and
+    Windows PowerShell 5.1 does not have, so it is not 5.1's own code and
+    is not the evidence. Builds of Windows PowerShell 5.1 older than the
+    runners' (on Windows 10 and on Windows Server 2016, 2019 and 2022) are
+    not tested. Windows' default `PSModulePath`,
     `%ProgramFiles%\WindowsPowerShell\Modules;%SystemRoot%\system32\WindowsPowerShell\v1.0\Modules`,
     is exactly the two folders the agent gives. On both runners, with that
     default set and none for SYSTEM, the fallback and the compatibility
@@ -508,12 +565,24 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     Windows PowerShell reads as the same folders; three values leave one
     of the four spellings free. On a computer with Windows' default, a run
     sees `C:\Program Files\WindowsPowerShell\Modules\` with its
-    trailing backslash. The agent expands those values with its own
-    environment, and Windows PowerShell with the run's, which differs in
-    `TEMP`, `TMP`, the `EASYRMM_` variables and the variables the
-    agent sets for a run, `PSModulePath` among them: a value an
-    administrator wrote naming one of those could still match. That is
-    recorded, not handled.
+    trailing backslash. *Amended after the third review of PR #90
+    (decided in review):* the agent expands those values as Windows
+    PowerShell does, an expandable value twice and another once, from the
+    agent's environment, which a run's is built from, as it expands a
+    configured module folder. A value naming a variable that environment
+    does not set, one each run sets for itself (`TEMP`, `TMP`,
+    `EASYRMM_*`), or one the agent sets for a run (`PSModulePath`, the
+    very path being spelled, and PowerShell 7's
+    `POWERSHELL_TELEMETRY_OPTOUT` and `POWERSHELL_UPDATECHECK`, which a
+    fallback's run does not get) leaves the agent unable to tell what
+    Windows PowerShell compares, so `pwsh` runs are blocked and the
+    fallback fails, naming the value and the variable ("Windows
+    PowerShell would be given a module path it may not keep as given: the
+    computer's PSModulePath names %TEMP%, …"). So does a value the agent
+    cannot read, other than a missing one or one that is not text, which
+    Windows PowerShell reads as not set. The second review had recorded
+    this as a limit; it is closed. A unit test (`TestCompared`)
+    covers the rule; no CI run sets such a value.
 
   Refusing every `pwsh` run while some folder in the machine's
   `PSModulePath` is open to users was weighed and not chosen: a run
@@ -525,6 +594,21 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
   check on the runners' images, which come with many modules installed;
   the time goes in the pull request, and if it is over a second this
   section is revisited there.
+
+  *Measured in slice 1, and decided in review after the third review of
+  PR #90:* on CI's runners on 2026-11-22, a run's check, choosing
+  PowerShell 7 and checking it and its module folders
+  (`TestPwshAsSystem`), took 141–323 ms on `windows-latest` (x64, Windows
+  Server 2025: 140.6, 151.1, 256.3, 315.3 and 322.6 ms in five runs) and
+  229–253 ms on `windows-11-arm` (ARM64, Windows 11: 228.9, 238.7, 251.2
+  and 252.8 ms in four), under the second. Discovery for the inventory,
+  which checks every usable install as a run does and is the first check
+  in its job (`TestDiscoverAsSystem`), took 1.0–1.6 s on `windows-latest`
+  (1.009, 1.081, 1.483, 1.575 and 1.576 s) and 365–650 ms on
+  `windows-11-arm`. That is over the second on x64, and accepted: it
+  runs in the background, once per inventory pass, and nothing waits on
+  it. No cache is added: a run checks again at its start, so a cache
+  could serve only the inventory.
 * **What is read**:
   * the version from the file's version resource (its product version,
     with a prerelease label for previews), not by starting it;
@@ -552,7 +636,9 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
   the registry and is sent to `SysWOW64` for `System32`, so a script
   would behave differently from the same script in Windows PowerShell
   5.1, which the agent runs 64-bit. Those installs are reported, marked
-  as not used, with the reason.
+  as not used, with the reason. *Amended after the third review of PR
+  #90:* a blocked install is passed over for the next that passes every
+  check, and where none passes the run fails (above).
 * **When**: with the inventory (at the agent's start, every hour and
   after every job, as now), and again at the start of every `pwsh` run,
   the whole check included, so a run uses what is on the computer at
@@ -582,9 +668,12 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
 * **Every state is explicit** on the device's page: *installed* with
   version and path; *not found*; *found, not used* with the reason
   (*Store install*, an entry others may change, preview, x86, version 6);
-  *found, not usable* with the reason for a blocked install;
-  *could not be read* with the error; and *not reported* for an agent too
-  old to report.
+  *found, not usable* with the reason for a blocked install, *Could not
+  be checked: …* with the error for one that could not be read or
+  checked, or for `Program Files\PowerShell` where it could not be
+  listed (*amended after the third review of PR #90*: before, *could not
+  be read*, which let a run fall back); and *not reported* for an agent
+  too old to report.
 
 ### Choosing the PowerShell a script runs in
 *Decided in review.*
@@ -1563,7 +1652,18 @@ endpoint its downloads use.
     Windows' default one and none for SYSTEM (the path given spelled
     unlike it), and with Windows' default and one of SYSTEM's own; and a
     folder opened to Users in Windows PowerShell's folder in Program Files
-    failing the fallback. The
+    failing the fallback; *after the third review*, a copy's
+    `Program Files\PowerShell` held with no sharing
+    (`TestPwshUnlistedAsSystem`), its `pwsh.exe` held with no sharing and
+    then with its first 4 KiB locked (`TestPwshUnreadProgramAsSystem`),
+    and its `Modules` folder held with no sharing
+    (`TestPwshUncheckedFolderAsSystem`), each by the test's own process
+    standing in for a user's, failing a run that allows the fallback,
+    with the inventory listing it as *could not be checked* and no
+    PowerShell 7 usable; with `pwsh.dll` held in one copy, a run using a
+    second copy beside it; and PowerShell 7's own `$env:PSModulePath`
+    ending with the path the run gave, spelled as given, its trailing
+    backslash included where Windows' default is set. The
     statements of
     `agent/powershell/powershell_windows.go` that the two test binaries
     run are measured from their coverage profiles, and the job fails below

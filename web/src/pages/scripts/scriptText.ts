@@ -98,7 +98,7 @@ export function pwshWarning(s: Pick<Script, "shell" | "pwshFallback">, devices: 
   if (missing) parts.push(`${missing} of ${devices.length} devices reported no usable PowerShell 7 at their last inventory; ${what}.`);
   if (blocked.length) {
     parts.push(
-      `${blocked.length} of ${devices.length} devices have PowerShell 7 found, not usable: its module folders or configuration fail the agent's check, ` +
+      `${blocked.length} of ${devices.length} devices have PowerShell 7 found, not usable: what it would load fails the agent's check, or it could not be checked, ` +
         `so this script fails there${s.pwshFallback ? " without running in Windows PowerShell 5.1" : ""}. Their Hardware tab says why.`,
     );
   }

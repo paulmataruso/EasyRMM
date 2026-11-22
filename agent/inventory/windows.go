@@ -57,8 +57,7 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 // alone.
 func powerShell() []agentproto.PowerShellInstall {
 	roots, _ := powershell.Roots()
-	list, _ := powershell.Discover(roots)
-	return list
+	return powershell.Discover(roots)
 }
 
 // firmware reads the SMBIOS tables Windows keeps a copy of.

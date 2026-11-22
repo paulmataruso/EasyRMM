@@ -19,16 +19,16 @@ import (
 // installFolders are the names of the folders an install may have under
 // <Program Files>\PowerShell: a major version, or one followed by
 // -preview, as the MSI names them.
-var installFolders = regexp.MustCompile(`^([0-9]{1,3})(-preview)?$`)
+var installFolders = regexp.MustCompile(`^[0-9]{1,3}(-preview)?$`)
 
-// installFolder reads such a folder's name.
-func installFolder(name string) (major int, preview, ok bool) {
+// installFolder reads such a folder's name: ok when it is one, and
+// whether it is a preview's.
+func installFolder(name string) (preview, ok bool) {
 	m := installFolders.FindStringSubmatch(strings.ToLower(name))
 	if m == nil {
-		return 0, false, false
+		return false, false
 	}
-	major, _ = strconv.Atoi(m[1])
-	return major, m[2] != "", true
+	return m[1] != "", true
 }
 
 // storePackages are the folders of PowerShell's Microsoft Store (MSIX)
@@ -177,7 +177,8 @@ func assess(in *agentproto.PowerShellInstall, native string) {
 
 // order sorts what was found as the inventory lists it: Windows PowerShell
 // first, then the PowerShell 7 installs a run may use, the one it uses
-// first, then the rest by path.
+// first, then those that block a run (Blocked), then the rest, each by
+// path.
 func order(list []agentproto.PowerShellInstall, native string) {
 	slices.SortStableFunc(list, func(a, b agentproto.PowerShellInstall) int {
 		if c := cmp.Compare(rankOf(a), rankOf(b)); c != 0 {
@@ -205,19 +206,10 @@ func rankOf(p agentproto.PowerShellInstall) int {
 		return 0
 	case p.Usable:
 		return 1
+	case p.Blocked:
+		return 2
 	}
-	return 2
-}
-
-// chosen is the install a pwsh run uses from an ordered list, nil when
-// none is usable.
-func chosen(list []agentproto.PowerShellInstall) *agentproto.PowerShellInstall {
-	for i := range list {
-		if list[i].Edition == agentproto.EditionCore && list[i].Usable {
-			return &list[i]
-		}
-	}
-	return nil
+	return 3
 }
 
 // configModulePath reads the module folder a powershell.config.json sets
@@ -287,6 +279,70 @@ func runEnv(modulePath string) []string {
 		"POWERSHELL_TELEMETRY_OPTOUT=1",
 		"POWERSHELL_UPDATECHECK=Off",
 	}
+}
+
+// registryPath is a PSModulePath as the registry holds it.
+type registryPath struct {
+	value string
+	// expandable is true for an expandable value (REG_EXPAND_SZ).
+	expandable bool
+}
+
+// compared is what Windows PowerShell 5.1 compares a PSModulePath it is
+// given with (spell): the computer's PSModulePath (machine) and the system
+// account's (account), each nil where not set, and the two joined. Windows
+// PowerShell reads each as .NET does, an expandable value expanded, and
+// expands it once more, from its process's environment; so does compared,
+// as a run's configured module folders are expanded (expand, runLookup),
+// from the agent's environment (agent), which a run's is built from. A
+// variable the agent's environment does not set is an error, and so is one
+// each run sets for itself (PerRun) or the agent sets for a run (runEnv):
+// PSModulePath is the very value being spelled, and PowerShell 7's
+// variables are set for a pwsh run and not for its fallback. Where a value
+// names one, the agent could not tell what Windows PowerShell compares
+// (ADR-0064).
+func compared(machine, account *registryPath, agent func(string) (string, bool)) ([]string, error) {
+	fromAgent := runLookup(nil, agent)
+	lookup := func(name string) (string, bool) {
+		for _, kv := range runEnv("") {
+			if k, _, _ := strings.Cut(kv, "="); strings.EqualFold(k, name) {
+				return "", false
+			}
+		}
+		return fromAgent(name)
+	}
+	read := func(whose string, p *registryPath) (string, error) {
+		v, err := p.value, error(nil)
+		if p.expandable {
+			v, err = expand(v, lookup)
+		}
+		if err == nil {
+			v, err = expand(v, lookup)
+		}
+		if err != nil {
+			return "", fmt.Errorf("Windows PowerShell would be given a module path it may not keep as given: %s PSModulePath names %w", whose, err) //nolint:staticcheck // ST1005: a name
+		}
+		return v, nil
+	}
+	var taken []string
+	if machine != nil {
+		m, err := read("the computer's", machine)
+		if err != nil {
+			return nil, err
+		}
+		taken = append(taken, m)
+	}
+	if account != nil {
+		a, err := read("the system account's", account)
+		if err != nil {
+			return nil, err
+		}
+		taken = append(taken, a)
+		if machine != nil {
+			taken = append(taken, a+";"+taken[0])
+		}
+	}
+	return taken, nil
 }
 
 // spell joins folders into a PSModulePath that equals, ignoring case, none

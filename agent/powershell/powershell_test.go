@@ -1,6 +1,7 @@
 package powershell
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -8,24 +9,21 @@ import (
 )
 
 func TestInstallFolder(t *testing.T) {
-	for name, want := range map[string]struct {
-		major       int
-		preview, ok bool
-	}{
-		"7":         {7, false, true},
-		"8":         {8, false, true},
-		"6":         {6, false, true},
-		"7-preview": {7, true, true},
-		"7-Preview": {7, true, true},
+	for name, want := range map[string]struct{ preview, ok bool }{
+		"7":         {false, true},
+		"8":         {false, true},
+		"6":         {false, true},
+		"7-preview": {true, true},
+		"7-Preview": {true, true},
 		"Modules":   {},
 		"7.4":       {},
 		"7-rc":      {},
 		"1234":      {},
 		"":          {},
 	} {
-		major, preview, ok := installFolder(name)
-		if major != want.major || preview != want.preview || ok != want.ok {
-			t.Errorf("%q: %d %v %v", name, major, preview, ok)
+		preview, ok := installFolder(name)
+		if preview != want.preview || ok != want.ok {
+			t.Errorf("%q: %v %v", name, preview, ok)
 		}
 	}
 }
@@ -141,10 +139,10 @@ func TestAssess(t *testing.T) {
 	}
 }
 
-// TestOrderAndChoice: the computer's own architecture before a newer
-// emulated build, then the newest version; never a preview, a Store
-// install, x86 or version 6.
-func TestOrderAndChoice(t *testing.T) {
+// TestOrder: the computer's own architecture before a newer emulated
+// build, then the newest version; never a preview, a Store install, x86 or
+// version 6; then what blocks a run, then the rest.
+func TestOrder(t *testing.T) {
 	list := func() []agentproto.PowerShellInstall {
 		return []agentproto.PowerShellInstall{
 			{Edition: agentproto.EditionCore, Version: "7.7.0-preview.5", Arch: "x64", Path: `C:\Program Files\PowerShell\7-preview\pwsh.exe`, Preview: true},
@@ -154,6 +152,7 @@ func TestOrderAndChoice(t *testing.T) {
 			{Edition: agentproto.EditionCore, Version: "6.2.7", Arch: "x64", Path: `C:\Program Files\PowerShell\6\pwsh.exe`},
 			{Edition: agentproto.EditionCore, Version: "7.6.10", Arch: "arm64", Path: `C:\Program Files\PowerShell\8\pwsh.exe`},
 			{Edition: agentproto.EditionCore, Version: "8.0.1", Arch: "x64", Path: `C:\Program Files\PowerShell\9\pwsh.exe`},
+			{Edition: agentproto.EditionCore, Path: `C:\Program Files\PowerShell\10\pwsh.exe`, Blocked: true, Reason: "Could not be checked: a lock."},
 			{Edition: agentproto.EditionDesktop, Version: "5.1.26100.1", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true},
 		}
 	}
@@ -172,13 +171,13 @@ func TestOrderAndChoice(t *testing.T) {
 	}
 	for native, want := range map[string]string{
 		// Windows PowerShell, the usable ones in the order a run tries them,
-		// then the rest by path.
-		"x64":   `v1.0 9 7 x86 6 7-preview 8 Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe`,
-		"arm64": `v1.0 8 9 7 x86 6 7-preview Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe`,
+		// the blocked one, then the rest by path.
+		"x64":   `v1.0 9 7 10 x86 6 7-preview 8 Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe`,
+		"arm64": `v1.0 8 9 7 10 x86 6 7-preview Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe`,
 	} {
 		l := list()
 		for i := range l {
-			if l[i].Edition == agentproto.EditionCore {
+			if l[i].Edition == agentproto.EditionCore && l[i].Reason == "" {
 				assess(&l[i], native)
 			}
 		}
@@ -186,13 +185,6 @@ func TestOrderAndChoice(t *testing.T) {
 		if got := paths(l); got != want {
 			t.Errorf("on %s:\n got %s\nwant %s", native, got, want)
 		}
-		c := chosen(l)
-		if c == nil || c.Path != l[1].Path {
-			t.Errorf("on %s chose %+v", native, c)
-		}
-	}
-	if c := chosen([]agentproto.PowerShellInstall{{Edition: agentproto.EditionDesktop, Usable: true}, {Edition: agentproto.EditionCore, Reason: reasonX86}}); c != nil {
-		t.Errorf("chose %+v", c)
 	}
 }
 
@@ -304,6 +296,51 @@ func TestSpell(t *testing.T) {
 	}
 	if folders[0] != `C:\Program Files\WindowsPowerShell\Modules` {
 		t.Errorf("the folders changed: %q", folders)
+	}
+}
+
+// TestCompared: the computer's and the system account's PSModulePath as
+// Windows PowerShell 5.1 reads them, from the agent's environment: an
+// expandable value expanded twice, another once, and the two joined; a
+// variable the agent's environment does not set, one each run sets for
+// itself, and those the agent sets for a run, PSModulePath, which is what
+// is being spelled, among them, refused.
+func TestCompared(t *testing.T) {
+	agent := map[string]string{
+		"ProgramFiles": `C:\Program Files`, "SystemRoot": `C:\Windows`, "Twice": `%SystemRoot%\Twice`,
+		"PerRunTwice": `%TEMP%`, "PSModulePath": `C:\Agent`, "TEMP": `C:\Windows\TEMP`,
+	}
+	lookup := func(k string) (string, bool) { v, ok := agent[k]; return v, ok }
+	def := &registryPath{value: `%ProgramFiles%\WindowsPowerShell\Modules;%SystemRoot%\system32\WindowsPowerShell\v1.0\Modules`, expandable: true}
+	machine := `C:\Program Files\WindowsPowerShell\Modules;C:\Windows\system32\WindowsPowerShell\v1.0\Modules`
+	for _, c := range []struct {
+		machine, account *registryPath
+		want             []string
+	}{
+		{nil, nil, nil},
+		{def, nil, []string{machine}},
+		{nil, &registryPath{value: `%Twice%`}, []string{`%SystemRoot%\Twice`}},
+		{def, &registryPath{value: `%Twice%;%ProgramFiles%`, expandable: true}, []string{machine, `C:\Windows\Twice;C:\Program Files`, `C:\Windows\Twice;C:\Program Files;` + machine}},
+	} {
+		got, err := compared(c.machine, c.account, lookup)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("%+v %+v: %q %v, want %q", c.machine, c.account, got, err, c.want)
+		}
+	}
+	for _, c := range []struct {
+		machine, account *registryPath
+		want             string
+	}{
+		{&registryPath{value: `%TEMP%\Modules`, expandable: true}, nil, "the computer's PSModulePath names %TEMP%,"},
+		{&registryPath{value: `%PerRunTwice%`, expandable: true}, nil, "the computer's PSModulePath names %TEMP%,"},
+		{def, &registryPath{value: `C:\A;%psmodulepath%`}, "the system account's PSModulePath names %psmodulepath%,"},
+		{nil, &registryPath{value: `%Unset%`}, "the system account's PSModulePath names %Unset%,"},
+		{nil, &registryPath{value: `%POWERSHELL_UPDATECHECK%`}, "the system account's PSModulePath names %POWERSHELL_UPDATECHECK%,"},
+	} {
+		_, err := compared(c.machine, c.account, lookup)
+		if err == nil || !strings.HasPrefix(err.Error(), "Windows PowerShell would be given a module path it may not keep as given: "+c.want) {
+			t.Errorf("%+v %+v: %v, want %q", c.machine, c.account, err, c.want)
+		}
 	}
 }
 

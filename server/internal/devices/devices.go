@@ -45,8 +45,8 @@ type Agent struct {
 	PowerShell7 *bool `json:"powerShell7"`
 	// PowerShell7Blocked says why a pwsh run fails there, without falling
 	// back to Windows PowerShell, when the inventory listed no usable
-	// PowerShell 7 but one whose module folders or configuration fail the
-	// agent's check (ADR-0064); empty otherwise.
+	// PowerShell 7 but a blocked one (agentproto.PowerShellInstall.Blocked,
+	// ADR-0064); empty otherwise.
 	PowerShell7Blocked string `json:"powerShell7Blocked,omitempty"`
 
 	// The update the server holds for the agent, if any.

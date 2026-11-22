@@ -319,24 +319,33 @@ An install that fails is not used, and the device says which file and why.
 file before the fix keeps what it opened until it closes it, including a
 handle that may change the file's permissions or owner, which the check
 cannot see, and a restart closes everything. A user who can read a file can
-also hold it open so that the check fails; the install is then *Found, not
-usable* (below), so PowerShell 7 runs fail on the device while they hold it,
-without falling back, and they gain no way to change what runs.
+also hold it open, or lock it, so that the agent cannot check or read it;
+the install is then *Found, not usable* (below), so PowerShell 7 runs on the
+device use another install that passes every check, or fail while they hold
+it, without falling back, and they gain no way to change what runs.
 
 A device's **Hardware** tab lists Windows PowerShell and every PowerShell 7
 the agent found: the one PowerShell 7 scripts run in, and why each other is
 not used. An agent of an earlier release reports none and says so.
 
-**Found, not usable**: an install whose own files pass, while a module
-folder or configuration file its runs would read does not, or with a file
-open in another program, is *blocked*.
-PowerShell 7 scripts fail there, **and do not fall back to Windows
-PowerShell 5.1 even where the script allows it**: Windows PowerShell loads
-from Windows PowerShell's module folders too, so a folder that fails would
-be loaded by the fallback as well. The Hardware tab says *Found, not
+**Found, not usable**: an install is *blocked* when its own files pass
+while a module folder or configuration file its runs would read does not,
+when a file of it is open in another program, or when the agent could not
+read or check it (*Could not be checked: …*); so is `Program Files\PowerShell`
+itself where the agent cannot list it, which the Hardware tab lists as that
+folder, not as PowerShell 7 missing. Runs use another install where one
+passes every check. Otherwise PowerShell 7 scripts fail there, **and do not
+fall back to Windows PowerShell 5.1 even where the script allows it**:
+Windows PowerShell loads from Windows PowerShell's module folders too, so a
+folder that fails would be loaded by the fallback as well, and anyone who
+may read a file can keep the agent from reading it. A script falls back
+only where there is no `Program Files\PowerShell`, or every install in it is
+not used for a reason of its own (a Store install, a preview, x86,
+PowerShell 6, a file others may change). The Hardware tab says *Found, not
 usable* with the reason, and the run dialog warns that the script fails
-there. Fix what the reason names, restart the computer, and the next
-inventory (within the hour, or after the next job) shows the result.
+there. Fix what the reason names, or close the program that holds the file,
+restart the computer, and the next inventory (within the hour, or after the
+next job) shows the result.
 
 **Microsoft Store installs are not run.** Since PowerShell 7.6, `winget
 install --id Microsoft.PowerShell` installs the Store (MSIX) package by
@@ -366,8 +375,9 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   `ConvertFrom-Json`, web requests) change what it does without an error.
   It does not apply where PowerShell 7 is found but blocked (above): the
   run fails with "PowerShell 7 would load modules from …; the script was
-  not run.", "PowerShell 7 would read its configuration from …" or "… is
+  not run.", "PowerShell 7 would read its configuration from …", "… is
   open in another program that may write to it; the script was not run."
+  or "… could not be checked: …; the script was not run."
   Windows PowerShell gets the module path a PowerShell 7 run gives its
   Windows PowerShell session (below), not the computer's `PSModulePath`;
   its module folders, and the system account's own
@@ -377,7 +387,13 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   a module path equal to the computer's or the system account's
   `PSModulePath`, so where the computer has Windows' default the agent
   gives the same two folders with a trailing backslash on the first, and
-  a script sees `C:\Program Files\WindowsPowerShell\Modules\`.
+  a script sees `C:\Program Files\WindowsPowerShell\Modules\`. A
+  `PSModulePath` in the registry that names a variable the agent cannot
+  expand as Windows PowerShell would (`%TEMP%`, `%TMP%`, an `EASYRMM_`
+  variable, `%PSModulePath%`, PowerShell 7's two, or one the agent's
+  environment does not set) stops PowerShell 7 runs and the fallback:
+  "Windows PowerShell would be given a module path it may not keep as
+  given: the computer's PSModulePath names %TEMP%, …".
 
 The setting is part of the script, copied into each job; whoever runs the
 script sees it and cannot change it. A job is not refused because a

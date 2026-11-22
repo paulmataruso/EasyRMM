@@ -217,6 +217,18 @@ describe("device hardware", () => {
     expect(within(blockedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
     third.unmount();
 
+    // The folder installs are in could not be listed: could not be checked, blocked, not "not installed".
+    const unlisted =
+      "Could not be checked: open C:\\Program Files\\PowerShell: The process cannot access the file because it is being used by another process. Not used until it can be, since anyone who may read a file can keep the agent from reading it. Scripts that allow Windows PowerShell 5.1 do not run in it instead.";
+    installFakeApi(at([desktop, { edition: "Core", version: "", arch: "", path: "C:\\Program Files\\PowerShell", usable: false, blocked: true, reason: unlisted }]));
+    const fourth = renderApp("/devices/d1?tab=hardware");
+    const unlistedCard = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    const unlistedRows = within(unlistedCard.querySelector("tbody") as HTMLElement).getAllByRole("row");
+    expect(unlistedRows[1]).toHaveTextContent(/^PowerShellFound, not usableCould not be checked: open C:\\Program Files\\PowerShell: /);
+    expect(within(unlistedCard).getByText(/a file of it is open in another program or could not be checked/)).toBeInTheDocument();
+    expect(within(unlistedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
+    fourth.unmount();
+
     // An agent too old to report them.
     installFakeApi(at(undefined));
     renderApp("/devices/d1?tab=hardware");

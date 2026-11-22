@@ -75,18 +75,26 @@ func line(out, prefix string) string {
 
 // TestPwshAsSystem: a pwsh run starts the runner's PowerShell 7, never a
 // pwsh.exe on the PATH; it gets its arguments, the run's environment and a
-// module path of the five checked folders, without the folders the agent's
-// own PSModulePath adds; its result names what ran.
+// module path of the five checked folders, PowerShell 7's three and then
+// Windows PowerShell's two spelled exactly as the run gave them, without
+// the folders the agent's own PSModulePath adds; its result names what ran.
 func TestPwshAsSystem(t *testing.T) {
 	systemTest(t)
 	want := runnerPwsh(t)
 	roots, _ := powershell.Roots()
+	start := time.Now()
 	run, err := powershell.ForRun(roots)
 	if err != nil {
 		t.Fatal(err)
 	}
 	run.Release()
-	t.Logf("choosing PowerShell 7 and checking it and its module folders took %s; module folders %q", run.Took, run.Modules)
+	t.Logf("choosing PowerShell 7 and checking it and its module folders took %s; the run's environment %q", time.Since(start), run.Env)
+	given, _ := strings.CutPrefix(run.Env[0], "PSModulePath=")
+	docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := []string{filepath.Join(docs, `PowerShell\Modules`), filepath.Join(roots[0], `PowerShell\Modules`), filepath.Join(filepath.Dir(want.Path), "Modules")}
 
 	// A pwsh.exe on the PATH, in a folder of the system drive's root, which
 	// users may write to: a copy of cmd.exe, which never prints the lines
@@ -142,15 +150,9 @@ func TestPwshAsSystem(t *testing.T) {
 	if got := line(res.Stdout, "process:"); !strings.EqualFold(got, want.Path) {
 		t.Errorf("ran %q, want %q", got, want.Path)
 	}
-	seen := strings.Split(line(res.Stdout, "modules:"), ";")
-	if len(seen) != 5 || len(run.Modules) != 5 {
-		t.Errorf("module path %q, checked %q", seen, run.Modules)
-	} else {
-		for i := range seen {
-			if !strings.EqualFold(filepath.Clean(seen[i]), filepath.Clean(run.Modules[i])) {
-				t.Errorf("module folder %d: %q, checked %q", i, seen[i], run.Modules[i])
-			}
-		}
+	seen := line(res.Stdout, "modules:")
+	if head, ok := strings.CutSuffix(seen, ";"+given); !ok || !sameFolders("PSModulePath="+head, own) {
+		t.Errorf("module path %q, want %q then %q as given", seen, own, given)
 	}
 	if res.Interpreter == nil || *res.Interpreter != want {
 		t.Errorf("program %+v, want %+v", res.Interpreter, want)

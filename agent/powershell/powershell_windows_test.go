@@ -70,19 +70,21 @@ func archOf(s string) string {
 }
 
 // TestDiscoverAsSystem: discovery finds the runner's Windows PowerShell and
-// PowerShell 7 and reads what each says of itself; the x86 build and the
-// Store package are reported and not used.
+// PowerShell 7 and reads what each says of itself; a run uses the PowerShell
+// 7 the inventory lists first; the x86 build and the Store package are
+// reported and not used.
 func TestDiscoverAsSystem(t *testing.T) {
 	systemTest(t)
 	roots, err := Roots()
 	if err != nil || len(roots) != 2 {
 		t.Fatalf("roots %q %v", roots, err)
 	}
-	list, took := Discover(roots)
+	start := time.Now()
+	list := Discover(roots)
 	for _, p := range list {
 		t.Logf("found %+v", p)
 	}
-	t.Logf("checking the usable installs took %s", took)
+	t.Logf("discovery, with the usable installs checked, took %s", time.Since(start))
 
 	d := list[0]
 	if d.Edition != agentproto.EditionDesktop || !d.Usable || d.Reason != "" || !strings.EqualFold(d.Path, DesktopPath()) {
@@ -100,9 +102,17 @@ func TestDiscoverAsSystem(t *testing.T) {
 		t.Errorf("edition %q", e)
 	}
 
-	c := chosen(list)
-	if c == nil || !strings.EqualFold(c.Path, filepath.Join(roots[0], `PowerShell\7\pwsh.exe`)) || c.Preview || c.Store {
-		t.Fatalf("chose %+v", c)
+	run, err := ForRun(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Release()
+	c := run.Interpreter
+	if !strings.EqualFold(c.Path, filepath.Join(roots[0], `PowerShell\7\pwsh.exe`)) || list[1].Edition != agentproto.EditionCore || !list[1].Usable || list[1].Path != c.Path {
+		t.Fatalf("a run uses %+v; the inventory lists %+v", c, list[1])
+	}
+	if list[1].Preview || list[1].Store {
+		t.Errorf("chose %+v", list[1])
 	}
 	if want := printed(t, c.Path, "$PSVersionTable.PSVersion.ToString()"); c.Version != want {
 		t.Errorf("PowerShell 7's version %q, its $PSVersionTable %q", c.Version, want)
@@ -183,8 +193,9 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 
 	find := func() agentproto.PowerShellInstall {
 		t.Helper()
-		list, took := Discover([]string{root})
-		t.Logf("checked in %s", took)
+		start := time.Now()
+		list := Discover([]string{root})
+		t.Logf("checked in %s", time.Since(start))
 		for _, p := range list {
 			if strings.EqualFold(p.Path, pwsh) {
 				return p
@@ -339,7 +350,7 @@ func TestModuleFoldersAsSystem(t *testing.T) {
 	config := filepath.Join(install, "powershell.config.json")
 	find := func() agentproto.PowerShellInstall {
 		t.Helper()
-		list, _ := Discover([]string{root})
+		list := Discover([]string{root})
 		for _, p := range list {
 			if strings.EqualFold(p.Path, pwsh) {
 				return p
@@ -381,8 +392,8 @@ func TestModuleFoldersAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	run.Release()
-	if len(run.Modules) != 5 || !strings.EqualFold(run.Modules[1], shared) {
-		t.Errorf("module folders %q, want the configured one second", run.Modules)
+	if all, _, _, err := moduleFolders(install); err != nil || len(all) != 5 || !strings.EqualFold(all[1], shared) {
+		t.Errorf("module folders %q (%v), want the configured one second", all, err)
 	}
 
 	gone := filepath.Join(root, "Not made")

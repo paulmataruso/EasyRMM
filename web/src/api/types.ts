@@ -373,8 +373,9 @@ export interface DeviceAgent {
   /** Whether the last inventory listed a usable PowerShell 7; null when it listed no PowerShell (an older agent, or none yet). */
   powerShell7: boolean | null;
   /**
-   * Where no PowerShell 7 is usable but one is blocked, why: its module folders or configuration fail the agent's check,
-   * and PowerShell 7 scripts fail there without falling back to Windows PowerShell 5.1 (ADR-0064). Absent otherwise.
+   * Where no PowerShell 7 is usable but one is blocked, why: what it would load fails the agent's check, or a file of it is
+   * open in another program or could not be checked, and PowerShell 7 scripts fail there without falling back to Windows
+   * PowerShell 5.1 (ADR-0064). Absent otherwise.
    */
   powerShell7Blocked?: string;
 }
@@ -1209,8 +1210,10 @@ export interface PowerShellInstall {
   usable: boolean;
   reason?: string;
   /**
-   * Not usable although its own files pass: what it would load, its module folders or configuration, fails the agent's
-   * check. A run that would use it fails, and does not fall back to Windows PowerShell 5.1.
+   * Not usable, and not passed over for Windows PowerShell 5.1: what it would load, its module folders or configuration,
+   * fails the agent's check, or a file of it is open in another program, or it (or the folder installs are in) could not be
+   * read or checked. A run moves to another install only where one passes every check; otherwise it fails, and does not
+   * fall back to Windows PowerShell 5.1.
    */
   blocked?: boolean;
 }

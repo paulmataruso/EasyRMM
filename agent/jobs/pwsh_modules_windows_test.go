@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -61,8 +62,7 @@ func TestPwshBlockedAsSystem(t *testing.T) {
 		if res.Status != agentproto.RunFailed || res.Error != want || res.Interpreter != nil || res.ExitCode != nil || res.Stdout != "" {
 			t.Errorf("with %s open to Users: %+v\nwant the error %q", planted, res, want)
 		}
-		list, _ := powershell.Discover(roots)
-		for _, i := range list {
+		for _, i := range powershell.Discover(roots) {
 			if i.Edition == agentproto.EditionCore && (i.Usable || (!i.Store && i.Arch != agentproto.ArchX86 && !i.Blocked)) {
 				t.Errorf("an install with %s open to Users: %+v", planted, i)
 			}
@@ -117,7 +117,7 @@ func TestPwshCompatibilitySessionAsSystem(t *testing.T) {
 	if line(res.Stdout, "imported:") == "(no line imported:)" || line(res.Stdout, "compat edition:") != "Desktop" {
 		t.Fatalf("no module was loaded in a compatibility session: %+v", res)
 	}
-	want := strings.Join(run.Modules[3:], ";")
+	want, _ := strings.CutPrefix(run.Env[0], "PSModulePath=")
 	if got := line(res.Stdout, "compat:"); !strings.EqualFold(got, want) {
 		t.Errorf("the compatibility session's module path %q, want the run's Windows PowerShell folders %q", got, want)
 	}
@@ -135,26 +135,158 @@ func copyInstall(t *testing.T) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	root := filepath.Join(roots[0], "EasyRMM test "+hex.EncodeToString(b))
-	from := filepath.Join(roots[0], `PowerShell\7`)
 	install := filepath.Join(root, `PowerShell\7`)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	copyTree(t, filepath.Join(roots[0], `PowerShell\7`), install)
+	old := pwshRoots
+	pwshRoots = func() ([]string, error) { return []string{root}, nil }
+	t.Cleanup(func() { pwshRoots = old })
+	return install
+}
+
+// copyTree copies the folder from, and what it holds, to the folder to.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
 	if err := filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(from, p)
 		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(install, rel), 0o755)
+			return os.MkdirAll(filepath.Join(to, rel), 0o755)
 		}
-		copyFile(t, p, filepath.Join(install, rel))
+		copyFile(t, p, filepath.Join(to, rel))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	old := pwshRoots
-	pwshRoots = func() ([]string, error) { return []string{root}, nil }
-	t.Cleanup(func() { pwshRoots = old })
-	return install
+}
+
+// hold opens p, a file or a folder, to read it and shares it with no one,
+// as any user who may read it could, until the function it returns is
+// called or the test ends.
+func hold(t *testing.T, p string) func() {
+	t.Helper()
+	name, _ := windows.UTF16PtrFromString(p)
+	h, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		t.Fatalf("holding %s: %v", p, err)
+	}
+	var once sync.Once
+	let := func() { once.Do(func() { _ = windows.CloseHandle(h) }) }
+	t.Cleanup(let)
+	return let
+}
+
+// blockedWhileHeld checks that a pwsh script that allows Windows
+// PowerShell fails, and does not run there instead, with an error that
+// starts with want, and that the inventory lists listed as blocked, could
+// not be checked, and no PowerShell 7 as usable (ADR-0064).
+func blockedWhileHeld(t *testing.T, listed, want string) {
+	t.Helper()
+	p := winPayload(agentproto.ShellPwsh, "Write-Output ran\n")
+	p.PwshFallback = true
+	res := Execute(context.Background(), p, t.TempDir())
+	if res.Status != agentproto.RunFailed || !strings.HasPrefix(strings.ToLower(res.Error), strings.ToLower(want)) || !strings.HasSuffix(res.Error, "; the script was not run.") ||
+		res.Interpreter != nil || res.ExitCode != nil || res.Stdout != "" {
+		t.Errorf("held: %+v, program %+v\nwant an error that starts %q", res, res.Interpreter, want)
+	}
+	roots, _ := pwshRoots()
+	found := false
+	for _, i := range powershell.Discover(roots) {
+		t.Logf("the inventory lists %+v", i)
+		if i.Edition == agentproto.EditionCore && i.Usable {
+			t.Errorf("usable while held: %+v", i)
+		}
+		if strings.EqualFold(i.Path, listed) {
+			found = true
+			if !i.Blocked || !strings.HasPrefix(i.Reason, "Could not be checked: ") || !strings.HasSuffix(i.Reason, "Scripts that allow Windows PowerShell 5.1 do not run in it instead.") {
+				t.Errorf("held, the inventory lists %+v", i)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("held, the inventory does not list %s", listed)
+	}
+}
+
+// usedAgain checks that a pwsh run uses the copy at install.
+func usedAgain(t *testing.T, install string) {
+	t.Helper()
+	res := Execute(context.Background(), winPayload(agentproto.ShellPwsh, "Write-Output \"edition:$($PSVersionTable.PSEdition)\"\n"), t.TempDir())
+	if line(res.Stdout, "edition:") != "Core" || res.Interpreter == nil || !strings.EqualFold(res.Interpreter.Path, filepath.Join(install, "pwsh.exe")) {
+		t.Errorf("let go: %+v", res)
+	}
+}
+
+// TestPwshUnlistedAsSystem: the folder PowerShell 7's installs are in,
+// opened and shared with no one, as any user who may list it could, so
+// that the agent cannot list it, stops a pwsh run, and a script that
+// allows Windows PowerShell does not run there instead; the inventory lists
+// the folder as could not be checked, not PowerShell 7 as not installed
+// (ADR-0064). A stand-in: the test's own process holds the folder, which
+// is a copy's in a Program Files of the test's own; what the agent meets
+// is the share mode, not who holds it.
+func TestPwshUnlistedAsSystem(t *testing.T) {
+	systemTest(t)
+	install := copyInstall(t)
+	folder := filepath.Dir(install)
+	let := hold(t, folder)
+	blockedWhileHeld(t, folder, folder+" could not be checked: open "+folder+": ")
+	let()
+	usedAgain(t, install)
+}
+
+// TestPwshUnreadProgramAsSystem: an install's pwsh.exe opened and shared
+// with no one, or with its header locked, as any user who may read it
+// could, so that the agent cannot read its version or architecture, stops
+// a pwsh run, and a script that allows Windows PowerShell does not run
+// there instead; the inventory lists the install as could not be checked
+// (ADR-0064). A stand-in: the test's own process holds the copy's
+// pwsh.exe; what the agent meets is the share mode and the lock, not who
+// holds them.
+func TestPwshUnreadProgramAsSystem(t *testing.T) {
+	systemTest(t)
+	install := copyInstall(t)
+	pwsh := filepath.Join(install, "pwsh.exe")
+	let := hold(t, pwsh)
+	blockedWhileHeld(t, pwsh, pwsh+" could not be checked: ")
+	let()
+	usedAgain(t, install)
+
+	f, err := os.Open(pwsh) //nolint:gosec // the test's own copy
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	var o windows.Overlapped
+	if err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 4096, 0, &o); err != nil {
+		t.Fatal(err)
+	}
+	blockedWhileHeld(t, pwsh, pwsh+" could not be checked: ")
+	if err := windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 4096, 0, &o); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	usedAgain(t, install)
+}
+
+// TestPwshUncheckedFolderAsSystem: a folder in an install opened and shared
+// with no one, as any user who may read it could, so that the agent cannot
+// check what it holds, stops a pwsh run, and a script that allows Windows
+// PowerShell does not run there instead; the inventory lists the install
+// as could not be checked (ADR-0064). A stand-in: the test's own process
+// holds the copy's Modules folder; what the agent meets is the share mode,
+// not who holds it.
+func TestPwshUncheckedFolderAsSystem(t *testing.T) {
+	systemTest(t)
+	install := copyInstall(t)
+	folder := filepath.Join(install, "Modules")
+	let := hold(t, folder)
+	pwsh := filepath.Join(install, "pwsh.exe")
+	blockedWhileHeld(t, pwsh, pwsh+" could not be checked: open "+folder+": ")
+	let()
+	usedAgain(t, install)
 }
 
 // TestPwshBusyAsSystem: a file of the install that another program holds
@@ -180,17 +312,26 @@ func TestPwshBusyAsSystem(t *testing.T) {
 		t.Errorf("with pwsh.dll held: %+v\nwant the error %q", res, want)
 	}
 	roots, _ := pwshRoots()
-	list, _ := powershell.Discover(roots)
-	for _, i := range list {
+	for _, i := range powershell.Discover(roots) {
 		if strings.EqualFold(i.Path, filepath.Join(install, "pwsh.exe")) && (i.Usable || !i.Blocked || !strings.HasPrefix(strings.ToLower(i.Reason), strings.ToLower(dll)+" is open in another program")) {
 			t.Errorf("the copy with pwsh.dll held: %+v", i)
 		}
 	}
 	_ = windows.CloseHandle(h)
-	res = Execute(context.Background(), winPayload(agentproto.ShellPwsh, "Write-Output \"edition:$($PSVersionTable.PSEdition)\"\n"), t.TempDir())
-	if line(res.Stdout, "edition:") != "Core" || res.Interpreter == nil || !strings.EqualFold(res.Interpreter.Path, filepath.Join(install, "pwsh.exe")) {
-		t.Errorf("let go: %+v", res)
+	usedAgain(t, install)
+
+	// With a second install that passes every check, a run held off the
+	// first uses the second, never Windows PowerShell: the one it moves to
+	// is changeable by administrators only, as the first is (ADR-0064).
+	second := filepath.Join(filepath.Dir(install), "8")
+	copyTree(t, install, second)
+	let := hold(t, dll)
+	res = Execute(context.Background(), p, t.TempDir())
+	if res.Status != agentproto.RunSucceeded || res.Interpreter == nil || res.Interpreter.Fallback || !strings.EqualFold(res.Interpreter.Path, filepath.Join(second, "pwsh.exe")) {
+		t.Errorf("with pwsh.dll held and a second install: %+v", res)
 	}
+	let()
+	usedAgain(t, install)
 }
 
 // TestPwshFallbackModulesAsSystem: a pwsh script that falls back to Windows
@@ -218,11 +359,22 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Modules) != 3 || len(f.Env) != 1 || !sameFolders(f.Env[0], f.Modules[1:]) {
+	// What the agent checks: the system account's own folder, then the two
+	// the PSModulePath it gives Windows PowerShell names.
+	docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	system32, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := []string{filepath.Join(docs, `WindowsPowerShell\Modules`), filepath.Join(roots[0], `WindowsPowerShell\Modules`), filepath.Join(system32, `WindowsPowerShell\v1.0\Modules`)}
+	if len(f.Env) != 1 || !sameFolders(f.Env[0], checked[1:]) {
 		t.Fatalf("the fallback %+v", f)
 	}
 	script := "'path:' + $env:PSModulePath\n"
-	ps7 := compatScript +
+	ps7 := script + compatScript +
 		"$s = Get-PSSession -Name WinPSCompatSession -ErrorAction SilentlyContinue\n" +
 		"if ($s) { 'compat:' + (Invoke-Command -Session $s { $env:PSModulePath }) } else { 'compat:none' }\n"
 	checkedOnly := func(what, got string, checked []string) {
@@ -247,9 +399,11 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 		if res.Interpreter == nil || !res.Interpreter.Fallback {
 			t.Fatalf("%s: not the fallback: %+v", what, res)
 		}
-		checkedOnly(what+", the fallback's module path", line(res.Stdout, "path:"), f.Modules)
+		checkedOnly(what+", the fallback's module path", line(res.Stdout, "path:"), checked)
 	}
-	compat := func(what string) {
+	// compat runs PowerShell 7, whose own module path must end with the path
+	// the run gives, spelled exactly as given, which it returns.
+	compat := func(what string) string {
 		t.Helper()
 		pwshRoots = func() ([]string, error) { return roots, nil }
 		defer func() { pwshRoots = func() ([]string, error) { return []string{empty}, nil } }()
@@ -258,12 +412,17 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 			t.Fatal(err)
 		}
 		run.Release()
+		given, _ := strings.CutPrefix(run.Env[0], "PSModulePath=")
 		res := Execute(context.Background(), winPayload(agentproto.ShellPwsh, ps7), t.TempDir())
+		if own := line(res.Stdout, "path:"); !strings.HasSuffix(own, ";"+given) {
+			t.Errorf("%s: PowerShell 7's own module path %q does not end with the path the run gave, %q, as given", what, own, given)
+		}
 		got := line(res.Stdout, "compat:")
 		if got == "none" {
 			t.Fatalf("%s: no compatibility session: %+v", what, res)
 		}
-		checkedOnly(what+", the compatibility session's module path", got, f.Modules)
+		checkedOnly(what+", the compatibility session's module path", got, checked)
+		return given
 	}
 
 	fallback("the runner's PSModulePath")
@@ -284,11 +443,15 @@ func TestPwshFallbackModulesAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("given %s where the computer's PSModulePath is %s", g.Env[0], expanded)
-	if !sameFolders(g.Env[0], f.Modules[1:]) || strings.EqualFold(g.Env[0], "PSModulePath="+expanded) {
+	if !sameFolders(g.Env[0], checked[1:]) || strings.EqualFold(g.Env[0], "PSModulePath="+expanded) {
 		t.Errorf("given %q where the computer's PSModulePath is %q", g.Env[0], expanded)
 	}
 	fallback("Windows' default PSModulePath")
-	compat("Windows' default PSModulePath")
+	// PowerShell 7 keeps the path given with its trailing backslash, and so
+	// passes it on to its compatibility session as spelled.
+	if given := compat("Windows' default PSModulePath"); given != strings.TrimPrefix(g.Env[0], "PSModulePath=") || !strings.Contains(given+";", `\;`) {
+		t.Errorf("a run given %q, the fallback %q, where the computer's PSModulePath is %q", given, g.Env[0], expanded)
+	}
 
 	// And a PSModulePath of the system account's own.
 	b := make([]byte, 4)

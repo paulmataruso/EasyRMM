@@ -350,7 +350,7 @@ describe("scripts", () => {
     await user.click(within(dialog).getByRole("checkbox", { name: "All" }));
     expect(
       within(dialog).getByText(
-        "1 of 4 devices reported no usable PowerShell 7 at their last inventory; this script fails there. 1 of 4 devices have PowerShell 7 found, not usable: its module folders or configuration fail the agent's check, so this script fails there. Their Hardware tab says why.",
+        "1 of 4 devices reported no usable PowerShell 7 at their last inventory; this script fails there. 1 of 4 devices have PowerShell 7 found, not usable: what it would load fails the agent's check, or it could not be checked, so this script fails there. Their Hardware tab says why.",
       ),
     ).toBeInTheDocument();
     await user.click(within(list).getByRole("checkbox", { name: /PC-02/ }));

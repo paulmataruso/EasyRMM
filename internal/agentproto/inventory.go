@@ -63,15 +63,18 @@ type PowerShellInstall struct {
 	// Store says it is a Microsoft Store (MSIX) install, reported and
 	// never run.
 	Store bool `json:"store,omitempty"`
-	// Usable says a pwsh run may choose it; Reason says why it may not,
-	// or why it could not be read.
+	// Usable says a pwsh run may choose it; Reason says why it may not.
 	Usable bool   `json:"usable"`
 	Reason string `json:"reason,omitempty"`
-	// Blocked says it is not usable although its own files pass: what a
-	// run of it would load from outside it, its module folders or its
-	// configuration, does not. A run that would have used it fails, and a
-	// script that allows Windows PowerShell does not run there instead
-	// (ADR-0064). Servers that do not know it ignore it.
+	// Blocked says it is not usable, and that a run does not fall back
+	// from it: what a run of it would load from outside it, its module
+	// folders or its configuration, fails the agent's check, or a file of
+	// it is open in another program, or it could not be read or checked;
+	// Path is then the folder installs are in where that folder could not
+	// be listed. A run moves to another install only where one passes
+	// every check; otherwise it fails, and a script that allows Windows
+	// PowerShell does not run there instead (ADR-0064). Servers that do not
+	// know it ignore it.
 	Blocked bool `json:"blocked,omitempty"`
 }
 
