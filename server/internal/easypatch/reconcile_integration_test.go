@@ -33,6 +33,12 @@ var reconcileKey = bytes.Repeat([]byte{7}, 32)
 // with nothing remembered but the database.
 func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Service {
 	f.t.Helper()
+	return f.engineServiceLog(engine, slog.New(slog.NewTextHandler(io.Discard, nil)), opts...)
+}
+
+// engineServiceLog is engineService, logging to log.
+func (f *fixture) engineServiceLog(engine *eptest.Server, log *slog.Logger, opts ...EngineOption) *Service {
+	f.t.Helper()
 	signer, err := NewSigner(reconcileKey)
 	if err != nil {
 		f.t.Fatal(err)
@@ -41,7 +47,7 @@ func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Se
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	svc := New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := New(f.db, audit.New(f.db, nil), "1.0.0", log)
 	if err := svc.UseEngine(client, opts...); err != nil {
 		f.t.Fatal(err)
 	}

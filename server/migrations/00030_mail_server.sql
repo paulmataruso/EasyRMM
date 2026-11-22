@@ -75,6 +75,17 @@ CREATE TABLE mail_waits (
     until  timestamptz NOT NULL
 );
 
+-- The mail server the patching engine is given, by the one of EasyRMM's
+-- servers that gives it (holding a session advisory lock): an Argon2id
+-- digest of it, with its salt, never the mail server itself, so that the
+-- others can tell whether theirs is the same.
+CREATE TABLE mail_engine_given (
+    id        boolean PRIMARY KEY DEFAULT true CHECK (id),
+    salt      bytea NOT NULL CHECK (length(salt) = 16),
+    digest    bytea NOT NULL CHECK (length(digest) = 32),
+    given_at  timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 -- Platform-wide: only platform-scope transactions see or change them.
 ALTER TABLE mail_server ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mail_server FORCE ROW LEVEL SECURITY;
@@ -95,7 +106,14 @@ CREATE POLICY mail_waits_system ON mail_waits TO easyrmm_app
     USING (easyrmm_scope_all()) WITH CHECK (easyrmm_scope_all());
 GRANT SELECT, INSERT, DELETE ON mail_waits TO easyrmm_app;
 
+ALTER TABLE mail_engine_given ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mail_engine_given FORCE ROW LEVEL SECURITY;
+CREATE POLICY mail_engine_given_system ON mail_engine_given TO easyrmm_app
+    USING (easyrmm_scope_all()) WITH CHECK (easyrmm_scope_all());
+GRANT SELECT, INSERT, UPDATE ON mail_engine_given TO easyrmm_app;
+
 -- +goose Down
+DROP TABLE IF EXISTS mail_engine_given;
 DROP TABLE IF EXISTS mail_waits;
 DROP TABLE IF EXISTS mail_sends;
 DROP TABLE IF EXISTS mail_server;

@@ -2,6 +2,7 @@ package easypatch
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -402,7 +403,9 @@ type NotificationSettings struct {
 // networks. EasyPatch replaces its notification settings at once, so the
 // mail server goes with the switch: EasyRMM's in force, read under the lock
 // syncMail holds, never the engine's copy, which may be a mail server
-// EasyRMM no longer has.
+// EasyRMM no longer has. On a server whose mail server is not the one the
+// engine was given (compareMail), that is its own, until the server that
+// gives the engine its mail server gives it again, within a pass.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
 	cl, err := s.notifications(ctx, c)
 	if err != nil {
@@ -414,17 +417,14 @@ func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, 
 	return s.Notifications(ctx, c)
 }
 
-// errMailUnreadable is EasyRMM's mail server unreadable when the engine's
-// notification settings, which carry it, are to change.
-var errMailUnreadable = apperr.Unavailable("mail_server_unreadable",
-	"EasyRMM could not read its mail server, which the patching engine's notification settings carry. Try again; if it goes on, check Settings → Notifications → Mail server.")
-
 func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *Client, allow bool) error {
 	e := s.engine
-	e.mailMu.Lock()
-	defer e.mailMu.Unlock()
+	if err := e.lockMail(ctx); err != nil {
+		return err
+	}
+	defer e.unlockMail()
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
-	m, err := cl.MailSettings(st)
+	m, err := e.mailSettings(st, cl)
 	if err != nil {
 		s.noteError(err)
 		return epError(err)
@@ -432,14 +432,21 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 	if m.AllowPrivateNetworkWebhooks == allow {
 		return nil
 	}
+	// EasyRMM's mail server unreadable (a password sealed with another
+	// key) does not stop the switch: no mail server goes with it, as when
+	// passes cannot give one, and the console says why.
 	cfg, err := e.mailInForce(ctx)
 	if err != nil {
-		s.log.Error("patching: reading EasyRMM's mail server for the engine's notification settings", "error", err)
-		return errMailUnreadable
+		problem := fmt.Sprintf("could not read EasyRMM's mail server for the patching engine: %v", err)
+		s.log.Error("patching: " + problem + "; the engine is given no mail server with the webhook switch")
+		cfg = MailConfig{}
+		e.mu.Lock()
+		e.mailProblem = problem
+		e.mu.Unlock()
 	}
 	put := cfg.mailSettings(m)
 	put.AllowPrivateNetworkWebhooks = allow
-	if err := cl.SetMailSettings(st, put); err != nil {
+	if err := e.setMailSettings(st, cl, put); err != nil {
 		s.noteError(err)
 		return epError(err)
 	}
