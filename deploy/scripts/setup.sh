@@ -34,6 +34,7 @@
 # `make updater`), its systemd units, and /etc/easyrmm/updater.conf naming
 # this deployment. --no-updater installs none. --auto-upgrade turns its
 # automatic upgrades on (they are off unless something turns them on).
+# While an updater attempt runs, setup.sh, run as root, changes nothing.
 #
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
@@ -97,6 +98,33 @@ done
 die() { echo "error: $*" >&2; exit 1; }
 # env_value KEY: KEY's value in .env (the last, if it is there twice).
 env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+
+# --- The updater's lock (ADR-0052) -------------------------------------------
+# Run as root, setup.sh holds the host updater's lock for its whole run: an
+# attempt changes .env, the data root and the updater's own files itself,
+# so setup.sh changes nothing while one runs. The updater runs a new
+# version's setup.sh --upgrade --no-updater under its lock and hands it
+# over, open, as EASYRMM_UPDATER_LOCK_FD: setup.sh takes it again, which
+# succeeds at once (a lock belongs to the open file, not to the process),
+# and never releases it, so neither waits for the other. Without an
+# updater's state directory, no updater runs here, unless this run installs
+# it.
+updater_state=/var/lib/easyrmm-updater
+updater_lock() {
+  local fd
+  if [[ -n "${EASYRMM_UPDATER_LOCK_FD:-}" ]]; then
+    fd=$EASYRMM_UPDATER_LOCK_FD
+    [[ "$fd" =~ ^[0-9]+$ && /proc/self/fd/$fd -ef "${updater_state}/lock" ]] ||
+      die "EASYRMM_UPDATER_LOCK_FD=${fd} is not the updater's lock, ${updater_state}/lock"
+  else
+    [[ -d "$updater_state" || "$install_updater" == true ]] || return 0
+    [[ -d "$updater_state" ]] || install -d -m 0700 -o root -g root "$updater_state"
+    exec {fd}>> "${updater_state}/lock"
+  fi
+  flock -n "$fd" ||
+    die "an updater attempt is running (easyrmm-updater status): setup.sh changes nothing while one does. Run it again once it has ended."
+}
+[[ $(id -u) -ne 0 ]] || updater_lock
 
 # --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
 # Authentik as everyone's sign-in. Its services are in docker-compose.yml
@@ -446,12 +474,11 @@ fi
 # for this deployment, as root. Each file is written beside its place and
 # renamed into it. An existing configuration keeps every setting but the
 # deployment (this directory), and automatic upgrades with --auto-upgrade.
-# It holds the updater's own lock while it does: an attempt running now
-# rewrites updater.conf, and replaces the updater and its units, itself.
+# setup.sh holds the updater's lock (updater_lock): an attempt rewrites
+# updater.conf, and replaces the updater and its units, itself.
 updater_conf=/etc/easyrmm/updater.conf
-updater_state=/var/lib/easyrmm-updater
 updater_install() {
-  local arch bin deployment tmp auto lock
+  local arch bin deployment tmp auto
   case "$(uname -m)" in
     x86_64) arch=amd64 ;;
     aarch64 | arm64) arch=arm64 ;;
@@ -472,13 +499,6 @@ updater_install() {
   deployment=$(pwd -P)
   if [[ ! "$deployment" =~ ^/[A-Za-z0-9_./+@-]*$ ]]; then
     echo "The updater: it takes a deployment directory of letters, digits and ._+@-/ only, not ${deployment}; not installed."
-    return
-  fi
-  [[ -d "$updater_state" ]] || install -d -m 0700 -o root -g root "$updater_state"
-  exec {lock}>> "${updater_state}/lock"
-  if ! flock -n "$lock"; then
-    exec {lock}>&-
-    echo "The updater: an attempt is running (easyrmm-updater status); not installed. Run setup.sh again once it has ended." >&2
     return
   fi
   updater_put 0755 "$bin" /usr/local/sbin/easyrmm-updater
@@ -517,7 +537,6 @@ CONF
   systemctl daemon-reload
   systemctl enable --now easyrmm-updater.timer > /dev/null 2>&1 ||
     echo "The updater: systemctl could not start easyrmm-updater.timer." >&2
-  exec {lock}>&-
   auto=$(sed -n 's/^[ \t]*auto_upgrade[ \t]*=[ \t]*//p' "$updater_conf" | tail -n 1)
   echo "The updater: installed as /usr/local/sbin/easyrmm-updater, configured in ${updater_conf}" \
     "(automatic upgrades: ${auto:-no}). See docs/operations/updater.md."

@@ -198,12 +198,23 @@ All notable changes to this project are documented here. The format follows
   stops, naming the version to install first; automatic upgrades install
   that stop first, and never go below the highest of the first three. An
   attempt cut short (killed, or the host restarted) is finished by the
-  next run from what it recorded, and after a rollback that failed the
-  updater does nothing until it is run with `--deployment-repaired`. It
-  refuses, before anything stops, a data root holding links at its top or
-  mount points, a host without room on each disk for everything that goes
-  on it, and a `.env` it could read otherwise than Compose does; it
-  unpacks bundles into `/opt/easyrmm`, root's, and removes only those. Each
+  next run from what it recorded, which is on the disk before each step
+  begins; a step it cannot record, or a command of its killed by a signal,
+  stops it where it is, the server held, without counting against the
+  version. systemd's stop (`KillMode=mixed`) and Ctrl-C reach the updater
+  alone, which runs on to the attempt's end for up to 30 minutes. After a
+  rollback that failed the updater does nothing until it is run with
+  `--deployment-repaired`. It refuses, before anything stops, a data root
+  holding links at its top or mount points, a host without room on each
+  disk for everything that goes on it (a restore done again included), a
+  `.env` it could read otherwise than Compose does or that sets a Compose
+  setting but `COMPOSE_PROFILES`, another Compose file beside
+  `docker-compose.yml`, and a volume a backup would not hold. A version
+  that ran out of room once the deployment stopped waits for an operator,
+  and `status` says how many bytes it was short. Run as root, `setup.sh`
+  holds the updater's lock for its whole run, and changes nothing while an
+  attempt runs. The updater unpacks bundles into `/opt/easyrmm`, root's,
+  and removes only those. Each
   bundle carries it; a clone builds it with `make updater`. Guide:
   [the host updater](docs/operations/updater.md). The console's requests
   (feature 4b) come later.

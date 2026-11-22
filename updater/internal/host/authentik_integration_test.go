@@ -141,7 +141,7 @@ func TestAuthentikRoundTrip(t *testing.T) {
 	// The upgrade stops the deployment and backs it up.
 	pg.stop()
 	meta := BackupMeta{Version: "v1.0.0", Deployment: deploy, DataRoot: dataRoot, Taken: time.Now()}
-	b, err := takeBackup(ctx, backupDirFor(filepath.Join(base, "backups"), meta), meta, conf, func() error { return nil })
+	b, err := takeBackup(ctx, backupDirFor(filepath.Join(base, "backups"), meta), meta, conf, 0, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

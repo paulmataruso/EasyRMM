@@ -264,12 +264,16 @@ func rollback(ctx context.Context, u *host.Updater, c *command, e env, log *slog
 }
 
 // stopSignals is ctx, canceled when someone presses Ctrl-C or systemd
-// stops the unit (SIGINT, SIGTERM). An attempt that has not stopped the
-// deployment ends there, having changed nothing; one that has runs on to
-// its end, or brings the previous version back, before the updater exits:
-// stopping halfway would leave the deployment down. systemd kills it after
-// the unit's TimeoutStopSec, and the next run finishes the attempt from
-// what it recorded. A terminal that hangs up changes nothing.
+// stops the unit (SIGINT, SIGTERM). Neither reaches the commands the
+// updater runs: they run in process groups of their own, and the unit's
+// KillMode=mixed signals the updater alone. An attempt that has not stopped
+// the deployment ends there, having changed nothing; one that has runs on
+// to its end, or brings the previous version back, before the updater
+// exits: stopping halfway would leave the deployment down. The stop is
+// recorded at once; systemd kills everything after the unit's
+// TimeoutStopSec, and the next run finishes the attempt from what it
+// recorded, without counting it against the version. A terminal that hangs
+// up changes nothing.
 func stopSignals(ctx context.Context, log *slog.Logger) (context.Context, func()) {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
 	ctx, cancel := context.WithCancel(ctx)

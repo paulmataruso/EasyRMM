@@ -34,9 +34,7 @@ func (u *Updater) settle(ctx context.Context, st *State, by string, repaired boo
 		a.Repaired = by + " at " + u.now().Format(time.RFC3339)
 		u.Log.Warn("acting again after an attempt whose rollback failed: the deployment was repaired by hand, says "+by, "attempt", a.ID)
 		if a.Action == "upgrade" && a.NewDeploy != "" && slices.Contains(st.Unpacked, filepath.Dir(a.NewDeploy)) {
-			if err := u.removeUnpacked(st, filepath.Dir(a.NewDeploy)); err != nil {
-				u.Log.Warn("could not remove the failed version's directory", "error", err)
-			}
+			u.removeUnlessRunning(ctx, st, filepath.Dir(a.NewDeploy), "the failed version's directory")
 		}
 		if err := u.save(st, &deployment{dataRoot: a.DataRoot}); err != nil {
 			return "", err
@@ -52,21 +50,29 @@ func (u *Updater) settle(ctx context.Context, st *State, by string, repaired boo
 
 // finishInterrupted finishes an attempt whose process ended before it did
 // (the out-of-memory killer, systemd's stop timeout, a power loss, a
-// reboot), by what the attempt recorded, as a failure at that step would
-// have been: before the deployment stopped (check, pull), nothing that runs
-// changed; stopped, before the backup was complete (stop, backup), the
-// previous version starts again where it stopped, and an incomplete backup
-// goes; after that the backup is restored and the new version marked
-// failed. A restore cut short is done again, without reading the discarded
-// database's head again; once a restore had put everything back, the
-// restored version starts. What it cannot finish ends rollback-failed.
+// reboot), or that the updater stopped where it was (leave), by what the
+// attempt recorded, as a failure at that step would have been: before the
+// deployment stopped (check, pull), nothing that runs changed; stopped,
+// with the data root as it stopped (stop, backup), the previous version
+// starts again where it stopped, and an incomplete backup goes; after that
+// the backup is restored. A restore cut short is done again, without
+// reading the discarded database's head again; once a restore had put
+// everything back, the restored version starts. The new version is marked
+// failed unless the attempt was cut short by something else than it: the
+// updater stopped it (Interrupted), or a stop was asked for. What it is
+// itself cut short in, it leaves again; what it cannot finish ends
+// rollback-failed.
 func (u *Updater) finishInterrupted(ctx context.Context, st *State) (string, error) {
 	ctx = context.WithoutCancel(ctx)
 	a := st.Attempt
 	d := &deployment{dir: a.Deployment, dataRoot: a.DataRoot}
 	step := a.Step
+	cutShort := u.cutShort(a)
 	reason := fmt.Errorf("the updater's process ended during the %s step, before the attempt did", step)
-	u.Log.Warn("finishing an attempt the updater did not see to its end", "action", a.Action, "from", a.From, "to", a.To, "step", a.Step, "attempt", a.ID)
+	if cutShort != "" {
+		reason = fmt.Errorf("the attempt stopped during the %s step: %s", step, cutShort)
+	}
+	u.Log.Warn("finishing an attempt the updater did not see to its end", "action", a.Action, "from", a.From, "to", a.To, "step", a.Step, "cut short", cutShort, "attempt", a.ID)
 	if a.Deployment == "" || a.DataRoot == "" {
 		u.end(st, d, ResultRollbackFailed, fmt.Errorf("%w; it did not record its deployment, and cannot be finished", reason))
 		return "", st.Attempt.reasonError()
@@ -82,9 +88,9 @@ func (u *Updater) finishInterrupted(ctx context.Context, st *State) (string, err
 	result := ResultRolledBack
 	var err error
 	switch {
-	case upgrade && (step == StepCheck || step == StepPull):
+	case step == StepCheck || (upgrade && step == StepPull):
 		result = ResultFailed
-	case upgrade && (step == StepStop || step == StepBackup):
+	case upgrade && !changesData(step):
 		if b == nil && a.Backup != "" {
 			err = os.RemoveAll(a.Backup)
 		}
@@ -100,23 +106,56 @@ func (u *Updater) finishInterrupted(ctx context.Context, st *State) (string, err
 		if !upgrade {
 			p.discardedDeploy, p.discarded = a.Deployment, a.From
 		}
-		st.MarkFailed(p.discarded)
+		if !upgrade || cutShort == "" {
+			st.MarkFailed(p.discarded)
+		}
 		err = u.restore(ctx, st, d, p)
+	}
+	if leaves(err, st.Attempt.Step) {
+		return "", u.leave(st, d, err)
 	}
 	if err != nil {
 		u.end(st, d, ResultRollbackFailed, fmt.Errorf("%w; then finishing it failed: %w (the backup: %s)", reason, err, orNone(a.Backup)))
 		return "", st.Attempt.reasonError()
 	}
 	if upgrade && a.NewDeploy != "" && slices.Contains(st.Unpacked, filepath.Dir(a.NewDeploy)) {
-		if err := u.removeUnpacked(st, filepath.Dir(a.NewDeploy)); err != nil {
-			u.Log.Warn("could not remove the new deployment's directory", "error", err)
-		}
+		u.removeUnlessRunning(ctx, st, filepath.Dir(a.NewDeploy), "the new version's directory")
 	}
 	if !upgrade {
 		st.Previous, st.Rollback = "", nil
 	}
 	u.end(st, d, result, reason)
 	return fmt.Sprintf("finished an attempt whose process had ended (%s from %s to %s, at its %s step): %s", a.Action, orNone(a.From), a.To, step, result), nil
+}
+
+// cutShort says what cut the attempt a short, when something else than its
+// version did: the updater, which recorded why (in state.json, or in
+// status.json when it could not write state.json), or a stop asked for.
+func (u *Updater) cutShort(a *Attempt) string {
+	if a.Interrupted != "" {
+		return a.Interrupted
+	}
+	if s, err := statusDirOf(a.DataRoot).read(); err == nil && s.Attempt != nil && s.Attempt.ID == a.ID && s.Attempt.Interrupted != "" {
+		return s.Attempt.Interrupted
+	}
+	return u.stopAsked(a)
+}
+
+// removeUnlessRunning removes root, a directory the updater unpacked,
+// unless a container of the project runs from it: then it is left, and
+// tidying removes it once nothing does.
+func (u *Updater) removeUnlessRunning(ctx context.Context, st *State, root, what string) {
+	dirs, err := u.Docker.RunningFrom(ctx)
+	switch {
+	case err != nil:
+		u.Log.Warn("could not list what runs: "+what+" is left, for tidying to remove", "dir", root, "error", err)
+	case slices.ContainsFunc(dirs, func(dir string) bool { return within(dir, root) }):
+		u.Log.Warn("containers run from "+what+": it is left, and tidying removes it once nothing does", "dir", root)
+	default:
+		if err := u.removeUnpacked(st, root); err != nil {
+			u.Log.Warn("could not remove "+what, "dir", root, "error", err)
+		}
+	}
 }
 
 // reinstall re-installs the updater from the running deployment's bundle

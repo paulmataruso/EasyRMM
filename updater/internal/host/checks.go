@@ -70,7 +70,9 @@ func readSmall(path string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
-// treeSize is the space a directory's files take, links not followed.
+// treeSize is the space a directory's entries take, links not followed:
+// each the larger of its length and the blocks it has, since a copy of a
+// file with holes may fill them, and a small file takes a whole block.
 func treeSize(dir string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(dir, func(_ string, e fs.DirEntry, err error) error {
@@ -89,9 +91,11 @@ func treeSize(dir string) (int64, error) {
 		if err != nil {
 			return err
 		}
+		size := fi.Size()
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-			total += st.Blocks * 512
+			size = max(size, st.Blocks*512)
 		}
+		total += size
 		return nil
 	})
 	return total, err
@@ -133,7 +137,8 @@ func unescapeOctal(s string) string {
 }
 
 // within reports whether path is dir or lies under it, by their names or
-// by where their links lead.
+// by where their links lead. It resolves both, so it is for the updater's
+// own paths, not the host's every mount point (checkDataRoot).
 func within(path, dir string) bool {
 	for _, p := range resolved(path) {
 		for _, d := range resolved(dir) {
@@ -163,13 +168,24 @@ func resolved(path string) []string {
 // directory bound there), are refused, before anything stops. Links deeper
 // down are the services' own, which they follow inside their containers,
 // and are copied as they are. The data root itself may be a mount point.
+//
+// The kernel lists mount points by their paths, without links, so only the
+// data root's path is resolved, once: the host's other mount points are
+// compared by name, and none is looked at (a network share that does not
+// answer would stall the check).
 func checkDataRoot(dataRoot string) (int64, error) {
 	points, err := mountPoints()
 	if err != nil {
 		return 0, err
 	}
+	roots := resolved(dataRoot)
 	for _, p := range points {
-		if within(p, dataRoot) && !within(dataRoot, p) && !skippedPath(dataRoot, p) {
+		p = filepath.Clean(p)
+		for _, root := range roots {
+			rel, err := filepath.Rel(root, p)
+			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || skippedEntry(strings.SplitN(rel, "/", 2)[0]) {
+				continue
+			}
 			return 0, fmt.Errorf("%s is a mount point in the data root %s: a restore cannot move it aside, and a backup copies it onto the backup's disk. Mount the data root as a whole instead (docs/operations/updater.md#the-data-root)", p, dataRoot)
 		}
 	}
@@ -196,21 +212,6 @@ func checkDataRoot(dataRoot string) (int64, error) {
 	return total, nil
 }
 
-// skippedPath reports whether path lies in an entry of the data root that
-// backups leave out.
-func skippedPath(dataRoot, path string) bool {
-	for _, root := range resolved(dataRoot) {
-		for _, p := range resolved(path) {
-			if rel, err := filepath.Rel(root, p); err == nil && rel != "." {
-				if skippedEntry(strings.SplitN(rel, "/", 2)[0]) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // freeSpace is the room left for root on the filesystem holding path; the
 // tests' disks are as full as they say.
 var freeSpace = func(path string) (int64, error) {
@@ -232,67 +233,103 @@ func noSpace(err error) bool {
 		strings.Contains(strings.ToLower(err.Error()), "no space left on device")
 }
 
-// checkSpace makes sure each filesystem has room for what the attempt may
-// write on it, the needs on one filesystem added up: in backup_dir, the
-// backup (a full copy of the data root, the deployment's tree and the
-// configuration: reflinks, where there are any, only save room); in the
-// data root, a restore's copy of it, should the upgrade fail; in Docker's
-// data directory, the new images; in the updater's state directory and its
-// bundle directory, the bundle downloaded and unpacked.
-func (up *upgrade) checkSpace(ctx context.Context, dataSize int64) error {
+// fsNeed is the room an attempt needs on one filesystem.
+type fsNeed struct {
+	path  string
+	bytes int64
+	free  int64
+	what  []string
+}
+
+// roomNeeds is the room each filesystem must have for what the attempt may
+// write on it, the needs on one filesystem added up, with what it has
+// free: in backup_dir, the backup (a full copy of the data root, the
+// deployment's tree and the configuration: reflinks, where there are any,
+// only save room); in the data root, a restore's copy of it, should the
+// upgrade fail, and another, should a restore cut short be done again (the
+// first's copy goes only once the second is checked); beside the
+// deployment's tree, a restore's copy of it; in Docker's data directory,
+// the new images; in the updater's state directory and its bundle
+// directory, the bundle downloaded and unpacked.
+func (up *upgrade) roomNeeds(ctx context.Context) ([]*fsNeed, error) {
 	u, d := up.u, up.d
-	treeSize, err := deploymentSize(d.dir)
-	if err != nil {
-		return err
-	}
 	if err := ensureRootDir(u.Config.BackupDir, 0o700); err != nil {
-		return err
+		return nil, err
 	}
 	dockerRoot, err := u.Docker.RootDir(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	type fsNeed struct {
-		path  string
-		bytes int64
-		what  []string
-	}
-	var order []uint64
+	var order []*fsNeed
 	needs := map[uint64]*fsNeed{}
 	for _, n := range []struct {
 		path, what string
 		bytes      int64
 	}{
-		{u.Config.BackupDir, "the backup", dataSize + treeSize},
-		{d.dataRoot, "a restore's copy of the data root", dataSize},
+		{u.Config.BackupDir, "the backup", up.dataSize + up.treeSize},
+		{d.dataRoot, "a restore's copy of the data root, and one more should it be done again", 2 * up.dataSize},
+		{filepath.Dir(d.dir), "a restore's copy of the deployment's directory", up.treeSize},
 		{dockerRoot, "the new images", minImageSpace},
 		{u.StateDir, "the bundle's download", bundleSpace},
 		{u.BundleDir, "the unpacked bundle", bundleSpace},
 	} {
 		var st syscall.Stat_t
 		if err := syscall.Stat(n.path, &st); err != nil {
-			return fmt.Errorf("%s: %w", n.path, err)
+			return nil, fmt.Errorf("%s: %w", n.path, err)
 		}
 		f, ok := needs[st.Dev]
 		if !ok {
 			f = &fsNeed{path: n.path}
 			needs[st.Dev] = f
-			order = append(order, st.Dev)
+			order = append(order, f)
 		}
 		f.bytes += n.bytes
 		f.what = append(f.what, fmt.Sprintf("%s %d MiB (%s)", n.what, n.bytes>>20, n.path))
 	}
-	for _, dev := range order {
-		f := needs[dev]
-		free, err := freeSpace(f.path)
-		if err != nil {
-			return err
+	for _, f := range order {
+		if f.free, err = freeSpace(f.path); err != nil {
+			return nil, err
 		}
-		if free < f.bytes {
-			return fmt.Errorf("the filesystem of %s has %d MiB free, and the upgrade needs %d MiB on it: %s", f.path, free>>20, f.bytes>>20, strings.Join(f.what, ", "))
+	}
+	return order, nil
+}
+
+// checkSpace makes sure each filesystem has room for what the attempt may
+// write on it (roomNeeds).
+func (up *upgrade) checkSpace(ctx context.Context) error {
+	needs, err := up.roomNeeds(ctx)
+	if err != nil {
+		return err
+	}
+	for _, f := range needs {
+		if f.free < f.bytes {
+			return fmt.Errorf("the filesystem of %s has %d MiB free, and the upgrade needs %d MiB on it: %s", f.path, f.free>>20, f.bytes>>20, strings.Join(f.what, ", "))
 		}
 	}
 	return nil
+}
+
+// needsRoom is what an attempt that ran out of room, err, needed: for a
+// backup, what it still had to copy; otherwise the most any filesystem
+// lacks of what the room check counts, measured again now.
+func (up *upgrade) needsRoom(ctx context.Context, err error) *NeedsRoom {
+	n := &NeedsRoom{Version: up.target.String(), Path: up.u.Config.BackupDir}
+	var room *roomError
+	if errors.As(err, &room) {
+		n.Path, n.Short = room.path, max(room.short, 0)
+		return n
+	}
+	needs, nerr := up.roomNeeds(ctx)
+	if nerr != nil {
+		up.u.Log.Warn("could not measure the room the attempt needed", "error", nerr)
+		return n
+	}
+	for _, f := range needs {
+		if short := f.bytes - f.free; short > n.Short {
+			n.Path, n.Short = f.path, short
+		}
+	}
+	return n
 }
 
 // deploymentSize is the space the deployment's tree takes: its deploy/ and
@@ -311,19 +348,23 @@ func deploymentSize(deployDir string) (int64, error) {
 
 // ensureRootPath makes dir, root's with mode 755, unless it is there, and
 // makes sure no one but root can change it or a directory above it: each
-// is root's, and only root can write it, or it is sticky (as /tmp is),
-// where no one can rename or remove what is not theirs.
+// is a directory, not a link, root's, and only root can write it, or it is
+// sticky (as /tmp is), where no one can rename or remove what is not
+// theirs.
 func ensureRootPath(dir string) error {
 	if err := ensureRootDir(dir, 0o755); err != nil {
 		return err
 	}
 	for p := filepath.Dir(dir); p != checkedBelow; p = filepath.Dir(p) {
-		fi, err := os.Stat(p)
+		fi, err := os.Lstat(p)
 		if err != nil {
 			return err
 		}
 		st, ok := fi.Sys().(*syscall.Stat_t)
 		switch {
+		case fi.Mode()&fs.ModeSymlink != 0:
+			target, _ := os.Readlink(p)
+			return fmt.Errorf("%s, above %s, is a link (to %s): whoever can change what it leads to changes %s. Give the updater a path without links", p, dir, target, dir)
 		case !ok || (st.Uid != 0 && st.Uid != rootUID):
 			return fmt.Errorf("%s, above %s, does not belong to root", p, dir)
 		case fi.Mode().Perm()&0o022 != 0 && fi.Mode()&fs.ModeSticky == 0:
@@ -364,11 +405,14 @@ func downloadBundle(ctx context.Context, src fetch.Source, m *release.Manifest, 
 
 // runSetup runs the new bundle's setup.sh --upgrade --no-updater in its
 // deploy/ directory, with a fixed environment and nothing to read, and
-// logs what it says.
-func runSetup(ctx context.Context, deployDir string, log *slog.Logger) error {
+// logs what it says. setup.sh holds the updater's lock for its whole run;
+// the updater, which holds it, hands it its own as file descriptor 3
+// (EASYRMM_UPDATER_LOCK_FD), on which taking the lock again succeeds.
+func runSetup(ctx context.Context, deployDir string, lock *os.File, log *slog.Logger) error {
 	cmd := exec.CommandContext(ctx, filepath.Join(deployDir, "scripts", "setup.sh"), "--upgrade", "--no-updater") //nolint:gosec // the verified bundle's setup.sh
 	cmd.Dir = deployDir
-	cmd.Env = fixedEnv()
+	cmd.Env = append(fixedEnv(), "EASYRMM_UPDATER_LOCK_FD=3")
+	cmd.ExtraFiles = []*os.File{lock}
 	cmd.SysProcAttr = ownGroup()
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -379,7 +423,7 @@ func runSetup(ctx context.Context, deployDir string, log *slog.Logger) error {
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return fmt.Errorf("setup.sh --upgrade failed (exit %d)", exit.ExitCode())
+		return asKilled(ctx, fmt.Errorf("setup.sh --upgrade failed (%w)", err))
 	}
 	return err
 }

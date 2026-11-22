@@ -91,7 +91,7 @@ func copyTree(ctx context.Context, src, dst string) error {
 				err = fmt.Errorf("%w (%w)", err, errno)
 			}
 		}
-		return fmt.Errorf("copying %s to %s: %w: %s", src, dst, err, lastLines(string(out), 3))
+		return asKilled(ctx, fmt.Errorf("copying %s to %s: %w: %s", src, dst, err, lastLines(string(out), 3)))
 	}
 	return verifyCopy(src, dst)
 }
@@ -185,10 +185,12 @@ func backupDirFor(backupDir string, meta BackupMeta) string {
 }
 
 // takeBackup copies the stopped deployment into dir, a new directory in
-// backup_dir, and calls made once dir exists, to record it. A backup that
+// backup_dir, and calls made once dir exists, to record it. size is what
+// the copy is expected to take (the room check's estimate). What it copied
+// is synced to its disk before backup.json marks it complete. A backup that
 // fails is removed, so that it takes no room from the version started
-// again.
-func takeBackup(ctx context.Context, dir string, meta BackupMeta, configPath string, made func() error) (b *Backup, err error) {
+// again; one that ran out of room says how much more it needed.
+func takeBackup(ctx context.Context, dir string, meta BackupMeta, configPath string, size int64, made func() error) (b *Backup, err error) {
 	if err := ensureRootDir(filepath.Dir(dir), 0o700); err != nil {
 		return nil, err
 	}
@@ -198,6 +200,10 @@ func takeBackup(ctx context.Context, dir string, meta BackupMeta, configPath str
 	defer func() {
 		if err == nil {
 			return
+		}
+		if noSpace(err) {
+			copied, _ := treeSize(dir)
+			err = &roomError{err: err, path: filepath.Dir(dir), short: size - copied}
 		}
 		if rerr := os.RemoveAll(dir); rerr != nil {
 			err = fmt.Errorf("%w; removing the incomplete backup %s: %w", err, dir, rerr)
@@ -232,6 +238,9 @@ func takeBackup(ctx context.Context, dir string, meta BackupMeta, configPath str
 	}
 	if err := copyTree(ctx, configPath, filepath.Join(dir, "updater.conf")); err != nil {
 		return nil, err
+	}
+	if err := syncFS(dir); err != nil {
+		return nil, fmt.Errorf("syncing the backup to its disk: %w", err)
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -294,31 +303,47 @@ func rotateBackups(backupDir string, keep ...string) error {
 // restoreData puts the backup's data root back: the failed data root's
 // entries moved aside into a directory only root can reach, kept for
 // diagnosis, and the backup's copied into the emptied data root, so that
-// root writes into no directory a container could have written. It returns
+// root writes into no directory a container could have written. aside names
+// that directory, the same for every restore of one attempt. It returns
 // where the failed entries went.
+//
+// A restore done again, after one cut short, finds that directory there.
+// Of the data root's entries, those it already holds are the first
+// restore's copies, whole or not: they are moved into a directory of their
+// own, removed once the backup is copied in again and checked. The others
+// are the failed version's, which the first restore did not get to move.
 func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (string, error) {
-	// A restore done again in the same second, after an interrupted one,
-	// moves the half restored entries aside beside the first's.
 	asideDir := filepath.Join(dataRoot, failedPrefix+aside)
-	for i := 2; ; i++ {
-		err := os.Mkdir(asideDir, 0o700)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, fs.ErrExist) {
+	again := false
+	if err := os.Mkdir(asideDir, 0o700); errors.Is(err, fs.ErrExist) {
+		if err := ensureRootDir(asideDir, 0o700); err != nil {
 			return "", err
 		}
-		asideDir = filepath.Join(dataRoot, fmt.Sprintf("%s%s.%d", failedPrefix, aside, i))
+		again = true
+	} else if err != nil {
+		return "", err
 	}
 	entries, err := os.ReadDir(dataRoot)
 	if err != nil {
+		return "", err
+	}
+	// Left by a restore done again and itself cut short: worth nothing.
+	half := filepath.Join(dataRoot, failedPrefix+aside+".half-restored")
+	if err := os.RemoveAll(half); err != nil {
 		return "", err
 	}
 	for _, e := range entries {
 		if skippedEntry(e.Name()) {
 			continue
 		}
-		if err := os.Rename(filepath.Join(dataRoot, e.Name()), filepath.Join(asideDir, e.Name())); err != nil {
+		to := filepath.Join(asideDir, e.Name())
+		if _, err := os.Lstat(to); again && err == nil {
+			if err := os.Mkdir(half, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+				return "", err
+			}
+			to = filepath.Join(half, e.Name())
+		}
+		if err := os.Rename(filepath.Join(dataRoot, e.Name()), to); err != nil {
 			return "", err
 		}
 	}
@@ -331,10 +356,15 @@ func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (strin
 			return "", err
 		}
 	}
+	if err := os.RemoveAll(half); err != nil {
+		return "", fmt.Errorf("removing the copy a restore cut short left: %w", err)
+	}
 	return asideDir, nil
 }
 
-// restoreTree puts the backup's deploy/ and docker/ back under root.
+// restoreTree puts the backup's deploy/ and docker/ back under root. What
+// each replaces is kept beside it until the copy is checked, then removed,
+// with what a restore cut short left.
 func (b *Backup) restoreTree(ctx context.Context, root, aside string) error {
 	if err := os.MkdirAll(root, 0o755); err != nil { //nolint:gosec // the deployment's files, which containers read
 		return err
@@ -342,7 +372,7 @@ func (b *Backup) restoreTree(ctx context.Context, root, aside string) error {
 	for _, name := range []string{"deploy", "docker"} {
 		dst := filepath.Join(root, name)
 		old := filepath.Join(root, "."+name+".replaced-"+aside)
-		// Left by an interrupted restore.
+		// Left by a restore of this attempt cut short.
 		if err := os.RemoveAll(old); err != nil {
 			return err
 		}
@@ -352,8 +382,11 @@ func (b *Backup) restoreTree(ctx context.Context, root, aside string) error {
 		if err := copyTree(ctx, filepath.Join(b.Dir, "tree", name), dst); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(old); err != nil {
-			return err
+		left, _ := filepath.Glob(filepath.Join(root, "."+name+".replaced-*"))
+		for _, dir := range left {
+			if err := os.RemoveAll(dir); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

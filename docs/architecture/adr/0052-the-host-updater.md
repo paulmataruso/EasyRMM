@@ -368,7 +368,8 @@ contacts no agent, so it does not depend on agents being reachable.
   says why. When the server and `.env` agree on another version than the
   record, the deployment was changed by hand and the record follows them:
   refusing then would stop the updater for good after any manual upgrade
-  (decided in implementation, beyond the review's wording). A rollback
+  (proposed in implementation, beyond the review's wording, and accepted
+  in review). A rollback
   needs all three to name the version the confirmed upgrade installed.
 * **`.env`** is read as `setup.sh` writes it: `KEY=value` lines, comments
   and blank lines. `export`, quoted values, spaces around a key and
@@ -378,8 +379,68 @@ contacts no agent, so it does not depend on agents being reachable.
   attempt's warning, in `status`; the next run re-installs it from the
   running version's bundle, when it is older than that version and the
   bundle is one it unpacked.
-* **`setup.sh`** takes the updater's lock while it installs the updater
-  and rewrites `updater.conf`, and installs nothing while an attempt runs.
+* **`setup.sh`**, run as root, holds the updater's lock for its whole run
+  (amended below, 2026-11-22).
+
+*Amended 2026-11-22, after a second review of the implementation (decided
+in review):*
+* **Stopping.** `easyrmm-updater.service` has `KillMode=mixed`: systemd's
+  stop sends SIGTERM to the updater alone, never to the `cp`, `docker` or
+  `setup.sh` it runs, which run in process groups of their own, so Ctrl-C
+  does not reach them either. The updater records the stop at once
+  (`stop-asked` in its state directory) and runs on as before.
+  `TimeoutStopSec=30min`, what is left of a held start and the engine's
+  worker's, bounds how long a reboot waits; systemd then kills everything,
+  and the next run settles the attempt. A stop recorded during an attempt
+  keeps the next run from counting it against the version.
+* **A command killed by a signal** (one the updater's own context did not
+  send) after the stop is an interruption, not the version failing: the
+  attempt stops at its step, the server held, its record saying why
+  (`interrupted`, in `state.json` and `status.json`), and the next run
+  finishes it.
+* **Records before changes.** The updater never changes the data root, by
+  starting the new version or by restoring, unless the step that says so
+  is recorded. Before step 5 a step it cannot record ends the attempt, and
+  the previous version starts again on its own data; from step 5 on the
+  attempt stops where it is, the server held (a restore's copy of the data
+  root predates `hold`, which the updater writes again), and `status` says
+  why. The same holds for a restore's stages: the discarded head, and the
+  restore's end.
+* **Durability.** Every file the updater writes is synced, renamed into
+  place and its directory synced. The backup's filesystem is synced
+  (`syncfs`) before `backup.json` marks it complete, and the filesystems a
+  restore copied to before the restore is recorded as done.
+* **Room.** A file counts as the larger of its length and its blocks. The
+  data root's filesystem needs room for two copies of it (a restore, and
+  one done again), and the deployment directory's for a copy of it. A disk
+  that runs out once the deployment has stopped does not mark the version
+  failed; automatic runs skip that version until an operator asks for it,
+  and `status` and `status.json` (`needsRoom`) say how many bytes it was
+  short, and where.
+* **A restore done again** removes the copy the first left once its own
+  copy is checked, and the deployment directory's replaced copies once
+  each copy is checked.
+* **`--deployment-repaired`** removes the failed version's directory only
+  when no container of the project runs from it; otherwise tidying does,
+  once none does.
+* **Compose reads only what a backup covers.** Refused at step 1, for the
+  running deployment, and once unpacked for the new one: another file
+  Compose reads (`docker-compose.override.yml`, `compose.yaml` and their
+  variants); a Compose setting in `.env` other than `COMPOSE_PROFILES`;
+  and any volume but a `tmpfs` or a bind mount from the data root (not its
+  `updater/` or a failed data root), the deployment's `deploy/` and
+  `docker/`, the status directory and the server's certificates
+  read-only, or `/etc/localtime`, `/etc/timezone` and the Docker socket.
+  The updater runs Compose with an environment of its own.
+* **Paths.** No directory above the bundle directory may be a link. Mount
+  points are compared with the data root by name, and with where a link to
+  it leads, without resolving the host's every mount point.
+* **`setup.sh`**, run as root, holds the updater's lock for its whole run,
+  every `.env` edit and the data root's directories included, and changes
+  nothing while an attempt runs. The updater hands its own lock, open, to
+  the `setup.sh --upgrade --no-updater` it runs (`EASYRMM_UPDATER_LOCK_FD`);
+  that `setup.sh` checks that it is the updater's lock and takes it again,
+  which succeeds at once, so neither waits for the other.
 
 ### Rollback guards (amended 2026-11-21)
 *Decided in review, so that ADR-0057 (rotating the job key) and ADR-0061

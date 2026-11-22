@@ -1,8 +1,10 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,7 +65,11 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 		result      string
 		failed      bool // v1.1.0 skipped by automatic upgrades
 		restored    bool // the backup restored, the audit IDs moved
-		headRead    bool // the discarded head read by the run that died
+		// readsHead is set when the run that finishes the attempt reads
+		// the discarded database's audit chain head: it does unless the
+		// run that died had (a restore cut short, whose data root may be
+		// half restored, with the backup's head).
+		readsHead bool
 	}{
 		"during the pull": {
 			crash: func(*testHost) func(dir, call string) bool {
@@ -78,7 +84,7 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 			result: ResultRolledBack,
 		},
 		"during the held start": {
-			crash: newServerReady, result: ResultRolledBack, failed: true, restored: true, headRead: true,
+			crash: newServerReady, result: ResultRolledBack, failed: true, restored: true, readsHead: true,
 		},
 		"while starting the worker before the confirm was recorded": {
 			crash: func(h *testHost) func(dir, call string) bool {
@@ -86,7 +92,7 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 					return dir == h.deploy("v1.1.0") && strings.HasPrefix(call, "compose up") && strings.HasSuffix(call, " "+workerService)
 				}
 			},
-			result: ResultRolledBack, failed: true, restored: true, headRead: true,
+			result: ResultRolledBack, failed: true, restored: true, readsHead: true,
 		},
 		"during the restore": {
 			crash: func(h *testHost) func(dir, call string) bool {
@@ -95,7 +101,7 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 				}
 			},
 			fail:   newServerReady,
-			result: ResultRolledBack, failed: true, restored: true, headRead: true,
+			result: ResultRolledBack, failed: true, restored: true,
 		},
 		"once the restore had put everything back": {
 			crash: func(h *testHost) func(dir, call string) bool {
@@ -104,7 +110,7 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 				}
 			},
 			fail:   newServerReady,
-			result: ResultRolledBack, failed: true, restored: true, headRead: true,
+			result: ResultRolledBack, failed: true, restored: true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -162,9 +168,9 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 				}
 				return
 			}
-			// The rollback is recorded once, past the head the run that
-			// died read: a restore done again does not read the half
-			// restored database's head.
+			// The rollback is recorded past the discarded database's head
+			// (v1.1.0's, at 57), read once: a restore done again does not
+			// read the half restored database's, which is the backup's.
 			var records []map[string]string
 			for i, sql := range h.docker.psql {
 				if strings.Contains(sql, "'updater.rolled_back'") {
@@ -175,8 +181,17 @@ func TestInterruptedAttemptIsFinished(t *testing.T) {
 				t.Fatal("no rollback recorded")
 			}
 			last := records[len(records)-1]
-			if tc.headRead && (last["skip_to"] != "42" || last["margin"] != "0") {
+			if last["skip_to"] != "57" || last["margin"] != "0" || !strings.Contains(last["details"], newerAuditHead) {
 				t.Errorf("vars %v", last)
+			}
+			reads := 0
+			for _, sql := range h.docker.psql[psqlBefore:] {
+				if strings.Contains(sql, "encode(entry_hash") {
+					reads++
+				}
+			}
+			if tc.readsHead != (reads == 1) || reads > 1 {
+				t.Errorf("the finishing run read the discarded head %d times", reads)
 			}
 			if name == "once the restore had put everything back" && len(h.docker.psql) != psqlBefore {
 				t.Errorf("the restore was done again: %v", h.docker.psql[psqlBefore:])
@@ -563,5 +578,53 @@ func TestFailedSelfReplacement(t *testing.T) {
 	}
 	if err := h.upgrade(Request{}); err != nil || len(h.installs) != 0 {
 		t.Errorf("from a deployment set up by hand: %v, %v", err, h.installs)
+	}
+}
+
+// --deployment-repaired removes the failed version's directory, unless a
+// container of the project still runs from it (the operator brought a
+// service of it up by hand): that one is left, and the log says so; the
+// next successful upgrade's tidying removes it once nothing does.
+func TestRepairedKeepsADirectoryInUse(t *testing.T) {
+	h := newTestHost(t, "v1.0.0", release.ChannelStable)
+	ctx := context.Background()
+	h.offer("v1.1.0", nil)
+	h.docker.fail = failing(func(_, call string) bool {
+		return strings.HasPrefix(call, "compose up") && strings.Contains(call, "server")
+	})
+	if err := h.upgrade(Request{Automatic: true}); err == nil || !strings.Contains(err.Error(), "rollback-failed") {
+		t.Fatalf("got %v", err)
+	}
+	h.docker.fail = nil
+	failedRoot := filepath.Join(h.root, "easyrmm-v1.1.0")
+	// Repaired by hand: v1.0.0 runs again, and so does a service of v1.1.0.
+	h.docker.running = map[string]string{}
+	if err := h.u.Docker.Start(ctx, h.deploy("v1.0.0"), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	h.docker.running["meshcentral"] = h.deploy("v1.1.0")
+	if err := h.statusDir().Unhold(); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	h.u.Log = slog.New(slog.NewTextHandler(&log, nil))
+	// A rollback acts after settling, and there is none to do.
+	if err := h.u.Rollback(ctx, "root on the host", true); !errors.Is(err, errNoRollback) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(failedRoot); err != nil || !strings.Contains(log.String(), "containers run from the failed version's directory: it is left, and tidying removes it once nothing does") {
+		t.Fatalf("the directory: %v; log:\n%s", err, log.String())
+	}
+	if a := h.state().Attempt; a.Repaired == "" || !slices.Contains(h.state().Unpacked, failedRoot) {
+		t.Errorf("attempt %+v, unpacked %v", a, h.state().Unpacked)
+	}
+	// The next upgrade stops everything, and tidies it away.
+	h.now = h.now.Add(time.Hour)
+	h.offer("v1.2.0", nil)
+	if err := h.upgrade(Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(failedRoot); err == nil || slices.Contains(h.state().Unpacked, failedRoot) {
+		t.Errorf("left %s (unpacked %v)", failedRoot, h.state().Unpacked)
 	}
 }

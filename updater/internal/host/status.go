@@ -3,6 +3,7 @@ package host
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -88,7 +89,10 @@ type Status struct {
 	Channel  string          `json:"channel"`
 	Attempt  *Attempt        `json:"attempt,omitempty"`
 	Rollback *RollbackStatus `json:"rollback,omitempty"`
-	Updated  time.Time       `json:"updated"`
+	// NeedsRoom is a version automatic upgrades wait with until an
+	// operator asks for it: it ran out of room.
+	NeedsRoom *NeedsRoom `json:"needsRoom,omitempty"`
+	Updated   time.Time  `json:"updated"`
 }
 
 // RollbackStatus is the rollback a confirmed upgrade offers.
@@ -96,6 +100,19 @@ type RollbackStatus struct {
 	To    string    `json:"to"`
 	Since time.Time `json:"since"`
 	Until time.Time `json:"until"`
+}
+
+// read reads status.json.
+func (d StatusDir) read() (*Status, error) {
+	data, err := readOwnFile(d.path(StatusFile), 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	var s Status
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("%s: %w", d.path(StatusFile), err)
+	}
+	return &s, nil
 }
 
 // Write writes status.json.

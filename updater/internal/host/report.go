@@ -113,8 +113,10 @@ type StatusReport struct {
 	Held                  bool
 	AgentUpdatesHeldUntil string
 	// Interrupted is set when the last attempt is recorded as running and
-	// no updater runs: its process ended, and the next run finishes it.
+	// no updater runs: its process ended, or it stopped there, and the
+	// next run finishes it. CutShort is what cut it short, when known.
 	Interrupted bool
+	CutShort    string
 	// Rollback is what rolling back would restore and lose, when a
 	// confirmed upgrade can be rolled back.
 	Rollback *RollbackPlan
@@ -130,6 +132,9 @@ func (u *Updater) Status(ctx context.Context) (*StatusReport, error) {
 	}
 	r := &StatusReport{Config: u.Config, State: st, Now: u.now()}
 	r.Interrupted = st.Attempt != nil && st.Attempt.Result == ResultRunning && !u.attemptRunning()
+	if r.Interrupted {
+		r.CutShort = u.cutShort(st.Attempt)
+	}
 	d, err := u.openDeployment()
 	if err != nil {
 		return nil, err
@@ -181,6 +186,8 @@ func (r *StatusReport) Write(w io.Writer) {
 		}
 		fmt.Fprintln(w)
 		switch {
+		case r.Interrupted && r.CutShort != "":
+			fmt.Fprintf(w, "             No updater runs: the attempt stopped there (%s). The next run (the timer's, or easyrmm-updater upgrade) finishes it.\n", r.CutShort)
 		case r.Interrupted:
 			fmt.Fprintln(w, "             No updater runs: its process ended before the attempt did. The next run (the timer's, or easyrmm-updater upgrade) finishes it.")
 		case a.unresolved():
@@ -199,6 +206,9 @@ func (r *StatusReport) Write(w io.Writer) {
 	}
 	if len(st.Failed) > 0 {
 		fmt.Fprintf(w, "Skipped by automatic upgrades (failed or rolled back): %s\n", strings.Join(st.Failed, ", "))
+	}
+	if n := st.NeedsRoom; n != nil {
+		fmt.Fprintf(w, "Needs room:  %s, which it ran out of once the deployment had stopped. Automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade %s\n", n, n.Version)
 	}
 	fmt.Fprintf(w, "Held:        %v\n", r.Held)
 	if r.AgentUpdatesHeldUntil != "" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -93,30 +94,55 @@ func (h *testHost) mounts(points ...string) {
 }
 
 // The room needed on each filesystem is added up: the backup, a restore's
-// copy of the data root, the images and the bundle all on one disk need
-// all of it.
+// copy of the data root and one more should the restore be done again, a
+// restore's copy of the deployment's directory, the images and the bundle
+// all on one disk need all of it. A file counts as the larger of its
+// length and its blocks: a copy may fill a file's holes.
 func TestRoomAddsUpPerFilesystem(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
 	writeFile(t, filepath.Join(h.dataRoot, "postgres", "18", "docker", "base"), strings.Repeat("x", 4<<20), 0o600)
+	// 64 MiB long, with no block written.
+	sparse, err := os.Create(filepath.Join(h.dataRoot, "server", "sparse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sparse.Truncate(64 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := sparse.Close(); err != nil {
+		t.Fatal(err)
+	}
 	size, err := checkDataRoot(h.dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if size < 68<<20 {
+		t.Errorf("the data root measures %d bytes, less than its files' lengths", size)
+	}
+	tree, err := deploymentSize(h.deploy("v1.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Room for each need alone, not for all of them.
-	room := size + minImageSpace + 2*bundleSpace
+	room := 2*size + minImageSpace + 2*bundleSpace
 	was := freeSpace
 	freeSpace = func(string) (int64, error) { return room, nil }
 	t.Cleanup(func() { freeSpace = was })
 	h.offer("v1.1.0", nil)
 	err = h.upgrade(Request{})
 	h.refusedBeforeStopping(err, "the upgrade needs")
-	for _, want := range []string{"the backup", "a restore's copy of the data root", "the new images", "the bundle's download", "the unpacked bundle"} {
+	for _, want := range []string{"the backup", "a restore's copy of the data root, and one more should it be done again", "a restore's copy of the deployment's directory", "the new images", "the bundle's download", "the unpacked bundle"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}
 	}
+	// With room for all of it but the restore's copy of the deployment's
+	// directory, refused.
+	room = 3*size + 2*tree + minImageSpace + 2*bundleSpace - 1
+	err = h.upgrade(Request{})
+	h.refusedBeforeStopping(err, "the upgrade needs")
 	// With room for all of it, taken.
-	room = 2*size + minImageSpace + 2*bundleSpace + 1<<20
+	room++
 	if err := h.upgrade(Request{}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,35 +171,135 @@ func TestFailedBackupIsRemoved(t *testing.T) {
 			t.Errorf("running %v, failed %v", h.docker.running, h.state().Failed)
 		}
 	})
-	t.Run("no room", func(t *testing.T) {
-		h := newTestHost(t, "v1.0.0", release.ChannelStable)
-		h.offer("v1.1.0", nil)
-		cp := filepath.Join(t.TempDir(), "cp")
-		writeFile(t, cp, "#!/bin/sh\necho \"cp: error writing '$7/x': No space left on device\" >&2\nexit 1\n", 0o755)
-		was := cpProgram
-		cpProgram = cp
-		t.Cleanup(func() { cpProgram = was })
-		err := h.upgrade(Request{Automatic: true})
-		if err == nil || !strings.Contains(err.Error(), "rolled-back") || !strings.Contains(err.Error(), "No space left on device") {
-			t.Fatalf("got %v", err)
-		}
-		if cerr := copyTree(t.Context(), h.dataRoot, filepath.Join(t.TempDir(), "copy")); !errors.Is(cerr, syscall.ENOSPC) {
-			t.Errorf("a copy out of room: %v", cerr)
-		}
-		st := h.state()
-		if st.HasFailed("v1.1.0") || st.Attempt.Result != ResultRolledBack || h.docker.running["server"] != h.deploy("v1.0.0") {
-			t.Errorf("attempt %+v, failed %v, running %v", st.Attempt, st.Failed, h.docker.running)
-		}
-		if left, _ := filepath.Glob(filepath.Join(h.u.Config.BackupDir, "*")); len(left) != 0 {
-			t.Errorf("left %v", left)
-		}
-		// Room again: the next automatic attempt takes it.
-		cpProgram = was
-		h.now = h.now.Add(time.Hour)
-		if err := h.upgrade(Request{Automatic: true}); err != nil || h.state().Running != "v1.1.0" {
-			t.Errorf("the next attempt: %v, running %s", err, h.state().Running)
-		}
-	})
+}
+
+// An attempt that runs out of room once the deployment has stopped does
+// not count against the version, nor do automatic upgrades try it again
+// every hour, each time stopping the deployment: they wait until an
+// operator, having made room, asks for it. status and status.json (the
+// console's) say how many bytes it needed.
+func TestOutOfRoomAfterTheStop(t *testing.T) {
+	for name, tc := range map[string]struct {
+		run   func(h *testHost) // the attempt that runs out
+		short func(h *testHost, st *State) int64
+		path  func(h *testHost) string
+	}{
+		"in the backup": {
+			run: func(h *testHost) {
+				// It runs out at its first copy.
+				cp := filepath.Join(h.t.TempDir(), "cp")
+				writeFile(h.t, cp, "#!/bin/sh\necho \"cp: error writing '$6/x': No space left on device\" >&2\nexit 1\n", 0o755)
+				was := cpProgram
+				cpProgram = cp
+				defer func() { cpProgram = was }()
+				if err := h.upgrade(Request{Automatic: true}); err == nil || !strings.Contains(err.Error(), "rolled-back") || !strings.Contains(err.Error(), "No space left on device") {
+					h.t.Fatalf("got %v", err)
+				}
+			},
+			// What it still had to copy: all of it, less the backup's
+			// directory and its data/, which it had made.
+			short: func(h *testHost, _ *State) int64 {
+				data, err := checkDataRoot(h.dataRoot)
+				if err != nil {
+					h.t.Fatal(err)
+				}
+				tree, err := deploymentSize(h.deploy("v1.0.0"))
+				if err != nil {
+					h.t.Fatal(err)
+				}
+				made := h.t.TempDir()
+				if err := os.Mkdir(filepath.Join(made, "data"), 0o700); err != nil {
+					h.t.Fatal(err)
+				}
+				dirs, err := treeSize(made)
+				if err != nil {
+					h.t.Fatal(err)
+				}
+				return data + tree - dirs
+			},
+			path: func(h *testHost) string { return h.u.Config.BackupDir },
+		},
+		"in the held start": {
+			run: func(h *testHost) {
+				h.docker.fail = func(dir string, args []string) error {
+					if dir == h.deploy("v1.1.0") && slices.Contains(args, "--wait") {
+						// Free space ran out under the new images.
+						freeSpace = func(string) (int64, error) { return 1 << 20, nil }
+						return errors.New("Error response from daemon: write /var/lib/docker/overlay2/x: no space left on device")
+					}
+					return nil
+				}
+				defer func() { h.docker.fail = nil }()
+				if err := h.upgrade(Request{Automatic: true}); err == nil || !strings.Contains(err.Error(), "rolled-back") {
+					h.t.Fatalf("got %v", err)
+				}
+			},
+			// The most any filesystem lacks of what the room check counts.
+			short: func(h *testHost, _ *State) int64 {
+				data, err := checkDataRoot(h.dataRoot)
+				if err != nil {
+					h.t.Fatal(err)
+				}
+				tree, err := deploymentSize(h.deploy("v1.0.0"))
+				if err != nil {
+					h.t.Fatal(err)
+				}
+				// One disk holds everything.
+				return 3*data + 2*tree + minImageSpace + 2*bundleSpace - 1<<20
+			},
+			path: func(h *testHost) string { return h.u.Config.BackupDir },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHost(t, "v1.0.0", release.ChannelStable)
+			was := freeSpace
+			t.Cleanup(func() { freeSpace = was })
+			h.offer("v1.1.0", nil)
+			tc.run(h)
+			freeSpace = was
+			st := h.state()
+			want := &NeedsRoom{Version: "v1.1.0", Short: tc.short(h, st), Path: tc.path(h)}
+			if st.NeedsRoom == nil || *st.NeedsRoom != *want || st.HasFailed("v1.1.0") || st.Attempt.Result != ResultRolledBack || h.docker.running["server"] != h.deploy("v1.0.0") {
+				t.Fatalf("needs room %+v, not %+v; failed %v, attempt %+v, running %v", st.NeedsRoom, want, st.Failed, st.Attempt, h.docker.running)
+			}
+			if left, _ := filepath.Glob(filepath.Join(h.u.Config.BackupDir, "*-v1.0.0")); name == "in the backup" && len(left) != 0 {
+				t.Errorf("left %v", left)
+			}
+			says := fmt.Sprintf("v1.1.0 needs room: %d bytes short on the filesystem of %s", want.Short, want.Path)
+			if status := readFile(t, h.statusDir().path(StatusFile)); !strings.Contains(status, fmt.Sprintf(`"short": %d`, want.Short)) {
+				t.Errorf("status.json:\n%s", status)
+			}
+			s, err := h.u.Status(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out strings.Builder
+			s.Write(&out)
+			if !strings.Contains(out.String(), says) {
+				t.Errorf("status lacks %q:\n%s", says, out.String())
+			}
+			// Room again: the timer's runs wait for an operator.
+			h.now = h.now.Add(time.Hour)
+			stops := h.docker.called("compose stop")
+			if err := h.upgrade(Request{Automatic: true}); err != nil || h.docker.called("compose stop") != stops || h.docker.running["server"] != h.deploy("v1.0.0") {
+				t.Errorf("the next automatic run: %v, running %v", err, h.docker.running)
+			}
+			// The operator's run takes it.
+			if err := h.upgrade(Request{}); err != nil || h.state().Running != "v1.1.0" || h.state().NeedsRoom != nil {
+				t.Errorf("the operator's run: %v, state %+v", err, h.state())
+			}
+		})
+	}
+	// A copy out of room says so.
+	cp := filepath.Join(t.TempDir(), "cp")
+	writeFile(t, cp, "#!/bin/sh\necho \"cp: error writing '$7/x': No space left on device\" >&2\nexit 1\n", 0o755)
+	was := cpProgram
+	cpProgram = cp
+	t.Cleanup(func() { cpProgram = was })
+	src := t.TempDir()
+	if cerr := copyTree(t.Context(), src, filepath.Join(t.TempDir(), "copy")); !errors.Is(cerr, syscall.ENOSPC) {
+		t.Errorf("a copy out of room: %v", cerr)
+	}
 }
 
 // A data root inside the directory the deployment was installed from by
@@ -364,4 +490,183 @@ func TestBundleDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.1.0")); err == nil {
 		t.Error("unpacked beside the old deployment")
 	}
+}
+
+// A link above the bundle directory is refused, even to a directory only
+// root writes: whoever can change the link changes where the updater
+// unpacks.
+func TestBundleDirectoryBehindALink(t *testing.T) {
+	h := newTestHost(t, "v1.0.0", release.ChannelStable)
+	real := filepath.Join(filepath.Dir(h.root), "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(h.root), "bundles")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	h.u.BundleDir = filepath.Join(link, "easyrmm")
+	h.offer("v1.1.0", nil)
+	h.refusedBeforeStopping(h.upgrade(Request{}), link+", above "+h.u.BundleDir+", is a link (to "+real+")")
+}
+
+// The mount points looked at are those whose names lie in the data root,
+// or in where a link to it leads; a mount point elsewhere is not followed,
+// so that a link on it, or a network mount that does not answer, does not
+// matter.
+func TestDataRootMountPointsByName(t *testing.T) {
+	t.Run("the data root through a link", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		// .env names a link to the data root; the host's mount table
+		// names the mount point by where it is.
+		link := filepath.Join(t.TempDir(), "data")
+		if err := os.Symlink(h.dataRoot, link); err != nil {
+			t.Fatal(err)
+		}
+		env := filepath.Join(h.deploy("v1.0.0"), ".env")
+		writeFile(t, env, strings.Replace(readFile(t, env), "EASYRMM_DATA_ROOT="+h.dataRoot, "EASYRMM_DATA_ROOT="+link, 1), 0o600)
+		point := filepath.Join(h.dataRoot, "postgres")
+		h.mounts(point)
+		h.offer("v1.1.0", nil)
+		h.refusedBeforeStopping(h.upgrade(Request{}), point+" is a mount point in the data root")
+	})
+	t.Run("a link elsewhere into it", func(t *testing.T) {
+		h := newTestHost(t, "v1.0.0", release.ChannelStable)
+		// A mount point listed under a name that, through a link, leads
+		// into the data root: not followed.
+		dir := t.TempDir()
+		if err := os.Symlink(filepath.Join(h.dataRoot, "server"), filepath.Join(dir, "elsewhere")); err != nil {
+			t.Fatal(err)
+		}
+		h.mounts(filepath.Join(dir, "elsewhere"))
+		h.offer("v1.1.0", nil)
+		if err := h.upgrade(Request{}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// The updater backs up, restores and starts the deployment as its
+// docker-compose.yml says, with what that mounts: so it refuses, before
+// anything stops, any other file Compose would read, a .env that changes
+// which files Compose reads, and a mount of anything a backup does not
+// hold, each saying why.
+func TestComposeFilesAndMounts(t *testing.T) {
+	bind := func(source, target string, ro bool) map[string]any {
+		return map[string]any{"type": "bind", "source": source, "target": target, "read_only": ro}
+	}
+	for name, tc := range map[string]struct {
+		change func(h *testHost)
+		want   string // "" when it is allowed
+	}{
+		"an override file": {
+			change: func(h *testHost) {
+				writeFile(h.t, filepath.Join(h.deploy("v1.0.0"), "docker-compose.override.yml"), "services: {}\n", 0o644)
+			},
+			want: "docker-compose.override.yml is in " + "%deploy%",
+		},
+		"compose.yaml beside it": {
+			change: func(h *testHost) {
+				writeFile(h.t, filepath.Join(h.deploy("v1.0.0"), "compose.yaml"), "services: {}\n", 0o644)
+			},
+			want: "compose.yaml is in",
+		},
+		"COMPOSE_FILE in .env": {
+			change: func(h *testHost) { h.appendEnv("COMPOSE_FILE=docker-compose.yml:extra.yml\n") },
+			want:   ".env line 5 sets COMPOSE_FILE",
+		},
+		"COMPOSE_PROJECT_NAME in .env": {
+			change: func(h *testHost) { h.appendEnv("COMPOSE_PROJECT_NAME=other\n") },
+			want:   ".env line 5 sets COMPOSE_PROJECT_NAME",
+		},
+		"a named volume": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{"server": {{"type": "volume", "source": "easyrmm_cache", "target": "/cache"}}}
+			},
+			want: "the service server mounts a volume volume at /cache",
+		},
+		"a directory outside": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{"meshcentral": {bind("/var/lib/elsewhere", "/x", false)}}
+			},
+			want: "the service meshcentral mounts /var/lib/elsewhere at /x, outside the data root",
+		},
+		"the data root whole": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{"meshcentral": {bind(h.dataRoot, "/x", false)}}
+			},
+			want: "mounts " + "%dataRoot%" + " at /x, outside the data root",
+		},
+		"a failed data root": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{"meshcentral": {bind(filepath.Join(h.dataRoot, failedPrefix+"x"), "/x", false)}}
+			},
+			want: "at /x, outside the data root",
+		},
+		"the status directory writable": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{workerService: {bind(filepath.Join(h.dataRoot, "updater", "status"), statusMount, false)}}
+			},
+			want: "the service " + workerService + " mounts",
+		},
+		"certificates elsewhere writable": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{"server": {bind("/etc/letsencrypt/live/x", "/etc/easyrmm/acme", false)}}
+			},
+			want: "the service server mounts /etc/letsencrypt/live/x",
+		},
+		"allowed": {
+			change: func(h *testHost) {
+				h.docker.mounts = map[string][]map[string]any{
+					// The fake mounts each deployment's own docker/ into
+					// PostgreSQL, as docker-compose.yml does.
+					"server":      {bind("/etc/letsencrypt/live/x", "/etc/easyrmm/tls", true), bind("/etc/localtime", "/etc/localtime", true)},
+					workerService: {bind(filepath.Join(h.dataRoot, "easypatch", "keys"), "/app/keys", true), bind("/var/run/docker.sock", "/var/run/docker.sock", false)},
+				}
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHost(t, "v1.0.0", release.ChannelStable)
+			h.offer("v1.1.0", nil)
+			tc.change(h)
+			err := h.upgrade(Request{})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			want := strings.NewReplacer("%deploy%", h.deploy("v1.0.0"), "%dataRoot%", h.dataRoot).Replace(tc.want)
+			if strings.HasPrefix(want, ".env") {
+				// .env is read before an attempt begins.
+				if err == nil || !strings.Contains(err.Error(), "the deployment's "+want) || h.docker.called("compose stop") != 0 || h.state().Attempt != nil {
+					t.Fatalf("got %v, want %q", err, want)
+				}
+				return
+			}
+			h.refusedBeforeStopping(err, want)
+		})
+	}
+	// A new version whose bundle has a file Compose would read beside its
+	// docker-compose.yml is refused once unpacked, before anything stops,
+	// and automatic upgrades skip it: its bundle will not change.
+	h := newTestHost(t, "v1.0.0", release.ChannelStable)
+	files := bundleFiles("v1.1.0")
+	files["easyrmm-v1.1.0/deploy/compose.override.yaml"] = "services: {}\n"
+	h.offerFiles("v1.1.0", files, nil)
+	err := h.upgrade(Request{})
+	if err == nil || !strings.Contains(err.Error(), "compose.override.yaml is in "+h.deploy("v1.1.0")) {
+		t.Fatalf("got %v", err)
+	}
+	if h.docker.called("compose stop") != 0 || h.docker.running["server"] != h.deploy("v1.0.0") || !h.state().HasFailed("v1.1.0") {
+		t.Errorf("running %v, failed %v", h.docker.running, h.state().Failed)
+	}
+}
+
+// appendEnv adds lines to the running deployment's .env.
+func (h *testHost) appendEnv(lines string) {
+	h.t.Helper()
+	env := filepath.Join(h.deploy("v1.0.0"), ".env")
+	writeFile(h.t, env, readFile(h.t, env)+lines, 0o600)
 }

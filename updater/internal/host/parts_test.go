@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"slices"
@@ -253,7 +254,7 @@ func backupAt(t *testing.T, dir string, at time.Time, complete bool) string {
 		writeFile(t, filepath.Join(tree, d, "f"), "x", 0o600)
 	}
 	meta := BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: at}
-	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, func() error { return nil })
+	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, 0, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +318,7 @@ func TestTakeBackupLeavesOutTheUpdatersFiles(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "backups")
 	meta := BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: time.Now()}
-	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, func() error { return nil })
+	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, 0, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,4 +589,53 @@ func TestUpgradeBesideAClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.1.0", ".git")); err == nil {
 		t.Error("an earlier attempt's file is left")
 	}
+}
+
+// deploy/docker-compose.yml, as Compose reads it, passes the updater's
+// checks of what a deployment mounts, with Authentik's profile and
+// without, its certificates in the data root or elsewhere.
+func TestTheDeploymentsMounts(t *testing.T) {
+	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
+		t.Skipf("no docker compose here: %v", err)
+	}
+	for name, env := range map[string]string{
+		"plain":                  "EASYRMM_TLS_DIR=/srv/test-data/tls\n",
+		"with Authentik":         "EASYRMM_TLS_DIR=/srv/test-data/tls\nCOMPOSE_PROFILES=authentik\n",
+		"certificates elsewhere": "EASYRMM_TLS_DIR=/etc/ssl/easyrmm\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "easyrmm-v1.0.0")
+			deploy := filepath.Join(root, "deploy")
+			writeFile(t, filepath.Join(deploy, "docker-compose.yml"), readFile(t, "../../../deploy/docker-compose.yml"), 0o644)
+			if err := os.Symlink(filepath.Join(must(filepath.Abs("../../..")), "docker"), filepath.Join(root, "docker")); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(deploy, ".env"), "EASYRMM_DATA_ROOT=/srv/test-data\nPOSTGRES_PASSWORD=x\nEASYRMM_DB_OWNER_PASSWORD=x\nEASYRMM_DB_APP_PASSWORD=x\nEASYRMM_PUBLIC_URL=https://rmm.example.com\nEASYRMM_SECRET_KEY=x\n"+env, 0o600)
+			d := Docker{R: ExecRunner{}}
+			mounts, err := d.Mounts(t.Context(), deploy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root2, err := dataRootOf(mounts, deploy)
+			if err != nil || root2 != "/srv/test-data" {
+				t.Fatalf("the data root %s, %v", root2, err)
+			}
+			if err := checkMounts(mounts, root2, deploy); err != nil {
+				t.Error(err)
+			}
+			if err := checkComposeFiles(deploy); err != nil {
+				t.Error(err)
+			}
+			if len(mounts) < 10 {
+				t.Errorf("only %d mounts: %v", len(mounts), mounts)
+			}
+		})
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

@@ -14,9 +14,15 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/local/sbin/easyrmm-updater upgrade --automatic
 # An attempt runs to its end, or to its rollback: a pull, a backup of the
-# data root and a start of up to 20 minutes. Stopped (SIGTERM) before it
-# stops the deployment, it ends there; after, it runs on to its end, or
-# brings the previous version back, for up to 45 minutes. Killed then, the
-# next run finishes it from what it recorded.
+# data root, a start of up to 20 minutes and the engine's worker's of up to
+# 10. systemd's stop (a reboot, or by hand) sends SIGTERM to the updater
+# alone (KillMode=mixed), never to the cp, docker or setup.sh it runs.
+# Stopped before it stops the deployment, it ends there; after, it runs on
+# to its end, or brings the previous version back, for up to 30 minutes, a
+# held start and the worker's, which is as long as a reboot waits. Then
+# systemd kills what still runs, and the next run finishes the attempt from
+# what it recorded, without counting it against the version
+# (docs/operations/updater.md#stopping-an-attempt).
+KillMode=mixed
 TimeoutStartSec=infinity
-TimeoutStopSec=45min
+TimeoutStopSec=30min

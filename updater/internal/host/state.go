@@ -35,8 +35,29 @@ type State struct {
 	// recorded before it unpacks each: the only directories it removes
 	// whole. Of any other deployment it removes the .env alone.
 	Unpacked []string `json:"unpacked,omitempty"`
+	// NeedsRoom is a version whose attempt ran out of room once the
+	// deployment had stopped: automatic upgrades do not try it again until
+	// an operator asks for it. It does not count as failed.
+	NeedsRoom *NeedsRoom `json:"needsRoom,omitempty"`
 	// Attempt is the last attempt, or the one running.
 	Attempt *Attempt `json:"attempt,omitempty"`
+}
+
+// NeedsRoom is a version that needs more room than a disk had.
+type NeedsRoom struct {
+	Version string `json:"version"`
+	// Short is how many more bytes it needs on the filesystem of Path: for
+	// a backup that ran out, what it still had to copy; otherwise what the
+	// room check counts there less what is free. 0 when neither says.
+	Short int64  `json:"short"`
+	Path  string `json:"path"`
+}
+
+func (n *NeedsRoom) String() string {
+	if n.Short <= 0 {
+		return fmt.Sprintf("%s needs room on the filesystem of %s", n.Version, n.Path)
+	}
+	return fmt.Sprintf("%s needs room: %d bytes short on the filesystem of %s", n.Version, n.Short, n.Path)
 }
 
 // RollbackPoint is a confirmed upgrade's backup, which a rollback restores
@@ -93,6 +114,12 @@ type Attempt struct {
 	// repaired the deployment by hand after this attempt's rollback
 	// failed, and when: the updater acts again.
 	Repaired string `json:"repaired,omitempty"`
+	// Interrupted is why the updater stopped the attempt where it was,
+	// once the deployment had stopped, for the next run to finish from
+	// this record (finishInterrupted): a command it ran was killed by a
+	// signal, or it could not record a step. An attempt cut short so does
+	// not count against its version.
+	Interrupted string `json:"interrupted,omitempty"`
 }
 
 // unresolved reports whether the updater must not act after a: its
@@ -155,6 +182,9 @@ func loadState(dir string) (*State, error) {
 	}
 	return &s, nil
 }
+
+// saveState writes the state; the tests' disk fails.
+var saveState = (*State).save
 
 // save writes the state.
 func (s *State) save(dir string) error {

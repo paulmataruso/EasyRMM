@@ -30,10 +30,16 @@ upgrade:
 `--no-updater` installs none of it. `--auto-upgrade` turns automatic
 upgrades on. Without root, or on a host without systemd, `setup.sh` says so
 and installs nothing. Existing installs get the updater with their next
-manual upgrade. While an attempt runs, `setup.sh` installs none of it
-either, and says so: it takes the updater's lock
-(`/var/lib/easyrmm-updater/lock`) first. Run it again once the attempt has
-ended.
+manual upgrade.
+
+Run as root, `setup.sh` holds the updater's lock
+(`/var/lib/easyrmm-updater/lock`) for its whole run, since an attempt
+changes `.env`, the data root and the updater's files itself. While an
+attempt runs, `setup.sh` changes nothing and says so. Run it again once the
+attempt has ended. The updater runs the new version's
+`setup.sh --upgrade --no-updater` under its own lock and hands that lock
+over, open (`EASYRMM_UPDATER_LOCK_FD`). That `setup.sh` takes it again at
+once, so neither waits for the other.
 
 The updater refuses Docker's user namespace remapping and rootless Docker.
 
@@ -81,11 +87,13 @@ journal: `journalctl -t easyrmm-updater` for attempts run by hand,
 Ctrl-C, or `systemctl stop` for the timer's run, ends an attempt that has
 not yet stopped the deployment (step 3 below), with nothing changed. Once
 it has, the attempt runs on to its end, or brings the previous version
-back; systemd allows it 45 minutes.
+back ([below](#stopping-an-attempt)).
 
 An upgrade without a version, automatic or by hand, skips a version that
 failed or was rolled back until a newer one appears. Asked for by name, it
-is tried again.
+is tried again. It also skips a version that ran out of room once the
+deployment had stopped, until you make room and ask for it by name
+([below](#an-upgrade)).
 
 ## An upgrade
 
@@ -98,12 +106,17 @@ is tried again.
    needs it:
    * the data root Compose mounts is the one `.env` names, and it holds
      no links or mount points ([below](#the-data-root));
+   * Compose reads the deployment as `docker-compose.yml` and `.env` say,
+     and mounts only what a backup holds ([below](#the-data-root));
    * `/opt/easyrmm`, where the updater unpacks bundles, and every
-     directory above it, can be written only by root;
+     directory above it, can be written only by root, and none is a link;
    * each disk has room for all that goes on it: the backup (a copy of the
      data root and the deployment directory), a restore's copy of the data
-     root, 2 GiB for the new images, and 256 MiB for the bundle's download
-     and its unpacking. Where they share a disk, it needs the sum.
+     root and one more should the restore be done again, a restore's copy
+     of the deployment directory, 2 GiB for the new images, and 256 MiB
+     for the bundle's download and its unpacking. Where they share a disk,
+     it needs the sum. A file counts as the larger of its length and the
+     blocks it takes: a copy may fill a sparse file's holes.
 2. **Pull** the new images by digest while the running version serves.
 3. **Stop** every service. The downtime starts.
 4. **Back up** the data root, the deployment directory (with `.env`) and
@@ -139,9 +152,21 @@ alerts do not fire for it
 
 A failure before step 3 changes nothing that runs. These are tried again
 at the next attempt: failing to reach the network or the registry, a disk
-without room (also one that fills during the backup), the host not as step
-1 needs it, and a stop asked for before step 3. Any other failure marks the
-version failed.
+without room, the host not as step 1 needs it, and a stop asked for before
+step 3. Any other failure marks the version failed.
+
+A disk that runs out of room once the deployment has stopped (in the
+backup, or under the new images) does not mark the version failed either.
+The previous version comes back. Automatic upgrades then wait with that
+version, so that they do not stop the deployment every hour for a disk that
+is still full. `status` and `status.json` (`needsRoom`) name the version and
+how many bytes it was short, and on which filesystem:
+
+```text
+Needs room:  v1.2.4 needs room: 1073741824 bytes short on the filesystem of /var/backups/easyrmm-updater, ...
+```
+
+Make room, then run `easyrmm-updater upgrade v1.2.4`.
 
 The version that runs is the highest of three: the one the server reports,
 the one the deployment's `.env` names, and the one the updater last
@@ -174,25 +199,61 @@ restore contacts no agent.
 
 The updater records each attempt's step, deployment, data root, new
 deployment directory and backup in `/var/lib/easyrmm-updater/state.json`
-as soon as each exists. When its process ends before the attempt does
-(killed by the out-of-memory killer or systemd's stop timeout, a power
-cut, a reboot), the next run finishes the attempt from that record, and
-does nothing else. Run by hand, it says so; run the command again. The
-timer's run five minutes after the host starts does it unattended:
+as soon as each exists, and each step before it begins it. Each record is
+on the disk before the updater goes on: the file and its directory are
+synced. So are the backup's copies before `backup.json` marks it complete
+(and so before step 5), and a restore's copies before the restore is
+recorded as done. The updater never changes the data root, by starting the
+new version or by restoring, on a step it could not record. Before step 5,
+a step it cannot record ends the attempt, and the previous version starts
+again on its own data. From step 5 on, the attempt stops where it is (as
+below).
+
+When its process ends before the attempt does (killed by the out-of-memory
+killer or at systemd's stop timeout, a power cut, a reboot), the next run
+finishes the attempt from that record, and does nothing else. Run by hand,
+it says so; run the command again. The timer's run five minutes after the
+host starts does it unattended:
 * before step 3, the attempt ends failed, and nothing that runs changed;
 * during steps 3 and 4, an incomplete backup is removed and the previous
   version starts again;
 * after the backup, the backup is restored as above, and the new version
-  is marked failed. A restore cut short is done again. The failed
-  database's audit chain head is read only once: if the first restore did
-  not get to read it, it is recorded as unknown.
+  is marked failed. A restore cut short is done again: what the first one
+  moved aside stays, and the copy it left is removed once the second is
+  checked. The failed database's audit chain head is read only once: if
+  the first restore did not get to read it, it is recorded as unknown.
 
-An attempt cut short before step 5 does not count against the version.
-Until the next run,
+Once the deployment has stopped, the attempt also stops where it is, the
+server held, for the next run to finish the same way, when a command it
+runs (`cp`, `docker`, `setup.sh`) is killed by a signal, or when it cannot
+record a step it is about to begin. Neither is the new version failing.
+`status` and `status.json` (the attempt's `interrupted`) say why.
+
+The new version is not counted as failed for an attempt cut short before
+step 5, nor for one cut short by the updater itself (above) or by a stop
+someone asked for ([below](#stopping-an-attempt)). Until the next run,
 `status` says that no updater runs and the attempt did not end. A
 confirmed upgrade cut short before `hold` was removed is restored, since
 the updater did not record it; one cut short after that keeps running, and
 the next run removes `hold` if it is still there.
+
+### Stopping an attempt
+
+Ctrl-C, and systemd's stop of `easyrmm-updater.service` (at a reboot, or
+`systemctl stop`), reach the updater alone. The commands it runs are in
+process groups of their own, and the unit has `KillMode=mixed`, so systemd
+sends SIGTERM to the updater only. An attempt that has not stopped the
+deployment ends at once, with nothing changed. One that has runs on to its
+end, or brings the previous version back. The updater records at once that
+a stop was asked for (`/var/lib/easyrmm-updater/stop-asked`).
+
+The unit has `TimeoutStopSec=30min`: what is left of a held start (up to 20
+minutes) and the engine's worker's (up to 10), and as long as a reboot
+waits for the updater. A backup or a restore of a large data root can take
+longer. systemd then kills the updater and its commands, and the next run
+finishes the attempt from its record
+([above](#interrupted-attempts)). Since the stop was recorded, that run
+does not count the attempt against the new version.
 
 ### When a rollback fails
 
@@ -324,7 +385,28 @@ before anything stops, when:
 The data root itself may be a mount point, and links deeper in the tree,
 which the services make themselves, are copied as links. To keep data on
 another disk, mount that disk at the data root, or set
-`EASYRMM_DATA_ROOT` to a directory on it, before installing.
+`EASYRMM_DATA_ROOT` to a directory on it, before installing. Mount points
+are compared with the data root by their names, and by where a link to the
+data root leads: the updater does not follow the host's every mount point,
+so a network mount elsewhere that does not answer cannot stall it.
+
+It refuses too, before anything stops, a deployment that Compose would read
+or mount otherwise than a backup covers:
+* another file Compose reads beside `docker-compose.yml` or instead of it:
+  `docker-compose.override.yml`, `compose.yaml` and their variants. Put
+  what it changes into `.env`'s settings;
+* a Compose setting in `.env` other than `COMPOSE_PROFILES`, which
+  `setup.sh` writes: `COMPOSE_FILE`, `COMPOSE_ENV_FILES` and
+  `COMPOSE_PROJECT_NAME` change the files Compose reads or its project;
+* a volume of any service that is not a `tmpfs` or a bind mount from:
+  the data root (not its `updater/`, nor a failed data root); the
+  deployment's own `deploy/` and `docker/`; the updater's status
+  directory, read-only; the server's certificates (`EASYRMM_TLS_DIR`),
+  read-only; or one of `/etc/localtime`, `/etc/timezone`,
+  `/run/docker.sock` and `/var/run/docker.sock`, which hold no state.
+
+The updater runs Compose with an environment of its own (`PATH`, `HOME`,
+`LANG`), so a `COMPOSE_` variable in root's environment changes nothing.
 
 ## Status
 
@@ -333,14 +415,15 @@ the server and the engine's worker mount read-only at `/run/easyrmm-updater`:
 
 | File | What |
 |---|---|
-| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, a rollback asked for ending `rolled-back`, and `reason`; `warning`, when the updater could not replace itself; `repaired`, who said with `--deployment-repaired` that they repaired the deployment, and when; and what the attempt works on: `deployment`, `dataRoot`, `newDeploy`, `backup`), the `rollback` on offer (`to`, `since`, `until`) and `updated` |
+| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, a rollback asked for ending `rolled-back`, and `reason`; `warning`, when the updater could not replace itself; `repaired`, who said with `--deployment-repaired` that they repaired the deployment, and when; `interrupted`, why the updater stopped a running attempt where it was; and what the attempt works on: `deployment`, `dataRoot`, `newDeploy`, `backup`), the `rollback` on offer (`to`, `since`, `until`), `needsRoom` (`version`, `short`, the bytes it lacked, and `path`) and `updated` |
 | `hold` | While it exists the server is held |
 | `agent-updates-held-until` | One RFC 3339 time: until then the engine starts no automatic agent update |
 
 Its own state is in `/var/lib/easyrmm-updater` (root's, mode 700): the
 same attempt record, in `state.json`, which the next run finishes an
-interrupted attempt from, the bundle directories it unpacked, and `lock`,
-which one attempt, or `setup.sh` installing the updater, holds at a time.
+interrupted attempt from, the bundle directories it unpacked, `stop-asked`,
+when a stop was asked for during the last attempt, and `lock`, which one
+attempt, or `setup.sh` run as root, holds at a time.
 
 ## Verification
 

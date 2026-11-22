@@ -63,6 +63,9 @@ type Updater struct {
 	// setup.sh: a directory of root's that only root can change, nor any
 	// directory above it (DefaultBundleDir).
 	BundleDir string
+
+	// held is the lock file while the updater holds its lock.
+	held *os.File
 }
 
 // DefaultBundleDir is where the updater unpacks new versions.
@@ -104,9 +107,13 @@ func (u *Updater) lock() (func(), error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, errors.New("another attempt is running")
+		return nil, errors.New("the updater's lock is held: another attempt runs, or setup.sh (easyrmm-updater status)")
 	}
-	return func() { _ = f.Close() }, nil
+	u.held = f
+	return func() {
+		u.held = nil
+		_ = f.Close()
+	}, nil
 }
 
 var dataRootRE = regexp.MustCompile(`^/[A-Za-z0-9_./-]*$`)
@@ -216,17 +223,23 @@ func (u *Updater) begin(st *State, d *deployment, action, by, from, to string) (
 		ID: hex.EncodeToString(id), Action: action, By: by, From: from, To: to, Step: StepCheck, Result: ResultRunning, Started: u.now(),
 		Deployment: d.dir, DataRoot: d.dataRoot,
 	}
+	u.forgetStop()
 	u.Log.Info("attempt started", "action", action, "from", from, "to", to, "by", by, "attempt", st.Attempt.ID)
 	return st.Attempt, u.save(st, d)
 }
 
-// step records the step an attempt reached.
-func (u *Updater) step(st *State, d *deployment, step string) {
+// step records the step an attempt reaches, before it begins it: a step
+// that could not be recorded is not begun (unsavedError), and the attempt
+// stays at the step it recorded last.
+func (u *Updater) step(st *State, d *deployment, step string) error {
+	last := st.Attempt.Step
 	st.Attempt.Step = step
 	u.Log.Info("step", "step", step, "attempt", st.Attempt.ID)
 	if err := u.save(st, d); err != nil {
-		u.Log.Warn("could not record the step", "error", err)
+		st.Attempt.Step = last
+		return &unsavedError{what: "the " + step + " step", err: err}
 	}
+	return nil
 }
 
 // end records how an attempt ended; a failure to record it is logged.
@@ -253,13 +266,18 @@ func (u *Updater) finish(st *State, d *deployment, result string, reason error) 
 
 // save writes the state and the status the server reads.
 func (u *Updater) save(st *State, d *deployment) error {
-	if err := st.save(u.StateDir); err != nil {
+	if err := saveState(st, u.StateDir); err != nil {
 		return err
 	}
+	return u.writeStatus(st, d)
+}
+
+// writeStatus writes the status the server reads.
+func (u *Updater) writeStatus(st *State, d *deployment) error {
 	if d.dataRoot == "" {
 		return nil
 	}
-	s := Status{Running: st.Running, Previous: st.Previous, Channel: string(u.Config.Channel), Attempt: st.Attempt, Updated: u.now()}
+	s := Status{Running: st.Running, Previous: st.Previous, Channel: string(u.Config.Channel), Attempt: st.Attempt, NeedsRoom: st.NeedsRoom, Updated: u.now()}
 	if rp := st.Rollback; rp != nil && u.now().Before(rp.Until) {
 		s.Rollback = &RollbackStatus{To: rp.To, Since: rp.Since, Until: rp.Until}
 	}
@@ -302,6 +320,9 @@ func (u *Updater) choose(ctx context.Context, req Request, st *State, vs version
 	case st.HasFailed(stop.target.String()):
 		u.Log.Info("the required upgrade stop failed or was rolled back before: waiting for an operator", "stop", stop.target, "for", c.target)
 		return choice{}, nil
+	case st.NeedsRoom != nil && st.NeedsRoom.Version == stop.target.String():
+		u.Log.Info("the required upgrade stop ran out of room once the deployment had stopped: waiting for an operator to make room and ask for it", "stop", stop.target, "for", c.target, "needs", st.NeedsRoom.String())
+		return choice{}, nil
 	}
 	u.Log.Info("installing the required upgrade stop first", "stop", stop.target, "for", c.target)
 	return stop, nil
@@ -322,6 +343,10 @@ func (u *Updater) chooseTarget(ctx context.Context, req Request, st *State, vs v
 		}
 		if st.HasFailed(newest.String()) {
 			u.Log.Info("the newest version failed or was rolled back before: waiting for a newer one, or for an operator to ask for it by name", "version", newest)
+			return choice{}, nil
+		}
+		if n := st.NeedsRoom; req.Automatic && n != nil && n.Version == newest.String() {
+			u.Log.Info("the newest version ran out of room once the deployment had stopped: waiting for an operator to make room and ask for it (easyrmm-updater upgrade)", "needs", n.String())
 			return choice{}, nil
 		}
 		target = newest
@@ -519,6 +544,7 @@ func (u *Updater) Upgrade(ctx context.Context, req Request) error {
 		return err
 	}
 	defer unlock()
+	defer u.watchStop(ctx)()
 	st, err := loadState(u.StateDir)
 	if err != nil {
 		return err
@@ -556,6 +582,10 @@ func (u *Updater) Upgrade(ctx context.Context, req Request) error {
 	if err != nil || c.target.IsZero() {
 		return err
 	}
+	if n := st.NeedsRoom; n != nil && !req.Automatic && n.Version == c.target.String() {
+		u.Log.Info("trying again, asked for by hand, a version that ran out of room", "version", n.Version)
+		st.NeedsRoom = nil
+	}
 	running := vs.high()
 	if _, err := u.begin(st, d, "upgrade", req.By, running.String(), c.target.String()); err != nil {
 		return err
@@ -576,11 +606,14 @@ type upgrade struct {
 	// channel is the one target is verified for.
 	channel release.Channel
 
-	manifest  *release.Manifest
-	newRoot   string // the new bundle's directory, once unpacked
-	newDeploy string
-	backup    *Backup
-	downloads string
+	manifest *release.Manifest
+	// dataSize and treeSize are what the data root and the deployment's
+	// tree take (checkDataRoot, deploymentSize), measured at the check.
+	dataSize, treeSize int64
+	newRoot            string // the new bundle's directory, once unpacked
+	newDeploy          string
+	backup             *Backup
+	downloads          string
 	// stopped is set once the running version is stopped: a failure from
 	// then on restarts or restores it.
 	stopped bool
@@ -611,13 +644,17 @@ func (up *upgrade) run(ctx context.Context) error {
 	}
 	// The attempt failed. A failure that a later try could get past (the
 	// network, the registry, room on a disk, the host's set-up, a stop
-	// asked for before anything stopped) is tried again; a version
-	// refused, or one that failed once the deployment stopped, is not, so
-	// that automatic upgrades do not take the server down every hour.
+	// asked for before anything stopped, a command killed, a record not
+	// written) is tried again; a version refused, or one that failed once
+	// the deployment stopped, is not, so that automatic upgrades do not take
+	// the server down every hour. A version that ran out of room once the
+	// deployment stopped waits for an operator.
 	var transient *transientError
 	var stop *StopError
+	var killed *killedError
+	var unsaved *unsavedError
 	switch {
-	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled):
+	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled), errors.As(err, &killed), errors.As(err, &unsaved):
 	default:
 		st.MarkFailed(up.target.String())
 	}
@@ -626,18 +663,29 @@ func (up *upgrade) run(ctx context.Context) error {
 		u.end(st, d, ResultFailed, err)
 		return err
 	}
+	if noSpace(err) {
+		st.NeedsRoom = up.needsRoom(ctx, err)
+		u.Log.Error("out of room once the deployment had stopped: automatic upgrades wait with this version until an operator asks for it", "needs", st.NeedsRoom.String())
+	}
+	if leaves(err, st.Attempt.Step) {
+		return u.leave(st, d, err)
+	}
 	// Failures after the deployment stopped bring the previous version
-	// back: from where it stopped when the backup is not complete,
-	// otherwise from the backup.
+	// back: from where it stopped while the data root is as it stopped
+	// (the backup not complete, or the set-up not recorded), otherwise from
+	// the backup.
 	u.Log.Error("the upgrade failed; bringing the previous version back", "step", st.Attempt.Step, "error", err)
 	var rerr error
-	if up.backup == nil {
+	if up.backup == nil || !changesData(st.Attempt.Step) {
 		rerr = u.restartPrevious(ctx, d)
 	} else {
 		rerr = u.restore(ctx, st, d, restorePlan{
 			discardedDeploy: up.newDeploy, discarded: up.target.String(),
 			backup: up.backup, reason: err.Error(),
 		})
+	}
+	if leaves(rerr, st.Attempt.Step) {
+		return u.leave(st, d, fmt.Errorf("%w; then bringing %s back: %w", err, up.running, rerr))
 	}
 	if rerr != nil {
 		// The new version's directory stays: it may be what runs.
@@ -678,7 +726,9 @@ func (up *upgrade) steps(ctx context.Context) error {
 		return err
 	}
 	// 2. Pull, while the running version serves.
-	u.step(st, d, StepPull)
+	if err := u.step(st, d, StepPull); err != nil {
+		return err
+	}
 	if err := u.Docker.Pull(ctx, up.newDeploy); err != nil {
 		return transient(err)
 	}
@@ -694,18 +744,25 @@ func (up *upgrade) steps(ctx context.Context) error {
 		return fmt.Errorf("asked to stop before the deployment stopped: %w", err)
 	}
 	ctx = context.WithoutCancel(ctx)
-	u.step(st, d, StepStop)
+	if err := u.step(st, d, StepStop); err != nil {
+		return err
+	}
 	up.stopped = true
 	if err := u.Docker.Stop(ctx, d.dir); err != nil {
 		return err
 	}
 	// 4. Back up.
-	u.step(st, d, StepBackup)
+	if err := u.step(st, d, StepBackup); err != nil {
+		return err
+	}
 	meta := BackupMeta{Version: up.running.String(), Deployment: d.dir, DataRoot: d.dataRoot, Taken: u.now()}
 	dir := backupDirFor(u.Config.BackupDir, meta)
-	b, err := takeBackup(ctx, dir, meta, u.Config.Path, func() error {
+	b, err := takeBackup(ctx, dir, meta, u.Config.Path, up.dataSize+up.treeSize, func() error {
 		st.Attempt.Backup = dir
-		return u.save(st, d)
+		if err := u.save(st, d); err != nil {
+			return &unsavedError{what: "the backup's directory", err: err}
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("backing up: %w", err)
@@ -718,8 +775,11 @@ func (up *upgrade) steps(ctx context.Context) error {
 	if err := rotateBackups(u.Config.BackupDir, keep...); err != nil {
 		u.Log.Warn("could not remove old backups", "error", err)
 	}
-	// 5. Set up, held.
-	u.step(st, d, StepSetUp)
+	// 5. Set up, held: from here on the data root changes, so the step is
+	// recorded first, and the backup is on its disk (takeBackup).
+	if err := u.step(st, d, StepSetUp); err != nil {
+		return err
+	}
 	status := statusDirOf(d.dataRoot)
 	if err := status.Hold(); err != nil {
 		return err
@@ -728,7 +788,9 @@ func (up *upgrade) steps(ctx context.Context) error {
 		return err
 	}
 	// 6. Start held, every service but the engine's worker.
-	u.step(st, d, StepStart)
+	if err := u.step(st, d, StepStart); err != nil {
+		return err
+	}
 	if err := u.Docker.Start(ctx, up.newDeploy, StartTimeout, workerService); err != nil {
 		return fmt.Errorf("starting %s held: %w", up.target, err)
 	}
@@ -737,7 +799,9 @@ func (up *upgrade) steps(ctx context.Context) error {
 	}
 	// 7. Confirm: the worker, its agent updates held, and the new
 	// deployment recorded; run lifts the hold once the attempt is.
-	u.step(st, d, StepConfirm)
+	if err := u.step(st, d, StepConfirm); err != nil {
+		return err
+	}
 	if err := status.HoldAgentUpdates(u.now().Add(RollbackWindow)); err != nil {
 		return err
 	}
@@ -755,6 +819,7 @@ func (up *upgrade) steps(ctx context.Context) error {
 		Backup: b.Dir, Since: b.Meta.Taken, Until: u.now().Add(RollbackWindow),
 	}
 	st.Failed = removeString(st.Failed, up.target.String())
+	st.NeedsRoom = nil
 	return nil
 }
 
@@ -798,14 +863,16 @@ func (up *upgrade) check(ctx context.Context) error {
 	if err := checkPostgresMajor(d.dataRoot, m.PostgresMajor); err != nil {
 		return err
 	}
-	size, err := u.checkHost(ctx, d)
-	if err != nil {
+	if up.dataSize, err = u.checkHost(ctx, d); err != nil {
 		return transient(err)
 	}
 	if err := ensureRootPath(u.BundleDir); err != nil {
 		return transient(fmt.Errorf("the updater's bundle directory: %w", err))
 	}
-	if err := up.checkSpace(ctx, size); err != nil {
+	if up.treeSize, err = deploymentSize(d.dir); err != nil {
+		return transient(err)
+	}
+	if err := up.checkSpace(ctx); err != nil {
 		return transient(err)
 	}
 	// The bundle, by the manifest's SHA-256.
@@ -828,12 +895,22 @@ func (up *upgrade) check(ctx context.Context) error {
 // and measures its data root: Compose reads the data root the updater
 // does, and a backup and a restore cover it whole (checkDataRoot).
 func (u *Updater) checkHost(ctx context.Context, d *deployment) (int64, error) {
-	root, err := u.Docker.DataRoot(ctx, d.dir)
+	if err := checkComposeFiles(d.dir); err != nil {
+		return 0, err
+	}
+	mounts, err := u.Docker.Mounts(ctx, d.dir)
+	if err != nil {
+		return 0, err
+	}
+	root, err := dataRootOf(mounts, d.dir)
 	if err != nil {
 		return 0, err
 	}
 	if root != d.dataRoot {
 		return 0, fmt.Errorf("the updater's status directory is mounted from %s by Compose, so the data root it reads is %s, not %s as the updater reads .env", root+"/updater/status", root, d.dataRoot)
+	}
+	if err := checkMounts(mounts, d.dataRoot, d.dir); err != nil {
+		return 0, err
 	}
 	return checkDataRoot(d.dataRoot)
 }
@@ -860,7 +937,7 @@ func (up *upgrade) unpack(archive string) error {
 	st.Unpacked = append(st.Unpacked, dir)
 	st.Attempt.NewDeploy = filepath.Join(dir, "deploy")
 	if err := u.save(st, up.d); err != nil {
-		return err
+		return &unsavedError{what: "the new version's directory", err: err}
 	}
 	root, err := unpackBundle(archive, parent, top)
 	if err != nil {
@@ -890,6 +967,8 @@ func (up *upgrade) writeEnv(ctx context.Context, env []byte) error {
 	return up.checkImages(ctx)
 }
 
+// checkImages checks that the new deployment runs exactly the manifest's
+// images, and mounts only what a backup holds.
 func (up *upgrade) checkImages(ctx context.Context) error {
 	got, err := up.u.Docker.Images(ctx, up.newDeploy)
 	if err != nil {
@@ -899,13 +978,20 @@ func (up *upgrade) checkImages(ctx context.Context) error {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		return fmt.Errorf("the new deployment would run %v, not the manifest's %v", got, want)
 	}
-	return nil
+	if err := checkComposeFiles(up.newDeploy); err != nil {
+		return err
+	}
+	mounts, err := up.u.Docker.Mounts(ctx, up.newDeploy)
+	if err != nil {
+		return err
+	}
+	return checkMounts(mounts, up.d.dataRoot, up.newDeploy)
 }
 
 // setUp runs the new setup.sh --upgrade (ADR-0052, step 5), told not to
 // install the updater, which replaces itself only at the confirm.
 func (up *upgrade) setUp(ctx context.Context) error {
-	if err := runSetup(ctx, up.newDeploy, up.u.Log); err != nil {
+	if err := runSetup(ctx, up.newDeploy, up.u.held, up.u.Log); err != nil {
 		return err
 	}
 	// setup.sh may add settings and set the server's version from the
@@ -995,6 +1081,14 @@ func (up *upgrade) tidy(ctx context.Context) {
 		}
 	}
 	st.Deployments = remaining
+	// What an attempt that did not confirm unpacked and left: a directory
+	// containers ran from when an operator said the deployment was
+	// repaired (settle).
+	for _, root := range slices.Clone(st.Unpacked) {
+		if root != filepath.Dir(up.newDeploy) && root != filepath.Dir(d.dir) {
+			u.removeUnlessRunning(ctx, st, root, "a directory an earlier attempt unpacked")
+		}
+	}
 	if err := removeFailedData(d.dataRoot); err != nil {
 		u.Log.Warn("could not remove failed data roots", "error", err)
 	}

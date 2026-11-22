@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,7 +42,7 @@ func (ExecRunner) Run(ctx context.Context, dir string, stdin []byte, args ...str
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.Bytes(), fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, lastLines(stderr.String(), 5))
+		return stdout.Bytes(), asKilled(ctx, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, lastLines(stderr.String(), 5)))
 	}
 	return stdout.Bytes(), nil
 }
@@ -165,6 +167,12 @@ func (d Docker) Stop(ctx context.Context, dir string) error {
 	return nil
 }
 
+// RunningFrom lists the project directories (deploy/) the project's running
+// containers were started from.
+func (d Docker) RunningFrom(ctx context.Context) ([]string, error) {
+	return d.lines(ctx, "", "ps", "--filter", "label=com.docker.compose.project="+Project, "--format", `{{.Label "com.docker.compose.project.working_dir"}}`)
+}
+
 // Up starts the services named, with the one-shot services they depend
 // on, and waits until each runs, healthy where it has a health check, or
 // the timeout passes.
@@ -215,40 +223,134 @@ func (d Docker) plan(ctx context.Context, dir string) (running, leaves []string,
 	return running, leaves, nil
 }
 
-// statusMount is where Compose mounts the updater's status directory into
-// the server.
-const statusMount = "/run/easyrmm-updater"
+// Where Compose mounts the updater's status directory, and the operator's
+// certificates, into the server.
+const (
+	statusMount = "/run/easyrmm-updater"
+	tlsMount    = "/etc/easyrmm/tls"
+)
 
-// DataRoot is the data root Compose reads for the deployment in dir: the
-// directory above the updater's status directory, <data root>/updater/
-// status, which it mounts into the server.
-func (d Docker) DataRoot(ctx context.Context, dir string) (string, error) {
+// composeMount is one of a service's volumes, as docker compose config
+// lists it.
+type composeMount struct {
+	Service  string `json:"-"`
+	Type     string `json:"type"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	ReadOnly bool   `json:"read_only"`
+}
+
+// Mounts lists the volumes of the deployment in dir, with its profiles,
+// by service and target.
+func (d Docker) Mounts(ctx context.Context, dir string) ([]composeMount, error) {
 	out, err := d.R.Run(ctx, dir, nil, "compose", "config", "--format", "json")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var cfg struct {
 		Services map[string]struct {
-			Volumes []struct {
-				Source string `json:"source"`
-				Target string `json:"target"`
-			} `json:"volumes"`
+			Volumes []composeMount `json:"volumes"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(out, &cfg); err != nil {
-		return "", fmt.Errorf("docker compose config: %w", err)
+		return nil, fmt.Errorf("docker compose config: %w", err)
 	}
-	for _, v := range cfg.Services["server"].Volumes {
-		if v.Target != statusMount {
+	var mounts []composeMount
+	for name, s := range cfg.Services {
+		for _, m := range s.Volumes {
+			m.Service = name
+			mounts = append(mounts, m)
+		}
+	}
+	slices.SortFunc(mounts, func(a, b composeMount) int {
+		return strings.Compare(a.Service+" "+a.Target, b.Service+" "+b.Target)
+	})
+	return mounts, nil
+}
+
+// dataRootOf is the data root Compose reads for the deployment in dir:
+// the directory above the updater's status directory, <data root>/updater/
+// status, which it mounts into the server.
+func dataRootOf(mounts []composeMount, dir string) (string, error) {
+	for _, m := range mounts {
+		if m.Service != "server" || m.Target != statusMount {
 			continue
 		}
-		root, ok := strings.CutSuffix(v.Source, "/updater/status")
+		root, ok := strings.CutSuffix(m.Source, "/updater/status")
 		if !ok {
-			return "", fmt.Errorf("the server's %s is mounted from %s, not from the data root's updater/status", statusMount, v.Source)
+			return "", fmt.Errorf("the server's %s is mounted from %s, not from the data root's updater/status", statusMount, m.Source)
 		}
 		return root, nil
 	}
 	return "", fmt.Errorf("the deployment in %s does not mount the updater's status directory into the server: set it up again with its setup.sh", dir)
+}
+
+// systemPaths are the host's files a service may mount from outside the
+// data root and the deployment: they hold none of its state.
+var systemPaths = []string{"/etc/localtime", "/etc/timezone", "/run/docker.sock", "/var/run/docker.sock"}
+
+// checkMounts refuses a deployment, in deployDir, that mounts what a backup
+// does not hold, and so a rollback would not restore. Each volume must be a
+// tmpfs, or a bind mount from:
+//   - the data root, but for the entries backups leave out (the updater's
+//     own status directory, which it writes itself, aside);
+//   - the deployment's own tree, deploy/ and docker/ beside it, which a
+//     backup copies;
+//   - anywhere, read-only, for the server's certificates (EASYRMM_TLS_DIR
+//     in manual TLS mode: the operator's, which no upgrade changes);
+//   - one of the system paths.
+func checkMounts(mounts []composeMount, dataRoot, deployDir string) error {
+	trees := resolved(filepath.Dir(deployDir))
+	inTree := func(src string) bool {
+		for _, t := range trees {
+			if inDir(src, filepath.Join(t, "deploy")) || inDir(src, filepath.Join(t, "docker")) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, m := range mounts {
+		src := filepath.Clean(m.Source)
+		rel, _ := filepath.Rel(dataRoot, src)
+		switch {
+		case m.Type == "tmpfs":
+		case m.Type != "bind":
+			return fmt.Errorf("the service %s mounts a %s volume at %s: a backup holds the data root and the deployment's directory only, and a rollback would not restore it", m.Service, m.Type, m.Target)
+		case inDir(src, dataRoot) && rel != "." && !skippedEntry(strings.SplitN(rel, "/", 2)[0]):
+		case src == string(statusDirOf(dataRoot)) && m.Target == statusMount && m.ReadOnly:
+		case inTree(src):
+		case m.Service == "server" && m.Target == tlsMount && m.ReadOnly:
+		case slices.Contains(systemPaths, src):
+		default:
+			return fmt.Errorf("the service %s mounts %s at %s, outside the data root %s and the deployment's directory %s: a backup would not hold it, and a rollback would not restore it. Move it into the data root (docs/operations/updater.md#the-data-root)", m.Service, src, m.Target, dataRoot, filepath.Dir(deployDir))
+		}
+	}
+	return nil
+}
+
+// inDir reports whether path is dir or lies under it, by their names.
+func inDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// composeFiles are the files Compose reads in a project directory with
+// docker-compose.yml, or instead of it.
+var composeFiles = []string{
+	"compose.yaml", "compose.yml", "docker-compose.yaml",
+	"compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml",
+}
+
+// checkComposeFiles refuses a deployment directory with another file
+// Compose would read: the updater backs up, restores and starts the
+// deployment as docker-compose.yml says.
+func checkComposeFiles(dir string) error {
+	for _, name := range composeFiles {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			return fmt.Errorf("%s is in %s: Compose reads it with docker-compose.yml, or instead of it, and the updater backs up, restores and starts the deployment as docker-compose.yml alone says. Move what it changes into docker-compose.yml's settings in .env, or remove it", name, dir)
+		}
+	}
+	return nil
 }
 
 // Start starts the deployment's services but those excluded, within the

@@ -25,7 +25,9 @@ follow first, as [below](#before-you-start); the updater takes its own
 backup.
 
 The rest of this page is the manual upgrade. Run as root, its `setup.sh`
-installs the updater on a host that lacks it.
+installs the updater on a host that lacks it. While an updater attempt
+runs, `setup.sh` changes nothing and says so: run it again once
+`easyrmm-updater status` shows the attempt has ended.
 
 ## Before you start
 

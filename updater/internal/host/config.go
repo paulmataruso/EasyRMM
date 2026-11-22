@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/paulmataruso/easyrmm/updater/internal/release"
 )
 
@@ -215,7 +217,8 @@ func readOwnFile(path string, limit int64) ([]byte, error) {
 var rootUID uint32
 
 // writeFileAtomic writes a file of root's in a directory only root can
-// write, through a new file renamed into place.
+// write, through a new file, synced, renamed into place, and the directory
+// synced: once it returns, the new file is what a power cut leaves.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".new-*")
 	if err != nil {
@@ -245,5 +248,31 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(name)
 		return err
 	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("syncing %s after writing %s: %w", filepath.Dir(path), filepath.Base(path), err)
+	}
 	return nil
+}
+
+// syncDir makes a directory's entries durable: a file renamed into it is
+// there after a power cut once it returns. The tests watch it.
+var syncDir = func(dir string) error {
+	f, err := os.Open(dir) //nolint:gosec // a directory the updater writes
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+// syncFS writes what the kernel holds of the filesystem of path to its disk
+// (syncfs(2)): the copies cp made there are durable once it returns. The
+// tests watch it.
+var syncFS = func(path string) error {
+	f, err := os.Open(path) //nolint:gosec // a directory the updater writes
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return unix.Syncfs(int(f.Fd())) //nolint:gosec // a file descriptor
 }

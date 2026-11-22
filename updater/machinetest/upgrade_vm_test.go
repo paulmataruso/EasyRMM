@@ -83,8 +83,9 @@ var withAuthentik = os.Getenv("EASYRMM_UPDATER_TEST_AUTHENTIK") == "1"
 //     brings A back from the backup it took;
 //  5. D and E published, E naming D as its required upgrade stop: E asked
 //     for by name is refused before anything stops, and the timer's
-//     service, automatic upgrades on, installs D first and E on its next
-//     run.
+//     service, automatic upgrades on, installs D first, stopped with
+//     systemctl stop during its backup and running on to its end, and E
+//     on its next run.
 //
 // Each step is checked from the outside: the version the server reports,
 // the directory every container runs from, the data, the audit chain, the
@@ -272,16 +273,19 @@ done`, base, installDir, versionA, versionB, versionC, authentikFlags()), 2*time
 	}
 
 	// 3a. setup.sh, run again while an attempt holds the updater's lock,
-	// leaves the updater, its units and updater.conf alone: here it would
-	// have put A's older updater in place of B's.
-	installed := m.run("the installed updater", "stat -c %Y /usr/local/sbin/easyrmm-updater /etc/easyrmm/updater.conf", time.Minute)
-	if out := m.run("setup.sh while the updater's lock is held", fmt.Sprintf(`set -e
+	// changes nothing: not .env, nor the updater, its units and
+	// updater.conf (here it would have put A's older updater in place of
+	// B's).
+	const installedFiles = "stat -c '%Y %n' /usr/local/sbin/easyrmm-updater /etc/easyrmm/updater.conf /etc/systemd/system/easyrmm-updater.service && sha256sum "
+	installed := m.run("the installed updater", installedFiles+deployDir(versionA)+"/.env", time.Minute)
+	stdout, stderr, exit := m.try("setup.sh while the updater's lock is held", fmt.Sprintf(`set -e
 cd %s
-flock -n -o /var/lib/easyrmm-updater/lock ./scripts/setup.sh --upgrade </dev/null 2>&1`, deployDir(versionA)), 10*time.Minute); !strings.Contains(out, "The updater: an attempt is running (easyrmm-updater status); not installed.") {
-		t.Errorf("setup.sh did not refuse to install the updater while an attempt held its lock:\n%s", out)
+flock -n -o /var/lib/easyrmm-updater/lock ./scripts/setup.sh --upgrade </dev/null`, deployDir(versionA)), 10*time.Minute)
+	if exit == 0 || !strings.Contains(stderr, "error: an updater attempt is running (easyrmm-updater status): setup.sh changes nothing while one does.") {
+		t.Errorf("setup.sh did not refuse to run while an attempt held the updater's lock: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
-	if again := m.run("the installed updater", "stat -c %Y /usr/local/sbin/easyrmm-updater /etc/easyrmm/updater.conf", time.Minute); again != installed {
-		t.Errorf("setup.sh changed the updater or updater.conf while an attempt held the lock: %q, then %q", installed, again)
+	if again := m.run("the installed updater", installedFiles+deployDir(versionA)+"/.env", time.Minute); again != installed {
+		t.Errorf("setup.sh changed .env, the updater or updater.conf while an attempt held the lock: %q, then %q", installed, again)
 	}
 	if out := m.run("the updater's version", "easyrmm-updater version", time.Minute); !strings.HasPrefix(out, versionB+" (TEST BUILD") {
 		t.Errorf("the updater after setup.sh: %q", out)
@@ -354,7 +358,7 @@ grep -x 'deployment = %[4]s' /etc/easyrmm/updater.conf`, installDir, versionB, s
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, exit := m.try("upgrading to "+versionC, "easyrmm-updater upgrade "+versionC, 3*time.Hour)
+	stdout, stderr, exit = m.try("upgrading to "+versionC, "easyrmm-updater upgrade "+versionC, 3*time.Hour)
 	if exit == 0 {
 		t.Fatalf("the upgrade to %s succeeded:\n%s\n%s", versionC, stdout, stderr)
 	}
@@ -414,11 +418,38 @@ systemctl stop easyrmm-updater.timer
 sed -i -e 's/^auto_upgrade = .*/auto_upgrade = yes/' -e 's/^auto_upgrade_hours = .*/auto_upgrade_hours = 0-24/' /etc/easyrmm/updater.conf
 grep -x 'auto_upgrade = yes' /etc/easyrmm/updater.conf
 grep -x 'auto_upgrade_hours = 0-24' /etc/easyrmm/updater.conf`, time.Minute)
-	m.updater("the timer's service, installing "+versionD+" first", "systemctl start easyrmm-updater.service")
+	// The service is stopped (SIGTERM, as at a reboot) during its
+	// backup: KillMode=mixed sends it to the updater alone, so the backup's
+	// cp runs on, and the updater, which runs on to the attempt's end,
+	// within TimeoutStopSec. A ballast file in the data root makes the
+	// backup last long enough to be stopped in.
+	stopped := m.run("the timer's service, installing "+versionD+" first, stopped during its backup", fmt.Sprintf(`set -e
+dd if=/dev/zero of=%[1]s/machinetest-ballast bs=1M count=1024 status=none
+systemctl start --no-block easyrmm-updater.service
+end=$(($(date +%%s) + 3600))
+until grep -Eq '"step": "(backup|set-up|start-held|confirm)"' /var/lib/easyrmm-updater/state.json 2>/dev/null &&
+  grep -q '"to": "%[2]s"' /var/lib/easyrmm-updater/state.json; do
+  if [ "$(date +%%s)" -ge "$end" ] || [ "$(systemctl show -P ActiveState easyrmm-updater.service)" = failed ]; then
+    echo "the service did not reach its backup" >&2
+    journalctl -u easyrmm-updater.service --no-pager -o cat >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+sed -n 's/.*"step": "\(.*\)".*/stopped at the \1 step/p' /var/lib/easyrmm-updater/state.json | head -n 1
+systemctl stop easyrmm-updater.service
+systemctl show -P Result easyrmm-updater.service`, dataRoot, versionD), 45*time.Minute)
+	t.Logf("the service stopped: %s", strings.TrimSpace(stopped))
+	if !strings.Contains(stopped, "stopped at the backup step") {
+		t.Logf("the stop came after the backup: the set-up's setup.sh ran on instead of the backup's cp")
+	}
+	if journal := m.run("the service's journal", "journalctl -u easyrmm-updater.service --no-pager -o cat", time.Minute); !strings.Contains(journal, "asked to stop") {
+		t.Errorf("the journal does not say a stop was asked for:\n%s", journal)
+	}
 	m.serves(versionD)
 	st = m.status()
-	if a := st.Attempt; a == nil || a.Action != "upgrade" || a.By != "automatic" || a.Result != host.ResultSucceeded || a.From != versionA || a.To != versionD {
-		t.Errorf("after the first automatic upgrade: %+v", a)
+	if a := st.Attempt; a == nil || a.Action != "upgrade" || a.By != "automatic" || a.Result != host.ResultSucceeded || a.From != versionA || a.To != versionD || a.Interrupted != "" {
+		t.Errorf("after the first automatic upgrade, stopped during its backup: %+v", a)
 	}
 	if journal := m.run("the service's journal", "journalctl -u easyrmm-updater.service --no-pager -o cat", time.Minute); !strings.Contains(journal, "installing the required upgrade stop first") {
 		t.Errorf("the journal does not say the stop was installed first:\n%s", journal)

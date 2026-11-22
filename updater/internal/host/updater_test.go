@@ -368,27 +368,31 @@ func TestUpgradeRefusesBeforeStopping(t *testing.T) {
 // the failed ones and the rollback recorded.
 func TestUpgradeFailureRestores(t *testing.T) {
 	for name, tc := range map[string]struct {
-		fail     func(h *testHost, dir, call string) bool
-		step     string
-		headRead bool
+		fail func(h *testHost, dir, call string) bool
+		step string
+		// head is the discarded database's audit chain head, as the
+		// restore reads it: its last ID and hash; "" when PostgreSQL does
+		// not start to be read.
+		head, headHash string
 	}{
 		"the held start": {
 			fail: func(h *testHost, dir, call string) bool {
 				return dir == h.deploy("v1.1.0") && strings.HasPrefix(call, "compose up") && strings.Contains(call, " server")
 			},
-			step: StepStart, headRead: true,
+			// The new server never started: the head is the backup's.
+			step: StepStart, head: "42", headHash: testAuditHead,
 		},
 		"the server's readiness on loopback": {
 			fail: func(h *testHost, dir, call string) bool {
 				return dir == h.deploy("v1.1.0") && call == "compose exec -T server easyrmm-server healthcheck"
 			},
-			step: StepStart, headRead: true,
+			step: StepStart, head: "57", headHash: newerAuditHead,
 		},
 		"the worker": {
 			fail: func(h *testHost, dir, call string) bool {
 				return dir == h.deploy("v1.1.0") && strings.HasPrefix(call, "compose up") && strings.HasSuffix(call, " "+workerService)
 			},
-			step: StepConfirm, headRead: true,
+			step: StepConfirm, head: "57", headHash: newerAuditHead,
 		},
 		"PostgreSQL does not start": {
 			fail: func(h *testHost, dir, call string) bool {
@@ -444,8 +448,8 @@ func TestUpgradeFailureRestores(t *testing.T) {
 			if !strings.Contains(sql, "setval") || !strings.Contains(sql, "easyrmm_audit_append") || !strings.Contains(sql, "'updater.rolled_back'") {
 				t.Errorf("SQL %s", sql)
 			}
-			if tc.headRead {
-				if last["skip_to"] != "42" || last["margin"] != "0" || !strings.Contains(last["details"], `"discardedHead":"`+testAuditHead+`"`) {
+			if tc.head != "" {
+				if last["skip_to"] != tc.head || last["margin"] != "0" || !strings.Contains(last["details"], `"discardedHead":"`+tc.headHash+`"`) {
 					t.Errorf("vars %v", last)
 				}
 			} else if last["skip_to"] != "0" || last["margin"] != "1000000" || !strings.Contains(last["details"], `"discardedHead":"unknown"`) {
@@ -509,7 +513,7 @@ func TestUpgradeSetupFails(t *testing.T) {
 	files["easyrmm-v1.1.0/deploy/scripts/setup.sh"] = "#!/bin/sh\necho 'error: something' >&2\nexit 1\n"
 	h.offerFiles("v1.1.0", files, nil)
 	err := h.upgrade(Request{})
-	if err == nil || !strings.Contains(err.Error(), "rolled-back") || !strings.Contains(err.Error(), "setup.sh --upgrade failed (exit 1)") {
+	if err == nil || !strings.Contains(err.Error(), "rolled-back") || !strings.Contains(err.Error(), "setup.sh --upgrade failed (exit status 1)") {
 		t.Fatalf("got %v", err)
 	}
 	st := h.state()

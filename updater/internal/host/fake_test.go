@@ -47,6 +47,9 @@ const (
 	meshImage     = "ghcr.io/ylianst/meshcentral:1.3.1" + releasetest.Digest
 	authentikImg  = "ghcr.io/goauthentik/server:2026.8.5" + releasetest.Digest
 	testAuditHead = "5c1e6b0f9a3e4d2c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c"
+	// newerAuditHead is the head a newer version's database reaches, at
+	// audit ID 57.
+	newerAuditHead = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
 )
 
 var (
@@ -87,17 +90,24 @@ type fakeDocker struct {
 	// .env says; serverSays, when set, the version the server reports.
 	composeDataRoot string
 	serverSays      string
-	// psql records what PostgreSQL was sent; head answers the audit head.
+	// psql records what PostgreSQL was sent. The audit chain's head is the
+	// database's, in the data root (headFile), so that a restore brings
+	// the backup's back; a version above v1.0.0 that starts writes its own.
 	psql []string
 	vars []map[string]string
-	head string
+	// mounts are volumes added to services' (service -> Compose's JSON).
+	mounts map[string][]map[string]any
+}
+
+// headFile is where the fake database keeps its audit chain's head.
+func headFile(dataRoot string) string {
+	return filepath.Join(dataRoot, "postgres", "18", "docker", "audit-head")
 }
 
 func newFakeDocker(t *testing.T, dataRoot string) *fakeDocker {
 	return &fakeDocker{
 		t: t, running: map[string]string{}, dataRoot: dataRoot, rootDir: t.TempDir(),
 		security: `["name=seccomp,profile=builtin","name=cgroupns"]`,
-		head:     "42|" + testAuditHead,
 	}
 }
 
@@ -173,19 +183,36 @@ func (f *fakeDocker) Run(ctx context.Context, dir string, stdin []byte, args ...
 			if s.restart != "-" {
 				svc["restart"] = s.restart
 			}
-			if s.name == "server" {
-				env, _ := os.ReadFile(filepath.Join(dir, ".env"))
-				root := envValue(env, "EASYRMM_DATA_ROOT")
-				switch {
-				case f.composeDataRoot != "":
-					root = f.composeDataRoot
-				case root == "":
-					root = "/srv/easyrmm"
-				}
-				svc["volumes"] = []any{
+			env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+			root := envValue(env, "EASYRMM_DATA_ROOT")
+			switch {
+			case f.composeDataRoot != "":
+				root = f.composeDataRoot
+			case root == "":
+				root = "/srv/easyrmm"
+			}
+			// As deploy/docker-compose.yml mounts them: from the data root,
+			// the deployment's docker/, and the certificates.
+			var volumes []any
+			switch s.name {
+			case "server":
+				volumes = []any{
 					map[string]any{"type": "bind", "source": root + "/server", "target": "/var/lib/easyrmm"},
+					map[string]any{"type": "bind", "source": root + "/tls", "target": tlsMount, "read_only": true},
 					map[string]any{"type": "bind", "source": root + "/updater/status", "target": "/run/easyrmm-updater", "read_only": true},
+					map[string]any{"type": "tmpfs", "target": "/tmp"},
 				}
+			case "postgres":
+				volumes = []any{
+					map[string]any{"type": "bind", "source": root + "/postgres", "target": "/var/lib/postgresql"},
+					map[string]any{"type": "bind", "source": filepath.Join(filepath.Dir(dir), "docker", "postgres", "init"), "target": "/docker-entrypoint-initdb.d", "read_only": true},
+				}
+			}
+			for _, m := range f.mounts[s.name] {
+				volumes = append(volumes, m)
+			}
+			if volumes != nil {
+				svc["volumes"] = volumes
 			}
 			cfg[s.name] = svc
 		}
@@ -197,6 +224,12 @@ func (f *fakeDocker) Run(ctx context.Context, dir string, stdin []byte, args ...
 	case slices.Equal(args, []string{"compose", "stop"}):
 		clear(f.running)
 		return nil, nil
+	case slices.Equal(args, []string{"ps", "--filter", "label=com.docker.compose.project=" + Project, "--format", `{{.Label "com.docker.compose.project.working_dir"}}`}):
+		var b strings.Builder
+		for _, dir := range f.running {
+			b.WriteString(dir + "\n")
+		}
+		return []byte(b.String()), nil
 	case len(args) > 1 && args[0] == "ps":
 		return nil, nil
 	case len(args) > 2 && args[0] == "compose" && args[1] == "up":
@@ -237,6 +270,12 @@ func (f *fakeDocker) up(dir string, args []string) error {
 			if err := os.WriteFile(filepath.Join(f.dataRoot, "server", "ran"), []byte(version), 0o600); err != nil {
 				return err
 			}
+			// A newer version writes audit records of its own.
+			if v, err := release.ParseVersion(version); err == nil && v.Compare(release.MustParseVersion("v1.0.0")) > 0 {
+				if err := os.WriteFile(headFile(f.dataRoot), []byte("57|"+newerAuditHead), 0o600); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -276,7 +315,11 @@ func (f *fakeDocker) exec(_ string, stdin []byte, args []string) ([]byte, error)
 		f.vars = append(f.vars, vars)
 		switch {
 		case strings.Contains(sql, "encode(entry_hash"):
-			return []byte(f.head + "\n"), nil
+			head, err := os.ReadFile(headFile(f.dataRoot))
+			if err != nil {
+				return nil, err
+			}
+			return append(head, '\n'), nil
 		case strings.Contains(sql, "json_build_object"):
 			return []byte(`{"devices": ["desk-1", "desk-2"], "deviceCount": 2, "jobs": 7, "audit": 31}` + "\n"), nil
 		}
@@ -326,6 +369,8 @@ service authentik-setup no ` + authentikImg + ` authentik-server
 const fakeSetup = `#!/bin/sh
 set -eu
 [ "$#" -eq 2 ] && [ "$1" = --upgrade ] && [ "$2" = --no-updater ] || { echo "setup.sh: bad options: $*" >&2; exit 2; }
+# As setup.sh: the updater's lock, which the updater hands it.
+[ "${EASYRMM_UPDATER_LOCK_FD:-}" = 3 ] && [ "$(basename "$(readlink /proc/self/fd/3)")" = lock ] && flock -n 3 || { echo "setup.sh: the updater's lock is not mine" >&2; exit 3; }
 echo "SETUP_RAN=yes" >> .env
 echo "setup.sh ran in $(pwd)"
 `
@@ -454,6 +499,7 @@ func newTestHost(t *testing.T, version string, channel release.Channel) *testHos
 		}
 	}
 	writeFile(t, filepath.Join(h.dataRoot, "postgres", "18", "docker", "PG_VERSION"), "18\n", 0o600)
+	writeFile(t, headFile(h.dataRoot), "42|"+testAuditHead, 0o600)
 	writeFile(t, filepath.Join(h.dataRoot, "server", "ran"), version, 0o600)
 	writeFile(t, filepath.Join(h.dataRoot, "server", "data"), "the data of "+version, 0o600)
 	for name, contents := range bundleFiles(version) {

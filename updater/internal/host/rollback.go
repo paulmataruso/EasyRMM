@@ -33,14 +33,17 @@ type restorePlan struct {
 // copies the backup into an emptied one, puts the backup's deployment
 // directory back, moves the audit IDs past the discarded ones and records
 // the rollback, then starts the restored version by its digests. Each
-// stage is recorded in the attempt before the next begins, and nothing
-// stops it once begun: a process killed halfway leaves what the next run
-// needs to finish it.
+// stage is recorded in the attempt before the next begins (a stage that
+// cannot be is not begun), and what it copied is on its disk before the
+// restore is recorded as done; nothing stops it once begun: a process
+// killed halfway leaves what the next run needs to finish it.
 func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p restorePlan) error {
 	ctx = context.WithoutCancel(ctx)
 	b, a := p.backup, st.Attempt
 	a.Backup = b.Dir
-	u.step(st, d, StepRestore)
+	if err := u.step(st, d, StepRestore); err != nil {
+		return err
+	}
 	// Every service stopped, from the discarded deployment's directory, or
 	// the restored one's when that is gone: they are one Compose project.
 	stopDir := p.discardedDeploy
@@ -60,10 +63,12 @@ func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p resto
 			return fmt.Errorf("stopping %s's PostgreSQL: %w", p.discarded, err)
 		}
 		if err := u.save(st, d); err != nil {
-			return err
+			return &unsavedError{what: "the discarded database's audit chain head", err: err}
 		}
 	}
-	stamp := u.now().Format("20060102T150405Z") + "-" + p.discarded
+	// The same for every restore of the attempt: one done again finds what
+	// the first moved aside (restoreData).
+	stamp := a.Started.UTC().Format("20060102T150405Z") + "-" + p.discarded
 	aside, err := b.restoreData(ctx, b.Meta.DataRoot, stamp)
 	if err != nil {
 		return fmt.Errorf("restoring the data root: %w", err)
@@ -75,9 +80,6 @@ func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p resto
 	if err := u.Config.SetDeployment(b.Meta.Deployment); err != nil {
 		return err
 	}
-	if err := statusDirOf(d.dataRoot).Unhold(); err != nil {
-		return err
-	}
 	if err := u.Docker.Up(ctx, b.Meta.Deployment, PostgresTimeout, "postgres"); err != nil {
 		return fmt.Errorf("starting the restored PostgreSQL: %w", err)
 	}
@@ -86,9 +88,15 @@ func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p resto
 	}); err != nil {
 		return fmt.Errorf("recording the rollback in the audit log: %w", err)
 	}
+	for _, dir := range []string{b.Meta.DataRoot, filepath.Dir(b.Meta.Deployment)} {
+		if err := syncFS(dir); err != nil {
+			return fmt.Errorf("syncing what the restore copied to its disk: %w", err)
+		}
+	}
 	a.Restored = true
 	if err := u.save(st, d); err != nil {
-		return err
+		a.Restored = false
+		return &unsavedError{what: "the restore's end", err: err}
 	}
 	return u.startRestored(ctx, st, d, b)
 }
@@ -190,6 +198,7 @@ func (u *Updater) Rollback(ctx context.Context, by string, repaired bool) error 
 		return err
 	}
 	defer unlock()
+	defer u.watchStop(ctx)()
 	st, err := loadState(u.StateDir)
 	if err != nil {
 		return err
@@ -231,7 +240,15 @@ func (u *Updater) Rollback(ctx context.Context, by string, repaired bool) error 
 		discardedDeploy: d.dir, discarded: rp.From, backup: b,
 		reason: "rolled back by " + by,
 	})
-	if err != nil {
+	var unsaved *unsavedError
+	switch {
+	case leaves(err, st.Attempt.Step):
+		return u.leave(st, d, err)
+	case errors.As(err, &unsaved):
+		// The restore did not begin.
+		u.end(st, d, ResultFailed, err)
+		return st.Attempt.reasonError()
+	case err != nil:
 		u.end(st, d, ResultRollbackFailed, fmt.Errorf("%w (the backup: %s)", err, b.Dir))
 		return st.Attempt.reasonError()
 	}

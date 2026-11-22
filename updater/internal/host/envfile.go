@@ -35,6 +35,16 @@ func envLines(data []byte) []string {
 // The settings the updater reads or writes.
 var envKeysRead = []string{"EASYRMM_DATA_ROOT", "EASYRMM_IMAGE", "EASYRMM_VERSION", "COMPOSE_PROFILES"}
 
+// composeSetting reports whether key is one of Compose's own settings that
+// the updater refuses in .env: every COMPOSE_ one but COMPOSE_PROFILES,
+// which setup.sh writes. Among them are COMPOSE_FILE, COMPOSE_ENV_FILES
+// and COMPOSE_PROJECT_NAME, which change the files Compose reads or its
+// project; the updater backs up, restores and starts the deployment as its
+// docker-compose.yml says.
+func composeSetting(key string) bool {
+	return strings.HasPrefix(key, "COMPOSE_") && key != "COMPOSE_PROFILES"
+}
+
 var (
 	envKeyRE   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	envPlainRE = regexp.MustCompile(`^[A-Za-z0-9_./:@,+-]*$`)
@@ -57,6 +67,9 @@ func checkEnv(data []byte) error {
 		key, value, _ := strings.Cut(line, "=")
 		if strings.HasPrefix(value, `"`) || strings.HasPrefix(value, "'") {
 			return fmt.Errorf(".env line %d: %s's value is quoted, which the updater does not read as Compose does: write it unquoted", n, key)
+		}
+		if composeSetting(key) {
+			return fmt.Errorf(".env line %d sets %s: of Compose's own settings the updater takes COMPOSE_PROFILES alone, since others (COMPOSE_FILE, COMPOSE_ENV_FILES, COMPOSE_PROJECT_NAME) change the files Compose reads or its project, and the updater backs up, restores and starts the deployment as its docker-compose.yml says. Remove it", n, key)
 		}
 		if !slices.Contains(envKeysRead, key) {
 			continue
