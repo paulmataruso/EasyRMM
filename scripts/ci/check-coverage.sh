@@ -59,6 +59,10 @@ floors=(
   # Audit forwarding: every tenant's records leave the server through it.
   "server/internal/auditfwd                88"
   "server/internal/httpapi/auditfwdapi     90"
+  # The mail server: it holds a password, and its limits keep invitations
+  # and password resets going (ADR-0053).
+  "server/internal/mailserver              88"
+  "server/internal/httpapi/mailserverapi   90"
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"

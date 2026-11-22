@@ -1401,15 +1401,15 @@ func TestContract(t *testing.T) {
 				t.Errorf("restore the mail settings: %v", err)
 			}
 		})
-		plain := MailConfig{Host: "mail.example.test", Port: 25, From: "Reports <reports@example.test>", TLS: "none"}
+		plain := MailConfig{Host: "localhost", Port: 25, FromAddress: "reports@example.test", FromName: "Reports", Security: "none"}
 		if err := engine.SetMailSettings(super, plain.mailSettings(mail)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_encrypted") {
 			t.Errorf("a plain mail server: %v", err)
 		}
-		tls := MailConfig{Host: "mail.example.test", Port: 465, Username: "reports", Password: "contract-only", From: "Reports <reports@example.test>",
-			TLS: "implicit"}
+		tls := MailConfig{Host: "mail.example.test", Port: 465, Username: "reports", Password: "contract-only", FromAddress: "reports@example.test",
+			FromName: "Reports", Security: "tls"}
 		if err := engine.SetMailSettings(super, tls.mailSettings(mail)); err != nil {
 			t.Fatal(err)
 		}
@@ -1418,6 +1418,76 @@ func TestContract(t *testing.T) {
 			!got.SMTPPasswordConfigured || got.FromAddress != "reports@example.test" || got.FromName != "Reports" ||
 			got.AllowPrivateNetworkWebhooks != mail.AllowPrivateNetworkWebhooks {
 			t.Errorf("mail settings: %+v, %v", got, err)
+		}
+		// The webhook switch from a server that does not give the engine its
+		// mail server sends no password, and the engine keeps its own.
+		for _, allow := range []bool{!got.AllowPrivateNetworkWebhooks, got.AllowPrivateNetworkWebhooks} {
+			if err := engine.SetMailSettings(super, got.unchanged(allow)); err != nil {
+				t.Fatal(err)
+			}
+			kept, err := engine.MailSettings(super)
+			want := got
+			want.AllowPrivateNetworkWebhooks = allow
+			if err != nil || kept != want {
+				t.Errorf("the switch without a password: %+v, want %+v, %v", kept, want, err)
+			}
+		}
+		// The engine's mail settings follow every change of EasyRMM's mail
+		// server, through one service, without a restart (ADR-0053): each
+		// reconcile pass gives the engine the mail server in force when it
+		// is not the one last given, or when the engine's differs.
+		inForce := MailConfig{Host: "smtp-a.example.test", Port: 587, Username: "rmm", Password: "contract-only-1", FromAddress: "rmm@example.test",
+			FromName: "EasyRMM Contract", Security: "starttls"}
+		follower := New(nil, nil, "contract", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err := follower.UseEngine(engine, Mail(func(context.Context) (MailConfig, error) { return inForce, nil }, nil)); err != nil {
+			t.Fatal(err)
+		}
+		follow := func(step string, want MailSettings) {
+			t.Helper()
+			var res ReconcileResult
+			follower.syncMail(ctx, engine, &res)
+			if len(res.Problems) > 0 {
+				t.Fatalf("%s: %v", step, res.Problems)
+			}
+			got, err := engine.MailSettings(super)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want.AllowPrivateNetworkWebhooks = mail.AllowPrivateNetworkWebhooks
+			if got != want {
+				t.Fatalf("%s: the engine's mail settings are %+v, want %+v", step, got, want)
+			}
+			// The engine keeps them as EasyRMM gives them, so the next pass
+			// finds nothing to give again.
+			if !sameMail(got, inForce.mailSettings(got)) {
+				t.Fatalf("%s: the engine keeps %+v, which the next pass gives again", step, got)
+			}
+		}
+		follow("first pass", MailSettings{SMTPHost: "smtp-a.example.test", SMTPPort: 587, SMTPSecurity: "StartTls", SMTPUsername: "rmm",
+			SMTPPasswordConfigured: true, FromAddress: "rmm@example.test", FromName: "EasyRMM Contract"})
+		inForce = MailConfig{Host: "smtp-b.example.test", Port: 465, Username: "rmm2", Password: "contract-only-2", FromAddress: "it@example.test",
+			Security: "tls"}
+		follow("a new mail server", MailSettings{SMTPHost: "smtp-b.example.test", SMTPPort: 465, SMTPSecurity: "SslOnConnect", SMTPUsername: "rmm2",
+			SMTPPasswordConfigured: true, FromAddress: "it@example.test", FromName: "EasyRMM"})
+		inForce = MailConfig{Host: "127.0.0.1", Port: 25, FromAddress: "it@example.test", FromName: "Relay", Security: "none"}
+		follow("a relay without signing in", MailSettings{SMTPHost: "127.0.0.1", SMTPPort: 25, SMTPSecurity: "None", FromAddress: "it@example.test",
+			FromName: "Relay"})
+		// EasyRMM is the mail server's one source: a change made in the
+		// engine, even keeping the stored password, is overwritten on the
+		// next pass.
+		if err := engine.SetMailSettings(super, MailSettingsInput{SMTPHost: "elsewhere.example.test", SMTPPort: 587, SMTPSecurity: "StartTls",
+			FromAddress: "x@example.test", AllowPrivateNetworkWebhooks: mail.AllowPrivateNetworkWebhooks}); err != nil {
+			t.Fatal(err)
+		}
+		follow("a change made in the engine", MailSettings{SMTPHost: "127.0.0.1", SMTPPort: 25, SMTPSecurity: "None", FromAddress: "it@example.test",
+			FromName: "Relay"})
+		inForce = MailConfig{}
+		follow("removed", MailSettings{SMTPPort: 587, SMTPSecurity: "StartTls", FromName: "EasyRMM"})
+		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_configured") {
+			t.Errorf("no mail server: %v", err)
+		}
+		if err := engine.SetMailSettings(super, tls.mailSettings(mail)); err != nil {
+			t.Fatal(err)
 		}
 		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@"}, ""); !IsStatus(err, http.StatusBadRequest) {
 			t.Errorf("a bad address: %v", err)

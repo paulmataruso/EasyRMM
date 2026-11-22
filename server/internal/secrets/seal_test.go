@@ -139,3 +139,30 @@ func TestParseKey(t *testing.T) {
 		t.Error("garbage accepted")
 	}
 }
+
+func TestDeriveKey(t *testing.T) {
+	k1 := Key{ID: "k1", Raw: bytes.Repeat([]byte{1}, KeySize)}
+	k2 := Key{ID: "k2", Raw: bytes.Repeat([]byte{2}, KeySize)}
+	a, _ := NewSealer(k1, k2)
+	again, _ := NewSealer(k1)
+	other, _ := NewSealer(k2, k1)
+	key := func(s *Sealer, info string) []byte {
+		t.Helper()
+		k, err := s.DeriveKey(info)
+		if err != nil || len(k) != KeySize {
+			t.Fatalf("%x %v", k, err)
+		}
+		return k
+	}
+	x := key(a, "easyrmm one use v1")
+	switch {
+	case !bytes.Equal(x, key(again, "easyrmm one use v1")):
+		t.Fatal("the same primary key and info derive another key")
+	case bytes.Equal(x, key(a, "easyrmm another use v1")):
+		t.Fatal("another use derives the same key")
+	case bytes.Equal(x, key(other, "easyrmm one use v1")):
+		t.Fatal("another primary key derives the same key")
+	case bytes.Equal(x, k1.Raw):
+		t.Fatal("the derived key is the primary key")
+	}
+}
