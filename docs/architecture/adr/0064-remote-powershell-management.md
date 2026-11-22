@@ -1491,8 +1491,9 @@ endpoint its downloads use.
     compatibility session's module path. The statements of
     `agent/powershell/powershell_windows.go` that the two test binaries
     run are measured from their coverage profiles, and the job fails below
-    a floor (`backend-tests.yml`): `scripts/ci/check-coverage.sh` measures
-    the Linux build only, which does not compile that file.
+    a floor of 82% (`backend-tests.yml`; both runners measured 83.2% of
+    its 286 statements on 2026-11-22): `scripts/ci/check-coverage.sh`
+    measures the Linux build only, which does not compile that file.
 * **Agent tests on CI's *Agent tests on Windows* job** (as the runner's
   administrator), *added after the review of PR #90*: a file open to
   write fails the check and one open to read does not; held files cannot

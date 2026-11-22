@@ -256,10 +256,11 @@ jobs:
       # The Windows half of agent/powershell runs only here, as LocalSystem,
       # so its floor is kept here rather than in check-coverage.sh: the
       # statements of powershell_windows.go that either test binary ran.
-      # Raise it as coverage grows; never lower it.
+      # Set from the 83.2% both runners measured on 2026-11-22. Raise it as
+      # coverage grows; never lower it.
       - name: Coverage floor of PowerShell 7's Windows code
         run: |
-          $floor = 0.0
+          $floor = 82.0
           $blocks = @{}
           foreach ($name in 'powershell-cover.txt', 'jobs-cover.txt') {
             foreach ($l in Get-Content -Path (Join-Path $env:RUNNER_TEMP $name)) {
@@ -278,7 +279,8 @@ jobs:
           }
           if ($total -eq 0) { throw 'No coverage of powershell_windows.go was recorded.' }
           $percent = [math]::Round(100.0 * $covered / $total, 1)
-          Write-Output "agent/powershell/powershell_windows.go: $percent% of $total statements as LocalSystem (floor $floor%)"
+          # Worded so that setup-go's problem matcher, which reads "<file>.go: <text>" as an error, does not.
+          Write-Output "Run as LocalSystem: $percent% of the $total statements of agent/powershell/powershell_windows.go (floor $floor%)"
           if ($percent -lt $floor) { throw "Below the floor of $floor%." }
 
   build:
