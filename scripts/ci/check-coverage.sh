@@ -44,6 +44,13 @@ floors=(
   "server/internal/devices                 88"
   # Scripts and jobs, inventory, monitoring and alerts, and their APIs.
   "server/internal/jobs                    85"
+  # Windows hardening (ADR-0054): the ownership reader's package and the
+  # related-controls tables, their generator and extraction.
+  "internal/winpolicy                      95"
+  "server/internal/jobs/hardening/controls 95"
+  "server/internal/jobs/hardening/controls/extract 95"
+  # Its command: run is tested, main only parses flags.
+  "server/internal/jobs/hardening/controls/cmd/gencontrols 50"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
   "server/internal/httpapi/jobsapi         90"

@@ -13,3 +13,7 @@ ce67feb1650acbb4e827f6f71e38426f0a73a48a:web/src/pages/devices/addDevices.test.t
 # A public-key fingerprint in a sample of the EasyPatch agent's status output.
 0650a62126255d0199fbdb35f910c7e40ead2648:agent/inventory/easypatch_test.go:generic-api-key:26
 0650a62126255d0199fbdb35f910c7e40ead2648:agent/inventory/easypatch_test.go:generic-api-key:60
+
+# The SHA-256 of a NIST spreadsheet the related-controls extraction
+# checks before reading it (ADR-0054).
+255b9a4da605bf89e905e783b9214d82da9707fe:server/internal/jobs/hardening/controls/extract/sources.go:generic-api-key:52

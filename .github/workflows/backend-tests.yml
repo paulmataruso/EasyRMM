@@ -119,3 +119,55 @@ jobs:
           go-version-file: go.mod
       - name: Build every package
         run: go build ./...
+
+  # ADR-0054, W1: Windows hardening's check on each Windows runner GitHub
+  # provides, as the agent's service runs jobs: Windows PowerShell 5.1 as
+  # LocalSystem. The test binary runs as LocalSystem through a scheduled
+  # task (scripts/ci/run-as-system.ps1, ADR-0064's). The tests plant and
+  # remove %ProgramData%\EasyRMM\Hardening, so they run only here, on
+  # runners made for the job. Defender and UAC as the images leave them are
+  # reported, never changed: a check changes nothing.
+  windows-hardening:
+    name: Windows hardening as LocalSystem (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-2022, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # PSScriptAnalyzer 1.24.0, pinned by its SHA-256, and a parse of every
+      # script by Windows PowerShell 5.1 and PowerShell 7.
+      - name: PowerShell scripts parse and pass PSScriptAnalyzer
+        if: matrix.runner == 'windows-2025'
+        shell: pwsh
+        run: ./scripts/ci/check-powershell.ps1
+      - name: Build the tests
+        run: |
+          go test -c -o "$env:RUNNER_TEMP\winpolicy.test.exe" ./internal/winpolicy
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -c -o "$env:RUNNER_TEMP\jobs.test.exe" ./server/internal/jobs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: The ownership reader started on its own, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\winpolicy.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' `
+            -WorkingDirectory "$env:GITHUB_WORKSPACE\internal\winpolicy" -Environment 'EASYRMM_TEST_SYSTEM=1'
+          exit $LASTEXITCODE
+      - name: Check every module, and the Hardening folder's check, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', '-test.timeout=50m' `
+            -WorkingDirectory "$env:GITHUB_WORKSPACE\server\internal\jobs" -Environment 'EASYRMM_TEST_SYSTEM=1' -TimeoutMinutes 55
+          exit $LASTEXITCODE
