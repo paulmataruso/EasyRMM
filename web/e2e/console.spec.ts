@@ -705,6 +705,94 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await readerContext.close();
 });
 
+test("a PowerShell 7 script runs only once the agent says it can, and its run names the version used", async ({ browser }) => {
+  // The agent's poll is held open for up to 25 seconds while there is no work, as a real agent's is.
+  test.slow();
+  const page = admin;
+  // A Windows device enrolls with a token of its own.
+  await page.goto("/devices");
+  await page.getByRole("link", { name: "Add devices" }).first().click();
+  await page.getByLabel(/^Site/).selectOption({ label: "Downtown clinic" });
+  await page.getByLabel(/^Device group/).selectOption({ label: "Reception" });
+  await page.getByLabel(/^Token name/).fill("Front desk");
+  await page.getByLabel("Device limit").fill("1");
+  await page.getByRole("button", { name: "Create token" }).click();
+  const token = /-Token '(ert_[A-Za-z0-9_-]+)'/.exec(await page.locator("pre", { hasText: "install.ps1" }).innerText())?.[1] ?? "";
+  expect(token).toHaveLength(47);
+  const key = deviceKey();
+  const facts = { hostname: "dt-frontdesk-01", os: "Microsoft Windows 11 Pro", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  const enroll = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: key.publicKey, facts } });
+  expect(enroll.status(), await enroll.text()).toBe(201);
+  const pc = new Agent(page.request, ((await enroll.json()) as { deviceId: string }).deviceId, key.privateKey);
+  // Its inventory lists Windows PowerShell and the PowerShell 7 its scripts run in.
+  const pwsh = { edition: "Core", version: "7.6.10", arch: "x64", path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" } as const;
+  await pc.inventory({
+    system: { manufacturer: "Dell Inc.", model: "OptiPlex 7020", serial: "", biosVendor: "", biosVersion: "", biosDate: "", virtualization: "" },
+    cpu: { model: "Intel(R) Core(TM) i5-14500", sockets: 1, cores: 14, threads: 20 },
+    memoryBytes: 16 * 1024 ** 3,
+    os: { name: "Windows 11 Pro", id: "windows", version: "10.0.26100", kernel: "26100.7171", timezone: "UTC" },
+    disks: [],
+    interfaces: [],
+    gateways: [],
+    dnsServers: [],
+    packageManager: "windows",
+    packages: [],
+    powerShell: [
+      { edition: "Desktop", version: "5.1.26100.7019", arch: "x64", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", usable: true },
+      { ...pwsh, usable: true },
+    ],
+  });
+
+  // The administrator adds a PowerShell 7 script; it fails where PowerShell 7 is missing unless the author says otherwise.
+  await page.goto("/scripts/new");
+  await page.getByLabel(/^Name/).fill("PowerShell version");
+  await page.getByLabel("Shell").selectOption({ label: "PowerShell 7" });
+  await expect(page.getByLabel("Where PowerShell 7 is missing")).toHaveValue("fail");
+  await page.getByLabel(/^Body/).fill("$PSVersionTable.PSVersion.ToString()\n");
+  await page.getByRole("button", { name: "Add script" }).click();
+  await expect(page.getByRole("heading", { name: "PowerShell version" })).toBeVisible();
+
+  // The technician tries it before the device's agent has said what it runs: refused, with the reason.
+  const techContext = await browser.newContext();
+  const tech = await techContext.newPage();
+  await tech.goto(`/devices/${pc.deviceId}`);
+  await signIn(tech, TECH);
+  await tech.getByLabel(/^Verification code/).fill(await nextCode(tech, TECH.email));
+  await tech.getByRole("button", { name: "Verify" }).click();
+  await expect(tech.getByRole("heading", { name: "dt-frontdesk-01" })).toBeVisible();
+  await tech.getByRole("button", { name: "Run script" }).click();
+  const run = tech.getByRole("dialog", { name: "Run a script" });
+  await run.getByLabel(/^Script/).selectOption({ label: "PowerShell version" });
+  await run.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(run.getByText("dt-frontdesk-01's agent has not yet said whether it can run PowerShell 7 scripts", { exact: false })).toBeVisible();
+
+  // The agent's poll says it takes PowerShell 7 jobs, and waits for work.
+  const polled = pc.poll(["job.pwsh"]);
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/v1/devices/${pc.deviceId}`)).json()) as { agent: { accepts: string[] | null } }).agent.accepts)
+    .toEqual(["job.pwsh"]);
+  await run.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(tech).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  let jobs = await polled;
+  while (jobs.length === 0) jobs = await pc.poll(["job.pwsh"]);
+  const [job] = jobs;
+  expect(job?.shell).toBe("pwsh");
+  expect(job?.pwshFallback ?? false).toBe(false);
+  expect(await pc.start(job!.runId)).toBe(true);
+  await pc.succeeded(job!.runId, "7.6.10\n", pwsh);
+
+  // The job and the run name the program the agent started.
+  await expect(tech.getByText("Without PowerShell 7")).toBeVisible();
+  await expect(tech.getByText("Fails the run")).toBeVisible();
+  await tech.getByRole("table").getByRole("link", { name: "dt-frontdesk-01" }).click();
+  await expect(tech.getByText("PowerShell 7.6.10, 64-bit")).toBeVisible();
+  await expect(tech.getByText(pwsh.path)).toBeVisible();
+  // The device lists what it found.
+  await tech.goto(`/devices/${pc.deviceId}?tab=hardware`);
+  await expect(tech.getByText("Runs PowerShell 7 scripts")).toBeVisible();
+  await techContext.close();
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();

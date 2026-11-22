@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -22,19 +24,37 @@ var (
 	errStopping = errors.New("the agent stopped while the script ran")
 )
 
+// program is what a run starts: the program, what the run's result
+// reports of it, read just before it starts (ADR-0064), and what the run's
+// environment adds. release, where set, lets go of the files held open
+// since their check, once the process is created or will not be.
+type program struct {
+	path    string
+	info    agentproto.Interpreter
+	env     []string
+	release func()
+}
+
 // Execute runs a job's script in a private directory under workRoot and
-// reports how it ended. Canceling ctx with cause errCanceled stops it as
-// canceled; any other cancellation stops it as failed.
+// reports how it ended, with the program it started. Canceling ctx with
+// cause errCanceled stops it as canceled; any other cancellation stops it
+// as failed.
 func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agentproto.ResultRequest {
 	res := agentproto.ResultRequest{StartedAt: time.Now().UTC()}
 	fail := func(msg string) agentproto.ResultRequest {
 		res.Status, res.Error, res.FinishedAt = agentproto.RunFailed, msg, time.Now().UTC()
 		return res
 	}
-	prog, err := interpreter(p.Shell)
+	prog, err := interpreter(p)
 	if err != nil {
-		return fail(capitalize(err.Error()) + ".")
+		return fail(sentence(err.Error()))
 	}
+	release := sync.OnceFunc(func() {
+		if prog.release != nil {
+			prog.release()
+		}
+	})
+	defer release()
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return fail("Could not prepare a working directory: " + err.Error())
 	}
@@ -50,21 +70,23 @@ func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agen
 	stdout, stderr := newCapture(), newCapture()
 	// A signed job from the server (ADR-0017). Not CommandContext: stopping
 	// is handled below, for everything the script started.
-	cmd, err := command(prog, p.Shell, script, p.Args)
+	cmd, err := command(prog.path, p.Shell, script, p.Args)
 	if err != nil {
 		return fail(err.Error())
 	}
 	cmd.Dir = dir
-	cmd.Env = environment(p, dir)
+	cmd.Env = withEnv(environment(p, dir), prog.env)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	// Background children may hold the output open; stop waiting for them
 	// soon after the script itself exits.
 	cmd.WaitDelay = 5 * time.Second
 	g, err := start(cmd)
+	release()
 	if err != nil {
-		return fail("Could not start " + p.Shell + ": " + err.Error())
+		return fail("Could not start " + prog.path + ": " + err.Error())
 	}
 	defer g.release()
+	res.Interpreter = &prog.info
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	timeout := time.NewTimer(time.Duration(p.TimeoutSeconds) * time.Second)
@@ -131,4 +153,29 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// sentence capitalizes s and ends it with a full stop.
+func sentence(s string) string {
+	s = capitalize(s)
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
+}
+
+// withEnv sets variables in env, replacing any of the same name, whose case
+// Windows ignores.
+func withEnv(env, set []string) []string {
+	if len(set) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env)+len(set))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.ContainsFunc(set, func(s string) bool { n, _, _ := strings.Cut(s, "="); return strings.EqualFold(n, k) }) {
+			out = append(out, kv)
+		}
+	}
+	return append(out, set...)
 }

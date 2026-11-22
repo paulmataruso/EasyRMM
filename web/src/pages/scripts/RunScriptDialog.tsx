@@ -16,6 +16,7 @@ import {
   LIMITS,
   parseArgs,
   PLATFORM_NAMES,
+  pwshWarning,
   scriptCovers,
   SHELL_NAMES,
   SHELL_PLATFORM,
@@ -162,6 +163,7 @@ function RunForm({ onClose, script: fixedScript, device, preset }: { onClose: ()
           error={err("deviceIds")}
         />}
       {device && err("deviceIds") && <p className="text-xs text-danger">{err("deviceIds")}</p>}
+      {device && script && <DeviceWarning script={script} device={device} />}
 
       {script && (
         <>
@@ -222,6 +224,12 @@ function RunForm({ onClose, script: fixedScript, device, preset }: { onClose: ()
   );
 }
 
+/** Running on one device: what happens there to a PowerShell 7 script, from its last inventory. */
+function DeviceWarning({ script, device }: { script: Script; device: Device }) {
+  const text = pwshWarning(script, [device]);
+  return text ? <p className="text-xs text-warn">{text}</p> : null;
+}
+
 function scriptSummary(s: Script): string {
   return [s.description, `${SHELL_NAMES[s.shell]}, stops after ${formatSeconds(s.timeoutSeconds)}.`].filter(Boolean).join(" ");
 }
@@ -248,8 +256,10 @@ function ScriptDevicePicker({ script, selected, onChange, error }: {
       }}
       excluded={(n) => {
         const o = otherDevices(n);
-        return `${o.devices} where it could run ${o.is} not listed: no EasyRMM agent, not ${PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]}, or your role does not run scripts there.`;
+        const agent = script.shell === "pwsh" ? "an agent that cannot run PowerShell 7 scripts yet" : "no EasyRMM agent";
+        return `${o.devices} where it could run ${o.is} not listed: ${agent}, not ${PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]}, or your role does not run scripts there.`;
       }}
+      note={(chosen) => pwshWarning(script, chosen)}
     />
   );
 }

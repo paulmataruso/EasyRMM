@@ -281,9 +281,12 @@ func TestAccessList(t *testing.T) {
 		"D:":                                 false,
 		protectedDACL + "(A;;FW;;;BU)":       true,
 		protectedDACL + "(A;;0x40000;;;WD)":  true,
-		protectedDACL + "(A;OICIIO;FW;;;CO)": true,
-		"D:NO_ACCESS_CONTROL":                true, // everyone may do everything
-		"O:SY":                               true, // no access list at all
+		protectedDACL + "(A;OICIIO;FW;;;AU)": true,
+		// CREATOR OWNER and CREATOR GROUP name whoever creates something
+		// later, who must already be let in: Program Files' list (ADR-0064).
+		protectedDACL + "(A;OICIIO;FA;;;CO)(A;OICIIO;FA;;;CG)": false,
+		"D:NO_ACCESS_CONTROL": true, // everyone may do everything
+		"O:SY":                true, // no access list at all
 		protectedDACL + "(OA;;FW;bf967aba-0de6-11d0-a285-00aa003049e2;;SY)": true,
 	} {
 		sd, err := windows.SecurityDescriptorFromString(sddl)

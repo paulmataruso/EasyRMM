@@ -193,6 +193,78 @@ All notable changes to this project are documented here. The format follows
   cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
   `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
   ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
+- **PowerShell 7 scripts** (ADR-0064, slice 1). A script's shell can be
+  **PowerShell 7** (`pwsh`); `powershell` scripts still run in Windows
+  PowerShell 5.1, unchanged, and the console now names that shell
+  *Windows PowerShell 5.1*. Run as LocalSystem, the agent uses only a
+  PowerShell 7 no standard user can change: it looks in Program Files and
+  Program Files (x86) only, never the `PATH` or a user's folders, takes the
+  newest stable 7 or later built for the processor, and before each run
+  checks that the install, the folders above it, the module folders and
+  configuration files the run reads can be changed only by Administrators,
+  SYSTEM and TrustedInstaller and hold no links or junctions (except the
+  hard links Windows keeps in Windows PowerShell's own module folders). A
+  module an installer left open to users fails the run, naming it. Previews,
+  32-bit builds, PowerShell 6 and Microsoft Store installs (winget's
+  default since PowerShell 7.6) are listed and never run. Runs get the
+  system's module folders only, and PowerShell 7's telemetry and update
+  check off. Where no usable PowerShell 7 is found the run fails without
+  running the script, unless its author set **Where PowerShell 7 is
+  missing** to Windows PowerShell 5.1 (`pwshFallback`, copied into each
+  job). The check also refuses a folder above the install or a module
+  folder that someone else could replace, a module folder the
+  configuration names that does not exist, and a file open in another
+  program that may write it; files Windows compressed or deduplicated are
+  plain files. A run holds `pwsh.exe` and the install's libraries open,
+  unwritable, until its process is created. After fixing an install's
+  permissions, restart the computer. An install whose module folders or
+  configuration fail, with a file open in another program or with more
+  than one hard link, whose version is not a version, or that could
+  not be read or checked (a `Program Files\PowerShell` that cannot be
+  listed included, shown as *could not be checked*, not as PowerShell 7
+  missing) is *found, not usable*: runs use another install that passes
+  every check, or fail, naming the blocked install the Hardware tab lists
+  first, without falling back to Windows PowerShell 5.1,
+  which loads from the same module folders and to which anyone who may
+  read a file could otherwise send scripts. A script that falls back runs
+  Windows PowerShell with a module path of checked folders only, never the
+  computer's, written so that Windows PowerShell adds no folder of its own
+  (with Windows' default `PSModulePath`, CI's runners showed it adding a
+  relative one); a `PSModulePath` in the registry that names a variable
+  the agent cannot expand as Windows PowerShell would stops PowerShell 7
+  runs and the fallback. Migration 00033 adds the shell and the new
+  columns, its checks unvalidated; migration 00034 validates them and
+  fills each device's PowerShell 7 flag and blocked reason from its stored
+  inventory
+  ([guide](docs/operations/scripts-and-jobs.md#powershell-7)).
+- **Every run records the program it used**: edition, version,
+  architecture and path, read from the file just before it starts, and
+  whether a PowerShell 7 script fell back to 5.1. Shown on the run's page
+  ("PowerShell 7.6.10, 64-bit"), as the **Program** column of a job's runs,
+  and in the results CSV and downloads, to everyone with `job.view`. Runs
+  from agents of earlier releases say *Not reported by this agent's
+  version*.
+- **A Windows device's PowerShell installs**: the inventory lists Windows
+  PowerShell and each PowerShell 7 found, and the **Hardware** tab shows
+  which one PowerShell 7 scripts run in and why each other is not used,
+  or *Found, not usable* with the reason. The run dialog warns how many
+  chosen devices reported no usable PowerShell 7 and what the script does
+  there.
+- **Agents say which jobs they take.** The agent's poll lists the job
+  capabilities its build takes (`accepts`; `job.pwsh` from Windows agents),
+  kept on the device for that build. A PowerShell 7 job is sent only to an
+  agent that listed it; starting one on a device whose agent cannot, or has
+  not said, is refused with the reason, the device picker leaves such
+  devices out, and a run left waiting says why and expires with that
+  reason, as does a run the agent took before changing versions. The agent
+  sends the list, its PowerShell installs and a run's program only to a
+  server of protocol level 2 or higher (ADR-0009); a result waits at most
+  until 30 seconds after the agent started to learn the level.
+  **Agents of 1.0.0-rc.4 and earlier never list it: update them to run
+  PowerShell 7 scripts.** Every other job runs on them as before: the
+  integration tests run the rc.4 agent, built from its tag, on Linux
+  through Bash, sh and Python scripts with arguments and exit codes, a
+  timeout and a cancel.
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends
@@ -419,7 +491,10 @@ All notable changes to this project are documented here. The format follows
   acknowledgement; what it means and what to do next; the policy's other
   alerts on the device; and the raw JSON to copy. The card has its own
   address; **Close**, Escape and **Back** close it. An alert older than
-  the measurements kept charts what is kept, and says so. The API adds
+  the measurements kept charts what is kept, and says so. Patching alerts
+  get a card too: select a title under **Patching → Alerts** for its
+  device or organization, times, what it means, what to do next and its
+  JSON ([Patching alerts](docs/operations/patching.md#alerts)). The API adds
   `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
   on `GET /api/v1/alerts`. See
   [An alert's card](docs/operations/alerts.md#an-alerts-card).

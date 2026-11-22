@@ -142,7 +142,7 @@ const OS: Record<string, string> = {
   rocky: "Rocky Linux 9.6 (Blue Onyx)",
 };
 
-function agent(online: boolean, lastSeen: string): DeviceAgent {
+function agent(online: boolean, lastSeen: string, platform: Platform): DeviceAgent {
   return {
     version: AGENT_VERSION,
     arch: "amd64",
@@ -151,6 +151,8 @@ function agent(online: boolean, lastSeen: string): DeviceAgent {
     lastSeenAt: lastSeen,
     enrolledAt: days(90),
     update: { status: "current", version: AGENT_VERSION, attempts: 0, error: "", requested: false },
+    accepts: platform === "windows" ? ["job.pwsh"] : [],
+    powerShell7: platform === "windows" ? true : null,
   };
 }
 
@@ -169,7 +171,7 @@ function device(id: string, name: string, siteId: string, os: string, platform: 
     online,
     remoteOnline: online,
     lastSeenAt: lastSeen,
-    agent: agent(online, lastSeen),
+    agent: agent(online, lastSeen, platform),
     createdAt: days(90),
     canRunScripts: true,
     canUpdateAgent: true,
@@ -321,6 +323,10 @@ export const healthInventory: DeviceInventory = {
     dnsServers: ["127.0.0.1", "192.0.2.11"],
     packageManager: "windows",
     packageCount: 61,
+    powerShell: [
+      { edition: "Desktop", version: "5.1.26100.7019", arch: "x64", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", usable: true },
+      { edition: "Core", version: "7.6.10", arch: "x64", path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", usable: true },
+    ],
     receivedAt: ago(42),
   }),
   metrics: metrics({

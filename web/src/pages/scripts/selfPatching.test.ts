@@ -134,10 +134,13 @@ describe("scripts that patch the system", () => {
 
   it("skips PowerShell block comments and reports line numbers and text", () => {
     const body = ["<#", "Install-WindowsUpdate -AcceptAll", "#>", "Write-Host 'start'", "  Install-WindowsUpdate -AcceptAll   ", "<# a #> usoclient StartInstall"].join("\r\n");
-    expect(selfPatching("powershell", body)).toEqual([
+    const found = [
       { line: 5, text: "Install-WindowsUpdate -AcceptAll", what: "installs Windows updates" },
       { line: 6, text: "<# a #> usoclient StartInstall", what: "installs Windows updates" },
-    ]);
+    ];
+    expect(selfPatching("powershell", body)).toEqual(found);
+    // PowerShell 7 scripts are read the same way (ADR-0064).
+    expect(selfPatching("pwsh", body)).toEqual(found);
     expect(selfPatching("bash", `${"x".repeat(200)} ; apt-get -y upgrade`)[0]?.text).toHaveLength(120);
     expect(selfPatching("bash", "")).toEqual([]);
   });

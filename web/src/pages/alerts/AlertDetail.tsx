@@ -1,20 +1,20 @@
 // An alert's card: everything recorded about one alert, opened from wherever alerts are listed (alertLink.tsx). Each
 // section shows only what the server records; nothing here is inferred.
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../../api/client";
 import { useApi, useList } from "../../api/hooks";
 import type { AlertEntry, AlertMetrics, AlertPolicy, Device, DiskHealthDetail } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { CodeBlock } from "../../components/Copy";
 import { Dialog } from "../../components/Dialog";
 import { TimeChart, type TimeSeries } from "../../components/TimeChart";
 import { Badge, Button, ErrorState, KeyValueList, Spinner } from "../../components/ui";
-import { formatDate, formatDateTime, formatDuration, formatRelative, plural } from "../../lib/format";
+import { formatDate, formatDateTime, formatDuration, plural } from "../../lib/format";
 import { DiskFacts, DiskState } from "../devices/DeviceDisks";
 import { AlertActions, useAlertAction } from "./AlertActions";
 import { alertGuide } from "./alertGuide";
+import { linkClass, muted, RawDetails, Section, When } from "./cardParts";
 import { ALERT_PARAM, AlertLink, useCloseAlertCard } from "./alertLink";
 import { CHECK_NAMES, conditionText, formatMinutes, KIND_NAMES, policyScope, resolutionText, SeverityBadge, valueText } from "./alertText";
 
@@ -78,34 +78,8 @@ function AlertDetail({ alert: a }: { alert: AlertEntry }) {
       <Times alert={a} />
       <Guide alert={a} />
       <History alert={a} />
-      <RawDetails alert={a} />
+      <RawDetails value={a} />
     </div>
-  );
-}
-
-function Section({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
-  const id = useId();
-  return (
-    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h3 id={id} className="text-sm font-semibold">
-          {title}
-        </h3>
-        {actions}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-const linkClass = "font-medium break-words text-accent hover:underline";
-const muted = (text: string) => <span className="text-muted">{text}</span>;
-
-function When({ at }: { at: string }) {
-  return (
-    <>
-      <time dateTime={at}>{formatDateTime(at)}</time> <span className="text-muted">({formatRelative(at)})</span>
-    </>
   );
 }
 
@@ -441,16 +415,5 @@ function HistoryItem({ alert: x, current }: { alert: AlertEntry; current: boolea
         {status}
       </span>
     </li>
-  );
-}
-
-function RawDetails({ alert: a }: { alert: AlertEntry }) {
-  return (
-    <details className="group rounded-lg border border-line">
-      <summary className="cursor-pointer px-3 py-2 text-sm font-medium select-none">Raw details (JSON)</summary>
-      <div className="border-t border-line p-3">
-        <CodeBlock code={JSON.stringify(a, null, 2)} />
-      </div>
-    </details>
   );
 }

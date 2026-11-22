@@ -124,6 +124,182 @@ jobs:
           EASYRMM_AUTHENTICODE_PROGRAM: ${{ github.workspace }}\easyrmm-agent-windows-amd64.exe
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/agents/authenticode/
 
+  # ADR-0064: PowerShell 7 as the agent's service sees it. The tests run as
+  # LocalSystem through a scheduled task: as the runner's administrator they
+  # would test something else, since the account the agent runs as is
+  # trusted too. PowerShell 7 comes from Microsoft's MSI, the x86 build from
+  # Microsoft's ZIP, both pinned by the SHA-256 Microsoft's release lists;
+  # the Store package from winget where the runner has it. The steps run in
+  # Windows PowerShell, as the image's PowerShell 7 is removed first.
+  windows-system:
+    name: PowerShell 7 as LocalSystem (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            msi-sha256: 7d8daea48b450d4d62fcd1ac4d6faa7ac2db5e11aba5061ee81b7496adca8c07
+          - runner: windows-11-arm
+            arch: arm64
+            msi-sha256: 732af00c51162ecb6826ba630f19bf6536c3ce7c3b740160660ddcfb51606780
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: powershell
+    env:
+      PWSH_VERSION: 7.6.10
+      PWSH_ARCH: ${{ matrix.arch }}
+      PWSH_MSI_SHA256: ${{ matrix.msi-sha256 }}
+      PWSH_X86_ZIP_SHA256: 221bad2ba6eff81f2661c8f467eca286f89173b0e0c044c858f18dbbeacb9891
+      PWSH_MSIX_SHA256: c6caa271d179dae426b3536fb17569707033519649b471ad52858bf11c46149d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Remove the image's PowerShell 7
+        run: |
+          $installed = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
+            Where-Object { $_.DisplayName -like 'PowerShell 7*' }
+          foreach ($p in $installed) {
+            Write-Output "Removing $($p.DisplayName) $($p.DisplayVersion)"
+            $run = Start-Process -FilePath msiexec.exe -ArgumentList '/x', $p.PSChildName, '/qn', '/norestart' -Wait -PassThru
+            if ($run.ExitCode -notin 0, 3010) { throw "msiexec /x ended with $($run.ExitCode)" }
+          }
+          $left = Join-Path $env:ProgramFiles 'PowerShell\7'
+          if (Test-Path $left) { Remove-Item -Recurse -Force $left }
+      # The images' lists do not name winget. windows-11-arm has none (seen
+      # 2026-11-22), so there the step installs the package winget's manifest
+      # names for this version, Microsoft's LTS MSIX bundle, pinned by the
+      # SHA-256 both the release and the manifest give, as winget would.
+      - name: PowerShell 7's Store package
+        run: |
+          if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+            winget --version
+            winget install --id Microsoft.PowerShell --exact --version "$env:PWSH_VERSION.0" --installer-type msix --source winget `
+              --accept-package-agreements --accept-source-agreements --disable-interactivity
+            if ($LASTEXITCODE) { throw "winget ended with $LASTEXITCODE" }
+          } else {
+            Write-Output '::warning::winget is not on this runner; the MSIX bundle is installed with Add-AppxPackage.'
+            $ProgressPreference = 'SilentlyContinue'
+            $name = "PowerShell-LTS-$env:PWSH_VERSION.msixbundle"
+            $bundle = Join-Path $env:RUNNER_TEMP $name
+            Invoke-WebRequest -UseBasicParsing -OutFile $bundle -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$env:PWSH_VERSION/$name"
+            $sum = (Get-FileHash -Algorithm SHA256 -Path $bundle).Hash.ToLowerInvariant()
+            if ($sum -ne $env:PWSH_MSIX_SHA256) { throw "$name has the SHA-256 $sum" }
+            Add-AppxPackage -Path $bundle
+          }
+          $package = Get-AppxPackage -Name 'Microsoft.PowerShell*' | Where-Object { $_.Version -eq "$env:PWSH_VERSION.0" } | Select-Object -First 1
+          if (-not $package) {
+            Get-AppxPackage -AllUsers -Name '*PowerShell*' | Format-List Name, PackageFullName, InstallLocation | Out-String | Write-Output
+            throw 'No Store package of PowerShell 7 was installed.'
+          }
+          Write-Output "Store package: $($package.PackageFullName) in $($package.InstallLocation)"
+          Add-Content -Path $env:GITHUB_ENV -Encoding Ascii -Value "EASYRMM_TEST_PWSH_STORE=$(Join-Path $package.InstallLocation 'pwsh.exe')"
+      - name: PowerShell 7 from Microsoft's MSI
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $name = "PowerShell-$env:PWSH_VERSION-win-$env:PWSH_ARCH.msi"
+          $msi = Join-Path $env:RUNNER_TEMP $name
+          Invoke-WebRequest -UseBasicParsing -OutFile $msi -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$env:PWSH_VERSION/$name"
+          $sum = (Get-FileHash -Algorithm SHA256 -Path $msi).Hash.ToLowerInvariant()
+          if ($sum -ne $env:PWSH_MSI_SHA256) { throw "$name has the SHA-256 $sum" }
+          $run = Start-Process -FilePath msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($run.ExitCode -notin 0, 3010) { throw "msiexec /i ended with $($run.ExitCode)" }
+          & (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe') -NoProfile -Command '$PSVersionTable'
+      - name: PowerShell 7's x86 ZIP in Program Files (x86)
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $name = "PowerShell-$env:PWSH_VERSION-win-x86.zip"
+          $zip = Join-Path $env:RUNNER_TEMP $name
+          Invoke-WebRequest -UseBasicParsing -OutFile $zip -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$env:PWSH_VERSION/$name"
+          $sum = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+          if ($sum -ne $env:PWSH_X86_ZIP_SHA256) { throw "$name has the SHA-256 $sum" }
+          $dest = Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7'
+          Expand-Archive -Path $zip -DestinationPath $dest
+          Add-Content -Path $env:GITHUB_ENV -Encoding Ascii -Value "EASYRMM_TEST_PWSH_X86=$(Join-Path $dest 'pwsh.exe')"
+      # windows-latest's image leaves a module in Windows PowerShell's
+      # machine folder open to users (ImageHelpers, to Authenticated Users,
+      # seen 2026-11-22), and every pwsh run then fails naming it, as
+      # ADR-0064 says it must. The tests need that folder as Windows sets it
+      # up: the step lists what it finds open or owned by someone else, then
+      # gives the whole folder Windows' inherited access list and the
+      # Administrators group as owner.
+      - name: Close the image's modules to users
+        run: |
+          $modules = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'
+          $trusted = 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', 'S-1-3-0', 'S-1-3-1'
+          $writes = 0x500D0156 # what the agent's check counts as a write right
+          foreach ($folder in Get-ChildItem -Path $modules -Directory -Force) {
+            $acl = Get-Acl -Path $folder.FullName
+            $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($owner -notin $trusted) { Write-Output "$($folder.Name): owned by $owner" }
+            foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+              if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $trusted -and ([int64]$rule.FileSystemRights -band $writes)) {
+                Write-Output "$($folder.Name): $($rule.IdentityReference.Value) may $($rule.FileSystemRights) (inherited: $($rule.IsInherited))"
+              }
+            }
+          }
+          icacls $modules /reset /T /C /Q
+          if ($LASTEXITCODE) { throw "icacls /reset ended with $LASTEXITCODE" }
+          icacls $modules /setowner '*S-1-5-32-544' /T /C /Q
+          if ($LASTEXITCODE) { throw "icacls /setowner ended with $LASTEXITCODE" }
+      # Both measure agent/powershell, whose Windows half only these tests
+      # reach: see its floor below. Windows PowerShell splits an unquoted
+      # -flag=./path at its period, so the flag is quoted.
+      - name: Build the tests
+        run: |
+          go test -c -cover "-coverpkg=./agent/powershell" -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -c -cover "-coverpkg=./agent/powershell" -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Discovery and the whole install's check, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\powershell.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\powershell-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\powershell" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1', "EASYRMM_TEST_PWSH_X86=$env:EASYRMM_TEST_PWSH_X86", "EASYRMM_TEST_PWSH_STORE=$env:EASYRMM_TEST_PWSH_STORE"
+          exit $LASTEXITCODE
+      - name: pwsh runs, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\jobs-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1'
+          exit $LASTEXITCODE
+      # The Windows half of agent/powershell runs only here, as LocalSystem,
+      # so its floor is kept here rather than in check-coverage.sh: the
+      # statements of powershell_windows.go that either test binary ran.
+      # Set from the 83.2% both runners measured on 2026-11-22. Raise it as
+      # coverage grows; never lower it.
+      - name: Coverage floor of PowerShell 7's Windows code
+        run: |
+          $floor = 82.0
+          $blocks = @{}
+          foreach ($name in 'powershell-cover.txt', 'jobs-cover.txt') {
+            foreach ($l in Get-Content -Path (Join-Path $env:RUNNER_TEMP $name)) {
+              if ($l -match '/agent/powershell/powershell_windows\.go:(\S+) (\d+) (\d+)$') {
+                $key = $Matches[1]
+                if (-not $blocks.ContainsKey($key)) { $blocks[$key] = [pscustomobject]@{ Statements = [int]$Matches[2]; Hit = $false } }
+                if ([int64]$Matches[3] -gt 0) { $blocks[$key].Hit = $true }
+              }
+            }
+          }
+          $total = 0
+          $covered = 0
+          foreach ($b in $blocks.Values) {
+            $total += $b.Statements
+            if ($b.Hit) { $covered += $b.Statements }
+          }
+          if ($total -eq 0) { throw 'No coverage of powershell_windows.go was recorded.' }
+          $percent = [math]::Round(100.0 * $covered / $total, 1)
+          # Worded so that setup-go's problem matcher, which reads "<file>.go: <text>" as an error, does not.
+          Write-Output "Run as LocalSystem: $percent% of the $total statements of agent/powershell/powershell_windows.go (floor $floor%)"
+          if ($percent -lt $floor) { throw "Below the floor of $floor%." }
+
   build:
     name: Build server
     runs-on: ubuntu-latest

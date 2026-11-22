@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/paulmataruso/easyrmm/agent/powershell"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -30,33 +31,93 @@ const cpOEM = 1
 
 func systemRoot() string { return cmp.Or(os.Getenv("SystemRoot"), `C:\Windows`) }
 
+// Accepts lists the job capabilities this build takes, for its polls
+// (agentproto.PollRequest.Accepts): pwsh jobs, their fallback and the
+// program a result reports.
+func Accepts() []string { return []string{agentproto.CapJobPwsh} }
+
+// pwshRoots are where a pwsh run looks for PowerShell 7: Program Files and
+// Program Files (x86). Tests point them at folders of their own, since the
+// runner's PowerShell 7 cannot be removed while a test runs in it.
+var pwshRoots = powershell.Roots
+
 // interpreter finds a shell's program: Windows PowerShell 5.1 and cmd.exe,
-// both part of Windows.
-func interpreter(shell string) (string, error) {
-	var p string
-	switch shell {
+// both part of Windows, or for pwsh the PowerShell 7 chosen at this moment:
+// the first, in the order a run prefers them, that passes every check of
+// its install and module folders, its program and libraries held open until
+// the run's process is created (ADR-0064). A blocked install is passed over
+// for the next one that passes, which only administrators can change, as
+// any install a run uses: one that could not be listed or read, whose
+// version is not one, with a file open in another program or with a second
+// hard link, or whose own files pass but what it would load fails. Where
+// none passes and one is blocked, the script fails, naming the blocked one
+// the inventory lists first, whatever it allows. Where none is blocked
+// either, a pwsh script runs in Windows PowerShell 5.1 if it allows that,
+// recorded as a fallback, with a module path of checked folders only
+// (fallback), and fails if not.
+func interpreter(p agentproto.JobPayload) (program, error) {
+	switch p.Shell {
 	case agentproto.ShellPowerShell:
-		p = filepath.Join(systemRoot(), `System32\WindowsPowerShell\v1.0\powershell.exe`)
+		return desktop()
 	case agentproto.ShellCmd:
-		p = filepath.Join(systemRoot(), `System32\cmd.exe`)
-	default:
-		return "", fmt.Errorf("%s scripts do not run on Windows", shell)
+		path := filepath.Join(systemRoot(), `System32\cmd.exe`)
+		if _, err := os.Stat(path); err != nil {
+			return program{}, errors.New("cmd is not installed on this device")
+		}
+		return program{path: path, info: agentproto.Interpreter{Path: path}}, nil
+	case agentproto.ShellPwsh:
+		roots, err := pwshRoots()
+		if err != nil {
+			return program{}, err
+		}
+		run, err := powershell.ForRun(roots)
+		var missing *powershell.NotFound
+		if errors.As(err, &missing) && p.PwshFallback {
+			return fallback()
+		}
+		if err != nil {
+			return program{}, err
+		}
+		return program{path: run.Interpreter.Path, info: run.Interpreter, env: run.Env, release: run.Release}, nil
 	}
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("%s is not installed on this device", shell)
+	return program{}, fmt.Errorf("%s scripts do not run on Windows", p.Shell)
+}
+
+// fallback is Windows PowerShell 5.1 for a pwsh script that allows it, its
+// module folders checked as a pwsh run's are and its PSModulePath set to
+// them (powershell.ForFallback): the agent's own, which names the system
+// environment's folders, is not what a pwsh script was checked to load.
+func fallback() (program, error) {
+	prog, err := desktop()
+	if err != nil {
+		return program{}, err
 	}
-	return p, nil
+	f, err := powershell.ForFallback()
+	if err != nil {
+		return program{}, fmt.Errorf("%w; the script was not run", err)
+	}
+	prog.info.Fallback = true
+	prog.env = f.Env
+	return prog, nil
+}
+
+// desktop is Windows PowerShell 5.1.
+func desktop() (program, error) {
+	info := powershell.DesktopInterpreter()
+	if _, err := os.Stat(info.Path); err != nil {
+		return program{}, errors.New("Windows PowerShell is not installed on this device") //nolint:staticcheck // ST1005: a name
+	}
+	return program{path: info.Path, info: info}, nil
 }
 
 // environment is the agent's own environment, which as a service is
 // Windows' system environment, without EasyRMM's settings, with TEMP in
-// the run's directory and the job's ids.
+// the run's directory and the job's ids: what powershell.PerRun names is
+// set for each run.
 func environment(p agentproto.JobPayload, home string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		switch u := strings.ToUpper(k); {
-		case k == "", u == "TEMP", u == "TMP", strings.HasPrefix(u, "EASYRMM_"):
+		if k, _, _ := strings.Cut(kv, "="); k == "" || powershell.PerRun(k) {
 			continue
 		}
 		env = append(env, kv)

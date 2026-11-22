@@ -17,18 +17,23 @@ import (
 // PATH: the system directories, never the agent's own environment.
 var searchPath = []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"}
 
-// interpreter finds a shell's program.
-func interpreter(shell string) (string, error) {
+// Accepts lists the job capabilities this build takes, for its polls
+// (agentproto.PollRequest.Accepts): none on Linux, where pwsh does not run.
+func Accepts() []string { return []string{} }
+
+// interpreter finds a shell's program; the result reports its path.
+func interpreter(p agentproto.JobPayload) (program, error) {
+	shell := p.Shell
 	if !agentproto.ValidShell(shell) || agentproto.ShellPlatforms(shell)[0] != "linux" {
-		return "", fmt.Errorf("%s scripts do not run on this device", shell)
+		return program{}, fmt.Errorf("%s scripts do not run on this device", shell)
 	}
 	for _, dir := range searchPath {
-		p := filepath.Join(dir, shell)
-		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
-			return p, nil
+		path := filepath.Join(dir, shell)
+		if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return program{path: path, info: agentproto.Interpreter{Path: path}}, nil
 		}
 	}
-	return "", fmt.Errorf("%s is not installed on this device", shell)
+	return program{}, fmt.Errorf("%s is not installed on this device", shell)
 }
 
 // environment is a script's whole environment.

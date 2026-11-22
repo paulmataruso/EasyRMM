@@ -5,11 +5,63 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
+
+// TestInventoryFollowsTheServersLevel: the PowerShell installs (ADR-0064),
+// added after protocol level 2, go only to a server whose last answer was
+// of level 2 or higher, and the inventory is collected again when the
+// level changes (ADR-0009).
+func TestInventoryFollowsTheServersLevel(t *testing.T) {
+	s := &server{}
+	r := newRunner(t, s, nil)
+	ps := []agentproto.PowerShellInstall{{Edition: agentproto.EditionCore, Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Usable: true}}
+	collected := 0
+	r.Inventory = func(context.Context) agentproto.Inventory {
+		collected++
+		return agentproto.Inventory{OS: agentproto.OSInfo{Name: "Windows"}, PowerShell: ps}
+	}
+	ctx := context.Background()
+	last := func() string {
+		t.Helper()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if len(s.uploads) == 0 {
+			t.Fatal("nothing uploaded")
+		}
+		return string(s.uploads[len(s.uploads)-1])
+	}
+
+	// A server without a level: the first heartbeat answer is known before
+	// the inventory is collected.
+	_, _ = r.beat(ctx)
+	if b := last(); strings.Contains(b, "powerShell") {
+		t.Errorf("a level 1 server got %s", b)
+	}
+	s.mu.Lock()
+	s.protocol = 2
+	s.mu.Unlock()
+	_, _ = r.beat(ctx)
+	if b := last(); !strings.Contains(b, `"powerShell":[{"edition":"Core","version":"7.6.10"`) || collected != 2 {
+		t.Errorf("a level 2 server got %s, collected %d", b, collected)
+	}
+	sum := sha256.Sum256([]byte(last()))
+	if r.invHash != hex.EncodeToString(sum[:]) {
+		t.Error("the upload is not what was hashed")
+	}
+	// Back to level 1, as after a server's rollback.
+	s.mu.Lock()
+	s.protocol = 0
+	s.mu.Unlock()
+	_, _ = r.beat(ctx)
+	if b := last(); strings.Contains(b, "powerShell") || collected != 3 {
+		t.Errorf("after a rollback the server got %s, collected %d", b, collected)
+	}
+}
 
 func TestBeatSendsMetricsAndSyncsTheInventory(t *testing.T) {
 	s := &server{}

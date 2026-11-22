@@ -116,6 +116,9 @@ floors=(
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
+  # Finding and choosing PowerShell 7 (ADR-0064): the platform-neutral part;
+  # the Windows part is tested as LocalSystem on CI's Windows runners.
+  "agent/powershell                        95"
   # Parses what disks answer (ADR-0065); the transports' system calls run
   # only in the machine tests.
   "agent/hardware                          97"

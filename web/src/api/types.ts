@@ -365,6 +365,19 @@ export interface DeviceAgent {
   enrolledAt: string;
   /** Where the agent stands against the server's build; null when the server has none for its platform. */
   update: AgentUpdate | null;
+  /**
+   * The job capabilities the agent's build said it takes, with its polls (ADR-0064): "job.pwsh" for PowerShell 7 scripts.
+   * Null when the build it runs now has not said, as an agent of a release before this one never does.
+   */
+  accepts: string[] | null;
+  /** Whether the last inventory listed a usable PowerShell 7; null when it listed no PowerShell (an older agent, or none yet). */
+  powerShell7: boolean | null;
+  /**
+   * Where no PowerShell 7 is usable but one is blocked, why: what it would load fails the agent's check, or a file of it is
+   * open in another program, has more than one hard link or could not be checked, and PowerShell 7 scripts fail there without
+   * falling back to Windows PowerShell 5.1 (ADR-0064). Absent otherwise.
+   */
+  powerShell7Blocked?: string;
 }
 
 /**
@@ -800,7 +813,7 @@ export interface RemoteAccessStatus {
 
 // Scripts and jobs (ADR-0017) --------------------------------------------------------------------
 
-export type Shell = "powershell" | "cmd" | "bash" | "sh" | "python3";
+export type Shell = "powershell" | "pwsh" | "cmd" | "bash" | "sh" | "python3";
 /** Where a script can run: everywhere, in one organization, or in one site. */
 export type ScriptLevel = "shared" | "organization" | "site";
 
@@ -814,6 +827,8 @@ export interface Script {
   name: string;
   description: string;
   shell: Shell;
+  /** A PowerShell 7 script that may run in Windows PowerShell 5.1 where no usable PowerShell 7 is found (ADR-0064). */
+  pwshFallback: boolean;
   /** Only in the response for one script. */
   body?: string;
   sha256: string;
@@ -832,11 +847,12 @@ export interface ScriptInput {
   name: string;
   description: string;
   shell: Shell;
+  pwshFallback: boolean;
   body: string;
   timeoutSeconds: number;
 }
 
-export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "body" | "timeoutSeconds">>;
+export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "pwshFallback" | "body" | "timeoutSeconds">>;
 
 export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" | "timed_out" | "canceled" | "expired" | "lost";
 
@@ -852,6 +868,8 @@ export interface Job {
   scriptId: string | null;
   scriptName: string;
   shell: Shell;
+  /** The script's fallback setting, copied into the job. */
+  pwshFallback: boolean;
   sha256: string;
   timeoutSeconds: number;
   /** When devices that have not picked the job up stop being waited for. */
@@ -897,6 +915,13 @@ export interface JobRun {
   exitCode: number | null;
   error: string;
   cancelRequested: boolean;
+  /** The program the agent started, as it reported it (ADR-0064); null when it reported none, as older agents do. */
+  program: RunProgram | null;
+  /**
+   * Why a queued run is not delivered: "unable" when the device's agent said it cannot run it, "unreported" when the build
+   * it runs has not said. Absent otherwise.
+   */
+  held?: "unable" | "unreported";
   /** The job is only in the response for one run. */
   job?: Job;
   /**
@@ -911,6 +936,17 @@ export interface JobRun {
   stderrBytes?: number;
   outputRemovedAt?: string | null;
   canCancel: boolean;
+}
+
+/** The program a run started (agentproto.Interpreter). cmd and the Linux shells report the path only. */
+export interface RunProgram {
+  /** PowerShell only. */
+  edition?: "Desktop" | "Core";
+  version?: string;
+  arch?: "x64" | "arm64" | "x86";
+  path: string;
+  /** A PowerShell 7 script ran in Windows PowerShell 5.1, as it allows, since no usable PowerShell 7 was found. */
+  fallback?: boolean;
 }
 
 /** What a run printed (GET /job-runs/{id}/output). */
@@ -1212,7 +1248,33 @@ export interface Inventory {
   dnsServers: string[];
   packageManager: "" | "windows" | "dpkg" | "rpm" | "apk" | "pacman";
   packageCount: number;
+  /**
+   * Windows PowerShell and the PowerShell 7 installs the agent found (ADR-0064), Windows PowerShell first, then the one a
+   * PowerShell 7 script runs in. Absent from an agent that reports none: a Linux agent, or one too old to report them.
+   */
+  powerShell?: PowerShellInstall[];
   receivedAt: string;
+}
+
+/** A PowerShell the agent found (agentproto.PowerShellInstall). */
+export interface PowerShellInstall {
+  edition: "Desktop" | "Core";
+  version: string;
+  arch: "" | "x64" | "arm64" | "x86";
+  path: string;
+  preview?: boolean;
+  /** A Microsoft Store (MSIX) install: reported, never run. */
+  store?: boolean;
+  /** Whether a script may run in it; otherwise reason says why not. */
+  usable: boolean;
+  reason?: string;
+  /**
+   * Not usable, and not passed over for Windows PowerShell 5.1: what it would load, its module folders or configuration,
+   * fails the agent's check, or a file of it is open in another program, or it (or the folder installs are in) could not be
+   * read or checked. A run moves to another install only where one passes every check; otherwise it fails, and does not
+   * fall back to Windows PowerShell 5.1.
+   */
+  blocked?: boolean;
 }
 
 export interface Filesystem {

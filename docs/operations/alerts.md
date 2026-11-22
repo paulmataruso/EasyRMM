@@ -174,7 +174,8 @@ list.
 
 Alerts hold no notes, and record no change between opening and resolving
 other than the acknowledgement and the latest value, so the card shows
-none. Patching alerts are EasyPatch's and are not in this card.
+none. Patching alerts have a card of their own under **Patching →
+Alerts** (see [Patching alerts](patching.md#alerts)).
 
 ### What pulses in red
 
