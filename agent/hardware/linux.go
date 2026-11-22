@@ -213,8 +213,8 @@ func (d *linuxNVMe) nvme(c nvmeCommand) ([]byte, error) {
 	defer pin.Unpin()
 	pin.Pin(cmd)
 	pin.Pin(&buf[0])
-	cmd.addr = uint64(uintptr(unsafe.Pointer(&buf[0]))) //nolint:gosec // the ioctl takes the address as a __u64; buf is pinned
-	status, errno := ioctl(d.fd, nvmeIoctlAdminCmd, unsafe.Pointer(cmd))
+	cmd.addr = uint64(uintptr(unsafe.Pointer(&buf[0])))                  //nolint:gosec // the ioctl takes the address as a __u64; buf is pinned
+	status, errno := ioctl(d.fd, nvmeIoctlAdminCmd, unsafe.Pointer(cmd)) //nolint:gosec // the kernel's struct, pinned
 	runtime.KeepAlive(cmd)
 	runtime.KeepAlive(buf)
 	switch {
@@ -318,12 +318,12 @@ func (d *linuxSG) ata(c ataCommand) ([]byte, *ataRegisters, error) {
 	pin.Pin(h)
 	pin.Pin(&cdb[0])
 	pin.Pin(&senseBuf[0])
-	h.cmdp, h.sbp = unsafe.Pointer(&cdb[0]), unsafe.Pointer(&senseBuf[0])
+	h.cmdp, h.sbp = unsafe.Pointer(&cdb[0]), unsafe.Pointer(&senseBuf[0]) //nolint:gosec // sg_io_hdr's pointers, to pinned buffers
 	if data != nil {
 		pin.Pin(&data[0])
-		h.dxferDirection, h.dxferLen, h.dxferp = sgDxferFromDev, c.length, unsafe.Pointer(&data[0])
+		h.dxferDirection, h.dxferLen, h.dxferp = sgDxferFromDev, c.length, unsafe.Pointer(&data[0]) //nolint:gosec // pinned
 	}
-	_, errno := ioctl(d.fd, sgIO, unsafe.Pointer(h))
+	_, errno := ioctl(d.fd, sgIO, unsafe.Pointer(h)) //nolint:gosec // the kernel's struct, pinned
 	runtime.KeepAlive(h)
 	runtime.KeepAlive(cdb)
 	runtime.KeepAlive(senseBuf)
