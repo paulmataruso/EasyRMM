@@ -138,6 +138,39 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Patch all, Schedule restart all and Update all now** (ADR-0030,
+  amended 2026-11-22). With an organization chosen, and a new **site**
+  filter beside it, the Patching overview offers **Patch all…** and
+  **Schedule restart all…**; with a site, also **Update all now…**, which
+  installs every available update now and restarts devices if the updates
+  need it, Windows devices first (Linux when ticked). The organization's
+  page has Patch all, a site's Update all now. The server reads "every
+  device" when the request runs: those with a linked EasyPatch agent, not
+  stopped, that you may patch; the dialog says how many, by platform, and
+  how many are left out and why. Installs go to the engine 1,000 devices at
+  a time with no limit on the organization's size, and each batch is
+  reported; every available update reaches at most 1,000 devices, and
+  leaves out updates excluded on a device, held, application updates the
+  policy does not approve, and feature upgrades unless ticked. One audit
+  record per request (`patch.install_all`, `patch.restart_all`) names the
+  organization or site, the counts, what was left out, the batches and the
+  presets. New: `GET /api/v1/patching/scope`,
+  `POST /api/v1/patching/install/plan`, and `all`, `organizationId`,
+  `siteId`, `platforms`, `updates`, `features`, `restart` and
+  `confirmServers` on installs and restarts. See
+  [Patch all](docs/operations/patching.md#patch-all-schedule-restart-all-update-all-now).
+- **Restart after the install.** The install dialog, wherever it opens,
+  offers *Don't restart* (the default), *Restart if the updates need it*
+  and *Restart when done* (at most 100 devices), with the restart's modes;
+  servers restart only when ticked by name. The patching engine cannot
+  restart when an install ends, so EasyRMM does: it keeps the choice in its
+  database (migration 00038), watches each install every minute, and asks
+  the engine for one restart once the install has completed, never after
+  one that failed, was cancelled or expired; an install that waits for a
+  restart gets one then, and the last when it ends. A restart of EasyRMM's
+  server neither loses nor repeats it. The install's job shows the choice
+  and what became of it. See
+  [Restart after the install](docs/operations/patching.md#restart-after-the-install).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends

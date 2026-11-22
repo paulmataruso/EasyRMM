@@ -433,9 +433,9 @@ func (s *Service) forget(ctx context.Context, deviceID uuid.UUID) error {
 	})
 }
 
-// Run keeps the engine in step and checks device links and agent installs
-// every minute and when Kick asks, and the server every ten minutes, until
-// ctx ends.
+// Run keeps the engine in step and checks device links, agent installs and
+// restarts after installs every minute, the engine also when Kick asks, and
+// the server every ten minutes, until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	// Stopping, this server stops giving the engine its mail server, so
 	// that another takes it over at its next pass.
@@ -461,6 +461,9 @@ func (s *Service) Run(ctx context.Context) {
 			}
 			if _, err := s.SweepInstalls(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("easypatch: agent installs", "err", err)
+			}
+			if _, err := s.SweepRestarts(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("easypatch: restarts after installs", "err", err)
 			}
 		case <-server.C:
 			if _, err := s.CheckConnection(ctx); err != nil && !errors.Is(err, apperr.ErrNotFound) && ctx.Err() == nil {

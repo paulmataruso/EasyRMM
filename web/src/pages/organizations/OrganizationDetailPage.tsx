@@ -11,6 +11,7 @@ import { Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { PatchAllButton } from "../patching/PatchAllButton";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
 import { OrganizationFormDialog } from "./OrganizationsPage";
@@ -64,6 +65,7 @@ export function OrganizationDetailPage() {
         subtitle={plural(o.siteCount, "site")}
         actions={
           <>
+            {patched && <PatchAllButton organizationId={o.id} />}
             {o.canManage && (
               <Button icon={<Pencil className="size-4" aria-hidden />} onClick={() => setEditing(true)}>
                 Edit

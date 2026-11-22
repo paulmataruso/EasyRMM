@@ -152,6 +152,8 @@ type Job struct {
 	NotBefore         *time.Time
 	// RetryOf is the job this one retries.
 	RetryOf *uuid.UUID
+	// RebootRequired says the job's updates need a restart.
+	RebootRequired bool
 }
 
 // Request is a call the server received.
@@ -194,12 +196,22 @@ func newServer() *Server {
 // only read. The server is closed when the test ends.
 func NewEngine(t testing.TB, key []byte) *Server {
 	t.Helper()
-	s := newServer()
-	s.key = append([]byte(nil), key...)
-	s.srv = httptest.NewServer(http.HandlerFunc(s.handle)) // 127.0.0.1
+	s := NewStandIn(key)
+	s.srv = httptest.NewServer(s.Handler()) // 127.0.0.1
 	t.Cleanup(s.srv.Close)
 	return s
 }
+
+// NewStandIn is NewEngine for a process of its own, the browser tests'
+// stand-in (cmd/eptest-engine): its Handler answers as the engine does.
+func NewStandIn(key []byte) *Server {
+	s := newServer()
+	s.key = append([]byte(nil), key...)
+	return s
+}
+
+// Handler answers calls as the engine does.
+func (s *Server) Handler() http.Handler { return http.HandlerFunc(s.handle) }
 
 // handle serves a call, losing its reply when LoseReply says to.
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +370,22 @@ func (s *Server) SetJobStatus(id uuid.UUID, status string) {
 	}
 }
 
+// SetJobRebootRequired says whether a job's updates need a restart, as its
+// agent's report would.
+func (s *Server) SetJobRebootRequired(id uuid.UUID, required bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.jobs {
+		if j.ID == id {
+			j.RebootRequired = required
+		}
+	}
+}
+
+// NewUpdate is an update as an endpoint's list shows it, in a state, for
+// Endpoint.Updates.
+func NewUpdate(title, category, state string) map[string]any { return update(title, category, state) }
+
 // RequestsTo lists the calls of a method to a path.
 func (s *Server) RequestsTo(method, path string) []Request {
 	s.mu.Lock()
@@ -464,7 +492,7 @@ func (j *Job) summary() map[string]any {
 		"id": j.ID, "endpointId": j.Endpoint, "hostname": j.Hostname, "organizationId": j.Org, "organizationName": "Acme Patch",
 		"type": j.Type, "status": j.Status, "trigger": "Manual", "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
 		"startedAt": nil, "completedAt": completed, "expiresAt": j.CreatedAt.Add(7 * 24 * time.Hour), "progressPercent": nil,
-		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": false, "timedOut": false,
+		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": false,
 		"cancelRequested": j.Status == StatusCanceled, "itemCount": 0, "succeededCount": 0, "failedCount": 0,
 	}
 }

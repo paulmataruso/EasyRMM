@@ -1,7 +1,8 @@
 // The technician console, end to end, against a real server and database: first-run setup,
 // mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment, a
 // hardening check through the device's agent, who sees a script's output and arguments, a failing
-// disk's health and alert, and the audit trail.
+// disk's health and alert, Update all now for a site with a restart after the install (against the
+// patching engine's stand-in), and the audit trail.
 // The suite is one ordered story because each step builds on the server state of the last.
 
 import { readFileSync } from "node:fs";
@@ -603,6 +604,111 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await expect(readerPanel.getByRole("table", { name: "Facts" })).toContainText("Media read-only");
   await expect(readerPanel.getByRole("region", { name: "Open alerts" })).toContainText("Disk failing");
   await readerContext.close();
+});
+
+// The patching engine's stand-in (eptest-engine, started by scripts/e2e/start-server.sh): the tests add its endpoints
+// and finish its jobs, as an EasyPatch agent's reports would.
+const ENGINE = `http://127.0.0.1:${Number(process.env.EASYRMM_E2E_PORT ?? 18180) + 13}/__eptest`;
+
+interface EngineJob {
+  ID: string;
+  Endpoint: string;
+  Type: string;
+  Status: string;
+}
+
+test("Update all now for a site installs every available update, and restarts the device once the install has finished", async ({ request }) => {
+  // EasyRMM links devices to the engine's endpoints, and asks for restarts after installs, once a minute.
+  test.setTimeout(300_000);
+  const page = admin;
+
+  // The engine has the device's endpoint once EasyRMM has created its organization there: two updates to install, one
+  // excluded on the device, and a feature upgrade.
+  let endpoint = { endpointId: "", keyFingerprint: "" };
+  await expect
+    .poll(
+      async () => {
+        const r = await request.post(`${ENGINE}/endpoints`, {
+          data: {
+            organization: "Contoso Dental Group",
+            hostname: "dt-reception-01",
+            updates: [
+              { title: "openssl 3.5.7-1~deb13u3", category: "Security", state: "Missing" },
+              { title: "tzdata 2026c-0+deb13u1", category: "Other", state: "Failed" },
+              { title: "libxml2 2.12.7+dfsg-2", category: "Security", state: "Missing", excluded: true },
+              { title: "Debian 14 upgrade", category: "Feature", state: "Missing" },
+            ],
+          },
+        });
+        if (r.ok()) endpoint = (await r.json()) as typeof endpoint;
+        return r.status();
+      },
+      { timeout: 90_000, intervals: [2_000] },
+    )
+    .toBe(201);
+  // The device's EasyPatch agent, as its EasyRMM agent reports it.
+  await agent.inventory({
+    system: { manufacturer: "Dell Inc.", model: "OptiPlex 7010", serial: "", biosVendor: "", biosVersion: "", biosDate: "", virtualization: "" },
+    cpu: { model: "Intel(R) Core(TM) i5-13500", sockets: 1, cores: 14, threads: 20 },
+    memoryBytes: 16 * 1024 ** 3,
+    os: { name: "Debian GNU/Linux 13 (trixie)", id: "debian", version: "13", kernel: "6.12.38+deb13-amd64", timezone: "America/New_York" },
+    disks: [],
+    interfaces: [],
+    gateways: [],
+    dnsServers: [],
+    packageManager: "dpkg",
+    packages: [],
+    easyPatch: { version: "1.10.0", status: "Active", serverUrl: "https://patch.example.com", ...endpoint },
+  });
+
+  // The overview, for the clinic: once the device is linked, it is the one device there to patch.
+  await page.goto("/patching");
+  await page.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
+  await page.getByLabel("Site").selectOption({ label: "Downtown clinic" });
+  const bar = page.getByRole("region", { name: "Every device in Downtown clinic (Contoso Dental Group)" });
+  await expect(async () => {
+    await page.reload();
+    await expect(bar).toContainText("you may patch: 1 device", { timeout: 5_000 });
+  }).toPass({ timeout: 120_000, intervals: [5_000] });
+  await expect(bar.getByRole("button", { name: "Patch all…" })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Schedule restart all…" })).toBeVisible();
+
+  // Update all now: now, every available update, restart if the updates need it, Windows first. The clinic's one
+  // device runs Linux, so it is ticked in.
+  await bar.getByRole("button", { name: "Update all now…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Update all of Downtown clinic (Contoso Dental Group) now" });
+  const linux = dialog.getByRole("checkbox", { name: /^Linux \(1\)/ });
+  await expect(linux).not.toBeChecked();
+  await linux.check();
+  await expect(dialog.getByRole("radio", { name: "Restart if the updates need it" })).toBeChecked();
+  const what = dialog.getByRole("region", { name: "What would be installed" });
+  await expect(what).toContainText("2 updates");
+  await expect(what).toContainText(/excluded/i);
+  await expect(what).toContainText(/feature upgrade/i);
+  await dialog.getByRole("button", { name: "Install now" }).click();
+
+  const result = page.getByRole("dialog", { name: "Install started in Downtown clinic (Contoso Dental Group)" });
+  await expect(result).toContainText("1 job created, one per device.");
+  await expect(result).toContainText("1 device is set to restart after the install.");
+  await result.getByRole("button", { name: "Close" }).last().click();
+
+  // The engine was asked for the two updates, as chosen updates, and no restart yet.
+  const jobs = async () => ((await (await request.get(`${ENGINE}/jobs`)).json()) as EngineJob[]).filter((j) => j.Endpoint === endpoint.endpointId);
+  const install = (await jobs()).find((j) => j.Type === "InstallUpdates");
+  expect(install).toBeTruthy();
+  expect((await jobs()).filter((j) => j.Type === "Restart")).toHaveLength(0);
+
+  // The install finishes, and its updates need a restart: EasyRMM asks the engine for one restart.
+  await request.post(`${ENGINE}/jobs/${install!.ID}`, { data: { status: "Completed", rebootRequired: true } });
+  await expect.poll(async () => (await jobs()).filter((j) => j.Type === "Restart").length, { timeout: 100_000, intervals: [5_000] }).toBe(1);
+
+  // The install's job shows the choice and what became of it, linked to the restart.
+  await page.goto(`/patching?tab=jobs&job=${install!.ID}`);
+  const job = page.getByRole("dialog").getByRole("region", { name: "Restart after the install" });
+  await expect(job).toContainText("Restart asked for");
+  await expect(job).toContainText("Restart asked for once the install finished.");
+  await page.getByRole("dialog").getByRole("button", { name: "Close" }).last().click();
+  await expect(page.getByRole("dialog")).toBeHidden();
 });
 
 test("a deep link survives sign-in and the second factor", async () => {

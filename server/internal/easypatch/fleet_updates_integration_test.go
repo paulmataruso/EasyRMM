@@ -499,14 +499,14 @@ func TestRestartStatements(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx
 	f.engine.Set(func() { f.eWeb.RebootPending = true })
-	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, ""); err != nil || !plan.Devices[0].Restart {
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, Condition: ""}); err != nil || !plan.Devices[0].Restart {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
 	st := f.lastStatement("GET", "/api/v1/organizations/"+f.epAcme.String()+"/restart-pending")
 	if st.Role != RoleReadOnly || st.Subject != f.tech.Actor.ID.String() || !slices.Equal(st.Organizations, []uuid.UUID{f.epAcme}) {
 		t.Fatalf("plan's statement: %+v", st)
 	}
-	if res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}}); err != nil || res.Succeeded != 1 {
+	if res, err := f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}}); err != nil || res.Succeeded != 1 {
 		t.Fatalf("restart: %+v, %v", res, err)
 	}
 	st = f.lastStatement("POST", "/api/v1/endpoints/bulk/restart")
@@ -514,7 +514,7 @@ func TestRestartStatements(t *testing.T) {
 		t.Fatalf("restart's statement: %+v", st)
 	}
 	// Whether or not a restart is pending: the endpoint is read as ReadOnly.
-	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.dbHost}, "Always"); err != nil || !plan.Devices[0].Restart {
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.dbHost}}, Condition: "Always"}); err != nil || !plan.Devices[0].Restart {
 		t.Fatalf("plan always: %+v, %v", plan, err)
 	}
 	if st := f.lastStatement("GET", "/api/v1/endpoints/"+f.eDB.ID.String()); st.Role != RoleReadOnly ||

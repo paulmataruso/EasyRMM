@@ -675,6 +675,11 @@ type JobDetailView struct {
 	DeviceID   uuid.UUID `json:"deviceId"`
 	DeviceName string    `json:"deviceName"`
 	CanManage  bool      `json:"canManage"`
+	// RestartAfter is an install's restart of its device afterwards, as
+	// asked for with the install; RestartFor, on a restart EasyRMM asked for
+	// after an install, is that install's job.
+	RestartAfter *RestartAfterView `json:"restartAfter"`
+	RestartFor   *uuid.UUID        `json:"restartFor"`
 }
 
 // linkedDevices reads the linked devices of the given endpoints that the
@@ -836,7 +841,12 @@ func (s *Service) Job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDe
 		return JobDetailView{}, err
 	}
 	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
-	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: c.Can(rbac.PermPatchManage, d.resource())}, nil
+	after, install, err := s.restartAfter(ctx, c, id)
+	if err != nil {
+		return JobDetailView{}, err
+	}
+	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: c.Can(rbac.PermPatchManage, d.resource()),
+		RestartAfter: after, RestartFor: install}, nil
 }
 
 // CancelJob cancels a job of a device the caller may manage patching of.
@@ -858,7 +868,11 @@ func (s *Service) CancelJob(ctx context.Context, c access.Caller, id uuid.UUID) 
 		return JobDetailView{}, err
 	}
 	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
-	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: true}, nil
+	after, install, err := s.restartAfter(ctx, c, id)
+	if err != nil {
+		return JobDetailView{}, err
+	}
+	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: true, RestartAfter: after, RestartFor: install}, nil
 }
 
 // ---------------------------------------------------------------- actions
@@ -887,6 +901,13 @@ type ActionResult struct {
 	Succeeded int          `json:"succeeded"`
 	Failed    int          `json:"failed"`
 	Results   []ActionItem `json:"results"`
+	// Scope is a Patch all's organization or site, as resolved when the
+	// request ran; Batches, each request it made to the engine.
+	Scope   *ScopeView `json:"scope,omitempty"`
+	Batches []Batch    `json:"batches,omitempty"`
+	// RestartAfter, on an install asked to restart its devices afterwards,
+	// counts those that will once their install ends.
+	RestartAfter *int `json:"restartAfter,omitempty"`
 }
 
 func (r *ActionResult) add(it ActionItem) {
@@ -930,15 +951,24 @@ func (s *Service) bulk(ctx context.Context, c access.Caller, devices []deviceRow
 	if len(devices) == 0 {
 		return nil
 	}
-	byEndpoint := map[uuid.UUID]deviceRow{}
 	ids := make([]uuid.UUID, 0, len(devices))
 	for _, d := range devices {
-		byEndpoint[*d.endpointID] = d
 		ids = append(ids, *d.endpointID)
 	}
 	br, err := send(ids)
 	if err != nil {
 		return epError(err)
+	}
+	return s.settle(ctx, c, devices, br, res, action, details)
+}
+
+// settle records each device's outcome of a bulk request, and audits those
+// the engine started a job for.
+func (s *Service) settle(ctx context.Context, c access.Caller, devices []deviceRow, br BulkResult, res *ActionResult, action string,
+	details map[string]any) error {
+	byEndpoint := map[uuid.UUID]deviceRow{}
+	for _, d := range devices {
+		byEndpoint[*d.endpointID] = d
 	}
 	answered := map[uuid.UUID]bool{}
 	var events []audit.Event
@@ -1018,20 +1048,64 @@ func (s *Service) Scan(ctx context.Context, c access.Caller, in ActionInput) (Ac
 	return res, err
 }
 
-// Install has devices install every eligible update, or chosen updates on
-// one device, now or at a scheduled time.
-func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) (ActionResult, error) {
-	_, cl, err := s.operable(ctx)
-	if err != nil {
-		return ActionResult{}, err
+// What an install installs.
+const (
+	// UpdatesPolicy is every update each device's patch policy allows.
+	UpdatesPolicy = "policy"
+	// UpdatesAvailable is every update the engine reports missing or failed
+	// on each device, but those excluded, held or not approved, and feature
+	// upgrades unless asked for.
+	UpdatesAvailable = "available"
+)
+
+// InstallInput chooses the devices of an install, what it installs and when,
+// and whether each device restarts once its install has finished.
+type InstallInput struct {
+	DeviceIDs []uuid.UUID `json:"deviceIds"`
+	// All, with OrganizationID (and SiteID), installs on every device of
+	// the organization (or the site) that the caller may patch, on
+	// Platforms (every platform when empty): Patch all.
+	All            bool      `json:"all"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	SiteID         uuid.UUID `json:"siteId"`
+	Platforms      []string  `json:"platforms"`
+	// UpdateIDs installs these updates (EasyPatch update GUIDs); one device
+	// only.
+	UpdateIDs []uuid.UUID `json:"updateIds"`
+	// Updates is UpdatesPolicy (the default) or UpdatesAvailable; Features
+	// adds feature upgrades to every available update.
+	Updates  string `json:"updates"`
+	Features bool   `json:"features"`
+	// ScheduledAt installs later: the jobs wait until then.
+	ScheduledAt *time.Time `json:"scheduledAt"`
+	// Restart restarts each device once its install has finished.
+	Restart *AfterInstall `json:"restart"`
+	// ConfirmServers are the servers the person ticked: only they restart
+	// after the install. Other servers install, and do not restart.
+	ConfirmServers []uuid.UUID `json:"confirmServers"`
+}
+
+func (in InstallInput) targets() Targets {
+	return Targets{DeviceIDs: in.DeviceIDs, All: in.All, OrganizationID: in.OrganizationID, SiteID: in.SiteID, Platforms: in.Platforms}
+}
+
+// check checks the request on its own, and returns the restart options.
+func (in *InstallInput) check(now time.Time) (*RestartOptions, error) {
+	if err := in.targets().checkTargets(); err != nil {
+		return nil, err
+	}
+	if in.Updates == "" {
+		in.Updates = UpdatesPolicy
 	}
 	f := apperr.Fields{}
+	f.Check(in.Updates == UpdatesPolicy || in.Updates == UpdatesAvailable, "updates", "Choose the updates the policy allows, or every available update.")
+	f.Check(!in.Features || in.Updates == UpdatesAvailable, "features", "Feature upgrades go with every available update.")
 	if len(in.UpdateIDs) > 0 {
-		f.Check(len(in.DeviceIDs) == 1, "updateIds", "Choose updates on one device at a time.")
+		f.Check(len(in.DeviceIDs) == 1 && !in.All, "updateIds", "Choose updates on one device at a time.")
+		f.Check(in.Updates == UpdatesPolicy, "updateIds", "Choose updates, or every available update, not both.")
 		f.Check(len(in.UpdateIDs) <= 1000, "updateIds", "Choose at most 1,000 updates.")
 	}
 	if in.ScheduledAt != nil {
-		now := s.now()
 		switch {
 		case in.ScheduledAt.Before(now.Add(time.Minute)):
 			f.Add("scheduledAt", "Choose a time in the future.")
@@ -1040,44 +1114,173 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) 
 		}
 	}
 	if err := f.Err(); err != nil {
-		return ActionResult{}, err
+		return nil, err
 	}
-	res := ActionResult{Results: []ActionItem{}}
-	devices, err := s.targets(ctx, c, in.DeviceIDs, &res)
-	if err != nil {
-		return ActionResult{}, err
-	}
-	details := map[string]any{"updates": "all eligible"}
 	if in.ScheduledAt != nil {
 		at := in.ScheduledAt.UTC()
 		in.ScheduledAt = &at
-		details["scheduledAt"] = at.Format(time.RFC3339)
+	}
+	if in.Restart == nil {
+		return nil, nil
+	}
+	o, err := in.Restart.options(now)
+	return &o, err
+}
+
+// checkCount refuses an install that reaches more devices than what it asks
+// for allows.
+func (in InstallInput) checkCount(n int) error {
+	switch {
+	case in.Restart != nil && in.Restart.Condition == conditionAlways && n > maxAlwaysRestart:
+		return apperr.Invalid("restart", fmt.Sprintf("Restarting when done reaches at most %d devices at once: restart only if the updates need it, "+
+			"or choose fewer devices.", maxAlwaysRestart))
+	case in.Restart != nil && n > MaxBulk:
+		return apperr.Invalid("restart", fmt.Sprintf("Restarting after the install reaches at most %s devices at once: choose a site, "+
+			"or install without restarting and use Schedule restart all.", thousands(MaxBulk)))
+	case in.Updates == UpdatesAvailable && n > MaxBulk:
+		return availableLimit()
+	}
+	return nil
+}
+
+// thousands writes n as people read it: 1,000.
+func thousands(n int) string {
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// Install has devices install updates: every update their policy allows,
+// every available update, or chosen updates on one device; on chosen
+// devices or every device of an organization or site (Patch all); now or at
+// a scheduled time; and, when asked, restart each device once its install
+// has finished.
+func (s *Service) Install(ctx context.Context, c access.Caller, in InstallInput) (ActionResult, error) {
+	_, cl, err := s.operable(ctx)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	restart, err := in.check(s.now())
+	if err != nil {
+		return ActionResult{}, err
+	}
+	res := ActionResult{Results: []ActionItem{}}
+	var devices []deviceRow
+	var sc *scope
+	if in.All {
+		if sc, err = s.resolveAll(ctx, c, in.targets()); err != nil {
+			return ActionResult{}, err
+		}
+		if len(sc.devices) == 0 {
+			return ActionResult{}, apperr.Conflict("easypatch_no_devices", fmt.Sprintf("No device of %s can be patched from EasyRMM.", sc.view.where()))
+		}
+		devices, res.Scope = sc.devices, &sc.view
+	} else if devices, err = s.targets(ctx, c, in.DeviceIDs, &res); err != nil {
+		return ActionResult{}, err
+	}
+	if err := in.checkCount(len(devices)); err != nil {
+		return ActionResult{}, err
+	}
+	details := map[string]any{"updates": "all eligible"}
+	if in.Updates == UpdatesAvailable {
+		details["updates"], details["featureUpgrades"] = "all available", in.Features
 	}
 	if len(in.UpdateIDs) > 0 {
 		details["updates"] = len(in.UpdateIDs)
-		if len(devices) == 1 {
-			d := devices[0]
-			j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)
-			if err != nil {
-				res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: message(epError(err))})
-				if !IsStatus(err, http.StatusConflict) && !IsStatus(err, http.StatusBadRequest) {
-					return ActionResult{}, epError(err)
-				}
-				return res, nil
-			}
-			res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, OK: true, JobID: &j.ID})
-			details["device"], details["endpointId"], details["jobId"] = d.name, d.endpointID.String(), j.ID.String()
-			err = s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
-				DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: details}})
-			s.fleet.clear()
-			return res, err
-		}
-		return res, nil
 	}
-	actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
-	err = s.bulk(ctx, c, devices, &res, "patch.install", details, func(ids []uuid.UUID) (BulkResult, error) {
-		return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
-	})
+	if in.ScheduledAt != nil {
+		details["scheduledAt"] = in.ScheduledAt.Format(time.RFC3339)
+	}
+	if restart != nil {
+		details["restartAfter"], details["restartMode"] = afterText(restart.Condition), restartModeText(*restart)
+	}
+	request := uuid.New()
+	if sc != nil {
+		details["patchAll"], details["requestId"] = sc.view.where(), request.String()
+	}
+	switch {
+	case len(in.UpdateIDs) > 0:
+		err = s.installChosen(ctx, c, cl, devices, in, &res, details)
+	case in.Updates == UpdatesAvailable:
+		err = s.installAvailable(ctx, c, cl, devices, in, &res, details)
+	case sc != nil:
+		res.Batches, err = s.batches(ctx, c, devices, &res, "patch.install", details, func(actx context.Context, ids []uuid.UUID) (BulkResult, error) {
+			return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
+		})
+	default:
+		actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
+		err = s.bulk(ctx, c, devices, &res, "patch.install", details, func(ids []uuid.UUID) (BulkResult, error) {
+			return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
+		})
+	}
 	s.fleet.clear()
+	if restart != nil {
+		n, rerr := s.keepRestarts(ctx, c, devices, res.Results, *restart, in.ConfirmServers)
+		res.RestartAfter = &n
+		err = errors.Join(err, rerr)
+	}
+	if sc != nil {
+		err = errors.Join(err, s.recordAll(ctx, c, "patch.install_all", sc, request, &res, details, map[string]any{"platforms": platformText(in.Platforms)}))
+	}
+	if err != nil && len(res.Results) == 0 {
+		return ActionResult{}, err
+	}
 	return res, err
+}
+
+// installChosen installs chosen updates on one device.
+func (s *Service) installChosen(ctx context.Context, c access.Caller, cl *Client, devices []deviceRow, in InstallInput, res *ActionResult,
+	details map[string]any) error {
+	if len(devices) != 1 {
+		return nil
+	}
+	d := devices[0]
+	j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)
+	if err != nil {
+		if !IsStatus(err, http.StatusConflict) && !IsStatus(err, http.StatusBadRequest) {
+			return epError(err)
+		}
+		res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: message(epError(err))})
+		return nil
+	}
+	res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, OK: true, JobID: &j.ID})
+	det := map[string]any{"device": d.name, "endpointId": d.endpointID.String(), "jobId": j.ID.String()}
+	for k, v := range details {
+		det[k] = v
+	}
+	return s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
+		DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: det}})
+}
+
+// recordAll audits a Patch all once, for its organization or site: what it
+// reached, what it left out and why, and each batch.
+func (s *Service) recordAll(ctx context.Context, c access.Caller, action string, sc *scope, request uuid.UUID, res *ActionResult,
+	details, extra map[string]any) error {
+	det := map[string]any{"requestId": request.String(), "organization": sc.view.OrganizationName, "devices": len(sc.devices),
+		"succeeded": res.Succeeded, "failed": res.Failed, "skipped": sc.view.skippedDetails()}
+	for k, v := range details {
+		if k != "patchAll" && k != "requestId" {
+			det[k] = v
+		}
+	}
+	for k, v := range extra {
+		det[k] = v
+	}
+	if len(res.Batches) > 0 {
+		det["batches"] = batchDetails(res.Batches)
+	}
+	if res.RestartAfter != nil {
+		det["restartAfterDevices"] = *res.RestartAfter
+	}
+	ev := audit.Event{Actor: c.Actor, Action: action, OrganizationID: sc.view.OrganizationID, TargetType: "organization",
+		TargetID: sc.view.OrganizationID.String(), Outcome: audit.Success, Details: det}
+	if sc.view.SiteID != nil {
+		ev.SiteID, ev.TargetType, ev.TargetID, det["site"] = *sc.view.SiteID, "site", sc.view.SiteID.String(), sc.view.SiteName
+	}
+	if res.Succeeded == 0 && len(sc.devices) > 0 {
+		ev.Outcome = audit.Failure
+	}
+	return s.record(ctx, []audit.Event{ev})
 }

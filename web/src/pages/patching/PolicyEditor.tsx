@@ -28,7 +28,7 @@ import {
   windowText,
   WU_GROUPS,
 } from "../devices/PatchPolicyView";
-import { COUNTDOWNS, DEADLINES, EXPIRIES, RESTART_MODES } from "./PatchDialogs";
+import { COUNTDOWNS, DEADLINES, EXPIRIES, RESTART_MODES } from "./RestartFields";
 import { categoryLabel } from "./patchText";
 
 // EasyPatch's policy at one level: the default policy, an organization, a site, a tag or a

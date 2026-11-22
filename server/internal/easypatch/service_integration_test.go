@@ -680,7 +680,7 @@ func TestActions(t *testing.T) {
 
 	// Installs of every eligible update.
 	f.ep.Set(func() { f.e2.Missing = 0 })
-	res, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web, f.db}})
+	res, err = f.svc.Install(ctx, f.admin, InstallInput{DeviceIDs: []uuid.UUID{f.web, f.db}})
 	if err != nil || res.Succeeded != 1 || res.Failed != 1 {
 		t.Fatalf("install: %+v, %v", res, err)
 	}
@@ -697,9 +697,9 @@ func TestActions(t *testing.T) {
 
 	// Chosen updates, on one device.
 	guid := uuid.New()
-	_, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web, f.db}, UpdateIDs: []uuid.UUID{guid}})
+	_, err = f.svc.Install(ctx, f.admin, InstallInput{DeviceIDs: []uuid.UUID{f.web, f.db}, UpdateIDs: []uuid.UUID{guid}})
 	wantField(t, err, "updateIds", "one device at a time")
-	res, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
+	res, err = f.svc.Install(ctx, f.tech, InstallInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
 	if err != nil || res.Succeeded != 1 || res.Results[0].JobID == nil {
 		t.Fatalf("install selected: %+v, %v", res, err)
 	}
@@ -712,23 +712,23 @@ func TestActions(t *testing.T) {
 		t.Fatalf("selected audit: %+v", got)
 	}
 	f.ep.Set(func() { f.e1.Missing = 0 })
-	res, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
+	res, err = f.svc.Install(ctx, f.tech, InstallInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
 	if err != nil || res.Failed != 1 || res.Results[0].Message != "The patching engine refused: web-01 has no eligible updates." {
 		t.Fatalf("nothing to install: %+v, %v", res, err)
 	}
 	f.ep.Set(func() { f.e1.Missing = 2 })
-	if res, err := f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.lab}, UpdateIDs: []uuid.UUID{guid}}); err != nil || res.Failed != 1 {
+	if res, err := f.svc.Install(ctx, f.tech, InstallInput{DeviceIDs: []uuid.UUID{f.lab}, UpdateIDs: []uuid.UUID{guid}}); err != nil || res.Failed != 1 {
 		t.Fatalf("selected on a device without EasyPatch: %+v, %v", res, err)
 	}
 
 	// Installs at a later time, within 31 days.
 	later := time.Now().Add(2 * time.Hour)
 	soon, far := time.Now().Add(30*time.Second), time.Now().Add(32*24*time.Hour)
-	_, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &soon})
+	_, err = f.svc.Install(ctx, f.admin, InstallInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &soon})
 	wantField(t, err, "scheduledAt", "in the future")
-	_, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &far})
+	_, err = f.svc.Install(ctx, f.admin, InstallInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &far})
 	wantField(t, err, "scheduledAt", "within 31 days")
-	res, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web, f.db}, ScheduledAt: &later})
+	res, err = f.svc.Install(ctx, f.admin, InstallInput{DeviceIDs: []uuid.UUID{f.web, f.db}, ScheduledAt: &later})
 	if err != nil || res.Succeeded != 2 {
 		t.Fatalf("scheduled install: %+v, %v", res, err)
 	}
@@ -855,7 +855,7 @@ func TestActions(t *testing.T) {
 	f.ep.Set(func() { f.ep.Down = true })
 	_, err = f.svc.Scan(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
 	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
-	_, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
+	_, err = f.svc.Install(ctx, f.tech, InstallInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
 	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.Jobs(ctx, f.tech, JobsQuery{})
 	wantErr(t, err, apperr.KindUnavailable, "")

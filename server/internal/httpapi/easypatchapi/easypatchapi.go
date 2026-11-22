@@ -54,6 +54,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/jobs/{id}/cancel", a.cancelJob)
 	r("POST /api/v1/patching/jobs/{id}/retry", a.retryJob)
 	r("POST /api/v1/patching/scan", a.scan)
+	r("GET /api/v1/patching/scope", a.scope)
+	r("POST /api/v1/patching/install/plan", a.planInstall)
 	r("POST /api/v1/patching/install", a.install)
 	r("POST /api/v1/patching/restart/plan", a.planRestart)
 	r("POST /api/v1/patching/restart", a.restart)
@@ -272,15 +274,33 @@ func (a *API) retryJob(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *API) planRestart(w http.ResponseWriter, r *http.Request) error {
-	var in struct {
-		DeviceIDs []uuid.UUID `json:"deviceIds"`
-		// Condition is OnlyIfPending (the default) or Always.
-		Condition string `json:"condition"`
-	}
+	var in easypatch.RestartPlanInput
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs, in.Condition)
+	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in)
+	return ok(w, p, err)
+}
+
+func (a *API) scope(w http.ResponseWriter, r *http.Request) error {
+	var q easypatch.ScopeQuery
+	var err error
+	if q.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
+		return err
+	}
+	if q.SiteID, err = httpapi.QueryID(r, "siteId"); err != nil {
+		return err
+	}
+	v, err := a.svc.Scope(r.Context(), httpapi.Caller(r), q)
+	return ok(w, v, err)
+}
+
+func (a *API) planInstall(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.AvailableInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	p, err := a.svc.PlanAvailable(r.Context(), httpapi.Caller(r), in)
 	return ok(w, p, err)
 }
 
@@ -303,7 +323,7 @@ func (a *API) scan(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *API) install(w http.ResponseWriter, r *http.Request) error {
-	var in easypatch.ActionInput
+	var in easypatch.InstallInput
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}

@@ -4,12 +4,39 @@ import { RotateCcw } from "lucide-react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { api, errorMessage } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { PatchActionInput, PatchActionResult, PatchInstallPreview, PatchJobDetail, PatchJobView, RestartInput, RestartMode, RestartPlan } from "../../api/types";
+import type {
+  PatchActionInput,
+  PatchActionResult,
+  PatchAvailablePlan,
+  PatchInstallPreview,
+  PatchJobDetail,
+  PatchJobView,
+  PatchRestartAfter,
+  PatchTargets,
+  RestartInput,
+  RestartMode,
+  RestartPlan,
+} from "../../api/types";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Badge, Button, ErrorState, Field, InlineError, Input, KeyValueList, Select, Spinner } from "../../components/ui";
+import { Alert, Badge, Button, ErrorState, InlineError, Input, KeyValueList, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { canRetry, categoryLabel, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester, skipReasonText, triggerLabel } from "./patchText";
+import {
+  ExpiryField,
+  localInput,
+  MAX_ALWAYS,
+  MAX_BULK,
+  minutesText,
+  PlanLists,
+  RESTART_MODES,
+  RestartModeFields,
+  ServerTicks,
+  splitPlan,
+  tonight,
+  useInstallRestart,
+} from "./RestartFields";
+import { AvailablePlanView, scopeLabel, ScopeSummary, scopeTargets, SkippedList, usePatchScope, usePlatforms, type ScopeTarget } from "./scopeParts";
 
 /** What the patching views refresh after an action. */
 export const PATCH_KEYS = ["/patching", "/audit"];
@@ -19,38 +46,92 @@ export interface PatchTarget {
   name: string;
 }
 
-/** The outcome of a scan or install, said in a toast; devices that did not start are listed in a dialog. */
+/**
+ * The outcome of a scan, install or restart. On chosen devices it is said in a toast, and devices that did not start
+ * are listed in a dialog; on all of an organization or site, a dialog sums it up: the jobs, the restarts to follow, the
+ * batches the patching engine did not take, and the devices left out.
+ */
 export function useOutcome() {
   const toast = useToast();
-  const [result, setResult] = useState<PatchActionResult | null>(null);
+  const [result, setResult] = useState<{ verb: string; r: PatchActionResult } | null>(null);
   const report = (verb: string, r: PatchActionResult) => {
-    if (r.succeeded > 0) toast.success(`${verb} on ${plural(r.succeeded, "device")}.`);
-    if (r.failed > 0) setResult(r);
+    if (r.scope || r.batches) {
+      setResult({ verb, r });
+      return;
+    }
+    if (r.succeeded > 0) {
+      const after = r.restartAfter ? ` ${plural(r.restartAfter, "device")} ${r.restartAfter === 1 ? "is" : "are"} set to restart after the install.` : "";
+      toast.success(`${verb} on ${plural(r.succeeded, "device")}.${after}`);
+    }
+    if (r.failed > 0) setResult({ verb, r });
   };
   const dialog = <ResultDialog result={result} onClose={() => setResult(null)} />;
   return { report, dialog };
 }
 
-function ResultDialog({ result, onClose }: { result: PatchActionResult | null; onClose: () => void }) {
-  const failed = result?.results.filter((r) => !r.ok) ?? [];
+function ResultDialog({ result, onClose }: { result: { verb: string; r: PatchActionResult } | null; onClose: () => void }) {
+  const r = result?.r;
+  const failed = r?.results.filter((x) => !x.ok) ?? [];
+  const bulk = Boolean(r?.scope || r?.batches);
+  const where = r?.scope ? ` in ${scopeLabel(r.scope.organizationName, r.scope.siteName)}` : "";
+  const notTaken = r?.batches?.filter((b) => b.error) ?? [];
   return (
     <Dialog
       open={result !== null}
       onClose={onClose}
-      title={`${plural(failed.length, "device")} did not start`}
-      description={result && result.succeeded > 0 ? `${plural(result.succeeded, "other device")} did.` : undefined}
+      title={!bulk ? `${plural(failed.length, "device")} did not start` : r && r.succeeded > 0 ? `${result!.verb}${where}` : `Nothing started${where}`}
+      description={!bulk && r && r.succeeded > 0 ? `${plural(r.succeeded, "other device")} did.` : undefined}
       footer={<Button onClick={onClose}>Close</Button>}
     >
-      <ul className="divide-y divide-line rounded-md border border-line">
-        {failed.map((r) => (
-          <li key={r.deviceId} className="px-3 py-2.5 text-sm">
-            <Link to={`/devices/${r.deviceId}?tab=patches`} className="font-medium hover:text-accent">
-              {r.deviceName}
-            </Link>
-            <p className="text-muted">{r.message || "The patching engine did not say why."}</p>
-          </li>
-        ))}
-      </ul>
+      <div className="space-y-4">
+        {bulk && r && (
+          <>
+            <ul className="space-y-0.5 text-sm">
+              <li>
+                {plural(r.succeeded, "job")} created, one per device{r.failed > 0 ? `; ${plural(r.failed, "device")} did not start` : ""}.
+              </li>
+              {r.restartAfter !== undefined && (
+                <li>
+                  {plural(r.restartAfter, "device")} {r.restartAfter === 1 ? "is" : "are"} set to restart after the install.
+                </li>
+              )}
+            </ul>
+            {notTaken.length > 0 && (
+              <Alert tone="danger" title={`The patching engine did not take ${plural(notTaken.length, "batch", "batches")}`}>
+                <ul className="space-y-0.5">
+                  {r.batches!.map((b, i) =>
+                    b.error ? (
+                      <li key={i}>
+                        Batch {i + 1} of {r.batches!.length}: {plural(b.devices, "device")} not sent. {b.error}
+                      </li>
+                    ) : null,
+                  )}
+                </ul>
+                <p className="mt-1 text-xs">Its devices are listed below. Start it again later; devices already started are not affected.</p>
+              </Alert>
+            )}
+            {r.batches && r.batches.length > 1 && notTaken.length === 0 && (
+              <p className="text-xs text-muted">Sent in {plural(r.batches.length, "batch", "batches")} of at most {MAX_BULK.toLocaleString()} devices.</p>
+            )}
+            {r.scope && <SkippedList skipped={r.scope.skipped} intro="Left out, as they stood when it was sent:" />}
+          </>
+        )}
+        {failed.length > 0 && (
+          <div>
+            {bulk && <h3 className="mb-1.5 text-xs font-medium text-muted">Did not start ({failed.length.toLocaleString()})</h3>}
+            <ul className="max-h-72 divide-y divide-line overflow-y-auto rounded-md border border-line">
+              {failed.map((x) => (
+                <li key={x.deviceId} className="px-3 py-2.5 text-sm">
+                  <Link to={`/devices/${x.deviceId}?tab=patches`} className="font-medium hover:text-accent">
+                    {x.deviceName}
+                  </Link>
+                  <p className="text-muted">{x.message || "The patching engine did not say why."}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </Dialog>
   );
 }
@@ -177,20 +258,6 @@ export function useAllowPatching() {
   });
 }
 
-/** A datetime-local value for a time, in the browser's zone. */
-function localInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** Tonight at 22:00, or tomorrow's if that has passed. */
-function tonight(now = new Date()): Date {
-  const d = new Date(now);
-  d.setHours(22, 0, 0, 0);
-  if (d.getTime() - now.getTime() < 15 * 60_000) d.setDate(d.getDate() + 1);
-  return d;
-}
-
 /** What an install on one device would do, from its last scan. */
 function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
   if (q.isPending) return <Spinner label="Checking what would be installed…" />;
@@ -253,21 +320,76 @@ function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
   );
 }
 
+/** Now, or at a time in the browser's zone, up to 31 days ahead. */
+function WhenFields({ when, onWhen, at, onAt, label, note }: {
+  when: "now" | "later";
+  onWhen: (w: "now" | "later") => void;
+  at: string;
+  onAt: (v: string) => void;
+  /** The time field's name: "Install at", "Restart at". */
+  label: string;
+  note: string;
+}) {
+  const id = useId();
+  // Unique per dialog: closed dialogs stay in the page, and radios that shared a name would share one choice.
+  const name = useId();
+  return (
+    <fieldset className="space-y-2" aria-describedby={id}>
+      <legend className="text-xs font-medium text-muted">When</legend>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="radio" name={name} checked={when === "now"} onChange={() => onWhen("now")} className="size-4 accent-accent" />
+        Now
+      </label>
+      <label className="flex flex-wrap items-center gap-2 text-sm">
+        <input type="radio" name={name} checked={when === "later"} onChange={() => onWhen("later")} className="size-4 accent-accent" />
+        At
+        <Input
+          type="datetime-local"
+          aria-label={label}
+          value={at}
+          min={localInput(new Date())}
+          onChange={(e) => {
+            onAt(e.target.value);
+            onWhen("later");
+          }}
+          className="w-auto"
+        />
+      </label>
+      <p id={id} className="text-xs text-subtle">
+        Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). {note}
+      </p>
+    </fieldset>
+  );
+}
+
+/** What "all available updates" takes in, said once for the choice and the preview. */
+const AVAILABLE_TEXT =
+  "Security, critical, cumulative, definitions, servicing stack, .NET, drivers, other updates and the application updates the patch policy approves. Updates on hold or excluded on a device are left out. Feature upgrades only when ticked.";
+
 /**
- * Installs updates on devices: every eligible update, or chosen ones on one device, now or at a later time. On one
- * device, with preview, it first shows what EasyPatch would install and leave out.
+ * Installs updates: on chosen devices, every update their policy allows or chosen ones on one device; or on every
+ * device of an organization or site the caller may patch (Patch all), what each policy allows or every available update.
+ * Now or at a later time, and, when asked, each device restarts once its install has finished; servers only when
+ * ticked by name. On one device, with preview, it first shows what EasyPatch would install and leave out.
  */
 export function InstallDialog({
   open,
   onClose,
-  devices,
+  devices = [],
+  scope,
+  preset,
   updates,
   preview = false,
   onDone,
 }: {
   open: boolean;
   onClose: () => void;
-  devices: PatchTarget[];
+  /** The chosen devices; or `scope` instead. */
+  devices?: PatchTarget[];
+  /** Every device of an organization or site the caller may patch, read by the server when the install is sent. */
+  scope?: ScopeTarget;
+  /** update-now: every available update, now, restarting if the updates need it, on Windows only; each can be changed. */
+  preset?: "update-now";
   /** Chosen updates (one device only); every eligible update when absent. */
   updates?: { id: string; title: string }[];
   /** Show what the install would do first (one device only). */
@@ -275,21 +397,50 @@ export function InstallDialog({
   onDone?: () => void;
 }) {
   const outcome = useOutcome();
-  const previewing = open && preview && devices.length === 1;
+  const updateNow = preset === "update-now";
+  const previewing = open && preview && !scope && devices.length === 1;
   const pv = useApi<PatchInstallPreview>(
     previewing ? `/patching/devices/${devices[0]!.id}/install-preview` : null,
     updates ? { updateId: updates.map((u) => u.id) } : undefined,
     { staleTime: 0 },
   );
+  const sc = usePatchScope(open && scope ? scope : null);
+  const plat = usePlatforms(sc.data, open, !updateNow);
+  const [what, setWhat] = useState<"policy" | "available">(updateNow ? "available" : "policy");
+  const [features, setFeatures] = useState(false);
   const [when, setWhen] = useState<"now" | "later">("now");
   const [at, setAt] = useState(() => localInput(tonight()));
-  const whenId = useId();
+  const whatName = useId();
   useEffect(() => {
     if (open) {
       setWhen("now");
       setAt(localInput(tonight()));
+    } else {
+      // Back to the start once closed, so opening again checks nothing twice.
+      setWhat(updateNow ? "available" : "policy");
+      setFeatures(false);
     }
-  }, [open]);
+  }, [open, updateNow]);
+
+  const count = scope ? plat.count : devices.length;
+  const targets: PatchTargets | null = scope
+    ? sc.data && plat.ready && plat.count > 0
+      ? scopeTargets(scope, plat.platforms)
+      : null
+    : { deviceIds: devices.map((d) => d.id) };
+  const available = scope !== undefined && what === "available";
+  const tooManyAvailable = available && count > MAX_BULK;
+  const availKey = open && available && targets && !tooManyAvailable ? JSON.stringify({ ...targets, features }) : "";
+  const avail = useApiMutation((body: PatchTargets & { features: boolean }) => api.post<PatchAvailablePlan>("/patching/install/plan", body));
+  const checkAvailable = () => {
+    if (availKey) avail.mutate(JSON.parse(availKey) as PatchTargets & { features: boolean });
+  };
+  useEffect(() => {
+    if (availKey) checkAvailable();
+    else avail.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- check again when what is sent changes
+  }, [availKey]);
+  const rs = useInstallRestart({ open, targets, count, initial: updateNow ? "OnlyIfPending" : "none" });
 
   const install = useApiMutation((body: PatchActionInput) => api.post<PatchActionResult>("/patching/install", body), {
     invalidate: PATCH_KEYS,
@@ -306,16 +457,35 @@ export function InstallDialog({
 
   const scheduledAt = when === "later" && at ? new Date(at) : null;
   const badTime = scheduledAt !== null && Number.isNaN(scheduledAt.getTime());
-  const what = updates ? plural(updates.length, "chosen update") : "every update its policy allows";
+  const nothing = available && avail.data !== undefined && avail.data.updates === 0 && avail.data.errors.length === 0;
+  const blocked =
+    badTime ||
+    (when === "later" && !at) ||
+    !rs.ready ||
+    (scope !== undefined && targets === null) ||
+    (available && (tooManyAvailable || !avail.isSuccess || nothing));
+  const whatText = updates ? plural(updates.length, "chosen update") : "every update its policy allows";
   const where = devices.length === 1 ? devices[0]!.name : plural(devices.length, "device");
+  const title = scope
+    ? updateNow
+      ? `Update all of ${scope.label} now`
+      : `Patch all of ${scope.label}`
+    : updates
+      ? `Install ${plural(updates.length, "update")} on ${where}`
+      : `Install updates on ${where}`;
+  const reached = !scope || (sc.data !== undefined && sc.data.devices > 0);
 
   return (
     <>
       <Dialog
         open={open}
         onClose={onClose}
-        title={updates ? `Install ${plural(updates.length, "update")} on ${where}` : `Install updates on ${where}`}
-        description={`The patching engine installs ${what}, downloading what it needs. Updates that need a restart finish at the next one, which the device's patch policy may schedule.`}
+        title={title}
+        description={
+          scope
+            ? "Reaches each device here that you may patch and whose EasyPatch agent EasyRMM has linked. EasyRMM reads the devices when you send this, so devices added since are included."
+            : `The patching engine installs ${whatText}, downloading what it needs.`
+        }
         footer={
           <>
             <Button onClick={onClose} disabled={install.isPending}>
@@ -324,12 +494,15 @@ export function InstallDialog({
             <Button
               variant="primary"
               loading={install.isPending}
-              disabled={badTime || (when === "later" && !at)}
+              disabled={blocked}
               onClick={() =>
                 install.mutate({
-                  deviceIds: devices.map((d) => d.id),
+                  ...(scope ? targets! : { deviceIds: devices.map((d) => d.id) }),
                   updateIds: updates?.map((u) => u.id),
+                  updates: scope ? what : undefined,
+                  features: available ? features : undefined,
                   scheduledAt: scheduledAt && !badTime ? scheduledAt.toISOString() : undefined,
+                  ...rs.body,
                 })
               }
             >
@@ -339,6 +512,7 @@ export function InstallDialog({
         }
       >
         <div className="space-y-4">
+          {scope && <ScopeSummary target={scope} q={sc} plat={plat} verb={when === "later" ? "install at the time set" : "install"} />}
           {previewing && <InstallPreviewList q={pv} />}
           {updates && !previewing && (
             <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-sm">
@@ -349,31 +523,48 @@ export function InstallDialog({
               ))}
             </ul>
           )}
-          <fieldset className="space-y-2" aria-describedby={whenId}>
-            <legend className="text-xs font-medium text-muted">When</legend>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="radio" name="when" checked={when === "now"} onChange={() => setWhen("now")} className="size-4 accent-accent" />
-              Now
-            </label>
-            <label className="flex flex-wrap items-center gap-2 text-sm">
-              <input type="radio" name="when" checked={when === "later"} onChange={() => setWhen("later")} className="size-4 accent-accent" />
-              At
-              <Input
-                type="datetime-local"
-                aria-label="Install at"
-                value={at}
-                min={localInput(new Date())}
-                onChange={(e) => {
-                  setAt(e.target.value);
-                  setWhen("later");
-                }}
-                className="w-auto"
-              />
-            </label>
-            <p id={whenId} className="text-xs text-subtle">
-              Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Up to 31 days ahead; the device must be online then.
-            </p>
-          </fieldset>
+          {scope && reached && (
+            <fieldset className="space-y-2">
+              <legend className="text-xs font-medium text-muted">What</legend>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name={whatName} checked={what === "policy"} onChange={() => setWhat("policy")} className="size-4 accent-accent" />
+                Updates each device&apos;s policy allows
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name={whatName} checked={what === "available"} onChange={() => setWhat("available")} className="size-4 accent-accent" />
+                All available updates
+              </label>
+              {what === "available" && (
+                <div className="space-y-2 pl-6">
+                  <p className="text-xs text-muted">{AVAILABLE_TEXT}</p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={features} onChange={(e) => setFeatures(e.target.checked)} className="size-4 accent-accent" />
+                    Include feature upgrades (new Windows versions)
+                  </label>
+                </div>
+              )}
+            </fieldset>
+          )}
+          {available &&
+            reached &&
+            (tooManyAvailable ? (
+              <Alert tone="warn" title={`All available updates reaches at most ${MAX_BULK.toLocaleString()} devices at once`}>
+                This reaches {plural(count, "device")}. Choose a site or fewer platforms, or install the updates each device&apos;s policy allows.
+              </Alert>
+            ) : (
+              targets && <AvailablePlanView plan={avail} onRetry={checkAvailable} />
+            ))}
+          {reached && (
+            <WhenFields
+              when={when}
+              onWhen={setWhen}
+              at={at}
+              onAt={setAt}
+              label="Install at"
+              note="Up to 31 days ahead; the device must be online then."
+            />
+          )}
+          {reached && (!scope || targets) && rs.element}
           <InlineError error={install.error} />
         </div>
       </Dialog>
@@ -382,66 +573,46 @@ export function InstallDialog({
   );
 }
 
-export const RESTART_MODES: { value: RestartMode; label: string; hint: string }[] = [
-  { value: "Countdown", label: "Count down, then restart", hint: "Signed-in users see the countdown and can only restart sooner." },
-  {
-    value: "PromptWithDeadline",
-    label: "Ask users, with a deadline",
-    hint: "Users restart when it suits them or postpone, never past the deadline; then a five-minute countdown.",
-  },
-  { value: "PromptNoDeadline", label: "Ask users, no deadline", hint: "Users choose when. The restart fails if nobody agrees within 7 days." },
-  { value: "Immediate", label: "Restart at once", hint: "No warning, even with users signed in." },
-];
-
-export const COUNTDOWNS = [1, 5, 10, 15, 30, 60];
-export const DEADLINES = [15, 30, 60, 120, 240, 480, 1440, 3 * 1440, 7 * 1440];
-export const EXPIRIES = [15, 30, 60, 120, 240, 480, 1440];
-
-/** "15 minutes", "4 hours", "3 days". */
-function minutesText(m: number): string {
-  if (m % 1440 === 0) return plural(m / 1440, "day");
-  if (m % 60 === 0) return plural(m / 60, "hour");
-  return plural(m, "minute");
-}
-
-/** At most this many devices restart whether or not a restart is pending (the server says the same). */
-const MAX_ALWAYS = 100;
-
 /**
- * Restarts devices: by default only those whose restart is still pending when the job runs,
- * or all of them; after a countdown, by asking the people signed in (with or without a deadline), or at once; now or
- * at a time, waiting a while for devices that are offline. EasyRMM first asks what the restart would do; servers
- * restart only when ticked by name.
+ * Restarts devices: chosen ones, or every device of an organization or site the caller may patch; by default only those
+ * whose restart is still pending when the job runs, or all of them; after a countdown, by asking the people signed in
+ * (with or without a deadline), or at once; now or at a time, waiting a while for devices that are offline. EasyRMM
+ * first asks what the restart would do; servers restart only when ticked by name, and on all of an organization or site
+ * those not ticked are left out.
  */
 export function RestartDialog({
   open,
   onClose,
-  devices,
+  devices = [],
+  scope,
   pendingOnly: initialPendingOnly = true,
+  initialWhen = "now",
   onDone,
 }: {
   open: boolean;
   onClose: () => void;
-  devices: PatchTarget[];
+  /** The chosen devices; or `scope` instead. */
+  devices?: PatchTarget[];
+  /** Every device of an organization or site the caller may patch, read by the server when the restart is sent. */
+  scope?: ScopeTarget;
   /** Start with "only if a restart is pending" ticked; untick it for devices with nothing pending. */
   pendingOnly?: boolean;
+  /** Start with now, or with a time (tonight). */
+  initialWhen?: "now" | "later";
   onDone?: () => void;
 }) {
   const outcome = useOutcome();
+  const sc = usePatchScope(open && scope ? scope : null);
+  const plat = usePlatforms(sc.data, open, true);
   const [pendingOnly, setPendingOnly] = useState(initialPendingOnly);
   const [mode, setMode] = useState<RestartMode>("Countdown");
   const [countdown, setCountdown] = useState(5);
   const [deadline, setDeadline] = useState(240);
   const [expiry, setExpiry] = useState(120);
-  const [when, setWhen] = useState<"now" | "later">("now");
+  const [when, setWhen] = useState<"now" | "later">(initialWhen);
   const [at, setAt] = useState(() => localInput(tonight()));
   const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
-  const whenId = useId();
-  const modeId = useId();
-  const expiryId = useId();
-  const plan = useApiMutation((v: { ids: string[]; always: boolean }) =>
-    api.post<RestartPlan>("/patching/restart/plan", v.always ? { deviceIds: v.ids, condition: "Always" } : { deviceIds: v.ids }),
-  );
+  const plan = useApiMutation((body: PatchTargets & { condition?: "Always" }) => api.post<RestartPlan>("/patching/restart/plan", body));
   const restart = useApiMutation((body: RestartInput) => api.post<PatchActionResult>("/patching/restart", body), {
     invalidate: PATCH_KEYS,
     onSuccess: (r) => {
@@ -450,51 +621,59 @@ export function RestartDialog({
       onDone?.();
     },
   });
-  const ids = devices.map((d) => d.id).join(",");
-  const replan = (pending: boolean) => {
+
+  const count = scope ? plat.count : devices.length;
+  const targets: PatchTargets | null = scope
+    ? sc.data && plat.ready && plat.count > 0
+      ? scopeTargets(scope, plat.platforms)
+      : null
+    : { deviceIds: devices.map((d) => d.id) };
+  const key = targets ? JSON.stringify(targets) : "";
+  const tooMany = !pendingOnly && count > MAX_ALWAYS;
+  const replan = () => {
+    if (!key || tooMany) return;
     setConfirmed(new Set());
-    plan.mutate({ ids: ids.split(","), always: !pending });
+    const t = JSON.parse(key) as PatchTargets;
+    plan.mutate(pendingOnly ? t : { ...t, condition: "Always" });
   };
+  // Back to the start once closed, so opening again plans once, with the choices it opens with.
   useEffect(() => {
-    if (!open) return;
+    if (open) return;
     setPendingOnly(initialPendingOnly);
     setMode("Countdown");
     setCountdown(5);
     setDeadline(240);
     setExpiry(120);
-    setWhen("now");
+    setWhen(initialWhen);
+    setConfirmed(new Set());
+    plan.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- back to the defaults when the dialog closes
+  }, [open, initialPendingOnly, initialWhen]);
+  useEffect(() => {
+    if (!open) return;
     setAt(localInput(tonight()));
     restart.reset();
-    replan(initialPendingOnly);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- plan again when the dialog opens, not when the mutations change
-  }, [open, ids]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when the dialog opens, not when the mutation changes
+  }, [open]);
+  useEffect(() => {
+    if (open) replan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plan again when the devices or the condition change
+  }, [open, key, pendingOnly, tooMany]);
 
-  const checks = plan.data?.devices ?? [];
-  const servers = checks.filter((c) => c.restart && c.server);
-  const others = checks.filter((c) => c.restart && !c.server);
-  const skipped = checks.filter((c) => !c.restart);
+  const { servers, others, skipped } = splitPlan(plan.data);
   const chosenServers = servers.filter((c) => confirmed.has(c.deviceId));
   const sending = [...others, ...chosenServers];
-  const allServers = servers.length > 0 && chosenServers.length === servers.length;
   const scheduledAt = when === "later" && at ? new Date(at) : null;
   const badTime = scheduledAt !== null && Number.isNaN(scheduledAt.getTime());
   const where = devices.length === 1 ? devices[0]!.name : plural(devices.length, "device");
-  const tooMany = !pendingOnly && devices.length > MAX_ALWAYS;
-  const tick = (id: string, on: boolean) =>
-    setConfirmed((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  const modeHint = RESTART_MODES.find((m) => m.value === mode)!.hint;
+  const reached = !scope || (sc.data !== undefined && sc.data.devices > 0);
 
   return (
     <>
       <Dialog
         open={open}
         onClose={onClose}
-        title={`Restart ${where}`}
+        title={scope ? `Restart all of ${scope.label}` : `Restart ${where}`}
         description={
           pendingOnly
             ? "Each device restarts only if it still needs a restart when the job runs."
@@ -508,10 +687,10 @@ export function RestartDialog({
             <Button
               variant="primary"
               loading={restart.isPending}
-              disabled={tooMany || !plan.data || plan.isPending || sending.length === 0 || badTime || (when === "later" && !at)}
+              disabled={tooMany || !targets || !plan.data || plan.isPending || sending.length === 0 || badTime || (when === "later" && !at)}
               onClick={() =>
                 restart.mutate({
-                  deviceIds: sending.map((c) => c.deviceId),
+                  ...(scope ? targets! : { deviceIds: sending.map((c) => c.deviceId) }),
                   confirmServers: chosenServers.length > 0 ? chosenServers.map((c) => c.deviceId) : undefined,
                   mode,
                   condition: pendingOnly ? "OnlyIfPending" : "Always",
@@ -532,186 +711,55 @@ export function RestartDialog({
         }
       >
         <div className="space-y-4">
-          <div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={pendingOnly}
-                onChange={(e) => {
-                  setPendingOnly(e.target.checked);
-                  if (e.target.checked || devices.length <= MAX_ALWAYS) replan(e.target.checked);
-                }}
-                className="size-4 accent-accent"
-              />
-              Only if a restart is pending
-            </label>
-            <p className="mt-0.5 pl-6 text-xs text-muted">
-              {pendingOnly
-                ? "Devices that no longer need a restart when the job runs are left alone."
-                : `Restarts every device chosen, at most ${MAX_ALWAYS.toLocaleString()} at once.`}
-            </p>
-          </div>
-          {tooMany ? (
+          {scope && <ScopeSummary target={scope} q={sc} plat={plat} verb="can restart" />}
+          {reached && (
+            <div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} className="size-4 accent-accent" />
+                Only if a restart is pending
+              </label>
+              <p className="mt-0.5 pl-6 text-xs text-muted">
+                {pendingOnly
+                  ? "Devices that no longer need a restart when the job runs are left alone."
+                  : `Restarts every device ${scope ? "here" : "chosen"}, at most ${MAX_ALWAYS.toLocaleString()} at once.`}
+              </p>
+            </div>
+          )}
+          {!reached || (scope && !targets) ? null : tooMany ? (
             <Alert tone="warn" title={`Choose at most ${MAX_ALWAYS.toLocaleString()} devices`}>
-              EasyRMM checks each device before restarting it whether or not a restart is pending. Choose fewer, or restart only where one is pending.
+              {scope
+                ? `This reaches ${plural(count, "device")}. EasyRMM checks each device before restarting it whether or not a restart is pending. Choose a site or fewer platforms, or restart only where one is pending.`
+                : "EasyRMM checks each device before restarting it whether or not a restart is pending. Choose fewer, or restart only where one is pending."}
             </Alert>
           ) : plan.isPending || plan.isIdle ? (
             <Spinner />
           ) : plan.isError ? (
-            <ErrorState error={plan.error} onRetry={() => replan(pendingOnly)} compact />
+            <ErrorState error={plan.error} onRetry={replan} compact />
           ) : (
             <>
-              {servers.length > 0 && (
-                <fieldset className="space-y-2">
-                  <legend className="mb-1 text-sm font-medium">
-                    Servers restart only when you tick them
-                  </legend>
-                  <p className="text-xs text-muted">A restart interrupts everyone using the server.</p>
-                  <ul className="max-h-48 divide-y divide-line overflow-y-auto rounded-md border border-line">
-                    {servers.length > 1 && (
-                      <li className="px-3 py-2">
-                        <label className="flex items-center gap-2 text-sm font-medium">
-                          <input
-                            type="checkbox"
-                            checked={allServers}
-                            ref={(el) => {
-                              if (el) el.indeterminate = chosenServers.length > 0 && !allServers;
-                            }}
-                            onChange={(e) => setConfirmed(e.target.checked ? new Set(servers.map((c) => c.deviceId)) : new Set())}
-                            className="size-4 accent-accent"
-                          />
-                          {`All ${servers.length.toLocaleString()}`}
-                        </label>
-                      </li>
-                    )}
-                    {servers.map((c) => (
-                      <li key={c.deviceId} className="px-3 py-2">
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={confirmed.has(c.deviceId)}
-                            onChange={(e) => tick(c.deviceId, e.target.checked)}
-                            className="size-4 accent-accent"
-                          />
-                          <span className="min-w-0 break-words">Restart {c.deviceName}</span>
-                          {!c.online && <span className="ml-auto shrink-0 text-xs text-muted">Offline</span>}
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                </fieldset>
-              )}
-              {others.length > 0 && (
-                <div>
-                  <h3 className="mb-1.5 text-xs font-medium text-muted">{servers.length > 0 ? "Also restarts" : "Restarts"}</h3>
-                  <ul className="max-h-40 space-y-0.5 overflow-y-auto text-sm">
-                    {others.map((c) => (
-                      <li key={c.deviceId} className="flex items-baseline gap-2">
-                        <span className="min-w-0 break-words">{c.deviceName}</span>
-                        {!c.online && <span className="text-xs text-muted">Offline</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {skipped.length > 0 && (
-                <div>
-                  <h3 className="mb-1.5 text-xs font-medium text-muted">{servers.length + others.length > 0 ? "Not restarted" : "Nothing to restart"}</h3>
-                  <ul className="max-h-40 divide-y divide-line overflow-y-auto rounded-md border border-line">
-                    {skipped.map((c) => (
-                      <li key={c.deviceId} className="px-3 py-2 text-sm">
-                        <span className="font-medium">{c.deviceName}</span>
-                        <p className="text-muted">{c.reason}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+              <ServerTicks
+                servers={servers}
+                confirmed={confirmed}
+                onChange={setConfirmed}
+                note={
+                  scope
+                    ? "A restart interrupts everyone using the server. Servers you leave unticked are left out; the other devices restart."
+                    : "A restart interrupts everyone using the server."
+                }
+              />
+              <PlanLists servers={servers} others={others} skipped={skipped} />
               {servers.length + others.length > 0 && (
                 <>
-                  <fieldset className="space-y-2" aria-describedby={modeId}>
-                    <legend className="text-xs font-medium text-muted">Signed-in users</legend>
-                    {RESTART_MODES.map((m) => (
-                      <div key={m.value} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="radio"
-                            name="restart-mode"
-                            checked={mode === m.value}
-                            onChange={() => setMode(m.value)}
-                            className="size-4 accent-accent"
-                          />
-                          {m.label}
-                        </label>
-                        {m.value === "Countdown" && mode === "Countdown" && (
-                          <Select aria-label="Countdown" value={countdown} onChange={(e) => setCountdown(Number(e.target.value))} className="w-auto">
-                            {COUNTDOWNS.map((n) => (
-                              <option key={n} value={n}>
-                                {minutesText(n)}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                        {m.value === "PromptWithDeadline" && mode === "PromptWithDeadline" && (
-                          <Select aria-label="Deadline" value={deadline} onChange={(e) => setDeadline(Number(e.target.value))} className="w-auto">
-                            {DEADLINES.map((n) => (
-                              <option key={n} value={n}>
-                                within {minutesText(n)}
-                              </option>
-                            ))}
-                          </Select>
-                        )}
-                      </div>
-                    ))}
-                    <p id={modeId} className="text-xs text-muted">
-                      {modeHint}
-                    </p>
-                    {mode !== "Immediate" && (
-                      <p className="text-xs text-subtle">
-                        Nobody signed in: the device restarts at once. Without the EasyPatch icon (Linux, macOS, or Windows where it is not running),
-                        users get the system&apos;s shutdown warning, and asking waits for the deadline, or for the icon when there is none.
-                      </p>
-                    )}
-                  </fieldset>
-                  <fieldset className="space-y-2" aria-describedby={whenId}>
-                    <legend className="text-xs font-medium text-muted">When</legend>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="radio" name="restart-when" checked={when === "now"} onChange={() => setWhen("now")} className="size-4 accent-accent" />
-                      Now
-                    </label>
-                    <label className="flex flex-wrap items-center gap-2 text-sm">
-                      <input type="radio" name="restart-when" checked={when === "later"} onChange={() => setWhen("later")} className="size-4 accent-accent" />
-                      At
-                      <Input
-                        type="datetime-local"
-                        aria-label="Restart at"
-                        value={at}
-                        min={localInput(new Date())}
-                        onChange={(e) => {
-                          setAt(e.target.value);
-                          setWhen("later");
-                        }}
-                        className="w-auto"
-                      />
-                    </label>
-                    <p id={whenId} className="text-xs text-subtle">
-                      Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Up to 31 days ahead.
-                    </p>
-                  </fieldset>
-                  <Field
-                    label="If a device is offline, wait for it"
-                    htmlFor={expiryId}
-                    hint="If it does not come back in time, the patching engine drops its restart."
-                    className="w-fit"
-                  >
-                    <Select id={expiryId} value={expiry} onChange={(e) => setExpiry(Number(e.target.value))} className="w-auto">
-                      {EXPIRIES.map((n) => (
-                        <option key={n} value={n}>
-                          {minutesText(n)}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
+                  <RestartModeFields
+                    mode={mode}
+                    onMode={setMode}
+                    countdown={countdown}
+                    onCountdown={setCountdown}
+                    deadline={deadline}
+                    onDeadline={setDeadline}
+                  />
+                  <WhenFields when={when} onWhen={setWhen} at={at} onAt={setAt} label="Restart at" note="Up to 31 days ahead." />
+                  <ExpiryField value={expiry} onChange={setExpiry} />
                 </>
               )}
             </>
@@ -721,6 +769,54 @@ export function RestartDialog({
       </Dialog>
       {outcome.dialog}
     </>
+  );
+}
+
+const RESTART_STATES: Record<PatchRestartAfter["state"], { label: string; tone: "info" | "ok" | "neutral" | "danger" }> = {
+  waiting: { label: "Waiting for the install to finish", tone: "info" },
+  done: { label: "Restart asked for", tone: "ok" },
+  skipped: { label: "Not restarted", tone: "neutral" },
+  failed: { label: "Restart refused", tone: "danger" },
+};
+
+/** The restart asked for with an install: the choice, how users are treated, and what became of it. */
+function RestartAfterView({ r, onJob }: { r: PatchRestartAfter; onJob: (id: string) => void }) {
+  const mode = RESTART_MODES.find((m) => m.value === r.mode)?.label ?? r.mode;
+  const how =
+    r.mode === "Countdown" && r.countdownMinutes
+      ? `${mode}, after ${minutesText(r.countdownMinutes)}`
+      : r.mode === "PromptWithDeadline" && r.deadlineMinutes
+        ? `${mode}, within ${minutesText(r.deadlineMinutes)}`
+        : mode;
+  const state = RESTART_STATES[r.state] ?? { label: r.state, tone: "neutral" as const };
+  const link = (id: string, text: string) => (
+    <button type="button" className="rounded-sm text-left text-accent hover:underline" onClick={() => onJob(id)}>
+      {text}
+    </button>
+  );
+  const items: [string, ReactNode][] = [
+    ["Asked for", r.condition === "Always" ? "Restart when done" : "Restart if the updates need it"],
+    ["Signed-in users", how],
+    ...(r.expiresAfterMinutes ? [["If offline", `Wait ${minutesText(r.expiresAfterMinutes)}`] as [string, ReactNode]] : []),
+    ...(r.server ? [["Server", "Ticked by name to restart"] as [string, ReactNode]] : []),
+    [
+      "State",
+      <span key="state" className="flex flex-col items-start gap-0.5">
+        <Badge tone={state.tone}>{state.label}</Badge>
+        {r.message && <span className="text-muted">{r.message}</span>}
+      </span>,
+    ],
+    ...(r.restartJobId ? [["Restart job", link(r.restartJobId, "The restart after the install")] as [string, ReactNode]] : []),
+    ...(r.midwayJobId ? [["Restart to go on", link(r.midwayJobId, "The restart the install waited for")] as [string, ReactNode]] : []),
+    ...(r.requestedAt
+      ? [["Requested", `${formatDateTime(r.requestedAt)}${r.requestedBy ? ` by ${requester(r.requestedBy)}` : ""}`] as [string, ReactNode]]
+      : []),
+  ];
+  return (
+    <section aria-label="Restart after the install">
+      <h3 className="mb-1.5 text-xs font-medium text-muted">Restart after the install</h3>
+      <KeyValueList narrow items={items} />
+    </section>
   );
 }
 
@@ -834,6 +930,16 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
                       ] as [string, ReactNode],
                     ]
                   : []),
+                ...(d.restartFor
+                  ? [
+                      [
+                        "Restart after",
+                        <button key="for" type="button" className="rounded-sm text-left text-accent hover:underline" onClick={() => onJob(d.restartFor!)}>
+                          The install job
+                        </button>,
+                      ] as [string, ReactNode],
+                    ]
+                  : []),
                 // A queued job waits for its device until then.
                 ...(s.status === "Queued" ? [["Gives up at", formatDateTime(s.expiresAt)] as [string, string]] : []),
                 ...(d.deliveredAt
@@ -849,6 +955,7 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
                 ...(s.rebootRequired ? [["Restart", "Needed to finish"] as [string, string]] : []),
               ]}
             />
+            {d.restartAfter && <RestartAfterView r={d.restartAfter} onJob={onJob} />}
             {d.items.length > 0 && (
               <div>
                 <h3 className="mb-1.5 text-xs font-medium text-muted">Updates</h3>

@@ -231,6 +231,51 @@ them, and refreshes every minute:
   engine stops patching the endpoint then, or after 7 days if it does not
   ([Removing a device](../deployment/agents.md#removing-a-device)).
 
+#### Patch all, Schedule restart all, Update all now
+
+Choose an organization, and a site if you like, and the overview names it,
+how many of its devices can be patched from EasyRMM and how many are left
+out. With `patch.manage` there it offers:
+
+* **Patch all…**: an install on every device there that has a linked
+  EasyPatch agent, whose patching is not stopped and that you may patch.
+  The dialog says how many devices, on which platforms (untick one to leave
+  its devices out), and how many are left out and why: you may not patch
+  them, patching is stopped, no EasyPatch agent, or an agent EasyRMM has not
+  linked. Devices you cannot see are not counted. Install what each
+  device's policy allows or every available update (below), now or at a
+  time, and choose whether devices restart afterwards
+  ([Restart after the install](#restart-after-the-install)).
+* **Schedule restart all…**: the restart dialog for every such device, only
+  where a restart is pending and at a time by default. Servers restart only
+  when ticked by name; the others are left out and the result names them.
+* **Update all now…**, with a site chosen, and on the site's page: the
+  install dialog with its presets, now, every available update, and a
+  restart if the updates need it with a countdown. Windows devices are
+  included; tick **Linux devices** to add them. One confirmation sends it,
+  and every preset can be changed first.
+
+The organization's page has **Patch all…**, and a site's **Update all
+now…**.
+
+"Every device" is read when you confirm, not when the dialog opened: a
+device enrolled in between is included, and the result gives the counts as
+sent. An install of what each policy allows goes to the engine 1,000
+devices at a time, however many there are; the result lists each batch, and
+a batch the engine refuses or does not answer is reported device by device
+(refused: not sent; no answer: not known, check [Jobs](#jobs) before
+sending it again) while the next still goes.
+
+**Every available update** is each update the engine reports missing or
+failed on the device, except those excluded on it, held, and application
+updates the policy does not approve. Updates still in the policy's rollout
+delay and drivers are included. Feature upgrades (a new version of
+Windows) are left out unless you tick them. Before you confirm, the dialog
+reads every device and says what would install, by category, and what is
+left out: how many excluded updates (with the devices that have them,
+linked to their updates), held, not approved, and devices whose updates
+could not be read.
+
 ### Devices
 
 The **Devices** tab lists the devices of linked organizations and every
@@ -245,8 +290,9 @@ device with an EasyPatch agent:
 * Filters: organization, site, device group, status, name.
 
 Choose devices to **Scan** them, **Install updates…** (every update the
-device's patch policy allows) or **Restart…** them (see
-[Restarts](#restarts)). The jobs that carry this out are on the
+device's patch policy allows, restarting afterwards if you choose: see
+[Restart after the install](#restart-after-the-install)) or **Restart…**
+them (see [Restarts](#restarts)). The jobs that carry this out are on the
 [Jobs](#jobs) tab.
 
 A device's **Patches** tab shows:
@@ -339,7 +385,9 @@ queued job waits for its device, when it was sent to the device (and how
 many times), started and finished, and the job it runs again when it is a
 retry. A running job can be cancelled; until the device stops, the job says
 the cancellation was asked for. A job whose device stopped reporting says
-it ran out of time. A job that failed, was cancelled or expired, or left
+it ran out of time. An install asked to restart its device afterwards shows
+that choice and what became of it, linked to the restart; that restart
+links back to its install. A job that failed, was cancelled or expired, or left
 some updates uninstalled, can be run again with **Retry**; the new job
 opens in its place. A retry is refused while the same job is already
 queued.
@@ -465,6 +513,35 @@ not linked.
   middle of an install.
 
 Recurring restarts are part of the patch policy (below).
+
+#### Restart after the install
+
+The install dialog, wherever it opens, asks what happens once the updates
+are installed:
+
+* **Don't restart** (the default).
+* **Restart if the updates need it**: once the install has finished, the
+  device restarts when its updates need it, or it has a restart pending; its
+  agent checks again before restarting.
+* **Restart when done**: once the install has finished, the device
+  restarts, at most 100 devices at once.
+
+With either restart, choose how signed-in users are treated, as for any
+restart (a countdown by default). The dialog first reads each device from
+the engine: servers restart only when ticked by name, and an unticked
+server installs and is not restarted.
+
+The engine cannot restart a computer when an install ends, so EasyRMM does:
+every minute it reads each install it waits for, and asks the engine for
+the restart once the install has **completed** (some updates may have
+failed). **A failed, cancelled or expired install never restarts the
+device.** An install that waits for a restart to go on gets one then, and
+the last when it has finished. The choice is kept in EasyRMM's database: a
+restart of EasyRMM's server neither loses it nor asks for it twice. EasyRMM
+reads the device again first and does not restart it if it became a server
+nobody ticked, its agent cannot restart, its patching was stopped or its
+EasyPatch agent changed; the install's job says so. It stops waiting for an
+install that has not ended within 40 days.
 
 ### Policies
 
@@ -761,7 +838,7 @@ warns about them; see
 | Permission | Allows | Built-in roles |
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
-| `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
+| `patch.manage` | Scan, install, restart, Patch all, Update all now and Schedule restart all (on the devices where you hold it), cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
 | `patch.configure` | Change the standing rules of patching: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only). Only organization-wide roles hold it | Organization administrator and above |
 | `report.view` (with `patch.view`) | The patch reports: compliance and installations for the devices you see; the compliance trend, monthly reports and report schedules of organizations you see whole | Every role |
 | `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
@@ -782,8 +859,9 @@ checks them again.
 
 | Action | Recorded |
 |---|---|
-| `patch.scan`, `patch.install` | One record per device that started, with the job id; installs record which updates and any scheduled time, and an install from an update's page its update id |
-| `patch.restart` | One record per device that was asked to restart, with the job id, how signed-in users were treated (the countdown or deadline), whether only if a restart is pending or always, how long it waits for an offline device, any scheduled time and the servers you confirmed |
+| `patch.scan`, `patch.install` | One record per device that started, with the job id; installs record which updates (what each policy allows, every available update with how many, or chosen ones), any scheduled time, a restart afterwards and how, and an install from an update's page its update id. Part of a Patch all: the organization or site, and the request's id |
+| `patch.restart` | One record per device that was asked to restart, with the job id, how signed-in users were treated (the countdown or deadline), whether only if a restart is pending or always, how long it waits for an offline device, any scheduled time and the servers you confirmed. A restart after an install is recorded by EasyRMM's patching component, with the install's job and who asked for it |
+| `patch.install_all`, `patch.restart_all` | One record per Patch all, Update all now or Schedule restart all, for the organization or site: how many devices it reached, succeeded and failed, how many were left out and why, the platforms, each batch sent to the engine, the presets (updates, feature upgrades, time, restart afterwards) and, for a restart, the servers left out |
 | `patch.cancel` | The job and its device |
 | `patch.exclude`, `patch.include` | The update excluded on the device, or included again, and the reason given |
 | `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason; from an update's page, one record per device |
@@ -822,7 +900,15 @@ EasyRMM user who asked for the install, or EasyRMM for an automatic one.
   and shows at most 5,000 devices; the job list shows the newest 200 jobs
   that match its filters.
 * A restart whether or not a restart is pending reaches at most 100 devices
-  at once; one only where a restart is pending, 1,000.
+  at once; one only where a restart is pending, 1,000. So does a restart
+  after an install: when done, 100 devices; if the updates need it, 1,000.
+* Patch all installing what each policy allows has no device limit: it goes
+  to the engine 1,000 devices at a time. Every available update reads each
+  device's updates first and reaches at most 1,000 devices; choose a site
+  beyond that. At most 1,000 updates install on a device at once; the
+  result says when there were more.
+* Each minute, EasyRMM reads at most 500 installs waiting to restart their
+  device; the rest wait for the next minute.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
 * An organization, a site or a device has at most 20 tags of its own.
 * The patch installations report reads at most 5,000 rows and says so;

@@ -21,15 +21,15 @@ func TestRestart(t *testing.T) {
 	})
 
 	// Who may restart what.
-	_, err := f.svc.PlanRestart(ctx, f.viewer, []uuid.UUID{f.web}, "")
+	_, err := f.svc.PlanRestart(ctx, f.viewer, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, Condition: ""})
 	wantErr(t, err, apperr.KindForbidden, "")
-	_, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web, f.db}, "")
+	_, err = f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, Condition: ""})
 	wantErr(t, err, apperr.KindNotFound, "")
-	_, err = f.svc.PlanRestart(ctx, f.tech, nil, "")
+	_, err = f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: nil}, Condition: ""})
 	wantField(t, err, "deviceIds", "from 1 to 1000")
 
 	// The plan: servers are marked; devices that cannot restart say why.
-	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db, f.app, f.lab, f.web}, "")
+	plan, err := f.svc.PlanRestart(ctx, f.admin, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db, f.app, f.lab, f.web}}, Condition: ""})
 	if err != nil || len(plan.Devices) != 4 {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
@@ -54,12 +54,12 @@ func TestRestart(t *testing.T) {
 	}
 
 	// A server is restarted only when confirmed by name.
-	_, err = f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db}})
+	_, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}})
 	wantField(t, err, "confirmServers", "These are servers; confirm restarting them: db-01.")
 	if n := len(f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")); n != 0 {
 		t.Fatalf("an unconfirmed server restart sent %d requests", n)
 	}
-	res, err := f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db, f.lab}, ConfirmServers: []uuid.UUID{f.db}})
+	res, err := f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db, f.lab}}, ConfirmServers: []uuid.UUID{f.db}})
 	if err != nil || res.Succeeded != 2 || res.Failed != 1 {
 		t.Fatalf("restart: %+v, %v", res, err)
 	}
@@ -84,12 +84,12 @@ func TestRestart(t *testing.T) {
 
 	// A technician restarts what they may manage; nothing pending, nothing sent.
 	f.ep.Set(func() { f.e1.RebootPending = false })
-	res, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}})
+	res, err = f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}})
 	if err != nil || res.Failed != 1 || res.Results[0].Message != "No restart is pending." {
 		t.Fatalf("nothing pending: %+v, %v", res, err)
 	}
 	f.ep.Set(func() { f.e1.RebootPending, f.e1.CannotRestart = true, true })
-	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, ""); err != nil || plan.Devices[0].Restart ||
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, Condition: ""}); err != nil || plan.Devices[0].Restart ||
 		!strings.Contains(plan.Devices[0].Reason, "cannot restart") {
 		t.Fatalf("agent that cannot restart: %+v, %v", plan, err)
 	}
@@ -100,11 +100,11 @@ func TestRestart(t *testing.T) {
 
 	// Later.
 	soon, far, later := time.Now().Add(30*time.Second), time.Now().Add(32*24*time.Hour), time.Now().Add(3*time.Hour)
-	_, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &soon})
+	_, err = f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, ScheduledAt: &soon})
 	wantField(t, err, "scheduledAt", "in the future")
-	_, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &far})
+	_, err = f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, ScheduledAt: &far})
 	wantField(t, err, "scheduledAt", "within 31 days")
-	res, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &later})
+	res, err = f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, ScheduledAt: &later})
 	if err != nil || res.Succeeded != 1 {
 		t.Fatalf("scheduled restart: %+v, %v", res, err)
 	}
@@ -138,17 +138,17 @@ func TestRestartOptions(t *testing.T) {
 		"deadlineMinutes":     {Mode: "PromptWithDeadline", DeadlineMinutes: n(10)},
 		"expiresAfterMinutes": {ExpiresAfterMinutes: n(14)},
 	} {
-		_, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web, RestartOptions: o})
+		_, err := f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: web}, RestartOptions: o})
 		wantField(t, err, field, "Choose")
 	}
-	_, err := f.svc.PlanRestart(ctx, f.tech, web, "Sometimes")
+	_, err := f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: web}, Condition: "Sometimes"})
 	wantField(t, err, "condition", "Choose")
 	if n := len(f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")); n != 0 {
 		t.Fatalf("refused restarts sent %d requests", n)
 	}
 
 	// A prompt with a deadline: minutes the mode does not use are dropped.
-	res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web, RestartOptions: RestartOptions{
+	res, err := f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: web}, RestartOptions: RestartOptions{
 		Mode: "PromptWithDeadline", DeadlineMinutes: n(480), CountdownMinutes: n(9), ExpiresAfterMinutes: n(60), Force: true}})
 	if err != nil || res.Succeeded != 1 {
 		t.Fatalf("prompt with a deadline: %+v, %v", res, err)
@@ -166,7 +166,7 @@ func TestRestartOptions(t *testing.T) {
 	}
 	for mode, want := range map[string]string{"Immediate": "at once", "PromptNoDeadline": "when a signed-in user agrees",
 		"Countdown": "after a 15-minute countdown"} {
-		if _, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web,
+		if _, err := f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: web},
 			RestartOptions: RestartOptions{Mode: mode, CountdownMinutes: n(15), DeadlineMinutes: n(60)}}); err != nil {
 			t.Fatal(err)
 		}
@@ -182,10 +182,10 @@ func TestRestartOptions(t *testing.T) {
 		f.e1.RebootPending = false
 		f.e2.IsServer = true
 	})
-	if plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db}, ""); err != nil || plan.Devices[0].Restart || plan.Devices[1].Restart {
+	if plan, err := f.svc.PlanRestart(ctx, f.admin, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, Condition: ""}); err != nil || plan.Devices[0].Restart || plan.Devices[1].Restart {
 		t.Fatalf("nothing pending: %+v, %v", plan, err)
 	}
-	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db}, "Always")
+	plan, err := f.svc.PlanRestart(ctx, f.admin, RestartPlanInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, Condition: "Always"})
 	if err != nil || len(plan.Devices) != 2 {
 		t.Fatalf("always: %+v, %v", plan, err)
 	}
@@ -196,9 +196,9 @@ func TestRestartOptions(t *testing.T) {
 		t.Fatalf("db-01, always: %+v", c)
 	}
 	always := RestartOptions{Condition: "Always"}
-	_, err = f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db}, RestartOptions: always})
+	_, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, RestartOptions: always})
 	wantField(t, err, "confirmServers", "These are servers; confirm restarting them: db-01.")
-	res, err = f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db}, RestartOptions: always, ConfirmServers: []uuid.UUID{f.db}})
+	res, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, RestartOptions: always, ConfirmServers: []uuid.UUID{f.db}})
 	if err != nil || res.Succeeded != 2 {
 		t.Fatalf("restart always: %+v, %v", res, err)
 	}
@@ -211,7 +211,7 @@ func TestRestartOptions(t *testing.T) {
 		t.Fatalf("restart always audit: %+v", last.Details)
 	}
 	f.ep.Set(func() { f.e1.CannotRestart = true })
-	if plan, err := f.svc.PlanRestart(ctx, f.tech, web, "Always"); err != nil || plan.Devices[0].Restart ||
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, RestartPlanInput{Targets: Targets{DeviceIDs: web}, Condition: "Always"}); err != nil || plan.Devices[0].Restart ||
 		!strings.Contains(plan.Devices[0].Reason, "cannot restart") {
 		t.Fatalf("always, agent that cannot restart: %+v, %v", plan, err)
 	}
@@ -219,14 +219,14 @@ func TestRestartOptions(t *testing.T) {
 	for i := range many {
 		many[i] = uuid.New()
 	}
-	_, err = f.svc.PlanRestart(ctx, f.admin, many, "Always")
+	_, err = f.svc.PlanRestart(ctx, f.admin, RestartPlanInput{Targets: Targets{DeviceIDs: many}, Condition: "Always"})
 	wantField(t, err, "deviceIds", "at most 100 devices")
 }
 
 func TestRetryJob(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx
-	res, err := f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
+	res, err := f.svc.Install(ctx, f.tech, InstallInput{DeviceIDs: []uuid.UUID{f.web}})
 	if err != nil || res.Succeeded != 1 {
 		t.Fatalf("install: %+v, %v", res, err)
 	}
