@@ -129,8 +129,8 @@ whether EasyRMM's record of applying it is on the computer (`recorded`).
 **Apply** changes only what the check found missing, and only to make it
 stricter: a value already stricter than EasyRMM's stays. A second apply
 changes nothing. It refuses what would lock you out or stop the computer
-from starting, and says why: password sign-in off where no account that may
-sign in has an SSH key, say, or USB storage off where a mounted filesystem is
+from starting, and says why: password sign-in off where no administrator
+who may sign in has an SSH key, say, or USB storage off where a mounted filesystem is
 on a USB disk, or `/etc/fstab` mounts one at boot without `nofail`. It
 leaves alone a firewall the computer already has. A module
 that fails part way is put back as it was, but for packages it installed
@@ -159,16 +159,34 @@ Apply's options:
 | `passwordOff` | SSH | Turns password sign-in off |
 | `epel` | fail2ban | On Rocky Linux and AlmaLinux, adds the EPEL repository fail2ban comes from; refused on Red Hat Enterprise Linux, where EPEL is added by hand |
 
+`passwordOff` is refused unless sshd has an `AuthorizedKeysCommand`, or
+an administrator who may sign in has a key: root, where `PermitRootLogin`
+lets root in with a key, or a member of `sudo`, `wheel` or `admin`, with a
+login shell, an account that has not expired, and allowed by sshd's
+`AllowUsers` and the like. The key is a line of their authorized keys file
+that is one: a known type (Ed25519, RSA, ECDSA, or a security key's) with
+its key, without a forced command (`command=`). Whether root signed in with
+a password lately is read from what sshd itself wrote to the journal, and
+from `auth.log` or `secure`. Anyone can write a line to those two files,
+which can only keep root's password sign-in on.
+
 **Undo** reverses what apply recorded. Before changing anything, each module
 records on the computer, in `/var/lib/easyrmm-hardening/`, the files,
 modes, kernel values, services, packages and rules it changes. Undo puts back
 each one that is still as apply left it, leaves what someone changed since,
 and says what it left and why. It removes the packages apply installed when
 that removes nothing else, and only those still at the version apply
-installed: one upgraded or installed again since stays. On Debian and
-Ubuntu it purges a package only while its configuration files are as
-installed; it removes one whose files someone changed, and keeps those
-files. A package an installation upgraded as a dependency stays upgraded.
+installed: one upgraded or installed again since stays. It removes them,
+and never purges them, so what is the computer's stays: on Debian and
+Ubuntu, their configuration files (dpkg's, and those `ucf` keeps, as
+AIDE's), their logs (the audit trail in `/var/log/audit`, fail2ban's log)
+and their data (fail2ban's ban database). dpkg then lists
+such a package as `rc`, and the result names it with the command that
+deletes what it left: `apt-get purge` and its name. On Red Hat Enterprise
+Linux, its rebuilds and Fedora, the files a package did not ship (its
+logs, its data) stay, and a configuration file changed since installation
+is kept as `.rpmsave`. The rollback of a failed apply does the same. A
+package an installation upgraded as a dependency stays upgraded.
 A directory under `/etc` that was there before and that an installation
 gave another mode or owner (on AlmaLinux 10, audit-rules makes
 `/etc/audit` 0750) gets them back once that installation's packages are
@@ -217,7 +235,12 @@ module instead, which is put back. The modules after it are *Not run*. A
 run canceled (**Stop job** or **Stop run**) stops the step it is in, and
 the script releases the computer for the next run. A run canceled or out
 of time in the middle of a module leaves it *Half applied*: applying
-it again finishes it, and undo reverses it. Installing packages on a slow
+it again finishes it, and undo reverses it. Canceled while it installs
+packages, the run first records those the installation had added, so undo
+removes them too. A run that is killed outright, not canceled (the
+agent's process killed, the computer losing power), cannot: undo then
+says which installation was interrupted and leaves its packages, to
+remove by hand if they are not wanted. Installing packages on a slow
 computer takes a while, so apply fewer modules at a time there.
 
 A package step cut short can leave the package database unusable, so that

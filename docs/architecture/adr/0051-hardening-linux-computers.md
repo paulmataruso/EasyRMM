@@ -157,12 +157,31 @@ log collection feature will).
 * **Root with a password.** If the authentication log or journal shows
   `Accepted password for root` in the last 30 days (backup software often
   signs in that way), apply leaves `PermitRootLogin` as it is and says
-  why, unless the option `root-password-off` is given.
+  why, unless the option `root-password-off` is given. *Amended
+  2026-11-22 (decided in review):* of the journal, only entries that
+  sshd's processes (`sshd`, `sshd-session`) wrote as root count
+  (`_UID=0` and `_COMM`, fields journald takes from the sending process):
+  a user's `logger -t sshd`, or a copy of logger named `sshd`, writes
+  neither. The log files (`auth.log`, `secure`) are still read, for what
+  a journal kept in memory does not reach back to, and there anyone can
+  write such a line with `logger`. That only keeps root's password
+  sign-in on, the safe direction, and is left so.
 * **Password sign-in off** is a separate option, off by default. It sets
   `PasswordAuthentication no` and `KbdInteractiveAuthentication no` (or
   passwords still work through PAM), and is refused unless at least one
   account that may sign in has a key in its `AuthorizedKeysFile`, or sshd
-  has an `AuthorizedKeysCommand`.
+  has an `AuthorizedKeysCommand`. *Amended 2026-11-22 (decided in
+  review):* any line of any user's file that was not a comment counted,
+  so a user without sudo could make password-off go through with a stray
+  word. Now sshd must take keys (`PubkeyAuthentication`), and the account
+  must be root (where `PermitRootLogin` lets it in with a key) or an
+  administrator (in `sudo`, `wheel` or `admin`), with a login shell, not
+  expired, not locked where sshd does not use PAM (with PAM, a key gets
+  into an account whose password is locked), and allowed by sshd
+  (`AllowUsers` and the like). The key must be a line that parses as one:
+  options without a forced command (`command=`), a known key type
+  (Ed25519, RSA, ECDSA, and their security-key forms), and that type's key
+  in valid base64, whose blob names the same type.
 * **Checking and reloading.** `/run/sshd` is created if missing before
   any `sshd -T` or `sshd -t`, in every mode and module that runs them (on
   Ubuntu with socket activation both fail without it). The configuration
@@ -308,7 +327,24 @@ or Kubernetes installed later.
   otherwise removes it, keeping them, and says which were kept. An
   installation never removes a package: `apt-get` runs with `--no-remove`
   and `dnf` without `--allowerasing`, so one that would (a conflict) fails,
-  and is put back.
+  and is put back. *Amended 2026-11-22 (decided in review):* undo, and the
+  rollback of a failed apply, remove packages and never purge them, on
+  every module and family; this replaces the purges above. A purge runs
+  the package's own scripts, which delete what is the computer's, not the
+  installation's: auditd's deletes `/var/log/audit`, the audit trail;
+  fail2ban's its logs and its ban database; aide-common's every
+  configuration file, edited or not, which `ucf` manages, not dpkg (Debian
+  12's aide-common has no dpkg configuration files at all, so recording
+  those could not guard them). On Debian and Ubuntu, a removed package's
+  configuration files (dpkg's and `ucf`'s), logs and data stay; dpkg lists
+  it as removed with its configuration kept (`rc`), and the result names
+  those packages with the command that purges them (`apt-get purge`). A
+  package that dpkg forgets when it removes it (no configuration files and
+  no `postrm` script) leaves nothing of dpkg's to purge, and the result
+  says nothing more of it. On RHEL and Fedora, `rpm -e` leaves the files a
+  package did not ship (its logs, its data) and keeps a configuration file
+  changed since installation as `.rpmsave`, and the result says so. The
+  record and the marker no longer list configuration files.
   *Amended 2026-11-22,* as CI's machines found: on Ubuntu 22.04,
   aide-common depends on a mailx, and bsd-mailx, apt's choice, on a mail
   server, which would listen, so AIDE comes with mailutils, which needs
@@ -400,7 +436,16 @@ or Kubernetes installed later.
   run killed outright (SIGKILL) leaves its steps running, and the lock
   counts as held while any of them runs, so that no later run starts a
   package step beside one left over. The lock also names the boot it was
-  taken in: nothing from before a restart runs. *Amended 2026-11-22 (decided in review):* a
+  taken in: nothing from before a restart runs. *Amended 2026-11-22
+  (decided in review):* a cancel or the time limit (SIGTERM) during an
+  installation records, once the step is stopped and before the lock is
+  released, the packages the installation had added (against the list
+  taken before it, each package query cut to 3 seconds, inside the 10
+  seconds before SIGKILL), with what else it changed and, for the audit
+  module, the marker, in place of the note that an installation was under
+  way: undo removes them as any others. A run killed outright (SIGKILL)
+  leaves only the note, and undo says to remove that installation's
+  packages by hand. *Amended 2026-11-22 (decided in review):* a
   package step cut short leaves the package database unusable, and every
   later package step then fails: dpkg is left interrupted, on which apt
   refuses everything until `dpkg --configure -a` runs; and on RHEL 8, an
@@ -574,6 +619,16 @@ hardening the operator wanted, unseen.
   configuration files, a package already half installed, an installation
   that would remove one, the marker's directory, generated files, links,
   the firewall undone without fail2ban, and a USB disk in `/etc/fstab`.
+  *Amended 2026-11-22 (decided in review):* and undo leaving what a
+  package's purge would delete (its configuration files, files its
+  scripts made, a log directory, its data), a cancel during an
+  installation and a run killed during one, the keys and accounts that
+  let password sign-in go off, and which journal entries tell that root
+  signed in with a password (with stand-ins for `sshd -T` and the
+  journal). The machines check that the audit trail, and fail2ban's log
+  where it writes one, are still there after undo; on Debian and Ubuntu they then purge the
+  packages undo left as `rc`, each of which its result must name, before
+  comparing the machine with its state before apply.
 * **Packages** that modules install come from a local package repository
   baked into each test image, as the bundle test's host image does.
   *Amended 2026-11-21:* that repository is not built yet. Until it is, the
@@ -582,6 +637,11 @@ hardening the operator wanted, unseen.
   fails it.
 * **Static checks**: `shellcheck -s sh` on the script in CI, and a test that
   fails when a module, mode and distribution family has no case.
+  *Amended 2026-11-22 (decided in review):* CI checked only the machine
+  harness's runner; it now runs ShellCheck 0.11.0, pinned by digest, on
+  both, as releases before 0.10 report the functions a trap runs as
+  unreachable. A test fails when CI's machine jobs (`ci.yml`'s matrix)
+  are not the pinned images, in their order.
 * Before it is called complete it is run on a real server.
 
 ## Consequences

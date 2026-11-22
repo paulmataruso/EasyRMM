@@ -203,8 +203,11 @@ All notable changes to this project are documented here. The format follows
   and the script works to that limit: it stops a step that would run past
   it, fails an area whose package step lacks the time it needs, and does
   not run the areas after it (*Not run*). Canceling a run stops the step it
-  is in. Undo removes only packages still at the version apply installed,
-  keeps their configuration files where someone changed them, gives a
+  is in, and records the packages an installation it stopped had added, so
+  that undo removes them. Undo removes only packages still at the version
+  apply installed, and never purges them: their configuration files, logs
+  (the audit trail among them) and data stay, and on Debian and Ubuntu the
+  result names the packages `apt-get purge` would clear. It gives a
   directory an installation changed its mode and owner back, and removes
   the files the installation made that its packages leave, once those
   packages are gone, removes
@@ -212,6 +215,9 @@ All notable changes to this project are documented here. The format follows
   labels, and refuses the firewall alone while fail2ban bans with it; an
   installation never removes a package; fail2ban's bans stop growing at a
   day; USB storage is refused where `/etc/fstab` needs a USB disk to boot.
+  Password sign-in goes off only where root or an administrator who may
+  sign in has a key that parses as one, and root's password sign-ins are
+  read from what sshd itself wrote to the journal.
   Apply and undo run on the releases CI's machine tests cover (Debian 12
   and 13, Ubuntu 22.04, 24.04 and 26.04, Rocky Linux 8, 9 and 10, AlmaLinux
   9 and 10, Fedora 45); other supported releases are checked only. Undo also runs

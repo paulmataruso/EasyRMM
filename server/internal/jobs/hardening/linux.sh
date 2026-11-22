@@ -338,6 +338,7 @@ on_signal() {
 		exit 143
 	fi
 	stop_steps
+	pkg_interrupted
 	release
 	exit 143
 }
@@ -910,12 +911,18 @@ ssh_algorithms() {
 
 # root_password_used: whether root signed in to SSH with a password in the
 # last 30 days, from the journal and auth.log or secure. Returns 0 yes, 1 no,
-# 2 when there was nothing to read.
+# 2 when there was nothing to read. The journal's entries are those sshd's
+# processes wrote as root (_UID and _COMM, which journald sets from the
+# sender's process: a user's logger -t sshd, or a copy of logger named
+# sshd, cannot forge one). The log files are read too, for the days a
+# journal kept in memory does not reach back to; anyone may write a line
+# to them with logger, and such a line can only keep root's password
+# sign-in on, never turn it off.
 root_password_used() {
 	rp_read=no
 	rp_pattern='Accepted (password|keyboard-interactive/pam) for root '
 	if have journalctl; then
-		rp_out=$(t 120 journalctl -q --no-pager -o cat --since=-30d SYSLOG_IDENTIFIER=sshd SYSLOG_IDENTIFIER=sshd-session 2>/dev/null)
+		rp_out=$(t 120 journalctl -q --no-pager -o cat --since=-30d _UID=0 _COMM=sshd _COMM=sshd-session 2>/dev/null)
 		rp_rc=$?
 		if [ "$rp_rc" -eq 0 ]; then
 			rp_read=yes
@@ -995,10 +1002,14 @@ expand_tokens() {
 	printf '%s' "$et_out"
 }
 
-# key_sign_in_possible: whether sshd has an AuthorizedKeysCommand, or some
-# local account that may sign in (a login shell, allowed by sshd; root only if
-# PermitRootLogin would let it in with a key) has a key in its authorized keys
-# file. ADR-0051 refuses password-off otherwise.
+# key_sign_in_possible: whether sshd takes keys and has an
+# AuthorizedKeysCommand, or an administrator who may sign in has a key in
+# their authorized keys file: root, if PermitRootLogin would let it in with
+# a key, or a member of sudo, wheel or admin; with a login shell, an
+# account not expired (nor locked, where sshd does not use PAM, which lets
+# a key in to an account whose password is locked), and allowed by sshd. A
+# key is a line that parses as one (ssh_key_line), without a forced
+# command. ADR-0051 refuses password-off otherwise.
 key_sign_in_possible() {
 	# sshd's patterns and file names are words here, never globs.
 	set -f
@@ -1008,23 +1019,72 @@ key_sign_in_possible() {
 	return "$kp_rc"
 }
 key_sign_in_possible_() {
+	[ "$(sshd_val pubkeyauthentication)" != no ] || return 1
 	case $(sshd_val authorizedkeyscommand) in '' | none) ;; *) return 0 ;; esac
 	kp_files=$(sshd_val authorizedkeysfile)
 	[ -n "$kp_files" ] && [ "$kp_files" != none ] || return 1
 	kp_root=$1
+	kp_pam=$(sshd_val usepam)
+	kp_today=$(($(date +%s) / 86400))
 	while IFS=: read -r kp_u _ kp_uid _ _ kp_home kp_shell; do
 		case $kp_shell in */nologin | */false | */sync | */shutdown | */halt) continue ;; esac
 		[ -n "$kp_home" ] || continue
-		if [ "$kp_uid" = 0 ] && [ "$kp_root" = no ]; then continue; fi
+		if [ "$kp_uid" = 0 ]; then
+			[ "$kp_root" = yes ] || continue
+		else
+			case " $(id -Gn "$kp_u" 2>/dev/null) " in *" sudo "* | *" wheel "* | *" admin "*) ;; *) continue ;; esac
+		fi
+		kp_sh=$(awk -F: -v u="$kp_u" '$1 == u { print $2 ":" $8; exit }' /etc/shadow 2>/dev/null)
+		case ${kp_sh#*:} in '' | *[!0-9]*) ;; *) [ "${kp_sh#*:}" -ge "$kp_today" ] || continue ;; esac
+		case $kp_pam:$kp_sh in yes:*) ;; *:!*) continue ;; esac
 		user_may_sign_in "$kp_u" || continue
 		for kp_p in $kp_files; do
 			kp_f=$(expand_tokens "$kp_p" "$kp_home" "$kp_u" "$kp_uid")
-			# A key is a line that is neither empty nor a comment; the time
-			# limit is for home directories on a network that does not answer.
-			t 10 grep -Eq '^[[:space:]]*[^#[:space:]]' "$kp_f" 2>/dev/null && return 0
+			# The time limit is for home directories on a network that does
+			# not answer.
+			if t 10 cat "$kp_f" 2>/dev/null | {
+				while IFS= read -r kp_l; do
+					ssh_key_line "$kp_l" && exit 0
+				done
+				exit 1
+			}; then
+				return 0
+			fi
 		done
 	done </etc/passwd
 	return 1
+}
+# ssh_key_line LINE: whether LINE of an authorized keys file is a key sshd
+# takes, with no forced command: options (none with command=), a known key
+# type, then that type's key in base64.
+ssh_key_line() {
+	kl_opts=
+	# shellcheck disable=SC2086 # the line's words; key_sign_in_possible turned globbing off
+	set -- $1
+	while [ $# -ge 2 ]; do
+		case $1 in
+		ssh-ed25519 | ssh-rsa | ecdsa-sha2-nistp256 | ecdsa-sha2-nistp384 | ecdsa-sha2-nistp521 | \
+			sk-ssh-ed25519@openssh.com | sk-ecdsa-sha2-nistp256@openssh.com)
+			case $kl_opts in *command=*) return 1 ;; esac
+			ssh_key_ok "$1" "$2"
+			return
+			;;
+		'#'*) return 1 ;;
+		esac
+		kl_opts="$kl_opts $1"
+		shift
+	done
+	return 1
+}
+# ssh_key_ok TYPE BASE64: whether BASE64 is valid base64 of a public key of
+# TYPE: its blob starts with TYPE's name, as a length and the name, and
+# holds more than that.
+ssh_key_ok() {
+	printf '%s' "$2" | base64 -d >/dev/null 2>&1 || return 1
+	ko_n=${#1}
+	[ "$(printf '%s' "$2" | base64 -d 2>/dev/null | wc -c)" -gt $((ko_n + 8)) ] || return 1
+	[ "$(printf '%s' "$2" | base64 -d 2>/dev/null | head -c $((ko_n + 4)) | od -An -v -tx1 | tr -d ' \n')" = \
+		"$(printf '%08x' "$ko_n")$(printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n')" ]
 }
 
 # Match blocks in the main file and every file it includes, as
@@ -2539,7 +2599,6 @@ check_integrity() {
 #       a systemd unit's state before apply changed it, and after
 #   pkg TOKEN...                 the packages an installation added, each
 #                                with its version and install time (PKG_TOKEN)
-#   conffile PACKAGE PATH MD5    a configuration file of one, as installed
 #   pkgdir TOKENS PATH MODE OWNER MODE-AFTER OWNER-AFTER
 #       a directory under /etc that was there before the installation of
 #       TOKENS (the pkg record's, as one field) and that it gave another
@@ -2604,9 +2663,14 @@ M_RECOV_PKGS=
 # package stays (a module stream it needs stays too).
 PKG_NOTES=
 PKG_KEPT=no
-# Where pkg_remove_alone reads conffile records: the module's record, or
-# the auditd marker.
+# Where pkg_remove_alone reads pkgdir and pkgfile records: the module's
+# record, or the auditd marker.
 PKG_CONF_SRC=
+# The packages of the installation under way (pkg_install's arguments),
+# which a cancel records (pkg_interrupted); PKG_Q runs the package queries,
+# with a time limit while a cancel stops the run.
+PKG_PENDING=
+PKG_Q=
 # Set while undo of audit runs: auditd's packages and unit are the
 # marker's (undo_audit_after).
 AUDIT_UNDO=no
@@ -2725,7 +2789,10 @@ tx_rollback() {
 			# shellcheck disable=SC2086 # tokens, one word each
 			tr_p=$(pkg_token_names ${tr_c#pkg_remove_alone } | tr '\n' ' ' | sed 's/ $//')
 			case $tr_rc in
-			0) ;;
+			0)
+				tr_k=$(pkg_kept "$PKG_REMOVED")
+				[ -z "$tr_k" ] || TX_LEFT="${TX_LEFT:+$TX_LEFT; }${tr_k#; }"
+				;;
 			1) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay, because removing them would remove other packages too" ;;
 			*) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay: the package manager could not remove them$(pkg_why)" ;;
 			esac
@@ -2972,18 +3039,15 @@ daemon_reload() { [ "$SYSTEMD_UP" = no ] || t 120 systemctl daemon-reload >/dev/
 # Installed means in any state but not installed: dpkg's half-installed,
 # unpacked and half-configured packages too (iU, iF and the like), so that
 # one a stopped run left is never taken for one an installation added.
-# pkg_names rc lists those removed with their configuration files left
-# (Debian and Ubuntu only).
+# Removed with its configuration files left (dpkg's rc) is not installed.
 pkg_names() {
+	# shellcheck disable=SC2016,SC2086 # dpkg-query's fields; PKG_Q, words
 	case $FAMILY in
 	debian)
-		# shellcheck disable=SC2016 # dpkg-query's fields, not the shell's
-		dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk -v rc="${1:-}" '
-		{ s = substr($1, 2, 1) }
-		rc == "" && s != "n" && s != "c" { print $2 }
-		rc != "" && s == "c" { print $2 }'
+		$PKG_Q dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null |
+			awk '{ s = substr($1, 2, 1) } s != "n" && s != "c" { print $2 }'
 		;;
-	*) [ $# -gt 0 ] || rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
+	*) $PKG_Q rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
 	esac | sort -u
 }
 pkg_installed() {
@@ -3000,14 +3064,14 @@ pkg_installed() {
 # removes only a package whose stamp is the same (not upgraded or installed
 # again since).
 pkg_stamp() {
+	# shellcheck disable=SC2016,SC2086 # dpkg-query's fields; PKG_Q, words
 	case $FAMILY in
 	debian)
-		# shellcheck disable=SC2016
-		ps_v=$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null) || return 0
+		ps_v=$($PKG_Q dpkg-query -W -f='${Version}' "$1" 2>/dev/null) || return 0
 		ps_t=$(stat -c %Y "/var/lib/dpkg/info/$1.list" 2>/dev/null) || ps_t=0
 		;;
 	*)
-		ps_v=$(rpm -q --qf '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE} %{INSTALLTIME}\n' "$1" 2>/dev/null | head -n 1) || return 0
+		ps_v=$($PKG_Q rpm -q --qf '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE} %{INSTALLTIME}\n' "$1" 2>/dev/null | head -n 1) || return 0
 		ps_t=${ps_v##* }
 		ps_v=${ps_v% *}
 		;;
@@ -3015,33 +3079,16 @@ pkg_stamp() {
 	[ -n "$ps_v" ] || return 0
 	printf '%s/%s' "$ps_v" "$ps_t"
 }
-# A package as a record names it, "NAME/VERSION/TIME" (pkg_stamp), then
-# "=rc" for one whose configuration files were left from an earlier removal
-# (undo keeps them). Read back from a record, a token must match this, or
-# nothing of the record is used: the record is root's alone, but a token is
-# a word the script runs a package manager with.
-PKG_TOKEN='[A-Za-z0-9][A-Za-z0-9.+_:-]*/[A-Za-z0-9.+~:^_-]+/[0-9]+(=rc)?'
+# A package as a record names it, "NAME/VERSION/TIME" (pkg_stamp). Read
+# back from a record, a token must match this, or nothing of the record is
+# used: the record is root's alone, but a token is a word the script runs a
+# package manager with.
+PKG_TOKEN='[A-Za-z0-9][A-Za-z0-9.+_:-]*/[A-Za-z0-9.+~:^_-]+/[0-9]+'
 # pkg_tokens_ok TOKEN...: whether every token is one.
 pkg_tokens_ok() {
 	[ $# -gt 0 ] || return 1
 	printf '%s\n' "$@" | grep -Evqx "$PKG_TOKEN" && return 1
 	return 0
-}
-# pkg_conffiles NAME...: the configuration files dpkg keeps for the
-# packages (Debian and Ubuntu), as records: "conffile NAME PATH MD5", with
-# the MD5 of the file as it is now ("-" where there is none). Undo purges a
-# package only while each is as apply left it.
-pkg_conffiles() {
-	[ "$FAMILY" = debian ] || return 0
-	for pc_n in "$@"; do
-		# shellcheck disable=SC2016
-		dpkg-query -W -f='${Conffiles}\n' "$pc_n" 2>/dev/null | awk '$1 ~ /^\// && $NF != "obsolete" { print $1 }' |
-			while IFS= read -r pc_f; do
-				pc_m=-
-				[ ! -f "$pc_f" ] || pc_m=$(md5sum <"$pc_f" | cut -c1-32)
-				printf 'conffile%s%s%s%s%s%s\n' "$tab" "$pc_n" "$tab" "$pc_f" "$tab" "$pc_m"
-			done
-	done
 }
 # pkg_why: why the last installation or removal failed, for a reason (""
 # or ": ...").
@@ -3235,20 +3282,20 @@ dpkg_audit_names() {
 
 # pkg_install PACKAGE...: installs them, refreshing the package lists first,
 # and records every package that installation added (a token each, see
-# PKG_TOKEN) and, on Debian and Ubuntu, their configuration files as they
-# are now (pkg_conffiles). It never removes a package: an installation that
-# would (a conflict) fails, as apt-get --no-remove and dnf without
-# --allowerasing do.
+# PKG_TOKEN), and what else it changed (pkg_record_new). It never removes a
+# package: an installation that would (a conflict) fails, as apt-get
+# --no-remove and dnf without --allowerasing do.
 pkg_install() {
 	PKG_ERR=
 	pkg_ready || return 1
 	need_time "$PKG_INSTALL_MIN" "install $*" || return 1
 	intent || return 1
-	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
+	pkg_names >"$TX_DIR/before" || return 1
 	pkg_dirs >"$TX_DIR/dirs-before"
 	pkg_etc_paths >"$TX_DIR/paths-before"
 	pkg_streams_before
 	rec_add "pending$tab$*"
+	PKG_PENDING=$*
 	pi_rc=0
 	pi_min=10
 	if [ "$PKG_REFRESHED" = no ]; then
@@ -3272,41 +3319,60 @@ pkg_install() {
 		*) t 1500 dnf -q -y --setopt=install_weak_deps=False install "$@" ;;
 		esac >>"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?
 	fi
+	pkg_record_new
+	[ "$pi_rc" -eq 0 ] || {
+		pkg_failed "$pi_rc" "$pi_min"
+		return 1
+	}
+}
+# pkg_record_new: after the installation of PKG_PENDING, or a cancel during
+# it (pkg_interrupted), records the packages it added (PKG_NEW), each with
+# its stamp, in place of its pending record, then what else it changed.
+pkg_record_new() {
 	pkg_names >"$TX_DIR/after"
 	PKG_NEW=
 	for pi_n in $(comm -13 "$TX_DIR/before" "$TX_DIR/after"); do
 		pi_s=$(pkg_stamp "$pi_n")
 		pi_tok="$pi_n/${pi_s:-0/0}"
-		grep -qxF -- "$pi_n" "$TX_DIR/rc" && pi_tok="$pi_tok=rc"
 		pkg_tokens_ok "$pi_tok" || pi_tok="$pi_n/unknown/0"
 		PKG_NEW="${PKG_NEW:+$PKG_NEW }$pi_tok"
 	done
-	awk -F "$tab" -v p="pending$tab$*" '$0 == p && !d { d = 1; next } { print }' "$MANIFEST" >"$MANIFEST.new" &&
+	awk -F "$tab" -v p="pending$tab$PKG_PENDING" '$0 == p && !d { d = 1; next } { print }' "$MANIFEST" >"$MANIFEST.new" &&
 		mv -f "$MANIFEST.new" "$MANIFEST"
+	PKG_PENDING=
 	# A module stream dnf enabled or changed for a package (RHEL 8's
 	# python36, for fail2ban): recorded before the packages, so that undo
 	# puts it back after removing them, and only if it removed them all.
 	pkg_streams_after
 	PKG_MADE=
-	if [ -n "$PKG_NEW" ]; then
-		pkg_dirs >"$TX_DIR/dirs-after"
-		PKG_MADE=$(
-			awk -v t="$tab" -v k="$PKG_NEW" '
-			{ p = substr($0, length($1) + length($2) + 3) }
-			FILENAME == ARGV[1] { b[p] = $1 t $2; next }
-			(p in b) && b[p] != $1 t $2 { print "pkgdir" t k t p t b[p] t $1 t $2 }' "$TX_DIR/dirs-before" "$TX_DIR/dirs-after"
-			pkg_ghosts
-		)
-		rec_add "pkg$tab$PKG_NEW"
-		# shellcheck disable=SC2046,SC2086 # tokens and names, one word each
-		pkg_conffiles $(pkg_token_names $PKG_NEW) >>"$MANIFEST"
-		[ -z "$PKG_MADE" ] || printf '%s\n' "$PKG_MADE" >>"$MANIFEST"
-		tx_push "pkg_remove_alone $PKG_NEW"
-	fi
-	[ "$pi_rc" -eq 0 ] || {
-		pkg_failed "$pi_rc" "$pi_min"
-		return 1
-	}
+	[ -n "$PKG_NEW" ] || return 0
+	pkg_dirs >"$TX_DIR/dirs-after"
+	PKG_MADE=$(
+		awk -v t="$tab" -v k="$PKG_NEW" '
+		{ p = substr($0, length($1) + length($2) + 3) }
+		FILENAME == ARGV[1] { b[p] = $1 t $2; next }
+		(p in b) && b[p] != $1 t $2 { print "pkgdir" t k t p t b[p] t $1 t $2 }' "$TX_DIR/dirs-before" "$TX_DIR/dirs-after"
+		pkg_ghosts
+	)
+	rec_add "pkg$tab$PKG_NEW"
+	[ -z "$PKG_MADE" ] || printf '%s\n' "$PKG_MADE" >>"$MANIFEST"
+	tx_push "pkg_remove_alone $PKG_NEW"
+}
+# pkg_interrupted: on a cancel (SIGTERM) while an installation runs, once
+# its step is stopped, records what it added (pkg_record_new), and the
+# auditd marker for the audit module's, so that undo removes them; within
+# seconds, as the agent kills the run 10 seconds after the signal. A run
+# killed outright (SIGKILL) leaves the pending record: undo says to remove
+# that installation's packages by hand.
+# shellcheck disable=SC2329 # the trap runs it
+pkg_interrupted() {
+	[ -n "$PKG_PENDING" ] && [ -f "$MANIFEST" ] && [ -f "$TX_DIR/before" ] || return 0
+	PKG_Q='timeout 3'
+	T_END=$(($(date +%s) + 4))
+	pkg_record_new
+	# shellcheck disable=SC2086 # tokens, one word each
+	if [ "$MODE:$CUR" = apply:audit ] && [ -n "$PKG_NEW" ]; then audit_mark $PKG_NEW; fi
+	PKG_Q=
 }
 # pkg_token_names TOKEN...: the packages' names, one a line.
 pkg_token_names() { printf '%s\n' "$@" | cut -d/ -f1; }
@@ -3413,7 +3479,7 @@ stream_back() {
 	fi
 }
 # pkg_removable PACKAGE...: whether removing them would remove nothing else
-# (simulated: apt-get -s, rpm -e --test). Names without =rc. Returns 1 when
+# (simulated: apt-get -s, rpm -e --test). Returns 1 when
 # it would, 2 when the simulation failed (PKG_ERR says why).
 pkg_removable() {
 	PKG_ERR=
@@ -3440,39 +3506,42 @@ pkg_removable() {
 		;;
 	esac
 }
-# pkg_remove PURGE PACKAGE...: removes them; on Debian and Ubuntu, then
-# purges the configuration files of those in PURGE (one word, names
-# separated by commas), which were not there before apply. PKG_ERR says why
-# it failed.
+# pkg_remove PACKAGE...: removes them, never purging: what their
+# maintainer scripts purge (configuration files, logs, data; auditd's purge
+# deletes /var/log/audit) is the computer's (pkg_kept says what stays).
+# PKG_ERR says why it failed.
 pkg_remove() {
-	pr_purge=$1
-	shift
 	PKG_ERR=
 	pr_rc=0
-	pr_min=15
 	case $FAMILY in
-	debian)
-		t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" remove "$@" || pr_rc=$?
-		# The purge gets the installation's limit: aide-common's undoes, one
-		# file at a time, what its configuration did.
-		if [ "$pr_rc" -eq 0 ] && [ -n "$pr_purge" ]; then
-			pr_min=25
-			# shellcheck disable=SC2046 # package names, one word each
-			t 1500 dpkg --purge $(printf '%s' "$pr_purge" | tr ',' ' ') || pr_rc=$?
-		fi
-		;;
+	debian) t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" remove "$@" || pr_rc=$? ;;
 	*) t 900 rpm -e "$@" || pr_rc=$? ;;
 	esac >"$TX_DIR/pkg.log" 2>&1
 	[ "$pr_rc" -eq 0 ] || {
-		pkg_failed "$pr_rc" "$pr_min"
+		pkg_failed "$pr_rc" 15
 		return 1
 	}
 }
+# pkg_kept NAMES: what removing the packages NAMES (one word, separated by
+# spaces) left, for the result: nothing, or "; " and what. dpkg keeps a
+# package removed, not purged, as "rc" where its purge would delete
+# something (configuration files, a postrm script); one it forgot left
+# nothing to purge. rpm -e leaves the files a package did not ship.
+pkg_kept() {
+	[ -n "$1" ] || return 0
+	case $FAMILY in
+	debian)
+		# shellcheck disable=SC2016,SC2086 # dpkg-query's fields; names, one word each
+		pk_rc=$(dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' $1 2>/dev/null |
+			awk '$1 == "rc" { printf "%s%s", s, $2; s = " " }')
+		[ -z "$pk_rc" ] || printf '; the configuration files, logs and data of %s stay (removed, not purged: apt-get purge %s removes them)' "$pk_rc" "$pk_rc"
+		;;
+	*) printf '; the files they did not ship (logs, data) stay, and configuration files changed since as .rpmsave' ;;
+	esac
+}
 # pkg_remove_alone TOKEN...: removes the packages the tokens (PKG_TOKEN)
 # name that are still installed as the installation left them, if that
-# removes nothing else. NAME=rc keeps its configuration files; so, on Debian
-# and Ubuntu, does a package one of whose configuration files changed since
-# apply (pkg_conf_changed): removed, not purged. A package upgraded or
+# removes nothing else, never purging them (pkg_remove). A package upgraded or
 # installed again since (another stamp) is left. PKG_NOTES says, one a
 # line, what it left and why; PKG_KEPT is yes once a package stays. Returns
 # 1 when removing them would remove other packages, 2 when the package
@@ -3493,8 +3562,6 @@ pkg_remove_alone() {
 		return 3
 	fi
 	pa_have=
-	pa_purge=
-	pa_conf=
 	pa_kept=no
 	PKG_BACK=
 	pa_now=$(pkg_names)
@@ -3502,7 +3569,6 @@ pkg_remove_alone() {
 		pa_n=${pa_t%%/*}
 		text_has "$pa_now" -xF "$pa_n" || continue
 		pa_s=${pa_t#*/}
-		pa_s=${pa_s%=rc}
 		pa_cur=$(pkg_stamp "$pa_n")
 		if [ "$pa_cur" != "$pa_s" ]; then
 			if [ "${pa_cur%/*}" != "${pa_s%/*}" ]; then
@@ -3515,13 +3581,6 @@ pkg_remove_alone() {
 			continue
 		fi
 		pa_have="$pa_have $pa_n"
-		[ "${pa_t%=rc}" = "$pa_t" ] || continue
-		pa_ch=$(pkg_conf_changed "$pa_n")
-		if [ -n "$pa_ch" ]; then
-			pa_conf="$pa_conf${nl}the configuration files of $pa_n, changed since apply ($pa_ch): the package was removed and they were kept"
-		else
-			pa_purge="$pa_purge,$pa_n"
-		fi
 	done
 	if [ -z "$pa_have" ]; then
 		[ "$pa_kept" = yes ] || pkg_made_back "$*"
@@ -3538,13 +3597,12 @@ pkg_remove_alone() {
 		return "$pa_rc"
 	fi
 	# shellcheck disable=SC2086
-	if ! pkg_remove "${pa_purge#,}" $pa_have; then
+	if ! pkg_remove $pa_have; then
 		PKG_KEPT=yes
 		return 2
 	fi
 	PKG_REMOVED=${pa_have# }
 	[ "$pa_kept" = yes ] || pkg_made_back "$*"
-	[ -z "$pa_conf" ] || pkg_note "${pa_conf#"$nl"}"
 	return 0
 }
 pkg_note() { PKG_NOTES="${PKG_NOTES:+$PKG_NOTES$nl}$1"; }
@@ -3605,19 +3663,6 @@ pkg_back_did() {
 	for pd_l in $PKG_BACK; do did "$pd_l"; done
 	IFS=$pd_oifs
 }
-# pkg_conf_changed NAME: the package's configuration files that are not as
-# apply recorded them (conffile records in PKG_CONF_SRC), separated by
-# commas. One removed since counts as unchanged: nothing of it is left to
-# keep.
-pkg_conf_changed() {
-	awk -F "$tab" -v n="$1" '$1 == "conffile" && $2 == n && NF == 4 { print $3 "\t" $4 }' "${PKG_CONF_SRC:-$MANIFEST}" 2>/dev/null |
-		while IFS=$tab read -r pc_f pc_m; do
-			case $pc_f in /*) ;; *) continue ;; esac
-			[ -f "$pc_f" ] || continue
-			[ "$(md5sum <"$pc_f" | cut -c1-32)" = "$pc_m" ] || printf '%s\n' "$pc_f"
-		done | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
-}
-
 # Mounts: mount_options PATH is the options PATH is mounted with now;
 # mount_flags_added NOW BEFORE lists which of nodev, nosuid and noexec NOW
 # has and BEFORE had not; mount_flags_back NOW BEFORE the options that take
@@ -3773,7 +3818,7 @@ undo_pkg() {
 	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
 	case $up_rc in
 	0)
-		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED"
+		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED$(pkg_kept "$PKG_REMOVED")"
 		pkg_back_did
 		;;
 	1) left "the packages it installed ($up_names), because removing them would remove other packages too" ;;
@@ -3888,7 +3933,7 @@ undo_records() {
 			undo_pkg "$@"
 			;;
 		# Read by undo_pkg.
-		conffile:4 | pkgdir:7 | pkgfile:5) ;;
+		pkgdir:7 | pkgfile:5) ;;
 		stream:5) undo_stream "$2" "$3" "$4" "$5" ;;
 		pending:2) left "the packages of an installation that was interrupted ($2): remove them by hand if they are not wanted" ;;
 		table:3) undo_table "$3" ;;
@@ -4356,8 +4401,8 @@ audit_shipped() {
 	esac
 }
 # audit_mark TOKEN...: the marker, after the audit module installed auditd:
-# the packages, as tokens (PKG_TOKEN), then their configuration files
-# (pkg_conffiles) and what else the installation changed (PKG_MADE).
+# the packages, as tokens (PKG_TOKEN), then what else the installation
+# changed (PKG_MADE).
 # Written only into a directory of root's alone (marker_dir_ok).
 audit_mark() {
 	mk_dir=${AUDITD_MARKER%/*}
@@ -4367,11 +4412,8 @@ audit_mark() {
 	fi
 	marker_dir_ok || return 1
 	tx_push "rm -f $AUDITD_MARKER"
-	mk_names=$(pkg_token_names "$@")
-	# shellcheck disable=SC2086 # package names, one word each
 	{
 		printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$*" &&
-			pkg_conffiles $mk_names &&
 			if [ -n "$PKG_MADE" ]; then printf '%s\n' "$PKG_MADE"; fi
 	} >"$AUDITD_MARKER.new" && mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
 }
@@ -4387,7 +4429,7 @@ marker_dir_ok() {
 	return 0
 }
 # marker_tokens: the marker's package tokens, one a line.
-marker_tokens() { sed -n '/^#/d; /^conffile	/d; /^pkgdir	/d; /^pkgfile	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
+marker_tokens() { sed -n '/^#/d; /^pkgdir	/d; /^pkgfile	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
 # marker_has_auditd: whether the marker's packages hold auditd (auditd on
 # Debian and Ubuntu, audit elsewhere).
 marker_has_auditd() { marker_tokens | cut -d/ -f1 | grep -Eqx 'auditd(:[a-z0-9]+)?|audit\.[A-Za-z0-9_]+'; }
@@ -4497,7 +4539,7 @@ undo_audit_after() {
 	0)
 		rm -f "$AUDITD_MARKER"
 		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
-		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
+		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER$(pkg_kept "$PKG_REMOVED")"
 		pkg_back_did
 		;;
 	1) left "auditd, which EasyRMM installed: removing its packages ($ua_pk) would remove other packages too" ;;

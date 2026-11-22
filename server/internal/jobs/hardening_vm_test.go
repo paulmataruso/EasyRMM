@@ -46,6 +46,13 @@ func TestHardeningOnMachines(t *testing.T) {
 	}
 }
 
+// machineLogs lists the logs undo must leave as they are, each that is
+// there and not empty with the digest of its first line: the audit trail
+// and fail2ban's.
+const machineLogs = `for f in /var/log/audit/audit.log /var/log/fail2ban.log; do
+	[ -s "$f" ] && printf '%s %s\n' "$f" "$(head -n 1 "$f" | sha256sum | cut -c1-64)"
+done; true`
+
 // What check may read but must never change: configuration, what an
 // administrator installed by hand, and the record apply and undo keep.
 const machineListing = `find /etc /usr/local /var/lib/easyrmm-hardening -xdev ` +
@@ -264,7 +271,16 @@ for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/de
 		}
 	}
 
+	// The logs, which undo leaves (it removes packages, never purging
+	// them; auditd's purge deletes /var/log/audit): each with its first
+	// line's digest.
+	logs := m.run(machineLogs, time.Minute)
+	if !strings.Contains(logs, "/var/log/audit/audit.log ") {
+		t.Errorf("no audit trail after apply: %q", logs)
+	}
+
 	// Undo, last module first.
+	var undone []string
 	for i := len(HardeningModules) - 1; i >= 0; i-- {
 		module := HardeningModules[i]
 		if module == "audit" {
@@ -276,6 +292,7 @@ for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/de
 		if r.Recorded {
 			t.Errorf("%s: a record is left after undo", module)
 		}
+		undone = append(undone, r.Done...)
 	}
 	for _, r := range m.script(HardeningUndo, HardeningModules).Modules {
 		if r.Outcome != HardeningNothingToUndo {
@@ -285,6 +302,13 @@ for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/de
 	if has, marked := m.hasAuditd(), m.marked(); has != auditdBefore || marked {
 		t.Errorf("after undo auditd installed: %v, the marker: %v; before apply auditd installed: %v", has, marked, auditdBefore)
 	}
+	// Each still there, or rotated (audit.log.1, fail2ban.log.1).
+	if gone := m.run("while read -r f d; do\n"+
+		`	for g in "$f" "$f".[0-9]*; do [ "$(head -n 1 "$g" 2>/dev/null | sha256sum | cut -c1-64)" = "$d" ] && continue 2; done`+"\n"+
+		"	echo \"$f\"\ndone <<'EOF'\n"+logs+"\nEOF", time.Minute); gone != "" {
+		t.Errorf("logs gone after undo: %s", gone)
+	}
+	m.purgeKept(before, undone)
 
 	// After a restart, everything as it was before apply.
 	m.restart()
@@ -446,6 +470,39 @@ func (m *hardeningMachine) keepsAuditd(before bool) {
 	r = scriptModule(m.t, m.script(HardeningApply, []string{"audit"}), "audit")
 	if marked := m.marked(); r.Outcome != HardeningApplied || marked == before {
 		m.t.Errorf("audit applied again over the auditd it installed: %s %q, the marker %v", r.Outcome, r.Done, marked)
+	}
+}
+
+// purgeKept: on Debian and Ubuntu, the packages undo removed that dpkg
+// keeps (rc: their configuration files, logs and data), each of which
+// undo's result names, with how to purge it; purged, so that what the
+// machine is compared with is as before apply.
+func (m *hardeningMachine) purgeKept(before string, undone []string) {
+	m.t.Helper()
+	if m.family != "debian" {
+		return
+	}
+	var kept []string
+	for name := range strings.FieldsSeq(m.run(`dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' | awk '$1 == "rc" { print $2 }'`, time.Minute)) {
+		if !slices.ContainsFunc(strings.Split(before, "\n"), func(l string) bool {
+			f := strings.Fields(l)
+			return len(f) >= 3 && f[0] == "package" && f[1] == "rc" && f[2] == name
+		}) {
+			kept = append(kept, name)
+		}
+	}
+	for _, name := range kept {
+		if !slices.ContainsFunc(undone, func(d string) bool {
+			_, list, ok := strings.Cut(d, "; the configuration files, logs and data of ")
+			list, _, _ = strings.Cut(list, " stay (removed, not purged: apt-get purge ")
+			return ok && slices.Contains(strings.Fields(list), name)
+		}) {
+			m.t.Errorf("%s, removed and not purged, is not named in undo's result: %q", name, undone)
+		}
+	}
+	m.t.Logf("purging what undo kept: %q", kept)
+	if len(kept) > 0 {
+		m.run("dpkg --purge "+strings.Join(kept, " ")+" >/dev/null", 10*time.Minute)
 	}
 }
 

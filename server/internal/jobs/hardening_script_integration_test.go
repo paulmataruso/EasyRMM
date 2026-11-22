@@ -50,16 +50,18 @@ func TestCheckInContainers(t *testing.T) {
 			scriptCheckAll(t, c)
 			scriptUsageErrors(t, c)
 			scriptOptions(t, c)
+			scriptSSHGuards(t, c)
 			scriptListeningPorts(t, c)
 			scriptJournal(t, c)
 			scriptApplyUndo(t, c)
 			scriptInterrupted(t, c)
 			scriptStepsStopped(t, c)
+			scriptCancelledInstall(t, c)
 			scriptTimeLimit(t, c)
 			scriptFailures(t, c)
 			scriptPackagesLeft(t, c)
 			scriptPackageStamps(t, c)
-			scriptConffiles(t, c)
+			scriptKeepsWhatPurgeRemoves(t, c)
 			scriptHalfInstalledBefore(t, c)
 			scriptNoRemove(t, c)
 			scriptRollbackLeaves(t, c)
@@ -748,8 +750,18 @@ func wantRecovered(t *testing.T, m HardeningModuleResult, pkg, why string, packa
 	if m.Outcome != HardeningUndone || m.Recorded || m.PackageRecovery == nil ||
 		m.PackageRecovery.Outcome != HardeningRecovered || m.PackageRecovery.Reason != why ||
 		!slices.Equal(m.PackageRecovery.Packages, packages) ||
-		!slices.Contains(m.Done, why) || !slices.Contains(m.Done, "Removed the packages it installed: "+pkg) {
+		!slices.Contains(m.Done, why) || !slices.ContainsFunc(m.Done, removed(pkg)) {
 		t.Errorf("undo after the package database was left unusable: %+v, want %q configuring %q", m, why, packages)
+	}
+}
+
+// removed matches undo's line for removing the packages PKGS, with what
+// they leave (on RHEL and Fedora, always said; on Debian and Ubuntu, for
+// packages dpkg keeps).
+func removed(pkgs string) func(string) bool {
+	return func(d string) bool {
+		const prefix = "Removed the packages it installed: "
+		return d == prefix+pkgs || strings.HasPrefix(d, prefix+pkgs+"; ")
 	}
 }
 

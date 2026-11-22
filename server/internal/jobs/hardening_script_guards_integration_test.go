@@ -249,38 +249,34 @@ func scriptPackageStamps(t *testing.T, c *scriptContainer) {
 	c.sh(t, "rm -rf "+stateDir)
 }
 
-// scriptConffiles: undo purges a package apply installed only while its
-// configuration files are as apply recorded them; one changed since is
-// kept, its package removed, not purged. Debian and Ubuntu.
-func scriptConffiles(t *testing.T, c *scriptContainer) {
+// scriptKeepsWhatPurgeRemoves: undo removes the packages apply installed,
+// never purging them: what their purge would delete stays, as auditd's
+// purge deletes /var/log/audit and aide-common's every configuration file
+// ucf keeps. A package whose purge deletes its configuration file, the
+// files its maintainer script made, a log directory (/var/log/audit) and
+// its data stands in. Debian and Ubuntu.
+func scriptKeepsWhatPurgeRemoves(t *testing.T, c *scriptContainer) {
 	if !c.has(t, "dpkg-deb") {
 		return
 	}
-	const name, conf = "easyrmm-test-conf", "/etc/easyrmm-test.conf"
-	c.buildDeb(t, name, "", "/DEBIAN/conffiles "+conf+"\\n", conf+" shipped\\n")
-	install := func() {
-		c.sh(t, "rm -rf "+stateDir+" && { dpkg --purge "+name+" >/dev/null 2>&1; true; } && dpkg -i /tmp/"+name+".deb >/dev/null")
-		c.record(t, "sudo", "pkg\t"+c.token(t, name), "conffile\t"+name+"\t"+conf+"\t"+strings.TrimSpace(c.sh(t, "md5sum <"+conf+" | cut -c1-32")))
-	}
-
-	install()
-	c.sh(t, "echo 'an administrator was here' >>"+conf)
+	const name, conf = "easyrmm-test-keep", "/etc/easyrmm-test.conf"
+	made := []string{"/etc/easyrmm-test/made.conf", "/var/log/audit/audit.log", "/var/lib/easyrmm-test/data"}
+	c.buildDeb(t, name, "", "/DEBIAN/conffiles "+conf+"\\n", conf+" shipped\\n",
+		"/DEBIAN/postinst #!/bin/sh\\nset -e\\nmkdir -p /etc/easyrmm-test /var/log/audit /var/lib/easyrmm-test\\n"+
+			"for f in "+strings.Join(made, " ")+"; do echo made >$f; done\\n",
+		"/DEBIAN/postrm #!/bin/sh\\nif [ \"$1\" = purge ]; then rm -rf /etc/easyrmm-test /var/log/audit /var/lib/easyrmm-test; fi\\n")
+	c.sh(t, "rm -rf "+stateDir+" /var/log/audit && dpkg -i /tmp/"+name+".deb >/dev/null && echo 'a line of the trail' >>/var/log/audit/audit.log")
+	c.record(t, "sudo", "pkg\t"+c.token(t, name))
 	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
-	want := []string{"Removed the packages it installed: " + name,
-		"Left as it is: the configuration files of " + name + ", changed since apply (" + conf + "): the package was removed and they were kept"}
-	if m.Outcome != HardeningPartlyUndone || !slices.Equal(m.Done, want) {
-		t.Errorf("undo after a configuration file changed: %+v, want %q", m, want)
+	want := []string{"Removed the packages it installed: " + name + "; the configuration files, logs and data of " + name + " stay (removed, not purged: apt-get purge " + name + " removes them)"}
+	if m.Outcome != HardeningUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo of an installed package: %+v, want %q", m, want)
 	}
-	if got := c.sh(t, "dpkg-query -W -f='${db:Status-Abbrev}' "+name+" && grep -c administrator "+conf); got != "rc 1\n" {
-		t.Errorf("the package and its changed file after undo: %q", got)
+	if got := strings.TrimSpace(c.sh(t, "dpkg-query -W -f='${db:Status-Abbrev}' "+name)); got != "rc" {
+		t.Errorf("%s after undo: %q, want rc (removed, its configuration kept)", name, got)
 	}
-
-	install()
-	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
-	if m.Outcome != HardeningUndone || !slices.Equal(m.Done, []string{"Removed the packages it installed: " + name}) {
-		t.Errorf("undo with its configuration file as installed: %+v", m)
-	}
-	c.sh(t, "! dpkg-query -W "+name+" >/dev/null 2>&1 && test ! -e "+conf+" && rm -rf "+stateDir+" /tmp/"+name+".deb")
+	c.sh(t, "test -f "+conf+" && for f in "+strings.Join(made, " ")+"; do test -f $f; done && grep -q 'a line of the trail' /var/log/audit/audit.log")
+	c.sh(t, "dpkg --purge "+name+" >/dev/null && test ! -e /var/log/audit && rm -rf "+stateDir+" /tmp/"+name+".deb")
 }
 
 // scriptHalfInstalledBefore: a package dpkg had left half configured before
@@ -632,4 +628,55 @@ func scriptPackageFiles(t *testing.T, c *scriptContainer) {
 		t.Errorf("undo of files an installation made: %+v, want %q", m, want)
 	}
 	c.sh(t, "test ! -e "+dir+" && test -f "+other+" && rm -rf "+other+" "+stateDir)
+}
+
+// scriptCancelledInstall: a cancel (SIGTERM) while an installation runs
+// records the packages it had added, so that undo removes them; a run
+// killed outright (SIGKILL) leaves only a note of the installation, and
+// undo says to remove its packages by hand. A stand-in apt-get installs a
+// package, then waits. Debian and Ubuntu.
+func scriptCancelledInstall(t *testing.T, c *scriptContainer) {
+	if !c.has(t, "dpkg-deb") {
+		return
+	}
+	const name = "easyrmm-test-cancel"
+	c.buildDeb(t, name, "")
+	c.standIn(t, "apt-get", `*" update "*) exit 0 ;;`+"\n"+
+		`*" install "*) dpkg -i /tmp/`+name+`.deb >/dev/null; echo $$ >/tmp/easyrmm-test-step; exec sleep 300 ;;`)
+	ended := `p=$(cat /tmp/pgid); test ! -e /proc/$p || test "$(cut -d' ' -f3 /proc/$p/stat)" = Z`
+	cancel := func(signal string) HardeningModuleResult {
+		t.Helper()
+		c.sh(t, "rm -rf "+stateDir+" /tmp/easyrmm-test-step && { dpkg --purge "+name+" >/dev/null 2>&1; true; }")
+		docker(t, "exec", "-d", c.name, "setsid", "sh", "-c", "echo $$ >/tmp/pgid; exec sh "+scriptPath+" apply integrity time-limit=3600")
+		c.waitFor(t, "/tmp/easyrmm-test-step")
+		c.sh(t, "kill -"+signal+" -$(cat /tmp/pgid)")
+		c.waitUntil(t, ended, "the run to end")
+		c.sh(t, "kill -KILL $(cat /tmp/easyrmm-test-step) 2>/dev/null; true")
+		c.waitUntil(t, stepGone, "the step to end")
+		return scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "integrity"), HardeningUndo, []string{"integrity"}), "integrity")
+	}
+
+	installed := func() string {
+		return strings.TrimSpace(c.sh(t, "dpkg-query -W -f='${db:Status-Abbrev}' "+name+" 2>/dev/null; true"))
+	}
+	m := cancel("TERM")
+	// Nothing for dpkg to keep: no configuration files, no postrm.
+	gone := "Removed the packages it installed: " + name
+	if !slices.Contains(m.Done, gone) || slices.ContainsFunc(m.Done, func(d string) bool { return strings.Contains(d, "remove them by hand") }) {
+		t.Errorf("undo after a cancel during the installation: %+v, want %q", m, gone)
+	}
+	if got := installed(); got != "" {
+		t.Errorf("%s after undo: %q, want it gone", name, got)
+	}
+
+	m = cancel("KILL")
+	if !slices.ContainsFunc(m.Done, func(d string) bool {
+		return strings.HasPrefix(d, "Left as it is: the packages of an installation that was interrupted (") && strings.HasSuffix(d, "): remove them by hand if they are not wanted")
+	}) {
+		t.Errorf("undo after the run was killed during the installation: %+v", m)
+	}
+	if got := installed(); got != "ii" {
+		t.Errorf("%s after undo of a killed installation: %q, want ii (left)", name, got)
+	}
+	c.sh(t, "dpkg --purge "+name+" >/dev/null && rm -rf "+stateDir+" /usr/local/sbin/apt-get /tmp/easyrmm-test-step /tmp/pgid /tmp/"+name+".deb")
 }

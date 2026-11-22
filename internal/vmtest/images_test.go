@@ -47,6 +47,30 @@ func TestImageTable(t *testing.T) {
 	}
 }
 
+// TestMachineJobs: CI runs a machine job (ci.yml's Machines matrix) for
+// each pinned image, in the table's order.
+func TestMachineJobs(t *testing.T) {
+	ci, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, job, ok := strings.Cut(string(ci), "name: Machines (${{ matrix.image }})")
+	if !ok {
+		t.Fatal("ci.yml has no Machines job")
+	}
+	m := regexp.MustCompile(`(?m)^\s+image: \[([^\]]*)\]$`).FindStringSubmatch(job)
+	if m == nil {
+		t.Fatal("ci.yml's Machines job has no image matrix")
+	}
+	var got []string
+	for s := range strings.SplitSeq(m[1], ",") {
+		got = append(got, strings.TrimSpace(s))
+	}
+	if !slices.Equal(got, Images()) {
+		t.Errorf("ci.yml's Machines matrix %v, want the pinned images %v", got, Images())
+	}
+}
+
 func TestSelected(t *testing.T) {
 	t.Setenv(ImageEnv, "")
 	if !slices.Equal(Selected(t), Images()) {
