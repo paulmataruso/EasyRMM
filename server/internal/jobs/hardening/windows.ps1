@@ -125,7 +125,11 @@ function Read-ErArguments {
 }
 
 # The computer: Windows' version, edition, installation type, role, joins
-# and MDM enrolment, read with cmdlets only.
+# and MDM enrolment, read with cmdlets only. What cannot be read is
+# unknown, never a guess: the role and join as 'unknown' and the MDM
+# enrolment as $null, with why in Unread (the reader's own note says why
+# the enrolments could not be read); Get-ErPlatformExtra makes such a
+# computer check only.
 function Get-ErPlatform {
     $cv = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
     $build = 0
@@ -136,22 +140,45 @@ function Get-ErPlatform {
     }
     $display = ''
     if ($cv -and $cv.DisplayVersion) { $display = [string]$cv.DisplayVersion } elseif ($cv -and $cv.ReleaseId) { $display = [string]$cv.ReleaseId }
-    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
-    $role = 'workstation'
-    $domain = $false
-    if ($cs) {
+    $unread = @()
+    $role = 'unknown'
+    $domain = $null
+    try {
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        if ($null -eq $cs) { throw 'Windows listed no computer system.' }
         switch ([int]$cs.DomainRole) {
+            0 { $role = 'workstation' }
+            1 { $role = 'workstation' }
             2 { $role = 'standalone_server' }
             3 { $role = 'member_server' }
             4 { $role = 'domain_controller' }
             5 { $role = 'domain_controller' }
+            default { $unread += "Windows reported a domain role this script does not know: $($cs.DomainRole)." }
         }
         $domain = [bool]$cs.PartOfDomain
+    } catch {
+        $unread += "Windows did not report the computer's role and domain: $($_.Exception.Message)"
     }
-    $entra = @(Get-ChildItem -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo' -ErrorAction SilentlyContinue).Count -gt 0
-    $joined = 'none'
-    if ($domain -and $entra) { $joined = 'domain_entra' } elseif ($domain) { $joined = 'domain' } elseif ($entra) { $joined = 'entra' }
-    $mdm = (Get-ErMdmProviders).Providers.Count -gt 0
+    $entra = $false
+    $join = 'HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo'
+    # Test-Path is true for a key that exists and cannot be read.
+    if (Test-Path -LiteralPath $join) {
+        $failed = $null
+        $joins = @(Get-ChildItem -LiteralPath $join -ErrorAction SilentlyContinue -ErrorVariable failed)
+        if ($failed) {
+            $entra = $null
+            $unread += "Whether the computer is joined to Entra ID could not be read: $($failed[0].Exception.Message)"
+        } else {
+            $entra = $joins.Count -gt 0
+        }
+    }
+    $joined = 'unknown'
+    if ($null -ne $domain -and $null -ne $entra) {
+        $joined = 'none'
+        if ($domain -and $entra) { $joined = 'domain_entra' } elseif ($domain) { $joined = 'domain' } elseif ($entra) { $joined = 'entra' }
+    }
+    $enrolments = Get-ErMdmProviders
+    $mdm = $(if ($enrolments.Error) { $null } else { $enrolments.Providers.Count -gt 0 })
     $arch = "$env:PROCESSOR_ARCHITECTURE".ToLowerInvariant()
     if ($arch -eq 'x86' -and $env:PROCESSOR_ARCHITEW6432) { $arch = "$env:PROCESSOR_ARCHITEW6432".ToLowerInvariant() }
     $edition = ''
@@ -160,7 +187,7 @@ function Get-ErPlatform {
     return @{
         Build = $build; Ubr = $ubr; DisplayVersion = $display; Edition = $edition; InstallationType = $install
         Role = $role; Joined = $joined; Mdm = $mdm; Architecture = $arch
-        Client = ($install -eq 'Client'); Core = ($install -eq 'Server Core')
+        Client = ($install -eq 'Client'); Core = ($install -eq 'Server Core'); Unread = $unread
     }
 }
 
@@ -500,9 +527,15 @@ function Get-ErMpPreference {
     return $ErCache.mppref
 }
 
+# Get-ErMpStatus: Defender's status, or $null with the error where it was
+# not reported.
 function Get-ErMpStatus {
     if (-not $ErCache.ContainsKey('mpstatus')) {
-        try { $ErCache.mpstatus = Get-MpComputerStatus -ErrorAction Stop } catch { $ErCache.mpstatus = $null }
+        try {
+            $ErCache.mpstatus = @{ Status = (Get-MpComputerStatus -ErrorAction Stop); Error = '' }
+        } catch {
+            $ErCache.mpstatus = @{ Status = $null; Error = $_.Exception.Message }
+        }
     }
     return $ErCache.mpstatus
 }
@@ -537,6 +570,18 @@ function New-ErSetting {
     if ($Want) { $s.want = $Want }
     if ($Note) { $s.note = Limit-ErText $Note 300 }
     return $s
+}
+
+# Get-ErUnread: where any of a setting's registry reads failed, the setting
+# as unknown (or, for one that is only reported, reported without a
+# value), with the error, which names the value; $null where all were
+# read. A value that cannot be read is neither absent nor present.
+function Get-ErUnread {
+    param($Def, [object[]]$Reads)
+    foreach ($r in $Reads) {
+        if ($r.Error) { return New-ErSetting $Def $(if ($Def.cite -eq 'not_set') { 'reported' } else { 'unknown' }) $null '' $r.Error }
+    }
+    return $null
 }
 
 # Compare a value with what the setting wants.
@@ -615,6 +660,8 @@ function Test-ErApplies {
 function Test-ErRegistrySetting {
     param($Def, $Module)
     $v = Get-ErRegistryValue $Def.path $Def.name
+    $unread = Get-ErUnread $Def @($v)
+    if ($unread) { return $unread }
     if ($Def.cite -eq 'not_set') {
         $shown = $(if ($v.Exists) { $v.Data } else { 'not set' })
         return New-ErSetting $Def 'reported' $shown ''
@@ -734,7 +781,9 @@ function Test-ErDefenderSetting {
     # some local values, such as cloud protection's, at their defaults.)
     if ($d.path) {
         $local = Get-ErRegistryValue ($d.path -replace '\\Policies\\Microsoft\\', '\Microsoft\') $d.name
-        if ($local.Exists) {
+        if ($local.Error) {
+            $s.note = $local.Error
+        } elseif ($local.Exists) {
             $lv = $local.Data
             if (@('True', 'False') -contains [string]$d.data) { $lv = $(if ("$lv" -eq '1') { 'True' } else { 'False' }) }
             if (-not (Test-ErWant $d $lv)) { $s.note = "A local setting ($($local.Data)) that a policy value would outrank." }
@@ -747,10 +796,14 @@ function Test-ErSmartScreen {
     param($Def, $Module)
     $d = $Def
     $v = Get-ErRegistryValue $d.path $d.name
+    $unread = Get-ErUnread $d @($v)
+    if ($unread) { return $unread }
     if ($d.name -eq 'EnableSmartScreen') {
         if ($v.Exists) { $shown = [string]$v.Data }
         else {
             $local = Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' 'SmartScreenEnabled'
+            $unread = Get-ErUnread $d @($local)
+            if ($unread) { return $unread }
             $shown = $(if ($local.Exists -and "$($local.Data)" -eq 'Off') { '0' } else { '1' })
         }
         return Test-ErValue $d $Module $shown ($shown -eq '1') '1'
@@ -784,9 +837,13 @@ function Test-ErAsrSetting {
 function Test-ErWinRmSetting {
     param($Def, $Module)
     $p = Get-ErRegistryValue $Def.path $Def.name
+    $unread = Get-ErUnread $Def @($p)
+    if ($unread) { return $unread }
     if ($p.Exists) { $v = [string]$p.Data }
     else {
         $l = Get-ErRegistryValue $Def.localPath $Def.localName
+        $unread = Get-ErUnread $Def @($l)
+        if ($unread) { return $unread }
         $v = $(if ($l.Exists) { [string]$l.Data } else { [string]$Def.default })
     }
     $note = ''
@@ -800,6 +857,8 @@ function Test-ErSchannelSetting {
     param($Def, $Module)
     $e = Get-ErRegistryValue $Def.path 'Enabled'
     $dbd = Get-ErRegistryValue $Def.path 'DisabledByDefault'
+    $unread = Get-ErUnread $Def @($e, $dbd)
+    if ($unread) { return $unread }
     if ($e.Exists) {
         return Test-ErValue $Def $Module "Enabled=$($e.Data)" ("$($e.Data)" -eq '0') 'Enabled=0'
     }
@@ -823,26 +882,27 @@ function Test-ErCustomSetting {
         'lsa-protection-value' {
             $v = Get-ErRegistryValue $Def.path 'RunAsPPL'
             $boot = Get-ErRegistryValue $Def.path 'RunAsPPLBoot'
+            $unread = Get-ErUnread $Def @($v, $boot)
+            if ($unread) { return $unread }
             $want = $(if (Test-ErOption 'lsa-uefi-lock') { @('1') } else { @('1', '2') })
             $shown = $(if ($v.Exists) { "RunAsPPL=$($v.Data)" } elseif ($boot.Exists) { "RunAsPPLBoot=$($boot.Data)" } else { 'not set' })
             $data = $(if ($v.Exists) { "$($v.Data)" } elseif ($boot.Exists) { "$($boot.Data)" } else { '' })
             return Test-ErValue $Def $Module $shown ($want -contains $data) ($want -join ' or ')
         }
-        'lsa-protection-running' {
-            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-            $e = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Wininit'; Id = 12; StartTime = $os.LastBootUpTime } -MaxEvents 1 -ErrorAction SilentlyContinue)
-            if ($e.Count -gt 0) { return New-ErSetting $Def 'in_place' "level $($e[0].Properties[0].Value)" 'protected' }
-            return New-ErSetting $Def 'not_in_place' 'not recorded since the last start' 'protected'
-        }
+        'lsa-protection-running' { return Test-ErLsaRunning $Def }
         'powershell-script-block-logging' {
             $row = @($ErAudit.values | Where-Object { $_.id -eq 'script-block-logging' })[0]
             $v = Get-ErRegistryValue $row.path $row.name
+            $unread = Get-ErUnread $Def @($v)
+            if ($unread) { return $unread }
             return New-ErSetting $Def 'reported' $(if ($v.Exists) { $v.Data } else { 'not set' }) '' 'Set by log collection''s Configure logging.'
         }
         'rdp-nla' { return Test-ErRdpSetting $Def $Module 'UserAuthenticationRequired' 'UserAuthentication' '1' }
         'rdp-encryption' { return Test-ErRdpSetting $Def $Module 'MinEncryptionLevel' 'MinEncryptionLevel' '3' }
         'uac-on' {
             $v = Get-ErRegistryValue $Def.path $Def.name
+            $unread = Get-ErUnread $Def @($v)
+            if ($unread) { return $unread }
             $on = -not $v.Exists -or "$($v.Data)" -ne '0'
             if (-not $on -and -not (Test-ErOption 'uac-enable')) { return New-ErSetting $Def 'reported' '0' '' 'UAC is off: turned on only with uac-enable (a restart).' }
             return Test-ErValue $Def $Module $(if ($on) { '1' } else { '0' }) $on '1'
@@ -863,6 +923,9 @@ function Test-ErCustomSetting {
     throw "no check for $($Def.id)"
 }
 
+# Remote Desktop's setting in effect, from its WMI provider; from the
+# listener's registry value where Windows has no such provider or listener.
+# A read that fails otherwise is unknown.
 function Test-ErRdpSetting {
     param($Def, $Module, [string]$WmiName, [string]$RegName, [string]$Want)
     $v = $null
@@ -870,14 +933,50 @@ function Test-ErRdpSetting {
         $ts = Get-CimInstance -Namespace 'root\cimv2\TerminalServices' -ClassName Win32_TSGeneralSetting -Filter "TerminalName='RDP-Tcp'" -ErrorAction Stop -OperationTimeoutSec 30
         if ($ts) { $v = [string]$ts.$WmiName }
     } catch {
-        $v = $null
+        # WBEM_E_INVALID_NAMESPACE, WBEM_E_INVALID_CLASS: no provider.
+        if ($_.FullyQualifiedErrorId -notmatch '^HRESULT 0x8004(100e|1010),') {
+            return New-ErSetting $Def 'unknown' $null '' "Remote Desktop's settings could not be read: $($_.Exception.Message)"
+        }
     }
     if ($null -eq $v -or $v -eq '') {
         $r = Get-ErRegistryValue 'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' $RegName
+        $unread = Get-ErUnread $Def @($r)
+        if ($unread) { return $unread }
         $v = $(if ($r.Exists) { [string]$r.Data } else { 'not set' })
     }
     $ok = $(if ($WmiName -eq 'MinEncryptionLevel') { $v -match '^\d+$' -and [int]$v -ge [int]$Want } else { $v -eq $Want })
     return Test-ErValue $Def $Module $v $ok $(if ($WmiName -eq 'MinEncryptionLevel') { ">= $Want" } else { $Want })
+}
+
+# LSASS started as a protected process: Wininit's event 12 since the last
+# start. Not in place only where the System log was read and has none.
+function Test-ErLsaRunning {
+    param($Def)
+    try {
+        $since = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+    } catch {
+        return New-ErSetting $Def 'unknown' $null 'protected' "Windows did not report when it last started: $($_.Exception.Message)"
+    }
+    $e = Get-ErEvents @{ FilterHashtable = @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Wininit'; Id = 12; StartTime = $since }; MaxEvents = 1 }
+    if (-not $e.Read) { return New-ErSetting $Def 'unknown' $null 'protected' "The System log could not be read: $($e.Error)" }
+    if ($e.Events.Count -gt 0) { return New-ErSetting $Def 'in_place' "level $($e.Events[0].Properties[0].Value)" 'protected' }
+    return New-ErSetting $Def 'not_in_place' 'not recorded since the last start' 'protected'
+}
+
+# Get-ErEvents: Get-WinEvent with the arguments; Read is false, with the
+# error, where the log could not be read, whether Get-WinEvent reports that
+# as an error or stops. No matching events is no error.
+function Get-ErEvents {
+    param([hashtable]$Arguments)
+    $failed = $null
+    try {
+        $events = @(Get-WinEvent @Arguments -ErrorAction SilentlyContinue -ErrorVariable failed)
+    } catch {
+        return @{ Read = $false; Error = $_.Exception.Message; Events = @() }
+    }
+    $failed = @($failed | Where-Object { $_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*' })
+    if ($failed.Count -gt 0) { return @{ Read = $false; Error = $failed[0].Exception.Message; Events = @() } }
+    return @{ Read = $true; Error = ''; Events = $events }
 }
 
 function Test-ErSpooler {
@@ -890,7 +989,11 @@ function Test-ErSpooler {
     $counted = $ErPlatform.Role -eq 'domain_controller' -or (Test-ErOption 'spooler-off')
     if (-not $off) {
         $why = @()
-        if (@(Get-CimInstance -ClassName Win32_Printer -Filter 'Shared=TRUE' -ErrorAction SilentlyContinue).Count -gt 0) { $why += 'shares a printer' }
+        try {
+            if (@(Get-CimInstance -ClassName Win32_Printer -Filter 'Shared=TRUE' -ErrorAction Stop).Count -gt 0) { $why += 'shares a printer' }
+        } catch {
+            return New-ErSetting $Def 'unknown' $shown 'stopped and disabled' "Whether this computer shares a printer could not be read: $($_.Exception.Message)"
+        }
         $f = Get-ErFeatures
         if ($f['Print-Server']) { $why += 'has the Print Server role' }
         if ($f['RDS-RD-Server']) { $why += 'is a Remote Desktop session host' }
@@ -903,10 +1006,14 @@ function Test-ErSpooler {
 function Test-ErDeviceGuard {
     param($Def, $What)
     if (-not $ErCache.ContainsKey('dg')) {
-        $ErCache.dg = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction SilentlyContinue
+        try {
+            $ErCache.dg = @{ State = (Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction Stop); Error = '' }
+        } catch {
+            $ErCache.dg = @{ State = $null; Error = "Device Guard's state could not be read: $($_.Exception.Message)" }
+        }
     }
-    $dg = $ErCache.dg
-    if ($null -eq $dg) { return New-ErSetting $Def 'unknown' $null '' 'Windows did not report Device Guard''s state.' }
+    $dg = $ErCache.dg.State
+    if ($null -eq $dg) { return New-ErSetting $Def 'unknown' $null '' $(if ($ErCache.dg.Error) { $ErCache.dg.Error } else { 'Windows did not report Device Guard''s state.' }) }
     if ($What -eq 'vbs') {
         $v = [int]$dg.VirtualizationBasedSecurityStatus
         $names = @{ 0 = 'off'; 1 = 'on, not running'; 2 = 'running' }
@@ -919,23 +1026,36 @@ function Test-ErDeviceGuard {
 # BitLocker through its WMI provider, which is there whenever BitLocker
 # is: the system volume's protection, and its key protectors by type (1
 # TPM, 3 recovery password, 4 TPM and PIN, 6 TPM, PIN and startup key).
+# Installed is false only where the provider's namespace or class is
+# absent; Read is false, with Error, where anything else stopped the read
+# (a method that does not return 0 among it).
 function Get-ErBitLocker {
     if (-not $ErCache.ContainsKey('bl')) {
-        $ErCache.bl = $null
+        $bl = @{ Installed = $true; Read = $false; Error = ''; On = $false; Types = @() }
         try {
-            $vol = Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -Filter "DriveLetter='$($env:SystemDrive)'" -ErrorAction Stop
-            if ($vol) {
-                $types = @()
-                $ids = (Invoke-CimMethod -InputObject $vol -MethodName GetKeyProtectors -Arguments @{ KeyProtectorType = [uint32]0 } -ErrorAction Stop).VolumeKeyProtectorID
-                foreach ($id in @($ids)) {
-                    $types += [int](Invoke-CimMethod -InputObject $vol -MethodName GetKeyProtectorType -Arguments @{ VolumeKeyProtectorID = $id } -ErrorAction Stop).KeyProtectorType
-                }
-                $status = (Invoke-CimMethod -InputObject $vol -MethodName GetProtectionStatus -ErrorAction Stop).ProtectionStatus
-                $ErCache.bl = @{ On = ([int]$status -eq 1); Types = $types }
+            $vol = @(Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName Win32_EncryptableVolume -Filter "DriveLetter='$($env:SystemDrive)'" -ErrorAction Stop)
+            if ($vol.Count -ne 1) { throw "BitLocker listed $($vol.Count) volumes for $($env:SystemDrive)." }
+            $r = Invoke-CimMethod -InputObject $vol[0] -MethodName GetKeyProtectors -Arguments @{ KeyProtectorType = [uint32]0 } -ErrorAction Stop
+            if ($r.ReturnValue -ne 0) { throw "GetKeyProtectors returned $($r.ReturnValue)." }
+            foreach ($id in @($r.VolumeKeyProtectorID)) {
+                $t = Invoke-CimMethod -InputObject $vol[0] -MethodName GetKeyProtectorType -Arguments @{ VolumeKeyProtectorID = $id } -ErrorAction Stop
+                if ($t.ReturnValue -ne 0) { throw "GetKeyProtectorType returned $($t.ReturnValue)." }
+                $bl.Types += [int]$t.KeyProtectorType
             }
+            $p = Invoke-CimMethod -InputObject $vol[0] -MethodName GetProtectionStatus -ErrorAction Stop
+            if ($p.ReturnValue -ne 0) { throw "GetProtectionStatus returned $($p.ReturnValue)." }
+            $bl.On = [int]$p.ProtectionStatus -eq 1
+            $bl.Read = $true
         } catch {
-            $ErCache.bl = $null
+            # WBEM_E_INVALID_NAMESPACE, WBEM_E_INVALID_CLASS: no BitLocker.
+            if ($_.FullyQualifiedErrorId -match '^HRESULT 0x8004(100e|1010),') {
+                $bl.Installed = $false
+                $bl.Read = $true
+            } else {
+                $bl.Error = $_.Exception.Message
+            }
         }
+        $ErCache.bl = $bl
     }
     return $ErCache.bl
 }
@@ -958,12 +1078,17 @@ function Test-ErBitLocker {
 function Test-ErLaps {
     param($Def)
     $dirs = @{ '1' = 'Entra ID'; '2' = 'Active Directory' }
+    $reads = @()
     foreach ($p in 'HKLM\SOFTWARE\Microsoft\Policies\LAPS', 'HKLM\SOFTWARE\Policies\Microsoft\Windows\LAPS') {
         $v = Get-ErRegistryValue $p 'BackupDirectory'
         if ($v.Exists -and $dirs["$($v.Data)"]) { return New-ErSetting $Def 'in_place' ('Windows LAPS to ' + $dirs["$($v.Data)"]) 'managed' }
+        $reads += $v
     }
     $legacy = Get-ErRegistryValue 'HKLM\SOFTWARE\Policies\Microsoft Services\AdmPwd' 'AdmPwdEnabled'
     if ($legacy.Exists -and "$($legacy.Data)" -eq '1') { return New-ErSetting $Def 'in_place' 'legacy Microsoft LAPS' 'managed' }
+    # Not managed only where every policy was read.
+    $unread = Get-ErUnread $Def ($reads + $legacy)
+    if ($unread) { return $unread }
     return New-ErSetting $Def 'not_in_place' 'not managed' 'managed'
 }
 
@@ -1004,7 +1129,22 @@ function Test-ErAuditLogs {
     $out = @()
     foreach ($row in @($ErAudit.logs)) {
         if ($row.onlyWith -eq 'pwsh' -and -not $pwsh) { continue }
-        $log = Get-WinEvent -ListLog ([string]$row.channel) -ErrorAction SilentlyContinue
+        # A log Windows does not have is a real answer; a log that could
+        # not be read is unknown.
+        $failed = $null
+        $log = $null
+        try {
+            $log = Get-WinEvent -ListLog ([string]$row.channel) -ErrorAction SilentlyContinue -ErrorVariable failed
+            $failed = @($failed | Where-Object { $_.FullyQualifiedErrorId -notlike 'NoMatchingLogsFound*' })
+        } catch {
+            $failed = @($_)
+        }
+        if ($failed.Count -gt 0) {
+            $s = New-ErSetting $Def 'unknown' $null ">= $($row.minKB) KB" "The log could not be read: $($failed[0].Exception.Message)"
+            $s.item = [string]$row.channel
+            $out += $s
+            continue
+        }
         $kb = $(if ($log) { [int64]($log.MaximumSizeInBytes / 1024) } else { $null })
         $s = New-ErSetting $Def $(if ($null -ne $kb -and $kb -ge [int64]$row.minKB) { 'in_place' } else { 'not_in_place' }) $(if ($null -ne $kb) { "$kb KB" } else { 'no such log' }) ">= $($row.minKB) KB"
         $s.item = [string]$row.channel
@@ -1031,10 +1171,9 @@ function Test-ErAuditLogs {
 function Get-ErExposure {
     param([int]$Limit = 5000)
     $since = (Get-Date).AddDays(-7)
-    $failed = $null
-    $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4625; StartTime = $since } -MaxEvents $Limit -ErrorAction SilentlyContinue -ErrorVariable failed)
-    $failed = @($failed | Where-Object { $_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*' })
-    if ($failed.Count -gt 0) { return @{ Read = $false; Error = $failed[0].Exception.Message } }
+    $read = Get-ErEvents @{ FilterHashtable = @{ LogName = 'Security'; Id = 4625; StartTime = $since }; MaxEvents = $Limit }
+    if (-not $read.Read) { return @{ Read = $false; Error = $read.Error } }
+    $events = $read.Events
     $accounts = @{}
     $addresses = @{}
     $times = @{}
@@ -1064,8 +1203,9 @@ function Get-ErExposure {
     if ($events.Count -ge $Limit) {
         $reach = $events[$events.Count - 1].TimeCreated
     } else {
-        $first = @(Get-WinEvent -LogName Security -MaxEvents 1 -Oldest -ErrorAction SilentlyContinue)
-        $reach = $(if ($first.Count -gt 0 -and $first[0].TimeCreated -gt $since) { $first[0].TimeCreated } else { $since })
+        $first = Get-ErEvents @{ LogName = 'Security'; MaxEvents = 1; Oldest = $true }
+        if (-not $first.Read) { return @{ Read = $false; Error = $first.Error } }
+        $reach = $(if ($first.Events.Count -gt 0 -and $first.Events[0].TimeCreated -gt $since) { $first.Events[0].TimeCreated } else { $since })
     }
     return @{
         Read = $true
@@ -1101,18 +1241,30 @@ function ConvertTo-ErPublicAddress {
     return $a.ToString()
 }
 
-# What stops a whole module before its settings are read.
+# What stops a whole module before its settings are read. A state that
+# cannot be read stops it as failed, with the reason: never as not
+# applicable.
 function Get-ErModuleGate {
     param([string]$Name, $Module)
     switch ($Name) {
         { $_ -eq 'defender' -or $_ -eq 'asr' } {
-            $st = Get-ErMpStatus
             $av = @($ErPolicy.Products.antivirus)
             if ($av.Count -gt 0) {
                 foreach ($n in $av) { $Module.managed += @{ id = $Name; owner = 'security_product'; policy = $n; value = 'on'; state = 'managed_elsewhere' } }
                 return @{ state = 'managed_elsewhere'; reason = 'Another antivirus is on: ' + ($av -join ', ') + '.' }
             }
-            if ($null -eq $st) { return @{ state = 'not_applicable'; reason = 'Microsoft Defender Antivirus is not installed or not running.' } }
+            $mp = Get-ErMpStatus
+            $st = $mp.Status
+            if ($null -eq $st) {
+                # Without its status, Defender's service tells absent or
+                # turned off from a status that could not be read.
+                $svc = Get-ErServiceState 'WinDefend'
+                if ($svc.Read -and -not $svc.Installed) { return @{ state = 'not_applicable'; reason = 'Microsoft Defender Antivirus is not installed.' } }
+                if ($svc.Read -and $svc.Status -ne 'Running') {
+                    return @{ state = 'not_applicable'; reason = "Microsoft Defender Antivirus is not running (its service is $($svc.Status), $($svc.StartType))." }
+                }
+                return @{ state = 'failed'; reason = "Microsoft Defender Antivirus did not report its status: $($mp.Error)" }
+            }
             $mode = [string]$st.AMRunningMode
             if ($mode -and $mode -ne 'Normal') {
                 return @{ state = $(if ($ErPlatform.Client) { 'managed_elsewhere' } else { 'not_applicable' }); reason = "Microsoft Defender Antivirus runs in $mode, beside another antivirus." }
@@ -1138,7 +1290,9 @@ function Get-ErModuleGate {
             if ($ErPlatform.Core) { return @{ state = 'not_applicable'; reason = 'Server Core has no UAC prompts.' } }
         }
         'bitlocker' {
-            if ($null -eq (Get-ErBitLocker)) { return @{ state = 'not_applicable'; reason = 'BitLocker is not installed.' } }
+            $bl = Get-ErBitLocker
+            if (-not $bl.Installed) { return @{ state = 'not_applicable'; reason = 'BitLocker is not installed.' } }
+            if (-not $bl.Read) { return @{ state = 'failed'; reason = "BitLocker's state could not be read: $($bl.Error)" } }
         }
         'accounts' {
             $x = Get-ErExposure
@@ -1161,7 +1315,7 @@ function Invoke-ErModule {
     $gate = Get-ErModuleGate $Name $m
     if ($gate) {
         $m.state = $gate.state
-        $m.reason = $gate.reason
+        $m.reason = Limit-ErText $gate.reason 300
         return $m
     }
     foreach ($def in @($ErSettings | Where-Object { $_.module -eq $Name })) {
@@ -1188,9 +1342,14 @@ function Invoke-ErModule {
     $counted = @($m.settings | Where-Object { @('reported', 'not_applicable') -notcontains $_.state })
     $in = @($counted | Where-Object { $_.state -eq 'in_place' }).Count
     $elsewhere = @($counted | Where-Object { $_.state -eq 'managed_elsewhere' }).Count
+    $unknown = @($counted | Where-Object { $_.state -eq 'unknown' }).Count
     if ($counted.Count -eq 0) {
         $m.state = 'not_applicable'
         $m.reason = 'None of its settings applies to this computer.'
+    } elseif ($unknown -eq $counted.Count) {
+        # Nothing read is nothing in place or not: the settings say why.
+        $m.state = 'failed'
+        $m.reason = 'None of its settings could be read.'
     } elseif ($in -eq $counted.Count) {
         $m.state = 'in_place'
     } elseif ($elsewhere + $in -eq $counted.Count -and $elsewhere -gt 0) {
@@ -1242,13 +1401,15 @@ function Get-ErPlatformExtra {
         azureMachineConfiguration = $ErPolicy.AzureMachineConfiguration; tamperProtected = $ErPolicy.TamperProtected
         osConfig = @($ErPolicy.OSConfigScenarios)
     }
-    # What makes apply check only on this computer (ADR-0054, Platforms).
+    # What makes apply check only on this computer (ADR-0054, Platforms),
+    # the platform's own reads among it.
     $reasons = @() + (Get-ErComputerReasons $ErPolicy)
     if ($ErPolicy.GpPreferences) { $reasons += 'group_policy_preferences' }
+    if (@($ErPlatform.Unread).Count -gt 0 -and $reasons -notcontains 'unreadable') { $reasons += 'unreadable' }
     return @{
         owners = $owners
         checkOnlyReasons = $reasons
-        notes = @($ErPolicy.Notes | ForEach-Object { Limit-ErText $_ 200 } | Select-Object -First 10)
+        notes = @(@($ErPlatform.Unread) + @($ErPolicy.Notes) | ForEach-Object { Limit-ErText $_ 200 } | Select-Object -First 10)
         hardening = @{ folder = $Folder.Folder; copySha256 = $Folder.CopySha256; warnings = @($Folder.Warnings); setAside = @($Folder.SetAside) }
     }
 }

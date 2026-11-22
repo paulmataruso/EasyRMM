@@ -290,6 +290,15 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 		`{"module":"wdigest","state":"not_supported"},{"module":"audit","state":"not_supported"}`), h); err != nil {
 		t.Errorf("constrained language: %v", err)
 	}
+	// What Windows did not report is unknown, never a guess: the role and
+	// join as unknown, the MDM enrolment as null.
+	unread := strings.NewReplacer(`"role":"member_server"`, `"role":"unknown"`, `"joined":"domain"`, `"joined":"unknown"`,
+		`"mdm":false,"architecture"`, `"mdm":null,"architecture"`, `"checkOnlyReasons":[]`, `"checkOnlyReasons":["unreadable"]`).Replace(windowsPlatform)
+	if r, err := parseHardeningResult(windowsLine(unread, good), h); err != nil {
+		t.Errorf("an unread role, join and enrolment: %v", err)
+	} else if w := r.Platform.Windows; w.Role != "unknown" || w.Joined != "unknown" || w.MDM != nil {
+		t.Errorf("an unread role, join and enrolment: %+v", w)
+	}
 
 	bad := map[string]struct{ platform, modules string }{
 		"a Linux platform":          {`{"id":"ubuntu","versionId":"24.04","family":"debian","container":"none","support":"full"}`, good},
@@ -323,7 +332,7 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 	// Text the computer gave is tidied, and never refuses the result: a
 	// failed sign-in's user name comes from whoever tried it.
 	untidy := strings.NewReplacer(
-		`"accounts":["administrator"]`, `"accounts":["","   ","\u0085\u0080\u009f","admin\u0085istrator\u202e","\u200b"]`,
+		`"accounts":["administrator"]`, `"accounts":["","   ","\u0085\u0080\u009f","admin\u0085istr\u2028ator\u2029\u202e","\u200b"]`,
 		`"bursts":["backup"]`, `"bursts":[" backup\u0007 "]`,
 		`"addresses":["203.0.113.9"]`, `"addresses":["203.0.113.9","somewhere"]`,
 		`"value":"42"`, `"value":"`+strings.Repeat("x", 121)+`"`,

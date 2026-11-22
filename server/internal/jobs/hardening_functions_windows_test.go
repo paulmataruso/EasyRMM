@@ -16,6 +16,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/paulmataruso/easyrmm/internal/wintest"
 )
 
 // Functions of the script a Windows hardening job carries, one by one, with
@@ -23,9 +25,10 @@ import (
 // "Agent tests on Windows" runs these (OnWindows) as the runner's
 // administrator.
 
-// hardeningFunctions defines the script's top-level functions, and nothing
-// else, in a new Windows PowerShell, runs body, and decodes the JSON body
-// prints last into v.
+// hardeningFunctions defines the script's top-level functions and its
+// tables ($ErSettingsJson, $ErAuditTableJson), and nothing else, in a new
+// Windows PowerShell, runs body, and decodes the JSON body prints last into
+// v.
 func hardeningFunctions(t *testing.T, body string, v any) {
 	t.Helper()
 	dir := t.TempDir()
@@ -42,6 +45,11 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]
 if ($errors.Count -gt 0) { throw "the script does not parse: $($errors[0].Message)" }
 foreach ($f in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
     . ([scriptblock]::Create($f.Extent.Text))
+}
+foreach ($s in $ast.EndBlock.Statements) {
+    if ($s -is [System.Management.Automation.Language.AssignmentStatementAst] -and @('$ErSettingsJson', '$ErAuditTableJson') -contains $s.Left.Extent.Text) {
+        . ([scriptblock]::Create($s.Extent.Text))
+    }
 }
 `
 	if err := os.WriteFile(harness, []byte(prelude+body), 0o600); err != nil {
@@ -189,5 +197,275 @@ ConvertTo-Json -Compress -Depth 4 @{ Limited = Get-ErExposure -Limit 5; Full = G
 		if strings.TrimSpace(s) == "" || strings.ContainsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
 			t.Errorf("account %q in the result", s)
 		}
+	}
+}
+
+// Stand-ins for a read that fails: where nothing on the computer can make
+// Windows' own provider fail without breaking the computer, the cmdlet is
+// sent to a computer that does not exist, and fails as a read does.
+const (
+	standInCim      = `$PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
+	standInWinEvent = `$PSDefaultParameterValues['Get-WinEvent:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
+)
+
+// hardeningGlobals sets what the script sets before its modules run, on
+// this computer, and Get-TestDef, a setting by its ID.
+const hardeningGlobals = `$ErSettings = @((ConvertFrom-Json $ErSettingsJson).settings)
+$ErAudit = ConvertFrom-Json $ErAuditTableJson
+$ErCache = @{}
+$ErOptions = @{}
+$ErPolicy = New-ErPolicyContext ''
+function Get-TestDef { param([string]$Id) return @($ErSettings | Where-Object { $_.id -eq $Id })[0] }
+$m = @{ settings = @(); managed = @(); notes = @() }
+`
+
+type unreadModule struct {
+	State, Reason string
+	Settings      []HardeningSetting
+}
+
+// unknownWithError: a setting whose read failed, with the error.
+func unknownWithError(t *testing.T, what string, s HardeningSetting) {
+	t.Helper()
+	if s.State != "unknown" || s.Note == "" {
+		t.Errorf("%s: %+v, want unknown with the error", what, s)
+	}
+}
+
+// TestHardeningUnreadableRegistryOnWindows: a registry value that cannot be
+// read is neither absent nor present. Every setting read from the registry
+// is unknown with the error (one that is only reported, reported without a
+// value), never in place or not, whatever the kind; and a module none of
+// whose settings could be read failed. The settings are read from a key no
+// one may read, and the keys the script names itself are made unreadable
+// to the test's account.
+func TestHardeningUnreadableRegistryOnWindows(t *testing.T) {
+	sid := wintest.CurrentSID(t)
+	const denied = `SOFTWARE\EasyRMM-hardening-unreadable`
+	wintest.Unreadable(t, denied, sid)
+	for _, k := range []string{
+		`SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer`,                   // SmartScreen's own setting
+		`SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp`, // Remote Desktop's listener
+		`SOFTWARE\Policies\Microsoft\Windows\LAPS`,                             // Windows LAPS's policy
+	} {
+		wintest.Unreadable(t, k, sid)
+	}
+	var got struct {
+		Modules  map[string]unreadModule
+		Settings map[string]HardeningSetting
+	}
+	hardeningFunctions(t, hardeningGlobals+`$ErPlatform = Get-ErPlatform
+$denied = 'HKLM\`+denied+`'
+foreach ($d in $ErSettings) {
+    if ($d.path) { $d.path = $denied }
+    if ($d.localPath) { $d.localPath = $denied }
+}
+foreach ($r in @($ErAudit.values)) { $r.path = $denied }
+$modules = @{}
+foreach ($name in 'wdigest', 'ntlm', 'uac', 'winrm', 'tls', 'autoplay', 'name-resolution', 'lsa-protection', 'powershell', 'rdp', 'laps') {
+    $modules[$name] = Invoke-ErModule $name
+}
+$one = @{}
+$one['defender-smartscreen'] = Test-ErSmartScreen (Get-TestDef 'defender-smartscreen') $m
+$one['defender-smartscreen-level'] = Test-ErSmartScreen (Get-TestDef 'defender-smartscreen-level') $m
+$one['audit-command-lines'] = Test-ErCustomSetting (Get-TestDef 'audit-command-lines') $m
+$one['audit-legacy-overridden'] = Test-ErCustomSetting (Get-TestDef 'audit-legacy-overridden') $m
+# SmartScreen's own setting, where no policy sets it.
+$d = (Get-TestDef 'defender-smartscreen').PSObject.Copy()
+$d.path = 'HKLM\SOFTWARE\EasyRMM-hardening-no-such-key'
+$one['smartscreen-own'] = Test-ErSmartScreen $d $m
+# Remote Desktop's listener, where its WMI provider gives no value.
+$one['rdp-listener'] = Test-ErRdpSetting (Get-TestDef 'rdp-nla') $m 'EasyRMMNoSuchProperty' 'UserAuthentication' '1'
+ConvertTo-Json -Compress -Depth 8 @{ Modules = $modules; Settings = $one }`, &got)
+
+	// The settings read from the registry, by kind or by ID.
+	fromRegistry := map[string]bool{"uac-on": true, "lsa-protection-value": true, "powershell-script-block-logging": true, "laps-managed": true}
+	notSet := map[string]bool{}
+	for _, s := range windowsSettings {
+		if s.Kind == "registry" || s.Kind == "winrm" || s.Kind == "schannel" {
+			fromRegistry[s.ID] = true
+		}
+		notSet[s.ID] = s.Cite == "not_set"
+	}
+	if len(got.Modules) != 11 || len(got.Settings) != 6 {
+		t.Fatalf("%d modules, %d settings", len(got.Modules), len(got.Settings))
+	}
+	for name, m := range got.Modules {
+		t.Logf("%s: %s %s", name, m.State, m.Reason)
+		read := 0
+		for _, s := range m.Settings {
+			switch {
+			case !fromRegistry[s.ID] || s.State == "not_applicable":
+				read++
+			case notSet[s.ID]:
+				if s.State != "reported" || s.Value != "" || !strings.Contains(s.Note, "could not be read") {
+					t.Errorf("%s: %+v, want reported without a value", s.ID, s)
+				}
+			default:
+				unknownWithError(t, s.ID, s)
+			}
+		}
+		// A module of registry settings alone, none of which could be read.
+		if read == 0 && (m.State != HardeningFailed || m.Reason != "None of its settings could be read.") {
+			t.Errorf("module %s: %s (%s), want failed", name, m.State, m.Reason)
+		}
+	}
+	for _, name := range []string{"wdigest", "ntlm", "uac", "winrm", "tls", "autoplay", "laps"} {
+		if m := got.Modules[name]; m.State != HardeningFailed {
+			t.Errorf("module %s: %s, want failed", name, m.State)
+		}
+	}
+	for id, s := range got.Settings {
+		unknownWithError(t, id, s)
+	}
+}
+
+// TestHardeningDefenderUnreadableOnWindows: where Microsoft Defender does
+// not report its status (here its module cannot be loaded: the PowerShell
+// modules are limited to an empty folder), its modules failed while its
+// service runs; they are not applicable only where it is not installed or
+// not running.
+func TestHardeningDefenderUnreadableOnWindows(t *testing.T) {
+	type gate struct{ State, Reason string }
+	var got struct {
+		Defender, Asr gate
+		Service       struct {
+			Installed, Read bool
+			Status          string
+		}
+	}
+	hardeningFunctions(t, `foreach ($n in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'CimCmdlets') { Import-Module $n }
+$env:PSModulePath = '`+t.TempDir()+`'
+`+hardeningGlobals+`$ErPlatform = @{ Client = $false; Build = 26100; Role = 'member_server' }
+ConvertTo-Json -Compress @{
+    Defender = Get-ErModuleGate 'defender' $m
+    Asr = Get-ErModuleGate 'asr' $m
+    Service = Get-ErServiceState 'WinDefend'
+}`, &got)
+	t.Logf("%+v", got)
+	s := got.Service
+	if !s.Read {
+		t.Fatalf("Defender's service could not be read: %+v", s)
+	}
+	for name, g := range map[string]gate{"defender": got.Defender, "asr": got.Asr} {
+		if s.Installed && s.Status == "Running" {
+			if g.State != HardeningFailed || !strings.HasPrefix(g.Reason, "Microsoft Defender Antivirus did not report its status: ") {
+				t.Errorf("%s: %+v, want failed with the error", name, g)
+			}
+		} else if g.State != "not_applicable" {
+			t.Errorf("%s with Defender's service %+v: %+v, want not_applicable", name, s, g)
+		}
+	}
+}
+
+// TestHardeningCimUnreadableOnWindows: where Windows' WMI provider does not
+// answer (stand-in: Get-CimInstance is sent to a computer that does not
+// exist), the computer's role and join are unknown and the computer check
+// only, with why; BitLocker's module failed, not "not installed"; and Remote
+// Desktop, LSA protection, Device Guard and the shared printers are
+// unknown. Then, with the MDM enrolments and the Entra join unreadable to
+// the test's account, the enrolment is null and the join unknown.
+func TestHardeningCimUnreadableOnWindows(t *testing.T) {
+	var got struct {
+		Platform  json.RawMessage
+		BitLocker struct{ State, Reason string }
+		Settings  map[string]HardeningSetting
+	}
+	hardeningFunctions(t, standInCim+hardeningGlobals+`$ErPlatform = Get-ErPlatform
+$one = @{}
+$one['rdp-nla'] = Test-ErRdpSetting (Get-TestDef 'rdp-nla') $m 'UserAuthenticationRequired' 'UserAuthentication' '1'
+$one['lsa-protection-running'] = Test-ErLsaRunning (Get-TestDef 'lsa-protection-running')
+$one['device-guard-vbs'] = Test-ErDeviceGuard (Get-TestDef 'device-guard-vbs') 'vbs'
+$spooler = Get-ErServiceState 'Spooler'
+if ($spooler.Installed -and -not ($spooler.Status -eq 'Stopped' -and $spooler.StartType -eq 'Disabled')) {
+    $one['printing-spooler'] = Test-ErSpooler (Get-TestDef 'printing-spooler')
+}
+$folder = @{ Folder = 'absent'; CopySha256 = ''; Warnings = @(); SetAside = @() }
+ConvertTo-Json -Compress -Depth 8 @{
+    Platform = ConvertTo-ErPlatformJson $ErPlatform 'full' 'FullLanguage' (Get-ErPlatformExtra $folder)
+    BitLocker = Get-ErModuleGate 'bitlocker' $m
+    Settings = $one
+}`, &got)
+	p := parseTestPlatform(t, got.Platform)
+	if w := p.Windows; w.Role != "unknown" || w.Joined != "unknown" || !slices.Contains(w.CheckOnlyReasons, "unreadable") ||
+		!slices.ContainsFunc(w.Notes, func(n string) bool { return strings.Contains(n, "role") }) {
+		t.Errorf("platform %+v", w)
+	}
+	if b := got.BitLocker; b.State != HardeningFailed || !strings.HasPrefix(b.Reason, "BitLocker's state could not be read: ") {
+		t.Errorf("bitlocker: %+v, want failed with the error", b)
+	}
+	if len(got.Settings) < 3 {
+		t.Errorf("settings %+v", got.Settings)
+	}
+	for id, s := range got.Settings {
+		unknownWithError(t, id, s)
+	}
+
+	sid := wintest.CurrentSID(t)
+	wintest.Unreadable(t, `SOFTWARE\Microsoft\Enrollments`, sid)
+	wintest.Unreadable(t, `SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo`, sid)
+	hardeningFunctions(t, hardeningGlobals+`$ErPlatform = Get-ErPlatform
+$folder = @{ Folder = 'absent'; CopySha256 = ''; Warnings = @(); SetAside = @() }
+ConvertTo-Json -Compress -Depth 8 @{ Platform = ConvertTo-ErPlatformJson $ErPlatform 'full' 'FullLanguage' (Get-ErPlatformExtra $folder) }`, &got)
+	p = parseTestPlatform(t, got.Platform)
+	if w := p.Windows; w.MDM != nil || w.Joined != "unknown" || w.Role == "unknown" || !slices.Contains(w.CheckOnlyReasons, "unreadable") ||
+		!slices.ContainsFunc(w.Notes, func(n string) bool { return strings.Contains(n, "Entra ID") }) {
+		t.Errorf("platform with the enrolments and join unreadable: %+v", w)
+	}
+}
+
+// parseTestPlatform parses a platform the script made as the server parses
+// a result's.
+func parseTestPlatform(t *testing.T, platform json.RawMessage) HardeningPlatform {
+	t.Helper()
+	h := Hardening{Platform: HardeningWindows, Mode: HardeningCheck, Modules: []string{"wdigest"}}
+	r, err := parseHardeningResult(windowsLine(string(platform), `{"module":"wdigest","state":"not_supported","reason":"Not checked."}`), h)
+	if err != nil {
+		t.Fatalf("%v: %s", err, platform)
+	}
+	return r.Platform
+}
+
+// TestHardeningEventsUnreadableOnWindows: a log that does not exist is a
+// real answer, read; where the event logs do not answer (stand-in:
+// Get-WinEvent is sent to a computer that does not exist), each log's size,
+// whether LSA protection started and the failed sign-ins are unknown, not
+// "not in place" or "none".
+func TestHardeningEventsUnreadableOnWindows(t *testing.T) {
+	var got struct {
+		Read, Unread []HardeningSetting
+		Lsa          HardeningSetting
+		Exposure     struct {
+			Read  bool
+			Error string
+		}
+	}
+	hardeningFunctions(t, hardeningGlobals+`$ErPlatform = Get-ErPlatform
+$ErAudit.logs = @($ErAudit.logs) + @([pscustomobject]@{ channel = 'EasyRMM-No-Such-Log'; minKB = 1024 })
+$read = Test-ErAuditLogs (Get-TestDef 'audit-log-sizes') $m
+`+standInWinEvent+`ConvertTo-Json -Compress -Depth 8 @{
+    Read = $read
+    Unread = Test-ErAuditLogs (Get-TestDef 'audit-log-sizes') $m
+    Lsa = Test-ErLsaRunning (Get-TestDef 'lsa-protection-running')
+    Exposure = Get-ErExposure
+}`, &got)
+	missing := slices.IndexFunc(got.Read, func(s HardeningSetting) bool { return s.Item == "EasyRMM-No-Such-Log" })
+	if missing < 0 || got.Read[missing].State != "not_in_place" || got.Read[missing].Value != "no such log" {
+		t.Errorf("a log that does not exist: %+v", got.Read)
+	}
+	for _, s := range got.Read {
+		if s.State == "unknown" {
+			t.Errorf("log %s, read: %+v", s.Item, s)
+		}
+	}
+	if len(got.Unread) != len(got.Read) {
+		t.Errorf("%d logs unread, %d read", len(got.Unread), len(got.Read))
+	}
+	for _, s := range got.Unread {
+		unknownWithError(t, "log "+s.Item, s)
+	}
+	unknownWithError(t, "lsa-protection-running", got.Lsa)
+	if got.Exposure.Read || got.Exposure.Error == "" {
+		t.Errorf("failed sign-ins: %+v, want not read, with the error", got.Exposure)
 	}
 }

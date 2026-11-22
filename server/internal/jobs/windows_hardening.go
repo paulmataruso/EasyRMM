@@ -386,12 +386,16 @@ type HardeningWindowsPlatform struct {
 	DisplayVersion   string `json:"displayVersion"`
 	Edition          string `json:"edition"`
 	InstallationType string `json:"installationType"`
-	// Role is workstation, member_server, standalone_server or
-	// domain_controller.
+	// Role is workstation, member_server, standalone_server,
+	// domain_controller, or unknown where Windows did not report it (the
+	// computer is then check only, with the reason unreadable).
 	Role string `json:"role"`
-	// Joined is none, domain, entra or domain_entra.
-	Joined       string `json:"joined"`
-	MDM          bool   `json:"mdm"`
+	// Joined is none, domain, entra, domain_entra, or unknown where either
+	// join could not be read.
+	Joined string `json:"joined"`
+	// MDM is whether the computer is enrolled in an MDM; null where the
+	// enrolments could not be read.
+	MDM          *bool  `json:"mdm"`
 	Architecture string `json:"architecture"`
 	// LanguageMode is PowerShell's; anything but FullLanguage stops the
 	// script, and the result then has no more than the fields above.
@@ -522,8 +526,8 @@ func validWindowsPlatform(p HardeningPlatform) bool {
 	}
 	ok := w.Build >= 0 && w.UBR >= 0 && shortText(w.DisplayVersion, 32) && shortText(w.Edition, 64) &&
 		shortText(w.InstallationType, 32) && shortText(w.Architecture, 16) &&
-		slices.Contains([]string{"workstation", "member_server", "standalone_server", "domain_controller"}, w.Role) &&
-		slices.Contains([]string{"none", "domain", "entra", "domain_entra"}, w.Joined) &&
+		slices.Contains([]string{"workstation", "member_server", "standalone_server", "domain_controller", "unknown"}, w.Role) &&
+		slices.Contains([]string{"none", "domain", "entra", "domain_entra", "unknown"}, w.Joined) &&
 		slices.Contains([]string{"FullLanguage", "ConstrainedLanguage", "RestrictedLanguage", "NoLanguage"}, w.LanguageMode) &&
 		fewItems(w.Notes) && len(w.CheckOnlyReasons) <= len(winpolicy.Reasons)
 	for _, r := range w.CheckOnlyReasons {
@@ -551,13 +555,14 @@ func fewItems(lists ...[]string) bool {
 
 // tidyText is text the script read from the computer as a result keeps
 // it: without control or format characters (bidirectional marks, zero
-// width spaces), trimmed, at most n characters. Anyone who reaches the
-// computer can put text there (the user name of a failed sign-in comes
-// from the internet), so such text is tidied, never a reason to refuse
-// the whole result.
+// width spaces) or line and paragraph separators (U+2028, U+2029), as the
+// script's Limit-ErText leaves it, trimmed, at most n characters. Anyone
+// who reaches the computer can put text there (the user name of a failed
+// sign-in comes from the internet), so such text is tidied, never a reason
+// to refuse the whole result.
 func tidyText(s string, n int) string {
 	s = cleanText(strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) {
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return -1
 		}
 		return r

@@ -24,9 +24,11 @@
 #                               items, which can set any registry value
 #     mdm                       enrolled in an MDM: every value no other
 #                               owner holds (Group Policy wins over the MDM
-#                               unless the MDM set MDMWinsOverGP), since the
-#                               reader of the Policy CSP's Config node is
-#                               not proven on a real enrolled computer yet
+#                               unless the MDM set MDMWinsOverGP, which does
+#                               not cover attack surface reduction rules),
+#                               since the reader of the Policy CSP's Config
+#                               node is not proven on a real enrolled
+#                               computer yet
 #     defender_for_endpoint     onboarded to Defender for Endpoint, whose
 #                               security settings management may apply
 #                               Intune's Defender, attack surface reduction
@@ -45,13 +47,22 @@
 #                               filtering platform provider filtering inbound
 #                               traffic (firewall values only)
 #     unreadable                a record the reader needs could not be read:
-#                               the MDM enrolments (every value), the
-#                               preferences' history (registry values), the
-#                               audit policy extension's history or copy
-#                               (audit subcategories), Security Center or the
+#                               the MDM enrolments or DSC's configuration
+#                               (every value); the preferences' history, the
+#                               local Group Policy object, whether local
+#                               policy is processed, or the value asked about
+#                               under Policies (registry values); the audit
+#                               policy extension's history or copy, or
+#                               whether subcategories override categories
+#                               (audit subcategories); whether this is a
+#                               workstation, Security Center or the
 #                               filtering platform (antivirus or firewall
-#                               values), Defender's status (values Tamper
-#                               Protection guards); the notes say which
+#                               values); Defender for Endpoint's onboarding
+#                               (Defender values); Defender's status (values
+#                               Tamper Protection guards); the notes say
+#                               which. Where whether Group Policy's record is
+#                               turned off cannot be read, the record is not
+#                               read either (group_policy_record_off)
 #
 # Owners it reads, once per run (Get-ErPolicyContext):
 # * Group Policy, from the domain or the local Group Policy object: the
@@ -72,8 +83,10 @@
 #   (root\cimv2\mdm\dmmap, MDM_Policy_Config01_<Area>02), the value in
 #   effect from its Result node (MDM_Policy_Result01_<Area>02), and the
 #   provider Windows records as winning under PolicyManager\current\device;
-#   MDMWinsOverGP. Security settings and audit subcategories by the Policy
-#   CSP's DeviceLock, LocalPoliciesSecurityOptions and Audit areas.
+#   MDMWinsOverGP (Microsoft: it "doesn't apply for all settings, such as
+#   attack surface reduction (ASR) rules", so for those Group Policy wins
+#   whatever it says). Security settings and audit subcategories by the
+#   Policy CSP's DeviceLock, LocalPoliciesSecurityOptions and Audit areas.
 # * Defender for Endpoint's onboarding; a Configuration Manager client;
 #   DSC's Local Configuration Manager; Azure's machine configuration by its
 #   services; OSConfig's active scenarios; Tamper Protection; another
@@ -85,8 +98,11 @@ function Get-ErPolicyContext {
     param([string]$WorkFolder)
     $c = New-ErPolicyContext $WorkFolder
 
+    # A workstation's other products are Security Center's, a server's
+    # firewalls the filtering platform's.
     $type = Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'InstallationType'
     $c.Client = $type.Exists -and "$($type.Data)" -eq 'Client'
+    if ($type.Error) { Add-ErUnreadable $c @('antivirus', 'firewall') $type.Error }
 
     # Group Policy's record turned off: the policy "Turn off Resultant Set
     # of Policy logging".
@@ -96,8 +112,11 @@ function Get-ErPolicyContext {
     # With the record off, WMI keeps the last record written before it was
     # turned off (seen on a domain member), which may name policies no
     # longer applied; so neither it nor gpresult, which reports from it, is
-    # read. The extensions' own history and the audit copy are kept.
-    if (-not $c.GpRecordOff) {
+    # read, nor where whether it is off cannot be read. The extensions' own
+    # history and the audit copy are kept.
+    if ($off.Error) {
+        $c.Notes.Add($off.Error)
+    } elseif (-not $c.GpRecordOff) {
         Read-ErRsop $c
         Read-ErGpresult $c $WorkFolder
     }
@@ -109,19 +128,19 @@ function Get-ErPolicyContext {
     # policy category settings", Enabled unless set to 0.
     $force = Get-ErRegistryValue 'HKLM\SYSTEM\CurrentControlSet\Control\Lsa' 'SCENoApplyLegacyAuditPolicy'
     $c.SubcategoriesOverride = -not ($force.Exists -and "$($force.Data)" -eq '0')
+    if ($force.Error) { Add-ErUnreadable $c @('audit') $force.Error }
 
     $m = Get-ErMdmProviders
-    $c.MdmProviders = $m.Providers
     $c.Mdm = $m.Providers.Count -gt 0
-    if ($m.Error) {
-        $c.Unreadable.all = $true
-        $c.Notes.Add($m.Error)
-    }
+    if ($m.Error) { Add-ErUnreadable $c @('all') $m.Error }
+    # Where MDMWinsOverGP cannot be read, the MDM may win (Test-ErMdmWins).
     $wins = Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\ControlPolicyConflict' 'MDMWinsOverGP'
     if ($wins.Exists -and "$($wins.Data)" -eq '1') { $c.MdmWinsOverGp = $true }
+    if ($wins.Error) { Add-ErUnreadable $c @('mdmWins') $wins.Error }
 
     $atp = Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status' 'OnboardingState'
     if ($atp.Exists -and "$($atp.Data)" -eq '1') { $c.DefenderForEndpoint = $true }
+    if ($atp.Error) { Add-ErUnreadable $c @('defender') $atp.Error }
 
     if (Get-Service -Name 'CcmExec' -ErrorAction SilentlyContinue) { $c.ConfigMgr = $true }
 
@@ -130,8 +149,12 @@ function Get-ErPolicyContext {
     $dscFolder = Join-Path $env:SystemRoot 'System32\Configuration'
     $meta = Join-Path $dscFolder 'MetaConfig.mof'
     if ((Test-Path -LiteralPath $meta) -and (Test-Path -LiteralPath (Join-Path $dscFolder 'Current.mof'))) {
-        $text = Get-Content -LiteralPath $meta -Raw -ErrorAction SilentlyContinue
-        if ($text -match 'ConfigurationMode\s*=\s*"ApplyAndAutoCorrect"') { $c.Dsc = $true }
+        try {
+            $text = Get-Content -LiteralPath $meta -Raw -ErrorAction Stop
+            if ($text -match 'ConfigurationMode\s*=\s*"ApplyAndAutoCorrect"') { $c.Dsc = $true }
+        } catch {
+            Add-ErUnreadable $c @('all') "DSC's configuration $meta could not be read: $($_.Exception.Message)"
+        }
     }
 
     # Azure machine configuration, by its services, which only an
@@ -145,11 +168,19 @@ function Get-ErPolicyContext {
         $mp = Get-MpComputerStatus -ErrorAction Stop
         if ($mp.IsTamperProtected) { $c.TamperProtected = $true }
     } catch {
-        $c.Unreadable.tamper = $true
-        $c.Notes.Add('Microsoft Defender did not report its status, so whether Tamper Protection is on is not known.')
+        Add-ErUnreadable $c @('tamper') "Microsoft Defender did not report its status, so whether Tamper Protection is on is not known: $($_.Exception.Message)"
     }
     if ($c.Client) { Read-ErSecurityProducts $c }
     return $c
+}
+
+# Add-ErUnreadable: a record the reader could not read, for the values it
+# concerns (Get-ErReasons: all, registry, security, audit, antivirus,
+# firewall, defender, tamper; mdmWins, Test-ErMdmWins), and why.
+function Add-ErUnreadable {
+    param($Context, [string[]]$Kinds, [string]$Note)
+    foreach ($k in $Kinds) { $Context.Unreadable[$k] = $true }
+    $Context.Notes.Add($Note)
 }
 
 # New-ErPolicyContext: a context in which nothing has been read yet.
@@ -171,7 +202,6 @@ function New-ErPolicyContext {
         GpPreferences             = $false
         SubcategoriesOverride     = $true
         Mdm                       = $false
-        MdmProviders              = @()
         MdmWinsOverGp             = $false
         MdmCache                  = @{}
         DefenderForEndpoint       = $false
@@ -321,18 +351,25 @@ function Find-ErGpRegistry {
 # Registry.pol. Whether Windows records the local object in the resultant
 # set of policy on a computer in a workgroup was not settled in W1, so the
 # file itself is read, which holds either way; unless domain policy turns
-# local policy processing off.
+# local policy processing off. A file that is not there is no policy; one
+# that cannot be read, or whether local policy is processed, makes registry
+# values unreadable.
 function Read-ErLocalGpo {
     param($Context)
     $off = Get-ErRegistryValue 'HKLM\SOFTWARE\Policies\Microsoft\Windows\System' 'DisableLGPOProcessing'
+    if ($off.Error) {
+        Add-ErUnreadable $Context @('registry') $off.Error
+        return
+    }
     if ($off.Exists -and "$($off.Data)" -eq '1') { return }
     $file = Join-Path $env:SystemRoot 'System32\GroupPolicy\Machine\Registry.pol'
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return }
     try {
         $entries = ConvertFrom-ErRegistryPol ([IO.File]::ReadAllBytes($file))
     } catch {
-        $Context.Unreadable.registry = $true
-        $Context.Notes.Add("The local Group Policy object's Registry.pol could not be read: $($_.Exception.Message)")
+        $e = $_.Exception
+        if ($e.InnerException) { $e = $e.InnerException }
+        if ($e -is [IO.FileNotFoundException] -or $e -is [IO.DirectoryNotFoundException]) { return }
+        Add-ErUnreadable $Context @('registry') "The local Group Policy object's Registry.pol could not be read: $($e.Message)"
         return
     }
     foreach ($e in $entries) {
@@ -394,8 +431,15 @@ function Read-ErGpresult {
     $file = Join-Path $WorkFolder 'gpresult.xml'
     $exe = Join-Path $env:SystemRoot 'System32\gpresult.exe'
     $run = Invoke-ErProgram $exe @('/scope', 'computer', '/x', $file, '/f') 120
-    if ($run.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file)) {
-        $Context.Notes.Add("gpresult did not report (exit code $($run.ExitCode)).")
+    # It may end with exit code 0 and write no report (seen on GitHub's
+    # Windows 11 runner); what it printed is kept in the note.
+    $said = Limit-ErText ("$($run.Output) $($run.Error)") 160
+    if ($run.ExitCode -ne 0) {
+        $Context.Notes.Add("gpresult failed with exit code $($run.ExitCode): $said")
+        return
+    }
+    if (-not (Test-Path -LiteralPath $file)) {
+        $Context.Notes.Add("gpresult ended with exit code 0 and wrote no report: $said")
         return
     }
     try {
@@ -439,7 +483,10 @@ function Read-ErGpresult {
 # the merged copy is not Group Policy's. The copy does not say which
 # policy set which subcategory, so the policy is every one in the history.
 # A history that cannot be read, or one that lists policies while the copy
-# is missing or cannot be read, makes audit subcategories unreadable.
+# is missing, cannot be read or is not in auditpol's form (its header, and
+# a GUID with a setting of 0 to 3 on each subcategory's row; the rows of
+# options and global SACLs have no GUID), makes audit subcategories
+# unreadable.
 function Read-ErAuditCopy {
     param($Context)
     $history = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\History\{F3CCC681-B74C-4060-9F26-CD84525DCA2A}'
@@ -455,8 +502,7 @@ function Read-ErAuditCopy {
             if ($n -and $names -notcontains $n) { $names += $n }
         }
     } catch {
-        $Context.Unreadable.audit = $true
-        $Context.Notes.Add("The audit policy extension's history could not be read: $($_.Exception.Message)")
+        Add-ErUnreadable $Context @('audit') "The audit policy extension's history could not be read: $($_.Exception.Message)"
         return
     } finally {
         if ($k) { $k.Close() }
@@ -465,23 +511,34 @@ function Read-ErAuditCopy {
     $policy = ($names | Sort-Object) -join ', '
     $file = Join-Path $env:SystemRoot 'security\audit\audit.csv'
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        $Context.Unreadable.audit = $true
-        $Context.Notes.Add("The audit policy extension's history lists $policy, but its copy $file is missing.")
+        Add-ErUnreadable $Context @('audit') "The audit policy extension's history lists $policy, but its copy $file is missing."
         return
     }
     try {
+        $header = [string](Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction Stop)
         $rows = @(Import-Csv -LiteralPath $file -ErrorAction Stop)
     } catch {
-        $Context.Unreadable.audit = $true
-        $Context.Notes.Add("The audit policy extension's copy could not be read: $($_.Exception.Message)")
+        Add-ErUnreadable $Context @('audit') "The audit policy extension's copy could not be read: $($_.Exception.Message)"
         return
     }
+    if ($header -notmatch '(^|,)"?Subcategory GUID"?(,|$)' -or $header -notmatch '(^|,)"?Setting Value"?(,|$)') {
+        Add-ErUnreadable $Context @('audit') "The audit policy extension's copy $file is not in auditpol's form (no Subcategory GUID and Setting Value columns)."
+        return
+    }
+    $found = @{}
     foreach ($r in $rows) {
         $guid = ([string]$r.'Subcategory GUID').Trim().Trim('{', '}').ToLowerInvariant()
-        $value = [string]$r.'Setting Value'
-        if ($guid -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $value -notmatch '^[0-3]$') { continue }
+        if (-not $guid) { continue }
+        $value = ([string]$r.'Setting Value').Trim()
+        if ($guid -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $value -notmatch '^[0-3]$') {
+            Add-ErUnreadable $Context @('audit') ("The audit policy extension's copy $file has a row it cannot read: " + (Limit-ErText "$guid $value" 80) + '.')
+            return
+        }
+        if (-not $found.ContainsKey($guid)) { $found[$guid] = [int]$value }
+    }
+    foreach ($guid in $found.Keys) {
         if (-not $Context.GpAudit.ContainsKey($guid)) {
-            $Context.GpAudit[$guid] = @{ Value = [int]$value; Policy = $policy }
+            $Context.GpAudit[$guid] = @{ Value = $found[$guid]; Policy = $policy }
         }
     }
 }
@@ -495,8 +552,7 @@ function Read-ErPreferencesHistory {
     $failed = $null
     $entries = @(Get-ChildItem -LiteralPath $history -ErrorAction SilentlyContinue -ErrorVariable failed)
     if ($failed) {
-        $Context.Unreadable.registry = $true
-        $Context.Notes.Add("The history of Group Policy's registry preference items could not be read: $($failed[0].Exception.Message)")
+        Add-ErUnreadable $Context @('registry') "The history of Group Policy's registry preference items could not be read: $($failed[0].Exception.Message)"
     } elseif ($entries.Count -gt 0) {
         $Context.GpPreferences = $true
     }
@@ -517,8 +573,7 @@ function Read-ErSecurityProducts {
                 if ($on -and -not $ms -and $name -and $names -notcontains $name) { $names += $name }
             }
         } catch {
-            $Context.Unreadable[$kind[1]] = $true
-            $Context.Notes.Add("Windows Security Center did not list $($kind[1]) products: $($_.Exception.Message)")
+            Add-ErUnreadable $Context @($kind[1]) "Windows Security Center did not list $($kind[1]) products: $($_.Exception.Message)"
         }
         $Context.Products[$kind[1]] = $names
     }
@@ -532,24 +587,24 @@ function Read-ErSecurityProducts {
 # when a firewall value is first asked about.
 function Read-ErFilteringPlatform {
     param($Context)
-    $Context.Wfp = @{ Read = $false; Providers = @() }
+    $Context.Wfp = @{ Providers = @() }
     if (-not $Context.WorkFolder) {
-        $Context.Unreadable.firewall = $true
+        Add-ErUnreadable $Context @('firewall') 'The filtering platform''s state was not read: the reader has no work folder.'
         return
     }
     $file = Join-Path $Context.WorkFolder 'wfpstate.xml'
     $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\netsh.exe') @('wfp', 'show', 'state', "file=$file") 120
     try {
-        if ($run.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "netsh exit code $($run.ExitCode)" }
+        if ($run.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw ("netsh ended with exit code $($run.ExitCode) and wrote no state: " + (Limit-ErText "$($run.Output) $($run.Error)" 160))
+        }
         $xml = ConvertFrom-ErWfpState ([IO.File]::ReadAllText($file))
     } catch {
-        $Context.Unreadable.firewall = $true
-        $Context.Notes.Add("The filtering platform's state could not be read: $($_.Exception.Message)")
+        Add-ErUnreadable $Context @('firewall') "The filtering platform's state could not be read: $($_.Exception.Message)"
         return
     } finally {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
-    $Context.Wfp.Read = $true
     $Context.Wfp.Providers = Get-ErOtherFirewalls $xml
     if ($Context.Wfp.Providers.Count -gt 0) {
         $Context.Notes.Add('Another vendor''s filtering platform providers filter inbound traffic: ' + ($Context.Wfp.Providers -join ', ') + '.')
@@ -618,12 +673,14 @@ function Get-ErXmlText {
 # or System32's module folder, and only when no one but SYSTEM,
 # Administrators and TrustedInstaller can change it or the folders above it
 # (Test-ErTrustedTree); with commands found in System32's modules alone
-# while it runs. A copy found elsewhere, one that fails the check, or
-# OSConfig's own registry record of a scenario without its module, makes
-# every value cannot_tell (osconfig): a baseline may be applied that the
-# reader cannot see. OSConfig names its settings (AfdDisableAddressSharing)
-# and gives no registry value for them, so an active scenario does too.
-# Its read-only scenario (SecuredCoreState) sets nothing.
+# while it runs. A copy found elsewhere, one that fails the check or whose
+# folder cannot be listed, or OSConfig's own registry record of a scenario
+# without its module, makes every value cannot_tell (osconfig): a baseline
+# may be applied that the reader cannot see; a record that cannot be read,
+# cannot_tell (unreadable). OSConfig names its settings
+# (AfdDisableAddressSharing) and gives no registry value for them, so an
+# active scenario does too. Its read-only scenario (SecuredCoreState) sets
+# nothing.
 function Read-ErOSConfig {
     param($Context)
     $roots = @((Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'), (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'))
@@ -631,9 +688,15 @@ function Read-ErOSConfig {
     foreach ($r in $roots) {
         $base = Join-Path $r 'Microsoft.OSConfig'
         if (-not (Test-Path -LiteralPath $base -PathType Container)) { continue }
-        $versions = @(Get-ChildItem -LiteralPath $base -Directory -Force -ErrorAction SilentlyContinue |
+        $failed = $null
+        $versions = @(Get-ChildItem -LiteralPath $base -Directory -Force -ErrorAction SilentlyContinue -ErrorVariable failed |
             Where-Object { $_.Name -match '^\d+(\.\d+){1,3}$' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'Microsoft.OSConfig.psd1') -PathType Leaf) } |
             Sort-Object { [version]$_.Name } -Descending)
+        if ($failed) {
+            $Context.OSConfig = $true
+            $Context.Notes.Add("OSConfig's module folder $base could not be listed: $($failed[0].Exception.Message). Whether a baseline is active is not known.")
+            return
+        }
         if ($versions.Count -gt 0) {
             $module = @{ Root = $r; Folder = $versions[0].FullName }
         } elseif (Test-Path -LiteralPath (Join-Path $base 'Microsoft.OSConfig.psd1') -PathType Leaf) {
@@ -649,10 +712,17 @@ function Read-ErOSConfig {
             if (@($roots | Where-Object { $_.TrimEnd('\') -eq $full }).Count -gt 0) { continue }
             if (Test-Path -LiteralPath (Join-Path $full 'Microsoft.OSConfig')) { $elsewhere += $full }
         }
+        $metadata = 'HKLM:\SOFTWARE\Microsoft\OSConfig\Metadata'
+        $recorded = @()
+        $failed = $null
+        # Test-Path is true for a key that exists and cannot be read.
+        if (Test-Path -LiteralPath $metadata) { $recorded = @(Get-ChildItem -LiteralPath $metadata -ErrorAction SilentlyContinue -ErrorVariable failed) }
         if ($elsewhere.Count -gt 0) {
             $Context.OSConfig = $true
             $Context.Notes.Add("OSConfig's module is installed only outside Program Files and System32 (" + ($elsewhere -join ', ') + '), where the reader does not import it: whether a baseline is active is not known.')
-        } elseif (@(Get-ChildItem -LiteralPath 'HKLM:\SOFTWARE\Microsoft\OSConfig\Metadata' -ErrorAction SilentlyContinue).Count -gt 0) {
+        } elseif ($failed) {
+            Add-ErUnreadable $Context @('all') "OSConfig's record of its scenarios could not be read: $($failed[0].Exception.Message)"
+        } elseif ($recorded.Count -gt 0) {
             $Context.OSConfig = $true
             $Context.Notes.Add('OSConfig recorded scenarios here and its module is not installed: whether a baseline is active is not known.')
         }
@@ -809,8 +879,17 @@ function Get-ErReasons {
         if ($Context.Wfp.Providers.Count -gt 0) { $r += 'other_firewall' }
     }
     $u = $Context.Unreadable
-    if ($u.all -or $u[$Kind] -or ($Product -and $u[$Product]) -or ($Tamper -and $u.tamper)) { $r += 'unreadable' }
+    if ($u.all -or $u[$Kind] -or ($Product -and $u[$Product]) -or ($Defender -and $u.defender) -or ($Tamper -and $u.tamper)) { $r += 'unreadable' }
     return , $r
+}
+
+# Test-ErMdmWins: whether an MDM's setting of a Policy CSP policy wins over
+# Group Policy's: enrolled, and MDMWinsOverGP set or unreadable; never for
+# attack surface reduction rules, which it does not cover.
+function Test-ErMdmWins {
+    param($Context, [string]$Csp)
+    return [bool]($Context.Mdm -and $Csp -and $Csp -ne 'Defender/AttackSurfaceReductionRules' -and
+        ($Context.MdmWinsOverGp -or $Context.Unreadable.mdmWins))
 }
 
 # Get-ErProductOwner: another antivirus or firewall that is on, as the
@@ -831,19 +910,27 @@ function Get-ErProductOwner {
 #   -Product  antivirus or firewall: another such product that is on owns it
 #   -Tamper   Tamper Protection guards it
 # Another antivirus or firewall comes first, then Group Policy (unless an
-# MDM that wins over it sets the same policy), then Tamper Protection.
+# MDM that wins over it sets the same policy), then Tamper Protection. A
+# value under Policies that none of them explains, or that cannot be read,
+# is cannot_tell.
 function Resolve-ErRegistryOwner {
     param($Context, [string]$Path, [string]$Name, [string]$Csp = '', [switch]$Defender, [string]$Product = '', [switch]$Tamper)
     $byProduct = Get-ErProductOwner $Context $Product
     if ($byProduct) { return $byProduct }
     $gp = Find-ErGpRegistry $Context $Path $Name
-    if ($gp -and -not ($Context.Mdm -and $Context.MdmWinsOverGp -and $Csp)) {
+    if ($gp -and -not (Test-ErMdmWins $Context $Csp)) {
         return New-ErOwnerResult 'owner' 'group_policy' $gp.Policy $gp.Value @()
     }
     if ($Tamper -and $Context.TamperProtected) { return New-ErOwnerResult 'owner' 'tamper_protection' 'Tamper Protection' '' @() }
     $reasons = Get-ErReasons $Context 'registry' -Defender:$Defender -Product $Product -Tamper:$Tamper
-    if ($reasons.Count -eq 0 -and (Test-ErPolicyPath $Path) -and (Get-ErRegistryValue $Path $Name).Exists) {
-        $reasons += 'unexplained_policy'
+    if ($reasons.Count -eq 0 -and (Test-ErPolicyPath $Path)) {
+        $v = Get-ErRegistryValue $Path $Name
+        if ($v.Error) {
+            $reasons += 'unreadable'
+            if ($Context.Notes -notcontains $v.Error) { $Context.Notes.Add($v.Error) }
+        } elseif ($v.Exists) {
+            $reasons += 'unexplained_policy'
+        }
     }
     return New-ErUnownedResult $Context $reasons $Csp
 }
@@ -854,7 +941,7 @@ function Resolve-ErSecurityOwner {
     param($Context, [string]$Setting)
     $csp = Get-ErSecurityCsp $Setting
     $gp = $Context.GpSecurity[$Setting.ToLowerInvariant()]
-    if ($gp -and -not ($Context.Mdm -and $Context.MdmWinsOverGp -and $csp)) {
+    if ($gp -and -not (Test-ErMdmWins $Context $csp)) {
         return New-ErOwnerResult 'owner' 'group_policy' $gp.Policy $gp.Value @()
     }
     return New-ErUnownedResult $Context (Get-ErReasons $Context 'security') $csp
@@ -869,7 +956,7 @@ function Resolve-ErAuditOwner {
     $sub = Get-ErAuditSubcategory $g
     $csp = $(if ($sub) { $sub.Csp } else { '' })
     $gp = $Context.GpAudit[$g]
-    if ($gp -and -not ($Context.Mdm -and $Context.MdmWinsOverGp -and $csp)) {
+    if ($gp -and -not (Test-ErMdmWins $Context $csp)) {
         return New-ErOwnerResult 'owner' 'group_policy' $gp.Policy (ConvertTo-ErAuditSetting $gp.Value) @()
     }
     if (-not $Context.SubcategoriesOverride -and $Context.GpLegacyAudit.Count -gt 0) {
@@ -1050,21 +1137,25 @@ function Test-ErPolicyPath {
 }
 
 # Get-ErRegistryValue: a value under HKLM, without following anything: its
-# existence, data and kind.
+# existence, data and kind; or, where it could not be read, Error, which
+# names it: such a value is neither absent nor present, and every caller
+# makes it unknown or cannot_tell.
 function Get-ErRegistryValue {
     param([string]$Path, [string]$Name)
     $sub = $Path -replace '^HKLM\\', ''
     $k = $null
     try {
         $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub, $false)
-        if ($null -eq $k) { return @{ Exists = $false; Data = $null; Kind = '' } }
-        if (@($k.GetValueNames()) -notcontains $Name) { return @{ Exists = $false; Data = $null; Kind = '' } }
+        if ($null -eq $k) { return @{ Exists = $false; Data = $null; Kind = ''; Error = '' } }
+        if (@($k.GetValueNames()) -notcontains $Name) { return @{ Exists = $false; Data = $null; Kind = ''; Error = '' } }
         $kind = $k.GetValueKind($Name).ToString()
         $data = $k.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
         if ($kind -eq 'DWord') { $data = [uint32]([int64]$data -band 0xffffffffL) }
-        return @{ Exists = $true; Data = $data; Kind = $kind }
+        return @{ Exists = $true; Data = $data; Kind = $kind; Error = '' }
     } catch {
-        return @{ Exists = $false; Data = $null; Kind = ''; Error = $_.Exception.Message }
+        $e = $_.Exception
+        if ($e.InnerException) { $e = $e.InnerException }
+        return @{ Exists = $false; Data = $null; Kind = ''; Error = "HKLM\$sub\$Name could not be read: $($e.Message)" }
     } finally {
         if ($k) { $k.Close() }
     }

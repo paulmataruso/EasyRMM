@@ -15,6 +15,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/paulmataruso/easyrmm/internal/wintest"
 )
 
 // The reader started on its own, as the agent is to start it: Windows
@@ -177,7 +179,7 @@ var baseRequest = `{"registry": [
 func TestQueryAsSystem(t *testing.T) {
 	systemTest(t)
 	// A value under Policies that no owner the reader knows explains.
-	plant(t, plantedKey, map[string]any{"Planted": uint32(1)})
+	wintest.Plant(t, plantedKey, map[string]any{"Planted": uint32(1)})
 
 	code, a := ask(t, baseRequest)
 	if code != 0 || len(a.Registry) != 3 || len(a.Security) != 2 || len(a.Audit) != 2 {
@@ -211,6 +213,19 @@ func TestQueryAsSystem(t *testing.T) {
 		if x.Result != ResultNone {
 			t.Errorf("unowned %d: %v", i, x)
 		}
+	}
+
+	// A value under Policies that cannot be read is neither absent nor
+	// unexplained: cannot_tell (unreadable), with the error in the notes.
+	wintest.DenyKeyRead(t, plantedKey)
+	if code, a = ask(t, baseRequest); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if r := a.Registry[0]; r.Result != ResultCannotTell || strings.Join(r.Reasons, ",") != ReasonUnreadable {
+		t.Errorf("a value under Policies that cannot be read: %v", r)
+	}
+	if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "EasyRMM-winpolicy-test") }) {
+		t.Errorf("notes %q do not name the value", a.Notes)
 	}
 
 	badRequests(t)

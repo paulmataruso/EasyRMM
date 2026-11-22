@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/paulmataruso/easyrmm/internal/winpolicy"
+	"github.com/paulmataruso/easyrmm/internal/wintest"
 )
 
 // Windows hardening's check (ADR-0054, W1) on a real Windows, as the
@@ -253,6 +254,46 @@ func TestWindowsHardeningCheckAsSystem(t *testing.T) {
 	}
 	if s := setting(r, "audit", "audit-subcategories"); s == nil {
 		t.Error("no audit subcategories")
+	}
+}
+
+// TestWindowsHardeningUnreadableAsSystem: keys LocalSystem may not read
+// (WDigest's and SCHANNEL's own, denied to it alone; policy keys planted
+// and denied to everyone where they are absent) make each setting read
+// from them unknown, with the error: never "not set (Windows default)" and
+// in place, or not in place. WDigest's module, which has nothing else to
+// read, failed.
+func TestWindowsHardeningUnreadableAsSystem(t *testing.T) {
+	hardeningSystemTest(t)
+	keys := map[string][]string{
+		`SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest`:                           {"wdigest-logon-credential"},
+		`SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Client`: {"tls-ssl2-client"},
+		`SOFTWARE\Policies\Microsoft\Windows\Installer`:                                        {"uac-installer-elevated"},
+		`SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint`:                        {"printing-driver-admins"},
+		`SOFTWARE\Policies\Microsoft\Windows\WinRM\Service`:                                    {"winrm-service-basic", "winrm-service-unencrypted", "winrm-service-runas"},
+		`SOFTWARE\Policies\Microsoft\Windows NT\DNSClient`:                                     {"name-resolution-llmnr"},
+	}
+	for k := range keys {
+		wintest.Unreadable(t, k, wintest.SystemSID)
+	}
+	r := checkAll(t)
+	for k, ids := range keys {
+		for _, id := range ids {
+			var s *HardeningSetting
+			for _, m := range r.Modules {
+				if x := setting(r, m.Module, id); x != nil {
+					s = x
+				}
+			}
+			if s == nil || s.State != "unknown" || !strings.Contains(s.Note, "could not be read") {
+				t.Errorf(`%s, with HKLM\%s unreadable: %+v, want unknown with the error`, id, k, s)
+			}
+		}
+	}
+	for _, m := range r.Modules {
+		if m.Module == "wdigest" && (m.State != HardeningFailed || m.Reason != "None of its settings could be read.") {
+			t.Errorf("wdigest: %s (%s), want failed", m.State, m.Reason)
+		}
 	}
 }
 

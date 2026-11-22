@@ -15,6 +15,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/paulmataruso/easyrmm/internal/wintest"
 )
 
 // Owners the tests plant on a runner made for the job, each as the owner
@@ -22,84 +24,6 @@ import (
 // platform's objects), and the reader's answer with and without it. Like
 // TestQueryAsSystem, they run as LocalSystem in CI's job "Windows hardening
 // as LocalSystem", and remove what they plant.
-
-func keyExists(path string) bool {
-	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
-	if err != nil {
-		return !errors.Is(err, registry.ErrNotExist)
-	}
-	_ = k.Close()
-	return true
-}
-
-// plant makes a key under HKLM that does not exist yet, with values, and
-// removes it, and the parents it made, when the test ends.
-func plant(t *testing.T, path string, values map[string]any) {
-	t.Helper()
-	if keyExists(path) {
-		t.Fatalf(`HKLM\%s exists already`, path)
-	}
-	top := path
-	for p := path; strings.Contains(p, `\`); {
-		p = p[:strings.LastIndex(p, `\`)]
-		if keyExists(p) {
-			break
-		}
-		top = p
-	}
-	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, path, registry.ALL_ACCESS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer k.Close()
-	t.Cleanup(func() { deleteTree(t, top) })
-	for name, v := range values {
-		switch v := v.(type) {
-		case uint32:
-			err = k.SetDWordValue(name, v)
-		case string:
-			err = k.SetStringValue(name, v)
-		default:
-			t.Fatalf("value %s: %T", name, v)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-// deleteTree deletes a key under HKLM and its subkeys. A key SYSTEM may not
-// read (denyRead) has no subkeys here, and SYSTEM may still delete it.
-func deleteTree(t *testing.T, path string) {
-	t.Helper()
-	if k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.ENUMERATE_SUB_KEYS); err == nil {
-		names, _ := k.ReadSubKeyNames(-1)
-		_ = k.Close()
-		for _, n := range names {
-			deleteTree(t, path+`\`+n)
-		}
-	}
-	if err := registry.DeleteKey(registry.LOCAL_MACHINE, path); err != nil && !errors.Is(err, registry.ErrNotExist) {
-		t.Errorf(`delete HKLM\%s: %v`, path, err)
-	}
-}
-
-// denyRead lets no one, SYSTEM included, read a key under HKLM.
-func denyRead(t *testing.T, path string) {
-	t.Helper()
-	sd, err := windows.SecurityDescriptorFromString("D:P(D;;KR;;;SY)(D;;KR;;;BA)(A;;KA;;;BA)(A;;KA;;;SY)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := windows.SetNamedSecurityInfo(`MACHINE\`+path, windows.SE_REGISTRY_KEY,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // client: whether the computer is a workstation (InstallationType Client).
 func client(t *testing.T) bool {
@@ -152,7 +76,7 @@ func noReason(t *testing.T, what string, a *answers, reason string) {
 func TestQueryMDMAsSystem(t *testing.T) {
 	systemTest(t)
 	key := `SOFTWARE\Microsoft\Enrollments\{5E0F1E4B-3C1A-4E2B-9A61-EA5E7C0DE001}`
-	plant(t, key, map[string]any{
+	wintest.Plant(t, key, map[string]any{
 		"ProviderID":              "MS DM Server",
 		"EnrollmentState":         uint32(1),
 		"DiscoveryServiceFullURL": "https://enrollment.manage.microsoft.com/enrollmentserver/discovery.svc",
@@ -187,7 +111,7 @@ func TestQueryMDMAsSystem(t *testing.T) {
 	}
 	noReason(t, "Windows' own enrolment", a, ReasonMDM)
 
-	denyRead(t, key)
+	wintest.DenyKeyRead(t, key)
 	if code, a = ask(t, baseRequest); code != 0 {
 		t.Fatalf("exit code %d", code)
 	}
@@ -205,13 +129,13 @@ func TestQueryAuditHistoryAsSystem(t *testing.T) {
 	systemTest(t)
 	history := `SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\History\{F3CCC681-B74C-4060-9F26-CD84525DCA2A}`
 	copyFile := filepath.Join(os.Getenv("SystemRoot"), `security\audit\audit.csv`)
-	if keyExists(history) {
+	if wintest.KeyExists(history) {
 		t.Skip("the audit policy extension has a history here")
 	}
 	if _, err := os.Stat(copyFile); err == nil {
 		t.Skip("the audit policy extension has a copy here")
 	}
-	plant(t, history+`\0`, map[string]any{"DisplayName": "EasyRMM test audit policy", "GPOName": "{5E0F1E4B-3C1A-4E2B-9A61-EA5E7C0DE002}"})
+	wintest.Plant(t, history+`\0`, map[string]any{"DisplayName": "EasyRMM test audit policy", "GPOName": "{5E0F1E4B-3C1A-4E2B-9A61-EA5E7C0DE002}"})
 
 	code, a := ask(t, baseRequest)
 	if code != 0 {
@@ -232,8 +156,10 @@ func TestQueryAuditHistoryAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(copyFile) })
-	if err := os.WriteFile(copyFile, []byte("Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value\r\n"+
-		",System,Audit Logon,{0cce9215-69ae-11d9-bed3-505054503030},Success and Failure,,3\r\n"), 0o600); err != nil {
+	const header = "Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value\r\n"
+	// auditpol's options rows have no GUID.
+	if err := os.WriteFile(copyFile, []byte(header+",System,Audit Logon,{0cce9215-69ae-11d9-bed3-505054503030},Success and Failure,,3\r\n"+
+		",,Option:CrashOnAuditFail,,Disabled,,0\r\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code, a = ask(t, baseRequest); code != 0 {
@@ -246,7 +172,27 @@ func TestQueryAuditHistoryAsSystem(t *testing.T) {
 		t.Errorf("Process Creation, not in the copy: %v", p)
 	}
 
-	denyRead(t, history+`\0`)
+	// A copy not in auditpol's form: every audit subcategory cannot_tell
+	// (unreadable), not the rows it could read.
+	for what, text := range map[string]string{
+		"without its columns":      "Machine Name,Policy Target,Subcategory\r\n,System,Audit Logon\r\n",
+		"a GUID it cannot read":    header + ",System,Audit Logon,{0cce9215-69ae-11d9},Success,,1\r\n",
+		"a setting it cannot read": header + ",System,Audit Logon,{0cce9215-69ae-11d9-bed3-505054503030},Success,,7\r\n",
+	} {
+		if err := os.WriteFile(copyFile, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code, a = ask(t, baseRequest); code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		for i, x := range a.Audit {
+			if x.Result != ResultCannotTell || strings.Join(x.Reasons, ",") != ReasonUnreadable {
+				t.Errorf("audit %d with a copy %s: %v", i, what, x)
+			}
+		}
+	}
+
+	wintest.DenyKeyRead(t, history+`\0`)
 	if code, a = ask(t, baseRequest); code != 0 {
 		t.Fatalf("exit code %d", code)
 	}
@@ -281,7 +227,7 @@ func TestQueryLocalGpoAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Group Policy may apply the file while the test runs.
-	t.Cleanup(func() { deleteTree(t, key) })
+	t.Cleanup(func() { wintest.DeleteTree(t, key) })
 	if err := os.WriteFile(file, testPol(key), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -321,6 +267,134 @@ func TestQueryLocalGpoAsSystem(t *testing.T) {
 		if x.Result != ResultNone {
 			t.Errorf("security or audit %d: %v", i, x)
 		}
+	}
+
+	// A Registry.pol that cannot be read is not one that is absent.
+	if err := os.WriteFile(file, testPol(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("file unreadable", func(t *testing.T) {
+		wintest.DenyFileRead(t, file)
+		code, a := ask(t, request)
+		if code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		for i, x := range a.Registry {
+			if x.Result != ResultCannotTell || strings.Join(x.Reasons, ",") != ReasonUnreadable {
+				t.Errorf("registry %d with a Registry.pol that cannot be read: %v", i, x)
+			}
+		}
+		if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "Registry.pol") }) {
+			t.Errorf("notes %q", a.Notes)
+		}
+	})
+	// Whether domain policy turns local policy off, and whether Group
+	// Policy's record is off, not known (their key unreadable to
+	// LocalSystem): registry values cannot_tell (unreadable), and nothing
+	// from the record.
+	t.Run("policy key unreadable", func(t *testing.T) {
+		wintest.Unreadable(t, `SOFTWARE\Policies\Microsoft\Windows\System`, wintest.SystemSID)
+		code, a := ask(t, request)
+		if code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		for i, x := range a.Registry {
+			if x.Result != ResultCannotTell || !slices.Contains(x.Reasons, ReasonUnreadable) {
+				t.Errorf("registry %d: %v, want cannot_tell with unreadable", i, x)
+			}
+		}
+		for i, x := range a.Security {
+			if x.Result != ResultCannotTell || !slices.Contains(x.Reasons, ReasonGroupPolicyRecordOff) {
+				t.Errorf("security %d: %v, want cannot_tell with the record not read", i, x)
+			}
+		}
+	})
+}
+
+// TestQueryPreferencesHistoryAsSystem: Group Policy Preferences' registry
+// extension's history, listing a policy, makes every registry value
+// cannot_tell (group_policy_preferences); a history that cannot be read,
+// cannot_tell (unreadable).
+func TestQueryPreferencesHistoryAsSystem(t *testing.T) {
+	systemTest(t)
+	history := `SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\History\{B087BE9D-ED37-454f-AF9C-04291E351182}`
+	if wintest.KeyExists(history) {
+		t.Skip("Group Policy Preferences' registry extension has a history here")
+	}
+	wintest.Plant(t, history+`\0`, map[string]any{"DisplayName": "EasyRMM test preferences", "GPOName": "{5E0F1E4B-3C1A-4E2B-9A61-EA5E7C0DE003}"})
+	for _, deny := range []bool{false, true} {
+		reason := ReasonGroupPolicyPreferences
+		if deny {
+			wintest.DenyKeyRead(t, history)
+			reason = ReasonUnreadable
+		}
+		code, a := ask(t, baseRequest)
+		if code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		for i, x := range a.Registry {
+			if !tamperOwned(x) && (x.Result != ResultCannotTell || !slices.Contains(x.Reasons, reason)) {
+				t.Errorf("registry %d: %v, want cannot_tell with %s", i, x, reason)
+			}
+		}
+		noReason(t, "security and audit", &answers{Security: a.Security, Audit: a.Audit}, reason)
+	}
+}
+
+// TestQueryDefenderOnboardingAsSystem: Defender for Endpoint's onboarding
+// state, unreadable to LocalSystem, makes Defender's values cannot_tell
+// (unreadable), and no other.
+func TestQueryDefenderOnboardingAsSystem(t *testing.T) {
+	systemTest(t)
+	wintest.Unreadable(t, `SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status`, wintest.SystemSID)
+	code, a := ask(t, baseRequest)
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if x := a.Registry[1]; !tamperOwned(x) && (x.Result != ResultCannotTell || !slices.Contains(x.Reasons, ReasonUnreadable)) {
+		t.Errorf("real-time protection: %v, want cannot_tell with unreadable", x)
+	}
+	others := append([]answer{a.Registry[0]}, a.Registry[2:]...)
+	noReason(t, "values not Defender's", &answers{Registry: others, Security: a.Security, Audit: a.Audit}, ReasonUnreadable)
+}
+
+// TestQueryDSCAsSystem: DSC with a configuration to apply, in
+// ApplyAndAutoCorrect, makes every answer cannot_tell (dsc); a meta
+// configuration that cannot be read, cannot_tell (unreadable).
+func TestQueryDSCAsSystem(t *testing.T) {
+	systemTest(t)
+	dir := filepath.Join(os.Getenv("SystemRoot"), `System32\Configuration`)
+	meta, current := filepath.Join(dir, "MetaConfig.mof"), filepath.Join(dir, "Current.mof")
+	for _, f := range []string{meta, current} {
+		if _, err := os.Stat(f); err == nil {
+			t.Skipf("DSC has %s here", f)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for f, text := range map[string]string{
+		meta:    "instance of MSFT_DSCMetaConfiguration as $MSFT_DSCMetaConfiguration1ref\r\n{\r\n ConfigurationMode = \"ApplyAndAutoCorrect\";\r\n};\r\n",
+		current: "instance of OMI_ConfigurationDocument\r\n{\r\n Version = \"2.0.0\";\r\n};\r\n",
+	} {
+		t.Cleanup(func() { _ = os.Remove(f) })
+		if err := os.WriteFile(f, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, a := ask(t, baseRequest)
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	allCannotTell(t, "DSC in ApplyAndAutoCorrect", a, ReasonDSC)
+
+	wintest.DenyFileRead(t, meta)
+	if code, a = ask(t, baseRequest); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	allCannotTell(t, "a meta configuration that cannot be read", a, ReasonUnreadable)
+	if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "MetaConfig.mof") }) {
+		t.Errorf("notes %q", a.Notes)
 	}
 }
 
@@ -616,9 +690,91 @@ func TestQueryOSConfigAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only in another folder of PSModulePath.
+	// A junction in its place, to a folder only the trusted accounts may
+	// change: nothing is followed.
+	target := filepath.Join(os.Getenv("SystemDrive")+`\`, "EasyRMM-test-osconfig")
+	t.Cleanup(func() { _ = os.RemoveAll(target) })
+	standIn(t, target)
+	if out, err := exec.Command("icacls.exe", target, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F").CombinedOutput(); err != nil {
+		t.Fatalf("icacls: %v %s", err, out)
+	}
+	link := filepath.Join(programFiles, "Microsoft.OSConfig")
+	if out, err := exec.Command("cmd.exe", "/c", "mklink", "/J", link, filepath.Join(target, "Microsoft.OSConfig")).CombinedOutput(); err != nil {
+		t.Fatalf("mklink: %v %s", err, out)
+	}
+	t.Cleanup(func() { _ = os.Remove(link) })
+	if code, a = ask(t, baseRequest); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if imported() {
+		t.Error("a module behind a junction was imported")
+	}
+	allCannotTell(t, "a module behind a junction", a, ReasonOSConfig)
+	if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "reparse point") }) {
+		t.Errorf("notes %q", a.Notes)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+
+	// A module it requires, found only in another folder of PSModulePath:
+	// while the reader imports, it looks in System32's modules alone, so the
+	// required module is not loaded, and the import fails.
 	other := filepath.Join(os.Getenv("SystemDrive")+`\`, "EasyRMM-test-modules")
 	t.Cleanup(func() { _ = os.RemoveAll(other) })
+	dependency := filepath.Join(other, "EasyRMMTestDependency")
+	if err := os.MkdirAll(dependency, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	loaded := filepath.Join(os.Getenv("SystemRoot"), `Temp\easyrmm-osconfig-dependency`)
+	t.Cleanup(func() { _ = os.Remove(loaded) })
+	if err := os.WriteFile(filepath.Join(dependency, "EasyRMMTestDependency.psm1"),
+		[]byte(`Set-Content -LiteralPath (Join-Path $env:SystemRoot 'Temp\easyrmm-osconfig-dependency') -Value 'loaded'`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	folder = standIn(t, programFiles)
+	if err := os.WriteFile(filepath.Join(folder, "Microsoft.OSConfig.psd1"), []byte(`@{ ModuleVersion = '1.0.0'; RootModule = 'Microsoft.OSConfig.psm1'; `+
+		`FunctionsToExport = @('Get-OSConfigMetadata'); RequiredModules = @('EasyRMMTestDependency') }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, a = askWith(t, baseRequest, []string{"PSModulePath=" + other + ";" + programFiles + ";" + system32})
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if _, err := os.Stat(loaded); err == nil {
+		t.Error("a module from another folder of PSModulePath was loaded")
+	}
+	if imported() {
+		t.Error("a module whose required module is elsewhere was imported")
+	}
+	allCannotTell(t, "a module whose required module is elsewhere", a, ReasonOSConfig)
+	if err := os.RemoveAll(filepath.Join(programFiles, "Microsoft.OSConfig")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(other); err != nil {
+		t.Fatal(err)
+	}
+
+	// Its folder cannot be listed: whether a baseline is active is not
+	// known.
+	t.Run("folder unlistable", func(t *testing.T) {
+		base := filepath.Join(programFiles, "Microsoft.OSConfig")
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(base) })
+		wintest.DenyFileRead(t, base)
+		code, a := ask(t, baseRequest)
+		if code != 0 {
+			t.Fatalf("exit code %d", code)
+		}
+		allCannotTell(t, "a module folder that cannot be listed", a, ReasonOSConfig)
+		if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "could not be listed") }) {
+			t.Errorf("notes %q", a.Notes)
+		}
+	})
+
+	// Only in another folder of PSModulePath.
 	standIn(t, other)
 	code, a = askWith(t, baseRequest, []string{"PSModulePath=" + other + ";" + programFiles + ";" + system32})
 	if code != 0 {
@@ -633,9 +789,19 @@ func TestQueryOSConfigAsSystem(t *testing.T) {
 	}
 
 	// OSConfig's record of a scenario, without the module.
-	plant(t, metadata+`\EasyRMMTest`, map[string]any{"Description": "EasyRMM test"})
+	wintest.Plant(t, metadata+`\EasyRMMTest`, map[string]any{"Description": "EasyRMM test"})
 	if code, a = ask(t, baseRequest); code != 0 {
 		t.Fatalf("exit code %d", code)
 	}
 	allCannotTell(t, "OSConfig's record without the module", a, ReasonOSConfig)
+
+	// A record that cannot be read: cannot_tell (unreadable).
+	wintest.DenyKeyReadTo(t, metadata, wintest.SystemSID)
+	if code, a = ask(t, baseRequest); code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	allCannotTell(t, "OSConfig's record that cannot be read", a, ReasonUnreadable)
+	if !slices.ContainsFunc(a.Notes, func(n string) bool { return strings.Contains(n, "record of its scenarios") }) {
+		t.Errorf("notes %q", a.Notes)
+	}
 }

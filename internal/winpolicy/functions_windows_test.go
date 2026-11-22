@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -311,5 +312,121 @@ ConvertTo-Json -Compress -Depth 4 @($out | ForEach-Object { @{ result = $_.Resul
 }`, &writers)
 	if len(writers.Creator) != 0 || strings.Join(writers.Users, ",") != "S-1-5-32-545" {
 		t.Errorf("writers %+v", writers)
+	}
+}
+
+// unreadRecord is what the reader keeps of the records it could not read.
+type unreadRecord struct {
+	Unreadable map[string]bool
+	Notes      []string
+}
+
+// hasNote: whether a note contains the text.
+func (u unreadRecord) hasNote(text string) bool {
+	return slices.ContainsFunc(u.Notes, func(n string) bool { return strings.Contains(n, text) })
+}
+
+// TestReaderUnreadableOnWindows: an MDM's setting wins over Group
+// Policy's only where MDMWinsOverGP is set or cannot be read, never for
+// attack surface reduction rules, which it does not cover; and records the
+// reader could not read make the values they concern cannot_tell
+// (unreadable), with why: Security Center's products, the filtering
+// platform's state, Defender's status.
+func TestReaderUnreadableOnWindows(t *testing.T) {
+	r := Reader()
+	var wins []bool
+	runFunctions(t, r, `
+$c = New-ErPolicyContext ''
+$c.Mdm = $true
+$out = @((Test-ErMdmWins $c 'Defender/AllowRealtimeMonitoring'))
+$c.MdmWinsOverGp = $true
+$out += Test-ErMdmWins $c 'Defender/AllowRealtimeMonitoring'
+$out += Test-ErMdmWins $c 'Defender/AttackSurfaceReductionRules'
+$out += Test-ErMdmWins $c ''
+$c.MdmWinsOverGp = $false
+$c.Unreadable.mdmWins = $true
+$out += Test-ErMdmWins $c 'Defender/AllowRealtimeMonitoring'
+$c.Mdm = $false
+$out += Test-ErMdmWins $c 'Defender/AllowRealtimeMonitoring'
+ConvertTo-Json -Compress $out`, &wins)
+	if want := []bool{false, true, false, false, true, false}; !slices.Equal(wins, want) {
+		t.Errorf("Test-ErMdmWins: %v, want %v", wins, want)
+	}
+	// Under MDMWinsOverGP, Group Policy keeps its attack surface reduction
+	// rule; the MDM may hold another Defender policy.
+	var asr []answer
+	runFunctions(t, r, `
+$c = New-ErPolicyContext ''
+$c.GpRecordRead = $true
+$c.Mdm = $true
+$c.MdmWinsOverGp = $true
+$rules = 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\ASR\Rules'
+$rule = '56a863a9-875e-4185-98a7-b882c64b5ce5'
+$defender = 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender'
+$c.GpRegistry[(Get-ErRegistryKey $rules $rule)] = @{ Value = '1'; Policy = 'ASR policy' }
+$c.GpRegistry[(Get-ErRegistryKey $defender 'PUAProtection')] = @{ Value = '1'; Policy = 'Defender policy' }
+$out = @(
+    (Resolve-ErRegistryOwner $c $rules $rule 'Defender/AttackSurfaceReductionRules' -Defender -Product antivirus),
+    (Resolve-ErRegistryOwner $c $defender 'PUAProtection' 'Defender/PUAProtection' -Defender -Product antivirus)
+)
+ConvertTo-Json -Compress -Depth 4 @($out | ForEach-Object { @{ result = $_.Result; owner = $_.Owner; policy = $_.Policy; reasons = @($_.Reasons) } })`, &asr)
+	if len(asr) != 2 || asr[0].Result != ResultOwner || asr[0].Owner != OwnerGroupPolicy || asr[0].Policy != "ASR policy" ||
+		asr[1].Result != ResultCannotTell || !slices.Contains(asr[1].Reasons, ReasonMDM) {
+		t.Errorf("under MDMWinsOverGP: %+v, want Group Policy's rule and the MDM's Defender policy", asr)
+	}
+
+	// Security Center's products: on a server, where Windows has no
+	// Security Center, a real failure; on a workstation, the stand-in sends
+	// Get-CimInstance to a computer that does not exist.
+	var products unreadRecord
+	runFunctions(t, r, `$c = New-ErPolicyContext ''
+if ((Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'InstallationType').Data -eq 'Client') {
+    $PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'
+}
+Read-ErSecurityProducts $c
+ConvertTo-Json -Compress @{ Unreadable = $c.Unreadable; Notes = @($c.Notes) }`, &products)
+	if !products.Unreadable["antivirus"] || !products.Unreadable["firewall"] || !products.hasNote("Security Center did not list") {
+		t.Errorf("Security Center unread: %+v", products)
+	}
+
+	// The filtering platform's state, without a work folder and with one
+	// that does not exist (netsh cannot write there): firewall values
+	// cannot_tell (unreadable).
+	var wfp []struct {
+		unreadRecord
+		Reasons []string
+	}
+	runFunctions(t, r, `$out = @()
+foreach ($folder in '', '`+filepath.Join(t.TempDir(), "missing")+`') {
+    $c = New-ErPolicyContext $folder
+    $c.GpRecordRead = $true
+    $reasons = Get-ErReasons $c 'registry' -Defender -Product firewall
+    $out += @{ Unreadable = $c.Unreadable; Notes = @($c.Notes); Reasons = @($reasons) }
+}
+ConvertTo-Json -Compress -Depth 4 $out`, &wfp)
+	if len(wfp) != 2 {
+		t.Fatalf("filtering platform: %+v", wfp)
+	}
+	for i, w := range wfp {
+		if !w.Unreadable["firewall"] || !slices.Equal(w.Reasons, []string{ReasonUnreadable}) || !w.hasNote("filtering platform") {
+			t.Errorf("filtering platform %d: %+v", i, w)
+		}
+	}
+
+	// Defender's status, where its module cannot be loaded (the PowerShell
+	// modules limited to an empty folder): whether Tamper Protection is on
+	// is not known, so real-time protection is cannot_tell (unreadable).
+	var tamper struct {
+		unreadRecord
+		Realtime answer
+	}
+	runFunctions(t, r, `foreach ($n in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'CimCmdlets') { Import-Module $n }
+$env:PSModulePath = '`+t.TempDir()+`'
+$c = Get-ErPolicyContext ''
+$a = Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' 'DisableRealtimeMonitoring' 'Defender/AllowRealtimeMonitoring' -Defender -Product antivirus -Tamper
+ConvertTo-Json -Compress -Depth 4 @{ Unreadable = $c.Unreadable; Notes = @($c.Notes); Realtime = @{ result = $a.Result; reasons = @($a.Reasons) } }`, &tamper)
+	if !tamper.Unreadable["tamper"] || !tamper.hasNote("Tamper Protection") || tamper.Realtime.Result != ResultCannotTell ||
+		!slices.Contains(tamper.Realtime.Reasons, ReasonUnreadable) {
+		t.Errorf("Defender's status unread: %+v", tamper)
 	}
 }
