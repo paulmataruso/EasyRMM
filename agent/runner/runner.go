@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -94,6 +95,10 @@ type Runner struct {
 	EasyPatch EasyPatch
 	// Removal uninstalls the agent (ADR-0050); nil never does.
 	Removal Removal
+	// Hardware reads the device's hardware health (ADR-0065); nil never
+	// does. It runs on a goroutine of its own, so that a slow disk never
+	// delays a heartbeat.
+	Hardware func(ctx context.Context) agentproto.HardwareReport
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
@@ -104,6 +109,10 @@ type Runner struct {
 	InventoryEvery time.Duration
 	// InventoryRetry is the wait after a failed upload (15 min).
 	InventoryRetry time.Duration
+	// HardwareFirst is the wait from Run's start to the first hardware
+	// reading (2 min); HardwareEvery is the wait between readings (30
+	// min), each plus up to HardwareJitter (1 min).
+	HardwareFirst, HardwareEvery, HardwareJitter time.Duration
 
 	status      state.Status
 	failures    int
@@ -139,6 +148,15 @@ func (r *Runner) defaults() {
 	if r.InventoryRetry == 0 {
 		r.InventoryRetry = 15 * time.Minute
 	}
+	if r.HardwareFirst == 0 {
+		r.HardwareFirst = 2 * time.Minute
+	}
+	if r.HardwareEvery == 0 {
+		r.HardwareEvery = 30 * time.Minute
+	}
+	if r.HardwareJitter == 0 {
+		r.HardwareJitter = time.Minute
+	}
 }
 
 // Run sends heartbeats until ctx ends, or returns ErrRestart when the
@@ -146,6 +164,18 @@ func (r *Runner) defaults() {
 // itself.
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
+	if r.Hardware != nil {
+		hctx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			r.hardwareLoop(hctx)
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
 	if r.Mesh != nil && r.Mesh.Installed() {
 		// A systemd unit restarts by itself; a child process needs us.
 		if err := r.Mesh.Start(ctx); err != nil {
@@ -335,6 +365,48 @@ func heartbeatInterval(seconds int) time.Duration {
 func (r *Runner) save() {
 	if err := r.Store.SaveStatus(r.status); err != nil {
 		r.Log.Warn("saving the agent status failed", "error", err)
+	}
+}
+
+// hardwareLoop reads the hardware HardwareFirst after Run starts and then
+// every HardwareEvery plus up to HardwareJitter, until ctx ends.
+func (r *Runner) hardwareLoop(ctx context.Context) {
+	wait := r.HardwareFirst
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		r.sendHardware(ctx)
+		wait = r.hardwareWait()
+	}
+}
+
+// hardwareWait is the wait between two readings: HardwareEvery plus up to
+// HardwareJitter, so a fleet does not read in lockstep.
+func (r *Runner) hardwareWait() time.Duration {
+	return r.HardwareEvery + time.Duration(rand.Int64N(int64(r.HardwareJitter)+1)) //nolint:gosec // timing jitter, not security
+}
+
+// sendHardware reads the hardware and sends the report once. There is no
+// queue: a reading that cannot be sent is dropped, and the next one is
+// fresher. An older server without the endpoint answers 404, which is
+// dropped quietly.
+func (r *Runner) sendHardware(ctx context.Context) {
+	report := r.Hardware(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	// A report holds strings and integers only: it always encodes.
+	body, _ := json.Marshal(report)
+	var e *client.Error
+	switch err := r.Client.Hardware(ctx, body); {
+	case err == nil, ctx.Err() != nil:
+	case errors.As(err, &e) && e.Status == http.StatusNotFound:
+		r.Log.Debug("the server does not take hardware reports; the reading is dropped")
+	default:
+		r.Log.Warn("sending the hardware report failed; the reading is dropped", "error", err)
 	}
 }
 

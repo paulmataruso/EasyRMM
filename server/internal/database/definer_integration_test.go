@@ -330,9 +330,10 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 	}
 
 	// Another role owns the database: the functions are pinned, TEMPORARY
-	// stays, and up says what to run. public then belongs to that role, so
-	// easyrmm_owner creates in it by a grant, as it must in any such
-	// deployment to have migrated at all; later migrations need it.
+	// stays, and up says what to run.
+	// Such a deployment lets easyrmm_owner create tables in public, as it
+	// must for any later migration that makes one: public belongs to the
+	// database's owner (pg_database_owner).
 	down()
 	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO CURRENT_USER`)
 	must(`GRANT CREATE ON SCHEMA public TO easyrmm_owner`)
@@ -347,8 +348,8 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 		t.Errorf("up under another owner logged: %s", log)
 	}
 
-	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO easyrmm_owner`)
 	must(`REVOKE CREATE ON SCHEMA public FROM easyrmm_owner`)
+	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO easyrmm_owner`)
 	down()
 	if s := state(); s != before {
 		t.Errorf("after down again: %s", s)

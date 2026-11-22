@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, ErrorState, Field, PageHeader, Select, Spinn
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { AlertActions, useAlertAction } from "./AlertActions";
-import { conditionText, policyScope, resolutionText, SeverityBadge, valueText } from "./alertText";
+import { conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
 import { PolicyDialog, useCanWritePolicies } from "./PolicyDialog";
 
 export function AlertsPage() {
@@ -159,7 +159,9 @@ function AlertList() {
                         <SeverityBadge severity={a.severity} />
                       </div>
                       <p className="font-medium">{a.name}</p>
+                      <DiskSubject alert={a} />
                       <p className="text-xs text-muted">{conditionText(a)}</p>
+                      {a.canManage && risingHint(a) && <p className="mt-0.5 max-w-md text-xs text-muted">{risingHint(a)}</p>}
                       <p className="mt-0.5 text-xs text-muted sm:hidden">
                         <StatusText alert={a} />
                       </p>

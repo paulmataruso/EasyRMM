@@ -159,6 +159,34 @@ All notable changes to this project are documented here. The format follows
   cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
   `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
   ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
+- **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
+  own health record every 30 minutes, NVMe's health log and ATA's SMART
+  with a fixed list of read-only commands, on Windows and Linux, and sends
+  it in a report of its own (`POST /api/agent/v1/hardware`, one in 10
+  minutes per device with bursts of 6). The server judges every reading
+  with one set of rules: *Healthy*, *Warning*, *Failing*, *Unknown*,
+  *Unavailable* or *Unsupported*, each with a reason; a disk is never
+  shown healthy because something could not be read. A device's
+  **Hardware** tab shows each disk's health and firmware, and a disk's
+  panel its facts, ATA attributes, last 30 days and open alerts;
+  **Devices** gains a *Disk health* column and filter. Disks behind a
+  hardware RAID controller, SAS and USB disks show *Unavailable* until
+  later slices read them. See [Disk health](docs/operations/disk-health.md).
+  - **Disk health alerts**, one per disk: a `disk_health` policy watches
+    one check, *failing*, *errors*, *pending*, *wear* or *temperature*,
+    and resolves after two readings in a row clear it. Five shared
+    policies come with it, only **Disk failing** turned on. A disk that
+    disappears keeps its alerts; they resolve on their own (*Disk gone*,
+    `subject_gone`) once it has been missing from the device's disk
+    readings for 14 days. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
+  - **History**: every reading for `EASYRMM_METRICS_RETENTION`, then one
+    row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
+    730 days, by default, at least the metrics retention). About 0.3 MiB
+    per disk in the database and its backups.
+  - **Each disk's firmware revision** is in the inventory, and on Linux a
+    SATA disk's whole model (40 characters, where the kernel's listing
+    holds the first 16). Every device uploads its inventory once after
+    its agent is updated.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version
@@ -227,8 +255,87 @@ All notable changes to this project are documented here. The format follows
   kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
   hardening jobs *Hardening job*. See
   [Hardening Linux computers](docs/operations/hardening.md).
+- **The mail server in the console** (ADR-0053, slice 1). Super
+  administrators set it under **Settings → Notifications → Mail server**:
+  host, port, STARTTLS, TLS or none (only to a relay on the same machine),
+  signing in with a password or not at all, and the sender's address and
+  name. The password is sealed with `EASYRMM_SECRET_KEY`, write-only, and
+  kept while the host, port, security and user name stay the same. It
+  applies at once, without a restart: to invitations, password resets,
+  whether password reset is offered, and the patching engine, which
+  EasyRMM now gives the mail server on every change rather than once per
+  start. `EASYRMM_SMTP_*` in `.env` still works and wins: the console then
+  shows it read-only, and a mail server saved in the console before can
+  still be removed. **Send test message** tries the form's settings, saved
+  or not, one every 30 seconds, and shows the mail server's answer without
+  repeating what a server that is not a mail server said. **Limits**, 30
+  messages a minute and 9,000 a day by default, hold across servers:
+  invitations and password resets go first, the last 10% of the day is
+  kept for resets people ask for, and other mail stops at 80%. Every
+  change and test is audited (`mail_server.*`), from and to. See
+  [Mail](docs/operations/mail.md).
 
 ### Changed
+
+- **Upgrading adds five shared alert policies** for disk health, only
+  **Disk failing** turned on. **Where a shared policy already has one of
+  their names** (case aside), the new one is added as *… (disk health)*,
+  for example *Disk failing (disk health)*; where both names are taken, no
+  policy for that check is added. Check the **Policies** tab after the
+  upgrade if you named policies that way.
+- **An alert can be about one part of a device.** Alerts gain `checkName`,
+  `subject`, `subjectLabel` and `detail` in the API, and a device can have
+  one active alert per policy and disk. Changing a policy's check resolves
+  its alerts as a changed condition (`policy_changed`), as changing its
+  kind, threshold or minutes does.
+- **Invitations and password reset emails come in HTML and text**, from a
+  new mailer that sends each recipient a message of their own, can carry
+  attachments, checks the mail server's certificate against the system's
+  authorities with TLS 1.2 or later, and dials through the same address
+  checks as EasyRMM's other outbound connections. When an invitation's or
+  password link's email does not go, the console now says why: no mail
+  server, or the mail server did not take it.
+- **Invitations and password emails are limited**, so that no one
+  administrator, organization or attacker can use up the mail server's
+  day: per administrator an hour, per organization a day, per account
+  (3 at once, then one every 20 minutes, resets and administrators' links
+  together), and password resets people ask for per organization and on
+  the whole platform, by the hour only, so that no one can keep them
+  refused for a day. Each limit is the smaller of a fixed number and a share of
+  the day's limit, and all are counted in the database, across servers
+  (see the [Mail](docs/operations/mail.md#limits-on-invitations-and-password-emails)
+  guide for the numbers). Past the administrator's own limit, an
+  invitation or link is refused with `429` and a message that says when
+  to try again, and the refusal is audited; past the account's or the
+  organization's, it comes back to the administrator unsent, with the
+  reason. A super administrator's invitations and links count only
+  against their own limit. Without a mail server, links come back as
+  before, unlimited.
+- **Every `429` carries `Retry-After`.**
+- **The patching engine's mail server comes from EasyRMM alone**: a mail
+  server set in the engine itself is overwritten within a minute, and
+  when EasyRMM cannot give the engine its own three passes in a row, the
+  engine's is removed and Patching → Notifications says why. With several
+  servers, one at a time gives it; another whose mail server differs logs
+  an error and says so, rather than giving the engine its own in turn.
+  A server whose connection to PostgreSQL died without a word is noticed
+  in about 30 seconds, and another takes over; a pooler in transaction
+  mode (PgBouncer's) is not supported. Servers compare theirs with a
+  keyed HMAC of the one given, from which the password cannot be
+  guessed, and change the engine's mail settings one at a time. The
+  webhook switch no longer fails when EasyRMM's mail server cannot be
+  read, leaves the engine's as it is then, and an engine that hangs no
+  longer holds it up.
+- **`.env`'s SMTP password and sender's name are checked** against the
+  lengths the patching engine takes. Longer, EasyRMM still starts and
+  sends, logs an error and shows it on the Mail server page.
+- **Password reset checks the address's limit before anything else**, and
+  whether reset is offered is kept for five seconds, so requests anyone
+  may send seldom reach the database. A reset takes its room under the
+  limits before its link is made and never holds one database connection
+  while it waits for another, so that many resets at once for one address
+  cannot use up the server's connections; a reset refused under a limit
+  makes no new link, so the last one sent still works.
 
 - **CI and releases build the server image once.** Both platforms, amd64
   and arm64, are scanned and their agents checked against a release's

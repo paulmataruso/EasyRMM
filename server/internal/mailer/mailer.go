@@ -1,166 +1,572 @@
-// Package mailer sends plain-text e-mail over SMTP.
+// Package mailer sends e-mail over SMTP (ADR-0053): each recipient gets a
+// message of their own, with only their address in To, all in one session;
+// as plain text, or as HTML with a plain-text alternative, with attachments.
+//
+// It connects over STARTTLS or TLS from the first byte, trusting the
+// system's certificate authorities only, or unencrypted to a relay on
+// loopback; it dials through netguard, as the platform's other
+// integrations do, and signs in with a user name and password (PLAIN) only
+// over TLS or to loopback.
 package mailer
 
 import (
-	"bytes"
+	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"mime"
-	"mime/quotedprintable"
+	"io"
 	"net"
 	"net/mail"
+	"net/netip"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unicode"
+
+	"github.com/google/uuid"
+
+	"github.com/paulmataruso/easyrmm/server/internal/netguard"
 )
 
-// Config configures the SMTP relay.
+// Security says how the connection to the mail server is protected.
+const (
+	// StartTLS connects in plain and requires STARTTLS before anything else.
+	StartTLS = "starttls"
+	// TLS speaks TLS from the first byte, usually on port 465.
+	TLS = "tls"
+	// None sends in clear text, only to a relay on loopback.
+	None = "none"
+)
+
+// DefaultTimeout bounds each step of a session: connecting and signing in,
+// and each message.
+const DefaultTimeout = 30 * time.Second
+
+// Config is a mail server and the sender.
 type Config struct {
 	Host     string
 	Port     int
+	Security string
+	// Username and Password sign in with PLAIN; an empty Username does not
+	// sign in.
 	Username string
 	Password string
-	From     string
-	// TLS is "starttls" (required STARTTLS), "implicit" (TLS from the first
-	// byte, usually port 465) or "none" (only for a relay on loopback).
-	TLS string
-	// Timeout bounds the whole exchange. Defaults to 30 seconds.
+	// FromAddress is the sender's address, FromName the name shown with it.
+	FromAddress string
+	FromName    string
+	// Timeout bounds each step; DefaultTimeout when zero.
 	Timeout time.Duration
 }
 
-// SMTP sends mail through a relay.
+// SMTP sends mail through one mail server.
 type SMTP struct {
 	cfg  Config
 	from *mail.Address
-	// dial is replaceable in tests.
-	dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// dialer connects; dial is its DialContext, replaceable in tests.
+	dialer *net.Dialer
+	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// New validates the configuration and builds a mailer.
+// Loopback reports whether host names this machine: localhost, or a
+// loopback address.
+func Loopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// New checks the configuration and builds a mailer.
 func New(cfg Config) (*SMTP, error) {
-	from, err := mail.ParseAddress(cfg.From)
-	if err != nil {
-		return nil, fmt.Errorf("mailer: invalid from address: %w", err)
+	if cfg.Host == "" {
+		return nil, errors.New("mailer: no mail server")
 	}
-	if cfg.Timeout <= 0 {
-		cfg.Timeout = 30 * time.Second
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return nil, fmt.Errorf("mailer: port %d is out of range", cfg.Port)
 	}
-	switch cfg.TLS {
-	case "starttls", "implicit":
-	case "none":
-		if ip := net.ParseIP(cfg.Host); cfg.Host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+	if !BareAddress(cfg.FromAddress) {
+		return nil, fmt.Errorf("mailer: invalid sender's address %q", cfg.FromAddress)
+	}
+	if strings.ContainsFunc(cfg.FromName, unicode.IsControl) {
+		return nil, errors.New("mailer: the sender's name contains a control character")
+	}
+	switch cfg.Security {
+	case StartTLS, TLS:
+	case None:
+		if !Loopback(cfg.Host) {
 			return nil, errors.New("mailer: unencrypted SMTP is only allowed to a relay on loopback")
 		}
 	default:
-		return nil, fmt.Errorf("mailer: unknown TLS mode %q", cfg.TLS)
+		return nil, fmt.Errorf("mailer: unknown security %q", cfg.Security)
 	}
-	d := &net.Dialer{}
-	return &SMTP{cfg: cfg, from: from, dial: d.DialContext}, nil
+	if strings.ContainsAny(cfg.Username+cfg.Password, "\x00\r\n") {
+		return nil, errors.New("mailer: the user name or password contains a line break or NUL")
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = DefaultTimeout
+	}
+	d := &net.Dialer{Timeout: cfg.Timeout, Control: netguard.Control}
+	if cfg.Security == None {
+		d.Control = loopbackOnly
+	}
+	return &SMTP{cfg: cfg, from: &mail.Address{Name: cfg.FromName, Address: cfg.FromAddress}, dialer: d, dial: d.DialContext}, nil
 }
 
-// Send delivers one message.
-func (m *SMTP) Send(ctx context.Context, to, subject, body string) error {
-	rcpt, err := mail.ParseAddress(to)
-	if err != nil {
-		return fmt.Errorf("mailer: invalid recipient: %w", err)
-	}
-	msg, err := m.compose(rcpt, subject, body)
-	if err != nil {
+// loopbackOnly is the dialer's check without encryption: the address
+// actually dialed, after the name is resolved, must be loopback, whatever
+// the name said.
+func loopbackOnly(network, address string, c syscall.RawConn) error {
+	if err := netguard.Control(network, address, c); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, m.cfg.Timeout)
-	defer cancel()
-	addr := net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port))
-	conn, err := m.dial(ctx, "tcp", addr)
+	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		return fmt.Errorf("mailer: connecting to %s: %w", addr, err)
+		host = address
 	}
-	deadline, _ := ctx.Deadline()
-	_ = conn.SetDeadline(deadline)
+	if a, err := netip.ParseAddr(host); err != nil || !a.Unmap().IsLoopback() {
+		return fmt.Errorf("unencrypted SMTP is only allowed to a relay on loopback, and %s is not", host)
+	}
+	return nil
+}
+
+// Address is the mail server's host and port.
+func (m *SMTP) Address() string { return net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.Port)) }
+
+// BareAddress reports whether s is an e-mail address alone, without a name
+// or angle brackets.
+func BareAddress(s string) bool {
+	if s == "" || len(s) > 254 {
+		return false
+	}
+	a, err := mail.ParseAddress(s)
+	return err == nil && a.Name == "" && a.Address == s
+}
+
+// AccountMail says whom a message to someone's own account is counted
+// against, under the mail server's limits (ADR-0053).
+type AccountMail struct {
+	// Self: the person asked for it themselves (a password reset), so it
+	// may use the share of the day's limit kept for that alone.
+	Self bool
+	// Admin is the administrator who sent it (an invitation, a password
+	// link).
+	Admin uuid.UUID
+	// Account is the account it goes to; Organization that account's
+	// organization, uuid.Nil for none or several, and for an
+	// administrator's mail uuid.Nil when a super administrator sends it,
+	// which no organization's limit counts.
+	Account      uuid.UUID
+	Organization uuid.UUID
+}
+
+// Limited is account mail the limits did not let go (ADR-0053): which
+// limit, in words, and when there will be room.
+type Limited interface {
+	error
+	// LimitCode names the limit: one of the Limit codes.
+	LimitCode() string
+	// RetryIn is how long until there is room, 0 when unknown.
+	RetryIn() time.Duration
+}
+
+// Reservation is room under the limits taken for one message of account
+// mail before it is made: Send sends it in that room, or Release gives
+// the room back. Either is done once; the other then does nothing.
+type Reservation interface {
+	Send(ctx context.Context, to string, msg Message) error
+	Release()
+}
+
+// The limits a message can reach, as Limited names them.
+const (
+	// LimitAdmin: the administrator's own, an hour.
+	LimitAdmin = "admin_mail_limited"
+	// LimitOrganization: administrators' mail to one organization's
+	// accounts, a day.
+	LimitOrganization = "organization_mail_limited"
+	// LimitAccount: password emails to one account, whoever asks.
+	LimitAccount = "account_mail_limited"
+	// LimitOrganizationResets: password resets people ask for, to one
+	// organization's accounts, an hour.
+	LimitOrganizationResets = "organization_resets_limited"
+	// LimitResets: password resets people ask for, on the whole platform,
+	// an hour.
+	LimitResets = "resets_limited"
+	// LimitDay: the day's limit, or the share of it this mail may use.
+	LimitDay = "day_limited"
+	// LimitMinute: the minute's limit.
+	LimitMinute = "minute_limited"
+	// LimitAccountWaiting: other mail standing back while account mail
+	// waits.
+	LimitAccountWaiting = "account_mail_waiting"
+)
+
+// Gate is asked before each message is sent. It may wait for room under a
+// limit, or refuse; release is called when the mail server did not take the
+// message, so that it does not count.
+type Gate func(ctx context.Context) (release func(), err error)
+
+// Outcome is what became of one recipient's message.
+type Outcome struct {
+	To string
+	// Err is nil when the mail server took the message.
+	Err error
+	// Reply is the mail server's answer when it took the message.
+	Reply string
+}
+
+// FirstError is the first recipient's error, or nil when every message was
+// taken.
+func FirstError(outs []Outcome) error {
+	for _, o := range outs {
+		if o.Err != nil {
+			return o.Err
+		}
+	}
+	return nil
+}
+
+// ReplyError is the mail server refusing a command, with its reply.
+type ReplyError struct {
+	// Step is what was refused: "hello", "STARTTLS", "sign-in", "sender",
+	// "recipient", "message".
+	Step string
+	Code int
+	Text string
+}
+
+func (e *ReplyError) Error() string {
+	return fmt.Sprintf("the mail server refused the %s: %d %s", e.Step, e.Code, clip(e.Text, 300))
+}
+
+// Permanent reports whether the reply is a permanent failure (5xx); a 4xx
+// reply may succeed later.
+func (e *ReplyError) Permanent() bool { return e.Code >= 500 }
+
+// stepError is a failure that is not the mail server's reply: a connection
+// that could not be made, a TLS failure, a timeout.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e *stepError) Error() string { return e.step + ": " + e.err.Error() }
+func (e *stepError) Unwrap() error { return e.err }
+
+// reply turns a textproto error into a ReplyError for step, and keeps any
+// other error as it is.
+func reply(step string, err error) error {
+	var te *textproto.Error
+	if errors.As(err, &te) {
+		return &ReplyError{Step: step, Code: te.Code, Text: te.Msg}
+	}
+	return &stepError{step: "mailer: " + step, err: err}
+}
+
+// peekConn reads through r, which has looked ahead at the greeting.
+type peekConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *peekConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// smtpReply reports whether b begins as an SMTP reply does: three digits,
+// then a space or a hyphen.
+func smtpReply(b []byte) bool {
+	for _, d := range b[:3] {
+		if d < '0' || d > '9' {
+			return false
+		}
+	}
+	return b[3] == ' ' || b[3] == '-'
+}
+
+// greeting is a greeting that is not SMTP's 220. What the other end said is
+// not repeated: whatever answers on a host and port a test message names,
+// the error shows only whether it is a mail server.
+func greeting(addr string, err error) error {
+	var te *textproto.Error
+	var pe textproto.ProtocolError
+	switch {
+	case errors.As(err, &te):
+		return fmt.Errorf("mailer: %s is not an SMTP server, or not one taking mail: it greeted with %d, not 220", addr, te.Code)
+	case errors.As(err, &pe):
+		return fmt.Errorf("mailer: %s is not an SMTP server: it did not greet as one", addr)
+	}
+	return &stepError{step: "mailer: waiting for the greeting of " + addr, err: err}
+}
+
+// Send sends msg to each recipient as a message of its own, in one session,
+// and returns each recipient's outcome in order. A recipient the mail
+// server refuses does not stop the others; a failure to connect, protect
+// the connection or sign in fails every recipient not yet sent.
+func (m *SMTP) Send(ctx context.Context, msg Message, to []string, gate Gate) []Outcome {
+	outs := make([]Outcome, len(to))
+	rcpts := make([]*mail.Address, len(to))
+	for i, t := range to {
+		outs[i].To = t
+		a, err := mail.ParseAddress(t)
+		if err != nil || strings.ContainsAny(a.Address, "\r\n") {
+			outs[i].Err = fmt.Errorf("mailer: invalid recipient %q", t)
+			continue
+		}
+		rcpts[i] = a
+	}
+	failRest := func(from int, err error) {
+		for j := from; j < len(outs); j++ {
+			if outs[j].Err == nil && outs[j].Reply == "" {
+				outs[j].Err = err
+			}
+		}
+	}
+	if err := msg.check(); err != nil {
+		failRest(0, err)
+		return outs
+	}
+	var s *session
+	defer func() {
+		if s != nil {
+			s.quit()
+		}
+	}()
+	for i := range to {
+		if outs[i].Err != nil {
+			continue
+		}
+		data := m.compose(rcpts[i], msg, time.Now())
+		var err error
+		release := func() {}
+		if gate != nil {
+			r, err := gate(ctx)
+			if err != nil {
+				outs[i].Err = err
+				continue
+			}
+			release = r
+		}
+		if s == nil {
+			if s, err = m.open(ctx); err != nil {
+				release()
+				failRest(i, err)
+				return outs
+			}
+		}
+		outs[i].Reply, err = s.deliver(ctx, m.from.Address, rcpts[i].Address, data)
+		if err == nil {
+			continue
+		}
+		outs[i].Err = err
+		var re *ReplyError
+		switch {
+		case errors.As(err, &re):
+			// Refused: it does not count, and the session goes on.
+			release()
+			if s.reset() != nil {
+				s.close()
+				s = nil
+			}
+		case s.sentData:
+			// The connection failed after the message went: it may have been
+			// taken, so it counts; the others fail with it.
+			s.close()
+			s = nil
+			failRest(i+1, err)
+			return outs
+		default:
+			release()
+			s.close()
+			s = nil
+			failRest(i+1, err)
+			return outs
+		}
+	}
+	return outs
+}
+
+// session is one connection to the mail server.
+type session struct {
+	m    *SMTP
+	conn net.Conn
+	c    *smtp.Client
+	// stop ends the context watch.
+	stop func() bool
+	// sentData says the current message's content was written.
+	sentData bool
+}
+
+// deadline is the end of the next step: the timeout, or ctx's deadline if
+// sooner.
+func (m *SMTP) deadline(ctx context.Context) time.Time {
+	d := time.Now().Add(m.cfg.Timeout)
+	if cd, ok := ctx.Deadline(); ok && cd.Before(d) {
+		return cd
+	}
+	return d
+}
+
+// open connects, protects the connection and signs in.
+func (m *SMTP) open(ctx context.Context) (*session, error) {
+	addr := m.Address()
+	dctx, cancel := context.WithDeadline(ctx, m.deadline(ctx))
+	defer cancel()
+	conn, err := m.dial(dctx, "tcp", addr)
+	if err != nil {
+		return nil, &stepError{step: "mailer: connecting to " + addr, err: err}
+	}
+	_ = conn.SetDeadline(m.deadline(ctx))
+	// A canceled ctx ends the session at once.
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
+	fail := func(err error) (*session, error) {
+		stop()
+		_ = conn.Close()
+		return nil, err
+	}
 	tlsCfg := &tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}
-	if m.cfg.TLS == "implicit" {
+	if m.cfg.Security == TLS {
 		tc := tls.Client(conn, tlsCfg)
-		if err := tc.HandshakeContext(ctx); err != nil {
-			_ = conn.Close()
-			return fmt.Errorf("mailer: tls handshake: %w", err)
+		if err := tc.HandshakeContext(dctx); err != nil {
+			return fail(&stepError{step: "mailer: TLS with " + addr, err: err})
 		}
 		conn = tc
 	}
-	c, err := smtp.NewClient(conn, m.cfg.Host)
+	// An SMTP greeting begins with three digits and a space or a hyphen;
+	// anything else is not read further, nor waited on.
+	pc := &peekConn{Conn: conn, r: bufio.NewReader(conn)}
+	head, err := pc.r.Peek(4)
+	switch {
+	case err != nil:
+		return fail(&stepError{step: "mailer: waiting for the greeting of " + addr, err: err})
+	case !smtpReply(head):
+		return fail(fmt.Errorf("mailer: %s is not an SMTP server: it did not greet as one", addr))
+	}
+	c, err := smtp.NewClient(pc, m.cfg.Host)
 	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("mailer: %w", err)
+		return fail(greeting(addr, err))
 	}
-	defer c.Close()
-	if err := c.Hello(localName()); err != nil {
-		return fmt.Errorf("mailer: hello: %w", err)
+	s := &session{m: m, conn: conn, c: c, stop: stop}
+	if err := c.Hello(localName); err != nil {
+		s.close()
+		return nil, reply("hello", err)
 	}
-	if m.cfg.TLS == "starttls" {
+	if m.cfg.Security == StartTLS {
 		if ok, _ := c.Extension("STARTTLS"); !ok {
-			return errors.New("mailer: the relay does not offer STARTTLS; refusing to send credentials or mail in clear text")
+			s.close()
+			return nil, errors.New("mailer: the mail server does not offer STARTTLS; refusing to send credentials or mail in clear text")
 		}
 		if err := c.StartTLS(tlsCfg); err != nil {
-			return fmt.Errorf("mailer: starttls: %w", err)
+			s.close()
+			return nil, reply("STARTTLS", err)
 		}
 	}
 	if m.cfg.Username != "" {
-		if err := c.Auth(smtp.PlainAuth("", m.cfg.Username, m.cfg.Password, m.cfg.Host)); err != nil {
-			return fmt.Errorf("mailer: authentication: %w", err)
+		if err := c.Auth(plainAuth{user: m.cfg.Username, password: m.cfg.Password}); err != nil {
+			s.close()
+			return nil, reply("sign-in", err)
 		}
 	}
-	if err := c.Mail(m.from.Address); err != nil {
-		return fmt.Errorf("mailer: MAIL FROM: %w", err)
+	return s, nil
+}
+
+// deliver sends one message to one recipient and returns the mail server's
+// answer.
+func (s *session) deliver(ctx context.Context, from, to string, data []byte) (string, error) {
+	s.sentData = false
+	_ = s.conn.SetDeadline(s.m.deadline(ctx))
+	if err := s.c.Mail(from); err != nil {
+		return "", reply("sender", err)
 	}
-	if err := c.Rcpt(rcpt.Address); err != nil {
-		return fmt.Errorf("mailer: RCPT TO: %w", err)
+	if err := s.c.Rcpt(to); err != nil {
+		return "", reply("recipient", err)
 	}
-	w, err := c.Data()
+	// DATA by hand, rather than smtp.Client.Data, to keep the final reply.
+	t := s.c.Text
+	id, err := t.Cmd("DATA")
 	if err != nil {
-		return fmt.Errorf("mailer: DATA: %w", err)
+		return "", reply("message", err)
 	}
-	if _, err := w.Write(msg); err != nil {
-		return fmt.Errorf("mailer: writing message: %w", err)
+	t.StartResponse(id)
+	_, _, err = t.ReadResponse(354)
+	t.EndResponse(id)
+	if err != nil {
+		return "", reply("message", err)
 	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("mailer: finishing message: %w", err)
+	w := t.DotWriter()
+	_, err = w.Write(data)
+	if err == nil {
+		err = w.Close()
 	}
-	return c.Quit()
+	s.sentData = true
+	if err != nil {
+		return "", &stepError{step: "mailer: writing the message", err: err}
+	}
+	code, text, err := t.ReadResponse(250)
+	if err != nil {
+		return "", reply("message", err)
+	}
+	return strconv.Itoa(code) + " " + clip(text, 300), nil
 }
 
-func (m *SMTP) compose(to *mail.Address, subject, body string) ([]byte, error) {
-	if strings.ContainsAny(subject, "\r\n") {
-		return nil, errors.New("mailer: subject contains a line break")
-	}
-	id := make([]byte, 16)
-	_, _ = rand.Read(id)
-	domain := m.from.Address[strings.LastIndexByte(m.from.Address, '@')+1:]
-	var b bytes.Buffer
-	h := func(k, v string) { b.WriteString(k + ": " + v + "\r\n") }
-	h("From", m.from.String())
-	h("To", to.String())
-	h("Subject", mime.QEncoding.Encode("utf-8", subject))
-	h("Date", time.Now().UTC().Format(time.RFC1123Z))
-	h("Message-ID", "<"+hex.EncodeToString(id)+"@"+domain+">")
-	h("MIME-Version", "1.0")
-	h("Content-Type", "text/plain; charset=utf-8")
-	h("Content-Transfer-Encoding", "quoted-printable")
-	h("Auto-Submitted", "auto-generated")
-	b.WriteString("\r\n")
-	qp := quotedprintable.NewWriter(&b)
-	if _, err := qp.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\r\n"))); err != nil {
-		return nil, err
-	}
-	if err := qp.Close(); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+// reset clears a refused transaction so the next message can begin.
+func (s *session) reset() error { return s.c.Reset() }
+
+// quit ends the session politely.
+func (s *session) quit() {
+	_ = s.c.Quit()
+	s.close()
 }
 
-func localName() string {
-	return "easyrmm.localdomain"
+func (s *session) close() {
+	s.stop()
+	_ = s.c.Close()
+}
+
+// plainAuth is PLAIN (RFC 4616). New allows a session without TLS only to
+// loopback, so, unlike smtp.PlainAuth, it does not check again, which would
+// refuse loopback addresses other than 127.0.0.1 and ::1.
+type plainAuth struct{ user, password string }
+
+func (a plainAuth) Start(*smtp.ServerInfo) (string, []byte, error) {
+	return "PLAIN", []byte("\x00" + a.user + "\x00" + a.password), nil
+}
+
+func (a plainAuth) Next(_ []byte, more bool) ([]byte, error) {
+	if more {
+		return nil, errors.New("mailer: unexpected challenge during PLAIN sign-in")
+	}
+	return nil, nil
+}
+
+// localName is the name given in EHLO.
+const localName = "easyrmm.localdomain"
+
+// clip shortens s to at most n bytes on a rune boundary, on one line.
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
+func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
+
+// base64Lines writes data in base64, in lines of 76 characters, to a
+// writer in memory.
+func base64Lines(w io.Writer, data []byte) {
+	enc := base64.StdEncoding.EncodeToString(data)
+	for len(enc) > 76 {
+		_, _ = io.WriteString(w, enc[:76]+"\r\n")
+		enc = enc[76:]
+	}
+	_, _ = io.WriteString(w, enc+"\r\n")
 }

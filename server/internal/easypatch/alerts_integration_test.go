@@ -3,8 +3,11 @@
 package easypatch
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -506,6 +509,155 @@ func TestNotifications(t *testing.T) {
 	if strings.Join(actions, " ") != "patch.channel_create patch.channel_update patch.channel_update patch.channel_rotate_secret patch.channel_test patch.channel_delete" ||
 		a[0].Details["host"] != "hooks.example.com" {
 		t.Fatalf("audit: %+v", a)
+	}
+}
+
+// The engine never holds one mail server's host with another's password.
+// Changing the webhook switch gives the engine EasyRMM's mail server in
+// force, never the engine's copy back, under the lock each pass holds; and
+// a pass gives it again whenever the engine's differs, so a mix made in
+// the engine is repaired.
+func TestNotificationSettingsCarryEasyRMMsMailServer(t *testing.T) {
+	f := newFleetFixture(t)
+	ctx := f.ctx
+	one := MailConfig{Host: "smtp-one.example.com", Port: 587, Username: "one", Password: "pw-one", FromAddress: "one@example.com", Security: "starttls"}
+	two := MailConfig{Host: "smtp-two.example.com", Port: 465, Username: "two", Password: "pw-two", FromAddress: "two@example.com", Security: "tls"}
+	var mu sync.Mutex
+	inForce := one
+	set := func(c MailConfig) {
+		mu.Lock()
+		inForce = c
+		mu.Unlock()
+	}
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return inForce, nil
+	}, mailKey))
+	f.reconcile()
+	holds := func(step string, c MailConfig) {
+		t.Helper()
+		m := f.engine.Mail()
+		if m["smtpHost"] != c.Host || m["smtpUsername"] != c.Username || m["smtpPassword"] != c.Password || m["fromAddress"] != c.FromAddress {
+			t.Fatalf("%s: the engine holds %v, want %s as %s", step, m, c.Host, c.Username)
+		}
+	}
+	holds("first pass", one)
+
+	// The review's interleaving: another administrator saves mail server
+	// two, and before any pass gives it, the switch changes. The engine
+	// gets two whole, not one's host and user with two's password.
+	set(two)
+	if _, err := f.svc.SetNotificationSettings(ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	holds("the switch after a change", two)
+	if m := f.engine.Mail(); m["allowPrivateNetworkWebhooks"] != true {
+		t.Fatalf("switch: %v", m)
+	}
+
+	// The mix the old code made, written to the engine directly: one's host
+	// and user, keeping the stored password (two's). The next pass repairs it.
+	cl, st := f.svc.engine.client, mailStatement(ctx)
+	if err := cl.SetMailSettings(st, MailSettingsInput{SMTPHost: one.Host, SMTPPort: one.Port, SMTPSecurity: "StartTls", SMTPUsername: one.Username,
+		FromAddress: one.FromAddress, AllowPrivateNetworkWebhooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.engine.Mail(); m["smtpHost"] != one.Host || m["smtpPassword"] != two.Password {
+		t.Fatalf("the mix: %v", m)
+	}
+	puts := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings"))
+	f.reconcile()
+	holds("repaired", two)
+	f.reconcile()
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != puts+1 {
+		t.Fatalf("%d pushes to repair, want 1", n-puts)
+	}
+	if m := f.engine.Mail(); m["allowPrivateNetworkWebhooks"] != true {
+		t.Fatalf("the switch is lost: %v", m)
+	}
+
+	// Changes, passes and the switch at once: every push carries one mail
+	// server whole, with its password, and the last pass leaves the one in
+	// force.
+	before := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings"))
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := f.svc.SetNotificationSettings(ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: i%2 == 0}); err != nil {
+				t.Error(err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			set([]MailConfig{one, two}[i%2])
+			var res ReconcileResult
+			f.svc.syncMail(ctx, cl, &res)
+			if len(res.Problems) > 0 {
+				t.Error(res.Problems)
+			}
+		}()
+	}
+	wg.Wait()
+	pairs := map[string]string{one.Host: one.Password, two.Host: two.Password}
+	for _, r := range f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")[before:] {
+		host, _ := r.Body["smtpHost"].(string)
+		if pw, ok := r.Body["smtpPassword"].(string); !ok || pw != pairs[host] {
+			t.Fatalf("a push of %s with password %v", host, r.Body["smtpPassword"])
+		}
+	}
+	var res ReconcileResult
+	f.svc.syncMail(ctx, cl, &res)
+	mu.Lock()
+	last := inForce
+	mu.Unlock()
+	holds("after it all", last)
+}
+
+// When EasyRMM's mail server cannot be given to the engine pass after
+// pass, the engine's is removed rather than left sending through one
+// EasyRMM may no longer have, and Patching → Notifications says why; the
+// first pass that can gives it again.
+func TestEngineMailServerRemovedAfterFailures(t *testing.T) {
+	f := newFleetFixture(t)
+	ctx := f.ctx
+	cfg := MailConfig{Host: "smtp.example.com", Port: 587, Username: "rmm", Password: "pw", FromAddress: "rmm@example.com", Security: "starttls"}
+	var readErr error
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return cfg, readErr }, mailKey))
+	f.reconcile()
+	readErr = errors.New("the stored password cannot be opened")
+	for pass := 1; pass < mailFailLimit; pass++ {
+		f.reconcile()
+		if m := f.engine.Mail(); m["smtpHost"] != cfg.Host {
+			t.Fatalf("pass %d: removed too soon: %v", pass, m)
+		}
+		if v, err := f.svc.Notifications(ctx, f.admin); err != nil || v.Mail.Problem != "" {
+			t.Fatalf("pass %d: %+v, %v", pass, v.Mail, err)
+		}
+	}
+	f.reconcile()
+	if m := f.engine.Mail(); m["smtpHost"] != nil || m["smtpPassword"] != "" || m["smtpUsername"] != nil {
+		t.Fatalf("not removed: %v", m)
+	}
+	v, err := f.svc.Notifications(ctx, f.admin)
+	if err != nil || v.Mail.Host != "" || !strings.Contains(v.Mail.Problem, "the stored password cannot be opened") {
+		t.Fatalf("view: %+v, %v", v.Mail, err)
+	}
+	// Removed once: later failing passes find nothing to remove.
+	puts := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings"))
+	f.reconcile()
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != puts {
+		t.Fatalf("%d more pushes", n-puts)
+	}
+	readErr = nil
+	f.reconcile()
+	if m := f.engine.Mail(); m["smtpHost"] != cfg.Host || m["smtpPassword"] != cfg.Password {
+		t.Fatalf("not given again: %v", m)
+	}
+	if v, err := f.svc.Notifications(ctx, f.admin); err != nil || v.Mail.Problem != "" {
+		t.Fatalf("problem stays: %+v, %v", v.Mail, err)
 	}
 }
 

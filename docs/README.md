@@ -26,6 +26,8 @@ Everything about running, using and building EasyRMM. Start with the
 * [Patching](operations/patching.md): status, scans, installs, restarts,
   holds, policies, reports, alerts and the engine's settings.
 * [Inventory and health](operations/inventory.md)
+* [Disk health](operations/disk-health.md): what each state and reason
+  means, and what is read where.
 * [Alerts](operations/alerts.md)
 * [Scripts and jobs](operations/scripts-and-jobs.md)
 * [Installing, updating and removing software](operations/software.md)
@@ -33,6 +35,8 @@ Everything about running, using and building EasyRMM. Start with the
   device's findings, and drift across the fleet.
 * [Reports](operations/reports.md)
 * [Forwarding the audit log](operations/audit-forwarding.md)
+* [Mail](operations/mail.md): the mail server in the console or `.env`,
+  the test message, and the limits.
 
 ## Secure
 

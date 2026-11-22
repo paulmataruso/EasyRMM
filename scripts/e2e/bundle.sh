@@ -24,7 +24,12 @@
 #  5. The engine on loopback refuses missing, forged, expired, replayed and
 #     out-of-scope statements, and the edge does not reach its API
 #     (server/internal/easypatch/bundle_test.go).
-#  6. The updater's hold (ADR-0052): setup.sh --upgrade made its status
+#  6. Mail (ADR-0053): Mailpit, a real SMTP server, listens on loopback; the
+#     story sets it as the mail server in the console, over plain SMTP, and
+#     reads what arrives through its API: the console's test message, an
+#     invitation, and the patching engine's email, which follows the change
+#     without a restart.
+#  7. The updater's hold (ADR-0052): setup.sh --upgrade made its status
 #     directory, root's with mode 755; the server and the engine's worker
 #     mount it read-only and, as their own users, see the hold file; a
 #     server started held is healthy for `docker compose up --wait` while
@@ -53,6 +58,10 @@ second=https://127.0.0.2
 server_image=${EASYRMM_BUNDLE_SERVER_IMAGE:-$project/easyrmm-server:local}
 engine_image=${EASYRMM_BUNDLE_ENGINE_IMAGE:-$project/easypatch-server:local}
 host_image=$project/linux:local
+mailpit=$project-mailpit
+mailpit_image=${MAILPIT_IMAGE:-$(make -s -C "$root" print-mailpit-image)}
+mailpit_smtp=127.0.0.1:11025
+mailpit_api=127.0.0.1:11080
 work=$(mktemp -d)
 deploy=$work/easyrmm/deploy
 up=false
@@ -82,24 +91,29 @@ cleanup() {
       done
     fi
   fi
-  docker rm -f -v "$host" > /dev/null 2>&1
+  if [ "$status" -ne 0 ] && docker inspect "$mailpit" > /dev/null 2>&1; then
+    echo "--- Mailpit (last 30 lines) ---" >&2
+    docker logs --tail 30 "$mailpit" >&2
+  fi
+  docker rm -f -v "$host" "$mailpit" > /dev/null 2>&1
   [ "$up" = true ] && compose down -v --remove-orphans > /dev/null 2>&1
   as_root rm -rf "$work"
   exit "$status"
 }
 trap cleanup EXIT
 
-for tool in docker go curl openssl ss npx; do
+for tool in docker go curl openssl ss npx make; do
   command -v "$tool" > /dev/null || { echo "$tool is required" >&2; exit 1; }
 done
-# The edge's ports and the loopback ports of the deployment's programs.
-for port in 80 443 4443 15432 14430 18080 18081 18180 18181; do
+# The edge's ports, the loopback ports of the deployment's programs, and
+# Mailpit's.
+for port in 80 443 4443 15432 14430 18080 18081 18180 18181 "${mailpit_smtp##*:}" "${mailpit_api##*:}"; do
   if (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null; then
     echo "127.0.0.1:$port is in use; the bundle test needs it" >&2
     exit 1
   fi
 done
-docker rm -f -v "$host" > /dev/null 2>&1 || true
+docker rm -f -v "$host" "$mailpit" > /dev/null 2>&1 || true
 
 # --- Images -------------------------------------------------------------------
 if [ -z "${EASYRMM_BUNDLE_SERVER_IMAGE:-}" ]; then
@@ -185,11 +199,25 @@ case $state in running | degraded) ;; *)
   ;;
 esac
 
+# --- Mailpit ----------------------------------------------------------------------
+# A real SMTP server on loopback, which the server and the engine reach on the
+# host's network, as a relay on the same machine. It takes mail without
+# signing in.
+docker run -d --name "$mailpit" --network host --read-only --tmpfs /tmp:size=64m --cap-drop ALL \
+  --security-opt no-new-privileges -e MP_UI_BIND_ADDR="$mailpit_api" "$mailpit_image" \
+  --smtp "$mailpit_smtp" --smtp-disable-rdns --disable-version-check > /dev/null
+for _ in $(seq 1 60); do
+  curl -fsS -o /dev/null "http://$mailpit_api/api/v1/messages?limit=1" 2> /dev/null && break
+  sleep 1
+done
+curl -fsS -o /dev/null "http://$mailpit_api/api/v1/messages?limit=1" || { echo "Mailpit did not start" >&2; exit 1; }
+
 # --- The story ------------------------------------------------------------------
 setup_token=$(as_root cat "$work/data/server/setup-token")
 echo "Running the story in a browser ..."
 (cd "$root/web" && EASYRMM_BUNDLE_URL=$public EASYRMM_BUNDLE_SECOND_URL=$second EASYRMM_BUNDLE_SPKI=$spki \
   EASYRMM_BUNDLE_SETUP_TOKEN=$setup_token EASYRMM_BUNDLE_HOST=$host EASYRMM_BUNDLE_HOSTNAME=$hostname \
+  EASYRMM_BUNDLE_SMTP=$mailpit_smtp EASYRMM_BUNDLE_MAILPIT=http://$mailpit_api \
   npx playwright test -c playwright.bundle.config.ts)
 
 # --- The gateway ----------------------------------------------------------------

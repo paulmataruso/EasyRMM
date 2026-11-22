@@ -227,7 +227,14 @@ export interface InviteResult {
   user?: User;
   link?: string;
   emailed: boolean;
+  /** Why the link was not emailed, when it was not. */
+  mailProblem?: MailProblem;
+  /** The limit that stopped it, in words, when one did. */
+  mailReason?: string;
 }
+
+/** Why a link was not emailed: there is no mail server, or it did not take the message. */
+export type MailProblem = "no_mail_server" | "not_sent";
 
 export interface RoleView {
   role: Role;
@@ -305,7 +312,23 @@ export interface Device {
   removal: DeviceRemoval | null;
   /** What hardening jobs found here, summed up; null until one reported (ADR-0051). */
   hardening: HardeningSummary | null;
+  /** Its disks' health, summed up; null while its agent has reported none (ADR-0065). */
+  diskHealth: DiskHealthSummary | null;
 }
+
+/**
+ * A device's disk health (ADR-0065, "A device's disk health"): the highest of its disks' shown states in the order
+ * failing, warning, unknown, healthy, else unavailable if any disk is, else unsupported; and how many disks show each
+ * state.
+ */
+export interface DiskHealthSummary {
+  label: DiskState;
+  states: Partial<Record<DiskState, number>>;
+}
+
+/** The Devices list's disk health filter: a label, or a device whose agent reported none. Unavailable and unsupported
+ * find a device with any disk in that state. */
+export type DiskHealthFilter = DiskState | "not_reported";
 
 /** When a device's latest hardening job reported, and how many modules are in each state. */
 export interface HardeningSummary {
@@ -636,6 +659,92 @@ export interface AuditForwardingTest {
   message: string;
 }
 
+// The mail server (ADR-0053) ---------------------------------------------------------------------
+
+/** STARTTLS required, TLS from the first byte, or none (only to a relay on this machine). */
+export type MailSecurity = "starttls" | "tls" | "none";
+export type MailSignIn = "none" | "password";
+
+export interface MailServer {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** A password is stored; it is never shown. */
+  passwordSet: boolean;
+  fromAddress: string;
+  fromName: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface MailServerView {
+  /** Where the mail server in force comes from: .env (which wins), the console, or nowhere. */
+  inForce: "env" | "console" | "none";
+  env?: MailServer;
+  console?: MailServer;
+  /** What of .env's mail server the patching engine will not take; EasyRMM still sends with it. */
+  envProblem?: string;
+  limits: {
+    perMinute: number;
+    perDay: number;
+    updatedAt?: string;
+    updatedBy?: string;
+    /** The limits on invitations and password emails, which follow the day's limit. */
+    account: AccountMailLimits;
+  };
+  usage: {
+    lastMinute: number;
+    lastDay: number;
+    /** Of the last 24 hours' messages, invitations and password resets. */
+    accountLastDay: number;
+    /** Where administrators' invitations and password links stop: 90% of the day's limit. Password resets people ask for may use all of it. */
+    adminDayLimit: number;
+    /** Where other mail stops: 80% of the day's limit. */
+    otherDayLimit: number;
+  };
+}
+
+/** Each is the smaller of a fixed number and a share of the day's limit (ADR-0053). */
+export interface AccountMailLimits {
+  /** Invitations and password links one administrator may email an hour. */
+  adminPerHour: number;
+  /** Invitations and password links administrators other than super administrators may email to one organization's accounts a day. */
+  organizationPerDay: number;
+  /** Password emails, resets people ask for and administrators' links together, to one account: this many at once, */
+  accountBurst: number;
+  /** then one every this many minutes. */
+  accountEveryMinutes: number;
+  /** Password resets people ask for, on the whole platform, an hour. */
+  resetsPerHour: number;
+  /** Password resets people ask for, to one organization's accounts, an hour. No limit a day holds resets. */
+  organizationResetsPerHour: number;
+}
+
+export interface MailServerInput {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** Write-only; empty keeps the stored one while the host, port, security and user name stay the same. */
+  password: string;
+  fromAddress: string;
+  fromName: string;
+}
+
+export interface MailServerTestInput {
+  to: string;
+  /** The form as it stands; absent tests the mail server in force. */
+  server?: MailServerInput;
+}
+
+export interface MailServerTest {
+  ok: boolean;
+  message: string;
+}
+
 export interface RemoteAccessStatus {
   address: string;
   connected: boolean;
@@ -914,6 +1023,115 @@ export interface Disk {
   sizeBytes: number;
   kind: "" | "ssd" | "hdd" | "nvme";
   removable: boolean;
+  /** The drive's firmware revision, a fact with its state (ADR-0065); absent from agents older than it. */
+  firmware?: TextFact;
+}
+
+/** A fact as the agent reports it (ADR-0065): read with its value, or why not. */
+export interface TextFact {
+  state: "read" | "unknown" | "unsupported" | "unavailable";
+  reason?: string;
+  value?: string;
+}
+
+// Disk health (ADR-0065) ---------------------------------------------------------------------------
+
+/** What a disk shows, or a judged fact: unhealthy is sent as its level, warning or failing. */
+export type DiskState = "healthy" | "warning" | "failing" | "unknown" | "unsupported" | "unavailable";
+/** A fact's state: a judged one's, or reported for a fact EasyRMM reads and does not judge. */
+export type FactState = DiskState | "reported";
+
+/** A disk's latest reading, whatever it found. */
+export interface DiskReading {
+  /** The reading's level, or the disk as a whole when it was not read. */
+  state: DiskState;
+  reason: string;
+  detail: string;
+  /** By the agent's clock. */
+  readAt: string;
+  receivedAt: string;
+}
+
+/** One fact of a reading: its state, why, and its value when it was read. */
+export interface DiskFact {
+  name: string;
+  state: FactState;
+  reason?: string;
+  value: number | null;
+}
+
+/** One ATA SMART attribute, judged against its threshold when the thresholds were read (else reported). */
+export interface DiskAttribute {
+  id: number;
+  /** Bit 0: pre-fail. */
+  flags: number;
+  value: number;
+  worst: number;
+  threshold?: number;
+  /** The 48-bit raw value. */
+  raw: number;
+  preFail: boolean;
+  state: FactState;
+}
+
+/** One disk as the console shows it (GET /devices/{id}/disks). */
+export interface DiskHealth {
+  /** The disk's identity; unstable when it comes from its name, for want of a serial. */
+  key: string;
+  unstable: boolean;
+  name: string;
+  model: string;
+  serial: string;
+  /** What to show, and why; detail is a sentence for warning and failing. */
+  state: DiskState;
+  reason: string;
+  detail: string;
+  latest: DiskReading;
+  /** The last reading that read the drive's verdict; null before one did. */
+  judgedLevel: "healthy" | "warning" | "failing" | "unknown" | null;
+  judgedAt: string | null;
+  /** How many readings since judgedAt could not tell. */
+  since: number;
+  /** When a report first left the disk out; null while it is listed. */
+  missingSince: string | null;
+  protocol: "" | "nvme" | "ata";
+  route: string;
+  /** Facts and attributes are from the latest reading that read the disk, at factsAt. */
+  factsAt: string | null;
+  facts: DiskFact[];
+  attributes: DiskAttribute[];
+}
+
+/** A disk's history on one UTC day: the day's worst state, highest temperature and last counts. */
+export interface DiskDay {
+  day: string;
+  state: DiskState;
+  temperature: number | null;
+  wear: number | null;
+  reallocatedSectors: number | null;
+  mediaErrors: number | null;
+  pendingSectors: number | null;
+  uncorrectableSectors: number | null;
+  driveErrors: number | null;
+  powerOnHours: number | null;
+}
+
+/** An open alert on a disk. */
+export interface DiskAlert {
+  id: string;
+  name: string;
+  checkName: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  detail: string;
+  openedAt: string;
+}
+
+/** A disk's panel (GET /devices/{id}/disks/{key}): the disk, its last 30 days newest first, and its open alerts (null
+ * when the caller may not view alerts there). */
+export interface DiskHealthDetail extends DiskHealth {
+  history: DiskDay[];
+  alerts: DiskAlert[] | null;
 }
 
 export interface NetworkInterface {
@@ -1017,11 +1235,16 @@ export interface SoftwareDevice {
 
 // Monitoring and alerts (ADR-0019) ----------------------------------------------------------------
 
-/** What a policy watches: no check-in, or processor, memory or the fullest disk at a percentage. */
-export type AlertKind = "offline" | "cpu" | "memory" | "disk";
+/** What a policy watches: no check-in, processor, memory or the fullest disk at a percentage, or each disk's health
+ * with one of its checks (ADR-0065). */
+export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health";
+/** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
+ * temperature (°C, or the drive's own limit without a threshold). */
+export type DiskCheck = "failing" | "errors" | "pending" | "wear" | "temperature";
 export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
-export type AlertResolution = "cleared" | "manual" | "not_covered" | "policy_off" | "policy_changed" | "policy_deleted";
+/** subject_gone: a disk missing from the device's hardware reports for 14 days. */
+export type AlertResolution = "cleared" | "manual" | "not_covered" | "policy_off" | "policy_changed" | "policy_deleted" | "subject_gone";
 
 export interface AlertPolicy {
   id: string;
@@ -1034,7 +1257,10 @@ export interface AlertPolicy {
   name: string;
   description: string;
   kind: AlertKind;
-  /** Percent for processor, memory and disk; null for offline. */
+  /** The disk health check; null for the other kinds. */
+  checkName: DiskCheck | null;
+  /** Percent for processor, memory and disk; null for offline. For disk health the count, percentage or °C its check
+   * takes: null for failing, and for a temperature check that uses each drive's own limit. */
   threshold: number | null;
   minutes: number;
   severity: AlertSeverity;
@@ -1052,6 +1278,8 @@ export interface AlertPolicyInput {
   name: string;
   description: string;
   kind: AlertKind;
+  /** Disk health only. */
+  checkName?: DiskCheck | null;
   threshold: number | null;
   minutes: number;
   severity: AlertSeverity;
@@ -1070,11 +1298,19 @@ export interface AlertEntry {
   siteName: string;
   name: string;
   kind: AlertKind;
+  /** The disk health check; null for the other kinds. */
+  checkName: DiskCheck | null;
   threshold: number | null;
   minutes: number;
   severity: AlertSeverity;
   status: AlertStatus;
-  /** The value that raised it and the latest: percent, or minutes without a check-in. */
+  /** For disk health: the disk's identity, its name in words ("PhysicalDrive1 · Samsung SSD 870 EVO 1TB") and what holds
+   * ("Pending sectors 8, uncorrectable sectors 0"). Empty for the other kinds. */
+  subject: string;
+  subjectLabel: string;
+  detail: string;
+  /** The value that raised it and the latest: percent, or minutes without a check-in; for disk health the count,
+   * percentage or °C its check watches, 1 for failing. */
   value: number;
   lastValue: number;
   openedAt: string;
@@ -1935,8 +2171,11 @@ export interface PatchDeliveryPage {
 
 export interface PatchNotifications {
   channels: PatchChannel[];
-  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at each start. */
-  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string };
+  /**
+   * The mail server email channels send through: EasyRMM's, given to EasyPatch at start and after every change. problem says why
+   * EasyRMM could not give it, after several tries in a row, which removed the engine's.
+   */
+  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string; problem?: string };
   allowPrivateNetworkWebhooks: boolean;
 }
 

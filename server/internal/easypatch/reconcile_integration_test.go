@@ -29,9 +29,19 @@ import (
 
 var reconcileKey = bytes.Repeat([]byte{7}, 32)
 
+// mailKey keys the digest of the mail server given to the engine, as one
+// derived from EasyRMM's secret key does; every server has the same.
+var mailKey = bytes.Repeat([]byte{9}, 32)
+
 // engineService is a service started on engine, as at EasyRMM's start:
 // with nothing remembered but the database.
 func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Service {
+	f.t.Helper()
+	return f.engineServiceLog(engine, slog.New(slog.NewTextHandler(io.Discard, nil)), opts...)
+}
+
+// engineServiceLog is engineService, logging to log.
+func (f *fixture) engineServiceLog(engine *eptest.Server, log *slog.Logger, opts ...EngineOption) *Service {
 	f.t.Helper()
 	signer, err := NewSigner(reconcileKey)
 	if err != nil {
@@ -41,7 +51,7 @@ func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Se
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	svc := New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := New(f.db, audit.New(f.db, nil), "1.0.0", log)
 	if err := svc.UseEngine(client, opts...); err != nil {
 		f.t.Fatal(err)
 	}
