@@ -59,6 +59,10 @@ floors=(
   # and password resets going (ADR-0053).
   "server/internal/mailserver              88"
   "server/internal/httpapi/mailserverapi   90"
+  # The customer record: customers' staff as contacts, personal data each
+  # organization and site keeps to itself (ADR-0066).
+  "server/internal/docs                    90"
+  "server/internal/httpapi/docsapi         90"
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"
