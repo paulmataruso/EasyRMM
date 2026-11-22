@@ -560,7 +560,7 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request, d *agents.Device, bod
 		return errTooManyPolls
 	}
 	defer a.leavePoll(d.ID)
-	out, err := a.jobs.Poll(r.Context(), d.ID)
+	out, err := a.jobs.Poll(r.Context(), d.ID, in.Accepts)
 	if err != nil && r.Context().Err() != nil {
 		return nil //nolint:nilerr // the agent went away; there is no one to answer
 	}

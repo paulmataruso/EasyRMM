@@ -32,6 +32,9 @@ type Inventory struct {
 	PackageManager string                 `json:"packageManager"`
 	PackageCount   int                    `json:"packageCount"`
 	ReceivedAt     time.Time              `json:"receivedAt"`
+	// PowerShell lists the PowerShell installs the agent found on Windows
+	// (ADR-0064); null when its agent does not report them.
+	PowerShell []agentproto.PowerShellInstall `json:"powerShell"`
 }
 
 // Metrics are a device's latest measurements.
@@ -76,6 +79,7 @@ func (s *Service) Get(ctx context.Context, c access.Caller, deviceID uuid.UUID) 
 			}
 			inv.System, inv.CPU, inv.MemoryBytes, inv.OS = doc.System, doc.CPU, doc.Memory, doc.OS
 			inv.Disks, inv.Interfaces, inv.Gateways, inv.DNS = nonNil(doc.Disks), nonNil(doc.Interfaces), nonNil(doc.Gateways), nonNil(doc.DNS)
+			inv.PowerShell = doc.PowerShell
 			out.Inventory = inv
 		case !errors.Is(err, pgx.ErrNoRows):
 			return err

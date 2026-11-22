@@ -1,5 +1,5 @@
 // Words and numbers for scripts, jobs and runs (ADR-0017), shared by the pages and their tests.
-import type { Device, Job, JobRun, RunStatus, Script, ScriptLevel, Shell } from "../../api/types";
+import type { Device, Job, JobRun, PowerShellInstall, RunProgram, RunStatus, Script, ScriptLevel, Shell } from "../../api/types";
 import type { Tone } from "../../components/ui";
 import { parseDate } from "../../lib/format";
 
@@ -16,10 +16,11 @@ export const LIMITS = {
   devices: 500,
 };
 
-export const SHELLS: Shell[] = ["powershell", "cmd", "bash", "sh", "python3"];
+export const SHELLS: Shell[] = ["powershell", "pwsh", "cmd", "bash", "sh", "python3"];
 
 export const SHELL_NAMES: Record<Shell, string> = {
-  powershell: "PowerShell",
+  powershell: "Windows PowerShell 5.1",
+  pwsh: "PowerShell 7",
   cmd: "Command Prompt (cmd)",
   bash: "Bash",
   sh: "POSIX sh",
@@ -29,6 +30,7 @@ export const SHELL_NAMES: Record<Shell, string> = {
 /** The platform each shell runs on (agentproto.ShellPlatforms). */
 export const SHELL_PLATFORM: Record<Shell, "windows" | "linux"> = {
   powershell: "windows",
+  pwsh: "windows",
   cmd: "windows",
   bash: "linux",
   sh: "linux",
@@ -63,8 +65,76 @@ export function cannotRunReason(d: Pick<Device, "canRunScripts" | "agent" | "pla
   if (!d.canRunScripts) return "Your role does not run scripts here.";
   if (d.platform !== "windows" && d.platform !== "linux") return "Scripts run on Windows and Linux devices.";
   if (shell && SHELL_PLATFORM[shell] !== d.platform) return `${SHELL_NAMES[shell]} scripts run on ${PLATFORM_NAMES[SHELL_PLATFORM[shell]]} devices.`;
+  // The agent's polls say whether its build runs PowerShell 7 scripts (ADR-0064); the server refuses the job otherwise.
+  if (shell === "pwsh") {
+    if (d.agent.accepts === null) {
+      return "The device's agent has not yet said whether it can run PowerShell 7 scripts; try again in a minute, and update the agent if it still has not.";
+    }
+    if (!d.agent.accepts.includes(CAP_PWSH)) return "The device's agent cannot run PowerShell 7 scripts; update the agent.";
+  }
   return null;
 }
+
+/** The job capability an agent's polls list when its build runs PowerShell 7 scripts (agentproto.CapJobPwsh). */
+export const CAP_PWSH = "job.pwsh";
+
+/**
+ * The run dialog's warning for a PowerShell 7 script: how many of the chosen devices reported no usable PowerShell 7 at
+ * their last inventory, and what the script does there. Null when it does not apply. The server does not refuse these
+ * devices: the inventory can be an hour old, and the agent decides when the run starts.
+ */
+export function pwshWarning(s: Pick<Script, "shell" | "pwshFallback">, devices: Pick<Device, "agent">[]): string | null {
+  if (s.shell !== "pwsh") return null;
+  const n = devices.filter((d) => d.agent?.powerShell7 === false).length;
+  if (n === 0) return null;
+  const what = s.pwshFallback ? "this script runs in Windows PowerShell 5.1 there" : "this script fails there";
+  if (devices.length === 1) return `The device reported no usable PowerShell 7 at its last inventory; ${what}.`;
+  return `${n} of ${devices.length} devices reported no usable PowerShell 7 at their last inventory; ${what}.`;
+}
+
+/** What a PowerShell 7 script does where no usable PowerShell 7 is found. */
+export function fallbackText(pwshFallback: boolean): string {
+  return pwshFallback ? "Runs in Windows PowerShell 5.1" : "Fails the run";
+}
+
+const ARCH_NAMES: Record<string, string> = { x64: "64-bit", arm64: "ARM64", x86: "32-bit" };
+
+function withArch(name: string, arch?: string): string {
+  return arch ? `${name}, ${ARCH_NAMES[arch] ?? arch}` : name;
+}
+
+export const NOT_REPORTED = "Not reported by this agent's version";
+
+/**
+ * The program a run started, as its agent reported it (ADR-0064): "PowerShell 7.6.10, 64-bit", "Windows PowerShell
+ * 5.1.26100.7019, 64-bit", or the program's file name for cmd and the Linux shells. NOT_REPORTED for a run that ended
+ * with an exit code from an agent that reports none; null for a run that never started a program.
+ */
+export function programText(r: Pick<JobRun, "program" | "exitCode">): string | null {
+  const p = r.program;
+  if (!p) return r.exitCode === null ? null : NOT_REPORTED;
+  if (p.edition === "Core" || p.edition === "Desktop") {
+    return withArch(`${p.edition === "Core" ? "PowerShell" : "Windows PowerShell"} ${p.version ?? ""}`.trim(), p.arch);
+  }
+  return p.path.slice(Math.max(p.path.lastIndexOf("/"), p.path.lastIndexOf("\\")) + 1);
+}
+
+/** Why the program is the one it is, for a fallback: shown after its name on the run's page. */
+export function programNote(p: RunProgram | null): string | null {
+  return p?.fallback ? "PowerShell 7 was not found, and this script allows Windows PowerShell." : null;
+}
+
+/** A PowerShell the agent found, in a few words: "PowerShell 7.6.10, 64-bit". */
+export function installName(i: PowerShellInstall): string {
+  return withArch(`${i.edition === "Desktop" ? "Windows PowerShell" : "PowerShell"} ${i.version}`.trim(), i.arch);
+}
+
+/** Why a queued run is not sent (JobRun.held). */
+export const HELD_TEXT: Record<NonNullable<JobRun["held"]>, string> = {
+  unable: "The device's agent says it cannot run PowerShell 7 scripts, so the run is not sent. Update the agent; otherwise the run expires.",
+  unreported:
+    "The device's agent has not yet said whether it can run PowerShell 7 scripts, so the run is not sent. An agent says so within a minute of starting; update it if it does not.",
+};
 
 /** "45 seconds", "5 minutes", "1 hour 30 minutes". */
 export function formatSeconds(total: number): string {

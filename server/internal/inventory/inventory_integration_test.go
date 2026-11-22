@@ -212,6 +212,55 @@ func TestRecordCleansAndReplaces(t *testing.T) {
 	}
 }
 
+// TestPowerShellInstalls: the inventory's powerShell (ADR-0064) is kept,
+// cleaned and bounded; without it, it reads as not reported.
+func TestPowerShellInstalls(t *testing.T) {
+	f := newFixture(t)
+	pc := f.device(f.acme, f.hq, "HQ-WIN")
+	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+
+	f.record(pc, agentproto.Inventory{PackageManager: "windows"})
+	if got, _ := f.svc.Get(f.ctx, super, pc); got == nil || got.Inventory == nil || got.Inventory.PowerShell != nil {
+		t.Fatalf("an inventory without powerShell = %+v", got)
+	}
+
+	list := []agentproto.PowerShellInstall{
+		{Edition: "Desktop", Version: "5.1.26100.1", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true},
+		{Edition: "Core", Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Usable: true},
+		{Edition: "Core", Version: "7.6.10\x00", Arch: "mips", Path: `C:\Program Files (x86)\PowerShell\7\pwsh.exe`, Reason: "An x86 build.\n" + strings.Repeat("r", 600)},
+		{Edition: "Core", Version: "7.6.0", Arch: "x64", Path: `C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.0.0_x64__8wekyb3d8bbwe\pwsh.exe`, Store: true, Reason: "A Store install."},
+		{Edition: "Other", Version: "1", Path: `C:\x.exe`},
+		{Edition: "Core", Version: "7", Path: "  "},
+	}
+	for i := range 20 {
+		list = append(list, agentproto.PowerShellInstall{Edition: "Core", Version: fmt.Sprintf("8.%d", i), Path: fmt.Sprintf(`C:\Program Files\PowerShell\8-%d\pwsh.exe`, i)})
+	}
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: list})
+	got, err := f.svc.Get(f.ctx, super, pc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := got.Inventory.PowerShell
+	if len(ps) != agentproto.MaxPowerShell {
+		t.Fatalf("%d installs kept, want %d: %+v", len(ps), agentproto.MaxPowerShell, ps)
+	}
+	if ps[0].Edition != "Desktop" || ps[0].Version != "5.1.26100.1" || !ps[0].Usable || ps[1].Path != `C:\Program Files\PowerShell\7\pwsh.exe` {
+		t.Errorf("kept as sent: %+v %+v", ps[0], ps[1])
+	}
+	if x := ps[2]; x.Arch != "" || x.Version != "7.6.10" || x.Usable || len([]rune(x.Reason)) != 500 || strings.ContainsRune(x.Reason, '\n') {
+		t.Errorf("cleaned: %+v", x)
+	}
+	if !ps[3].Store || ps[3].Usable || ps[4].Version != "8.0" {
+		t.Errorf("a Store install, then the unknown edition and the empty path dropped: %+v %+v", ps[3], ps[4])
+	}
+
+	// An empty list is kept as reported: none found.
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: []agentproto.PowerShellInstall{}})
+	if got, _ := f.svc.Get(f.ctx, super, pc); got.Inventory.PowerShell == nil || len(got.Inventory.PowerShell) != 0 {
+		t.Errorf("an empty list = %#v", got.Inventory.PowerShell)
+	}
+}
+
 func TestMetricsAndHistory(t *testing.T) {
 	f := newFixture(t)
 	pc := f.device(f.acme, f.hq, "HQ-PC")

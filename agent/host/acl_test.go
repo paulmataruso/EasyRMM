@@ -36,6 +36,13 @@ func TestOthersMayWrite(t *testing.T) {
 			aclEntry{kind: aceDeniedCallback, mask: fullControl, who: users},
 			aclEntry{kind: aceDeniedCallbackObject, mask: fullControl}),
 		"a condition that allows the system": with(aclEntry{kind: aceAllowedCallback, mask: fullControl, who: system}),
+		// Program Files as Windows sets it up: whoever creates something in
+		// it owns that, and only administrators may create.
+		"Program Files": with(
+			aclEntry{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: 0x10000000, who: "S-1-3-0"},
+			aclEntry{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: 0x10000000, who: "S-1-3-1"},
+			aclEntry{kind: aceAllowed, flags: inherit, mask: readExecute, who: users},
+			aclEntry{kind: aceAllowed, flags: inherit, mask: readExecute, who: "S-1-15-2-1"}),
 	}
 	for name, acl := range harmless {
 		for _, folder := range []bool{false, true} {
@@ -54,6 +61,13 @@ func TestOthersMayWrite(t *testing.T) {
 				t.Errorf("right %#x for %q: others may not write", right, who)
 			}
 		}
+	}
+	// writer names who may.
+	if who, ok := writer(with(aclEntry{kind: aceAllowed, mask: 0x2, who: users}), false); !ok || who != users {
+		t.Errorf("writer = %q %v", who, ok)
+	}
+	if who, ok := writer(protected, true); ok || who != "" {
+		t.Errorf("the protected list's writer = %q %v", who, ok)
 	}
 	for name, e := range map[string]aclEntry{
 		"inherited":                      {kind: aceAllowed, flags: inherited, mask: 0x2, who: users},

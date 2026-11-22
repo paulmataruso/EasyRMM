@@ -12,7 +12,7 @@ import { formatDateTime } from "../../lib/format";
 import { JobsTable } from "../jobs/JobsPage";
 import { CodeView, SelfPatchingWarning } from "./parts";
 import { RunScriptDialog } from "./RunScriptDialog";
-import { formatBytes, formatSeconds, scriptScope, SHELL_NAMES } from "./scriptText";
+import { fallbackText, formatBytes, formatSeconds, scriptScope, SHELL_NAMES } from "./scriptText";
 
 export function ScriptDetailPage() {
   const { id = "" } = useParams();
@@ -77,6 +77,7 @@ export function ScriptDetailPage() {
             items={[
               ["Runs in", scriptScope(s)],
               ["Shell", SHELL_NAMES[s.shell] ?? s.shell],
+              ...(s.shell === "pwsh" ? [["Without PowerShell 7", fallbackText(s.pwshFallback)] as [string, string]] : []),
               ["Timeout", formatSeconds(s.timeoutSeconds)],
               ["Size", formatBytes(s.size)],
               ["SHA-256", <Mono key="h">{s.sha256}</Mono>],

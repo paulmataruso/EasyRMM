@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/agent/powershell"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -46,7 +47,18 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 	}
 	inv.PackageManager, inv.Packages = "windows", installedPrograms(ctx)
 	inv.EasyPatch = c.easyPatch(ctx)
+	inv.PowerShell = powerShell()
 	return inv
+}
+
+// powerShell lists Windows PowerShell and the PowerShell 7 installs, each
+// usable one's whole install checked (ADR-0064). Without Program Files'
+// known folders, which Windows always has, it lists Windows PowerShell
+// alone.
+func powerShell() []agentproto.PowerShellInstall {
+	roots, _ := powershell.Roots()
+	list, _ := powershell.Discover(roots)
+	return list
 }
 
 // firmware reads the SMBIOS tables Windows keeps a copy of.

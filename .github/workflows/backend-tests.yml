@@ -107,6 +107,107 @@ jobs:
           EASYRMM_AUTHENTICODE_PROGRAM: ${{ github.workspace }}\easyrmm-agent-windows-amd64.exe
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/agents/authenticode/
 
+  # ADR-0064: PowerShell 7 as the agent's service sees it. The tests run as
+  # LocalSystem through a scheduled task: as the runner's administrator they
+  # would test something else, since the account the agent runs as is
+  # trusted too. PowerShell 7 comes from Microsoft's MSI, the x86 build from
+  # Microsoft's ZIP, both pinned by the SHA-256 Microsoft's release lists;
+  # the Store package from winget. The steps run in Windows PowerShell, as
+  # the image's PowerShell 7 is removed first.
+  windows-system:
+    name: PowerShell 7 as LocalSystem (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            msi-sha256: 7d8daea48b450d4d62fcd1ac4d6faa7ac2db5e11aba5061ee81b7496adca8c07
+          - runner: windows-11-arm
+            arch: arm64
+            msi-sha256: 732af00c51162ecb6826ba630f19bf6536c3ce7c3b740160660ddcfb51606780
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: powershell
+    env:
+      PWSH_VERSION: 7.6.10
+      PWSH_ARCH: ${{ matrix.arch }}
+      PWSH_MSI_SHA256: ${{ matrix.msi-sha256 }}
+      PWSH_X86_ZIP_SHA256: 221bad2ba6eff81f2661c8f467eca286f89173b0e0c044c858f18dbbeacb9891
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Remove the image's PowerShell 7
+        run: |
+          $installed = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
+            Where-Object { $_.DisplayName -like 'PowerShell 7*' }
+          foreach ($p in $installed) {
+            Write-Output "Removing $($p.DisplayName) $($p.DisplayVersion)"
+            $run = Start-Process -FilePath msiexec.exe -ArgumentList '/x', $p.PSChildName, '/qn', '/norestart' -Wait -PassThru
+            if ($run.ExitCode -notin 0, 3010) { throw "msiexec /x ended with $($run.ExitCode)" }
+          }
+          $left = Join-Path $env:ProgramFiles 'PowerShell\7'
+          if (Test-Path $left) { Remove-Item -Recurse -Force $left }
+      # The images' lists do not name winget; ADR-0064 needs it.
+      - name: winget installs PowerShell 7's Store package
+        run: |
+          if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) { throw 'winget is not on this runner.' }
+          winget --version
+          winget install --id Microsoft.PowerShell --exact --version "$env:PWSH_VERSION.0" --installer-type msix --source winget `
+            --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE) { throw "winget ended with $LASTEXITCODE" }
+          $package = Get-AppxPackage -Name Microsoft.PowerShell | Select-Object -First 1
+          if (-not $package) { throw 'winget installed no Store package.' }
+          Write-Output "Store package: $($package.PackageFullName) in $($package.InstallLocation)"
+          Add-Content -Path $env:GITHUB_ENV -Encoding Ascii -Value "EASYRMM_TEST_PWSH_STORE=$(Join-Path $package.InstallLocation 'pwsh.exe')"
+      - name: PowerShell 7 from Microsoft's MSI
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $name = "PowerShell-$env:PWSH_VERSION-win-$env:PWSH_ARCH.msi"
+          $msi = Join-Path $env:RUNNER_TEMP $name
+          Invoke-WebRequest -UseBasicParsing -OutFile $msi -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$env:PWSH_VERSION/$name"
+          $sum = (Get-FileHash -Algorithm SHA256 -Path $msi).Hash.ToLowerInvariant()
+          if ($sum -ne $env:PWSH_MSI_SHA256) { throw "$name has the SHA-256 $sum" }
+          $run = Start-Process -FilePath msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($run.ExitCode -notin 0, 3010) { throw "msiexec /i ended with $($run.ExitCode)" }
+          & (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe') -NoProfile -Command '$PSVersionTable'
+      - name: PowerShell 7's x86 ZIP in Program Files (x86)
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $name = "PowerShell-$env:PWSH_VERSION-win-x86.zip"
+          $zip = Join-Path $env:RUNNER_TEMP $name
+          Invoke-WebRequest -UseBasicParsing -OutFile $zip -Uri "https://github.com/PowerShell/PowerShell/releases/download/v$env:PWSH_VERSION/$name"
+          $sum = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+          if ($sum -ne $env:PWSH_X86_ZIP_SHA256) { throw "$name has the SHA-256 $sum" }
+          $dest = Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7'
+          Expand-Archive -Path $zip -DestinationPath $dest
+          Add-Content -Path $env:GITHUB_ENV -Encoding Ascii -Value "EASYRMM_TEST_PWSH_X86=$(Join-Path $dest 'pwsh.exe')"
+      - name: Build the tests
+        run: |
+          go test -c -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -c -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Discovery and the whole install's check, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\powershell.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\powershell" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1', "EASYRMM_TEST_PWSH_X86=$env:EASYRMM_TEST_PWSH_X86", "EASYRMM_TEST_PWSH_STORE=$env:EASYRMM_TEST_PWSH_STORE"
+          exit $LASTEXITCODE
+      - name: pwsh runs, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1'
+          exit $LASTEXITCODE
+
   build:
     name: Build server
     runs-on: ubuntu-latest

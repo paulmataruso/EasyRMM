@@ -48,24 +48,39 @@ type aclEntry struct {
 	who         string
 }
 
+// creators are CREATOR OWNER and CREATOR GROUP. Windows replaces them, in
+// what a folder passes on, with whoever creates the new entry, who must
+// already have been allowed to write in the folder; no one's access is ever
+// checked against them. Program Files passes full control on to CREATOR
+// OWNER (ADR-0064).
+var creators = []string{"S-1-3-0", "S-1-3-1"}
+
 // othersMayWrite reports whether an access list lets anyone but the
-// administration change what it protects: an allowing entry that grants a
-// write right (writeRights) to anyone else, or to someone it does not name
-// plainly. Denying entries let no one in. An entry that is only passed on
-// to what a folder holds counts on a folder, since what the folder holds
-// later gets it, and grants nothing on a file.
+// administration change what it protects (writer).
 func othersMayWrite(acl []aclEntry, folder bool) bool {
+	_, ok := writer(acl, folder)
+	return ok
+}
+
+// writer finds the first entry that lets anyone but the administration
+// change what an access list protects: an allowing entry that grants a
+// write right (writeRights) to anyone else, or to someone it does not name
+// plainly, and returns the SID it names ("" for one it does not). Denying
+// entries let no one in, nor do entries for the creators. An entry that is
+// only passed on to what a folder holds counts on a folder, since what the
+// folder holds later gets it, and grants nothing on a file.
+func writer(acl []aclEntry, folder bool) (who string, ok bool) {
 	for _, e := range acl {
 		switch {
 		case e.kind == aceDenied, e.kind == aceDeniedObject, e.kind == aceDeniedCallback, e.kind == aceDeniedCallbackObject:
 		case e.mask&writeRights == 0:
 		case !folder && e.flags&aceInheritOnly != 0:
-		case (e.kind == aceAllowed || e.kind == aceAllowedCallback) && slices.Contains(administration, e.who):
+		case (e.kind == aceAllowed || e.kind == aceAllowedCallback) && (slices.Contains(administration, e.who) || slices.Contains(creators, e.who)):
 		default:
-			return true
+			return e.who, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // sameEntries reports whether two access lists hold the same entries, in

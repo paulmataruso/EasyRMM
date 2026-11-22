@@ -1,0 +1,524 @@
+//go:build windows
+
+package powershell
+
+import (
+	"debug/pe"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+
+	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
+)
+
+// Roots are the folders installs are looked for in: Program Files and
+// Program Files (x86), from Windows' known folders, never from environment
+// variables. Below them the agent looks in PowerShell\<name>\pwsh.exe,
+// <name> a major version with or without -preview, and in WindowsApps for
+// Store packages.
+func Roots() ([]string, error) {
+	var out []string
+	for _, id := range []*windows.KNOWNFOLDERID{windows.FOLDERID_ProgramFiles, windows.FOLDERID_ProgramFilesX86} {
+		p, err := windows.KnownFolderPath(id, windows.KF_FLAG_DEFAULT)
+		if err != nil {
+			return nil, fmt.Errorf("finding Program Files: %w", err)
+		}
+		if !containsFold(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func containsFold(list []string, s string) bool {
+	for _, x := range list {
+		if strings.EqualFold(x, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// Discover lists Windows PowerShell and every PowerShell 7 install found in
+// roots, at most agentproto.MaxPowerShell, as the inventory reports them:
+// each usable one's whole install is checked (checkInstall), and took is
+// how long the checks took.
+func Discover(roots []string) (list []agentproto.PowerShellInstall, took time.Duration) {
+	list = []agentproto.PowerShellInstall{Desktop()}
+	found, took := discover(roots, true)
+	list = append(list, found...)
+	order(list, nativeArch())
+	return list[:min(len(list), agentproto.MaxPowerShell)], took
+}
+
+// Desktop is Windows PowerShell 5.1 as the inventory lists it: its version
+// from the registry, its architecture from its program's header.
+func Desktop() agentproto.PowerShellInstall {
+	p := agentproto.PowerShellInstall{Edition: agentproto.EditionDesktop, Path: DesktopPath()}
+	if _, err := os.Stat(p.Path); err != nil {
+		p.Reason = "Not found: " + err.Error()
+		return p
+	}
+	p.Usable = true
+	var errs []string
+	v, err := desktopVersion()
+	if err != nil {
+		errs = append(errs, "its version could not be read: "+err.Error())
+	}
+	arch, err := peArch(p.Path)
+	if err != nil {
+		errs = append(errs, "its architecture could not be read: "+err.Error())
+	}
+	p.Version, p.Arch = v, arch
+	if len(errs) > 0 {
+		p.Reason = capitalize(strings.Join(errs, "; ")) + "."
+	}
+	return p
+}
+
+// DesktopPath is Windows PowerShell 5.1's program, in System32.
+func DesktopPath() string {
+	return filepath.Join(system32(), `WindowsPowerShell\v1.0\powershell.exe`)
+}
+
+// DesktopInterpreter is Windows PowerShell as a run's result reports it.
+func DesktopInterpreter() agentproto.Interpreter {
+	d := Desktop()
+	return agentproto.Interpreter{Edition: d.Edition, Version: d.Version, Arch: d.Arch, Path: d.Path}
+}
+
+// desktopVersion is Windows PowerShell's version as its $PSVersionTable
+// prints it: the version the registry names (PowerShellVersion, 5.1.26100.1)
+// with the build and revision of its engine's file, which Windows' updates
+// change and the registry's value does not follow.
+func desktopVersion() (string, error) {
+	v, err := registryVersion()
+	if err != nil {
+		return "", err
+	}
+	engine, err := fixedFileVersion(desktopEngine())
+	if err != nil {
+		return "", fmt.Errorf("reading its engine's version: %w", err)
+	}
+	return withEngine(v, engine)
+}
+
+// registryVersion is the version Windows PowerShell's setup recorded.
+func registryVersion() (string, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\PowerShell\3\PowerShellEngine`, registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = k.Close() }()
+	v, _, err := k.GetStringValue("PowerShellVersion")
+	return v, err
+}
+
+// desktopEngine is Windows PowerShell's engine, System.Management.Automation
+// in the .NET Framework's assembly cache.
+func desktopEngine() string {
+	win, err := windows.GetWindowsDirectory()
+	if err != nil {
+		win = `C:\Windows`
+	}
+	return filepath.Join(win, `Microsoft.NET\assembly\GAC_MSIL\System.Management.Automation\v4.0_3.0.0.0__31bf3856ad364e35\System.Management.Automation.dll`)
+}
+
+// fixedFileVersion reads the file version of a program or library's
+// version resource, as four numbers.
+func fixedFileVersion(path string) ([4]uint16, error) {
+	size, err := windows.GetFileVersionInfoSize(path, nil)
+	if err != nil {
+		return [4]uint16{}, err
+	}
+	buf := make([]byte, size)
+	if err := windows.GetFileVersionInfo(path, 0, size, unsafe.Pointer(&buf[0])); err != nil {
+		return [4]uint16{}, err
+	}
+	var (
+		p *windows.VS_FIXEDFILEINFO
+		n uint32
+	)
+	if err := windows.VerQueryValue(unsafe.Pointer(&buf[0]), `\`, unsafe.Pointer(&p), &n); err != nil || n < uint32(unsafe.Sizeof(*p)) {
+		return [4]uint16{}, errors.New("it has no file version")
+	}
+	return [4]uint16{uint16(p.FileVersionMS >> 16), uint16(p.FileVersionMS), uint16(p.FileVersionLS >> 16), uint16(p.FileVersionLS)}, nil //nolint:gosec // halves of 32 bits
+}
+
+func system32() string {
+	if d, err := windows.GetSystemDirectory(); err == nil {
+		return d
+	}
+	return `C:\Windows\System32`
+}
+
+// discover finds the PowerShell 7 installs in roots. The installs a run
+// could use have their whole install checked: all of them with all, else
+// in the order a run prefers them until one passes, as a run needs only
+// that one.
+func discover(roots []string, all bool) ([]agentproto.PowerShellInstall, time.Duration) {
+	native := nativeArch()
+	var list []agentproto.PowerShellInstall
+	for _, root := range roots {
+		list = append(list, installsIn(root)...)
+		list = append(list, storeInstallsIn(root)...)
+	}
+	for i := range list {
+		if list[i].Reason == "" {
+			assess(&list[i], native)
+		}
+	}
+	order(list, native)
+	start := time.Now()
+	for i := range list {
+		if !list[i].Usable {
+			continue
+		}
+		if err := checkInstall(list[i].Path); err != nil {
+			list[i].Usable, list[i].Reason = false, untrustedReason(err)
+			continue
+		}
+		if !all {
+			break
+		}
+	}
+	took := time.Since(start)
+	order(list, native)
+	return list, took
+}
+
+// installsIn lists the installs in root\PowerShell, with what their files
+// say of them.
+func installsIn(root string) []agentproto.PowerShellInstall {
+	entries, err := os.ReadDir(filepath.Join(root, "PowerShell"))
+	if err != nil {
+		return nil
+	}
+	var out []agentproto.PowerShellInstall
+	for _, e := range entries {
+		_, preview, ok := installFolder(e.Name())
+		if !ok {
+			continue
+		}
+		path := filepath.Join(root, "PowerShell", e.Name(), "pwsh.exe")
+		if _, err := os.Lstat(path); err != nil {
+			continue
+		}
+		out = append(out, read(path, preview, false))
+	}
+	return out
+}
+
+// storeInstallsIn lists the Store packages of PowerShell in
+// root\WindowsApps, which only administrators and the system may list.
+func storeInstallsIn(root string) []agentproto.PowerShellInstall {
+	entries, err := os.ReadDir(filepath.Join(root, "WindowsApps"))
+	if err != nil {
+		return nil
+	}
+	var out []agentproto.PowerShellInstall
+	for _, e := range entries {
+		v, arch, preview, ok := storePackage(e.Name())
+		if !ok {
+			continue
+		}
+		path := filepath.Join(root, "WindowsApps", e.Name(), "pwsh.exe")
+		if _, err := os.Lstat(path); err != nil {
+			continue
+		}
+		p := read(path, preview, true)
+		if p.Version == "" {
+			p.Version = v
+		}
+		if p.Arch == "" {
+			p.Arch = arch
+		}
+		p.Reason = reasonStore
+		out = append(out, p)
+	}
+	return out
+}
+
+// read reads an install's version, from its program's version resource,
+// and its architecture, from the program's header, without starting it.
+func read(path string, preview, store bool) agentproto.PowerShellInstall {
+	p := agentproto.PowerShellInstall{Edition: agentproto.EditionCore, Path: path, Preview: preview, Store: store}
+	v, err := fileProductVersion(path)
+	if err != nil {
+		p.Reason = "Could not be read: " + err.Error() + "."
+	}
+	p.Version = productVersion(v)
+	if strings.Contains(p.Version, "-") {
+		p.Preview = true
+	}
+	arch, err := peArch(path)
+	if err != nil && p.Reason == "" {
+		p.Reason = "Could not be read: " + err.Error() + "."
+	}
+	p.Arch = arch
+	return p
+}
+
+// peArch reads a program's architecture from its PE header.
+func peArch(path string) (string, error) {
+	f, err := pe.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	switch f.Machine {
+	case pe.IMAGE_FILE_MACHINE_AMD64:
+		return agentproto.ArchX64, nil
+	case pe.IMAGE_FILE_MACHINE_ARM64:
+		return agentproto.ArchARM64, nil
+	case pe.IMAGE_FILE_MACHINE_I386:
+		return agentproto.ArchX86, nil
+	}
+	return "", fmt.Errorf("an unknown machine type %#x", f.Machine)
+}
+
+// fileProductVersion reads the ProductVersion of a program's version
+// resource, in the first language it lists.
+func fileProductVersion(path string) (string, error) {
+	size, err := windows.GetFileVersionInfoSize(path, nil)
+	if err != nil {
+		return "", err
+	}
+	buf := make([]byte, size)
+	if err := windows.GetFileVersionInfo(path, 0, size, unsafe.Pointer(&buf[0])); err != nil {
+		return "", err
+	}
+	var (
+		p unsafe.Pointer
+		n uint32
+	)
+	tables := []string{"040904b0", "040904e4", "000004b0"}
+	if err := windows.VerQueryValue(unsafe.Pointer(&buf[0]), `\VarFileInfo\Translation`, unsafe.Pointer(&p), &n); err == nil && n >= 4 {
+		t := unsafe.Slice((*uint16)(p), n/2)
+		var listed []string
+		for i := 0; i+1 < len(t); i += 2 {
+			listed = append(listed, fmt.Sprintf("%04x%04x", t[i], t[i+1]))
+		}
+		tables = append(listed, tables...)
+	}
+	for _, table := range tables {
+		if err := windows.VerQueryValue(unsafe.Pointer(&buf[0]), `\StringFileInfo\`+table+`\ProductVersion`, unsafe.Pointer(&p), &n); err == nil && n > 0 {
+			return windows.UTF16PtrToString((*uint16)(p)), nil
+		}
+	}
+	return "", errors.New("it has no product version")
+}
+
+// nativeArch is the computer's own architecture, whatever the agent's.
+func nativeArch() string {
+	var process, native uint16
+	if err := windows.IsWow64Process2(windows.CurrentProcess(), &process, &native); err == nil {
+		switch native {
+		case pe.IMAGE_FILE_MACHINE_ARM64:
+			return agentproto.ArchARM64
+		case pe.IMAGE_FILE_MACHINE_AMD64:
+			return agentproto.ArchX64
+		case pe.IMAGE_FILE_MACHINE_I386:
+			return agentproto.ArchX86
+		}
+	}
+	switch runtime.GOARCH {
+	case "arm64":
+		return agentproto.ArchARM64
+	case "386":
+		return agentproto.ArchX86
+	}
+	return agentproto.ArchX64
+}
+
+// checkInstall checks what a PowerShell 7 install is and loads: Program
+// Files and its PowerShell folder themselves, the install's folder and
+// everything in it, and PowerShell's shared module folder with everything
+// in it where it exists (ADR-0064).
+func checkInstall(pwsh string) error {
+	install := filepath.Dir(pwsh)
+	parent := filepath.Dir(install) // <Program Files>\PowerShell
+	root := filepath.Dir(parent)    // <Program Files>
+	for _, p := range []string{root, parent} {
+		if err := host.CheckEntry(p, false); err != nil {
+			return err
+		}
+	}
+	if err := host.CheckTree(install, false); err != nil {
+		return err
+	}
+	return checkIfThere(filepath.Join(parent, "Modules"), false)
+}
+
+// checkIfThere checks a folder and what it holds when it exists.
+func checkIfThere(p string, links bool) error {
+	if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return host.CheckTree(p, links)
+}
+
+// untrustedReason says why an install is not used after its check.
+func untrustedReason(err error) string {
+	var u *host.Untrusted
+	if errors.As(err, &u) {
+		return u.Path + " " + u.Reason + ": not used, since what it runs and loads must be changeable by administrators only."
+	}
+	return "Could not be checked: " + err.Error() + "."
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// Run is what a pwsh run starts: the PowerShell 7 chosen, what its result
+// reports of it, the module folders it may load from, all checked, and
+// what its environment adds (ADR-0064).
+type Run struct {
+	Interpreter agentproto.Interpreter
+	// Modules are the module folders PowerShell 7 builds its module path
+	// from, in its order: the system account's, the shared one, its own,
+	// and Windows PowerShell's two.
+	Modules []string
+	// Env sets PSModulePath to Windows PowerShell's two folders, which
+	// PowerShell 7 puts its own three before, and turns off its telemetry
+	// and update check.
+	Env []string
+	// Took is how long the checks took.
+	Took time.Duration
+}
+
+// ForRun chooses the PowerShell 7 a pwsh run uses from roots, checks it and
+// the folders the run may load modules from, and says how to start it. It
+// returns a *NotFound when no install is usable, and an *host.Untrusted
+// for a module folder that fails.
+func ForRun(roots []string) (*Run, error) {
+	start := time.Now()
+	list, _ := discover(roots, false)
+	c := chosen(list)
+	if c == nil {
+		looked := make([]string, len(roots))
+		for i, r := range roots {
+			looked[i] = filepath.Join(r, "PowerShell")
+		}
+		return nil, &NotFound{Looked: looked, Found: list}
+	}
+	run := &Run{Interpreter: agentproto.Interpreter{Edition: c.Edition, Version: c.Version, Arch: c.Arch, Path: c.Path}}
+	mods, windowsPS, err := moduleFolders(filepath.Dir(c.Path))
+	if err != nil {
+		return nil, fmt.Errorf("%w; the script was not run", err)
+	}
+	run.Modules = mods
+	install := filepath.Dir(c.Path)
+	shared := filepath.Join(filepath.Dir(install), "Modules")
+	for _, m := range mods {
+		// The install and its shared module folder were just checked.
+		if within(m, install) || strings.EqualFold(filepath.Clean(m), shared) {
+			continue
+		}
+		// System32's files are hard links into the component store, and the
+		// system account's profile is in System32 too.
+		if err := checkIfThere(m, inSystem32(m)); err != nil {
+			return nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w; the script was not run", m, err)
+		}
+	}
+	run.Env = []string{
+		"PSModulePath=" + strings.Join(windowsPS, ";"),
+		"POWERSHELL_TELEMETRY_OPTOUT=1",
+		"POWERSHELL_UPDATECHECK=Off",
+	}
+	run.Took = time.Since(start)
+	return run, nil
+}
+
+func inSystem32(p string) bool { return within(p, system32()) }
+
+// within reports whether p is dir or below it, ignoring case as Windows
+// does.
+func within(p, dir string) bool {
+	rel, err := filepath.Rel(strings.ToLower(dir), strings.ToLower(p))
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
+}
+
+// moduleFolders lists the folders a pwsh run may load modules from, in
+// PowerShell 7's order: the account's own (Documents\PowerShell\Modules, or
+// what the account's powershell.config.json names), the shared one (Program
+// Files\PowerShell\Modules, or what $PSHOME's powershell.config.json
+// names), $PSHOME\Modules, then Windows PowerShell's two, in Program Files
+// and in System32, which are also returned alone. Each configuration file
+// is checked before it is read.
+func moduleFolders(psHome string) (all, windowsPS []string, err error) {
+	// The system account's Documents folder need not exist.
+	docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		return nil, nil, fmt.Errorf("finding the account's Documents folder: %w", err)
+	}
+	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, windows.KF_FLAG_DEFAULT)
+	if err != nil {
+		return nil, nil, fmt.Errorf("finding Program Files: %w", err)
+	}
+	user, err := configured(filepath.Join(docs, "PowerShell", "powershell.config.json"), filepath.Join(docs, "PowerShell", "Modules"))
+	if err != nil {
+		return nil, nil, err
+	}
+	shared, err := configured(filepath.Join(psHome, "powershell.config.json"), filepath.Join(programFiles, "PowerShell", "Modules"))
+	if err != nil {
+		return nil, nil, err
+	}
+	windowsPS = []string{filepath.Join(programFiles, "WindowsPowerShell", "Modules"), filepath.Join(system32(), `WindowsPowerShell\v1.0\Modules`)}
+	all = append(append(append(user, shared...), filepath.Join(psHome, "Modules")), windowsPS...)
+	return all, windowsPS, nil
+}
+
+// configured is the module folders a powershell.config.json names, or def
+// when there is no such file or it names none. The file and its folder
+// must pass the check first.
+func configured(file, def string) ([]string, error) {
+	if _, err := os.Lstat(file); errors.Is(err, fs.ErrNotExist) {
+		return []string{def}, nil
+	}
+	links := inSystem32(file)
+	for _, p := range []string{filepath.Dir(file), file} {
+		if err := host.CheckEntry(p, links); err != nil {
+			return nil, fmt.Errorf("PowerShell 7 would read its configuration from %s, and %w", file, err)
+		}
+	}
+	b, err := os.ReadFile(file) //nolint:gosec // checked above: only administrators may change it
+	if err != nil {
+		return nil, err
+	}
+	p, err := configModulePath(b)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", file, err)
+	}
+	if p == "" {
+		return []string{def}, nil
+	}
+	var out []string
+	for f := range strings.SplitSeq(expand(p, os.LookupEnv), ";") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		if !filepath.IsAbs(f) {
+			return nil, fmt.Errorf("%s names the module folder %q, which is not a full path", file, f)
+		}
+		out = append(out, filepath.Clean(f))
+	}
+	if len(out) == 0 {
+		return []string{def}, nil
+	}
+	return out, nil
+}

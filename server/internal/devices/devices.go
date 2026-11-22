@@ -36,6 +36,13 @@ type Agent struct {
 	// Update is where the agent stands against the build the server serves
 	// for its platform; nil when the server serves none.
 	Update *AgentUpdate `json:"update"`
+	// Accepts is what the agent's build last said its polls accept, such as
+	// job.pwsh (ADR-0064); nil when the build it runs has not said.
+	Accepts []string `json:"accepts"`
+	// PowerShell7 says whether its last inventory listed a usable
+	// PowerShell 7; nil when the inventory listed no PowerShell installs
+	// (an agent too old to look, or not Windows).
+	PowerShell7 *bool `json:"powerShell7"`
 
 	// The update the server holds for the agent, if any.
 	updateState, updateTarget string
@@ -218,7 +225,9 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
 	coalesce(u.error, ''), coalesce(u.requested, false),
 	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, ''),
-	hc.checked_at, coalesce(hs.states, '{}')`
+	hc.checked_at, coalesce(hs.states, '{}'),
+	CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END,
+	CASE WHEN inv.data ? 'powerShell' THEN jsonb_path_exists(inv.data, '$.powerShell[*] ? (@.edition == "Core" && @.usable == true)') END`
 
 // from joins what the columns read. hs counts the device's hardening
 // modules by state, as {"in_place": 9, "partly": 1}.
@@ -229,6 +238,7 @@ const from = ` FROM devices d
 	LEFT JOIN agent_updates u ON u.device_id = d.id
 	LEFT JOIN device_removals rm ON rm.device_id = d.id
 	LEFT JOIN device_hardening_checks hc ON hc.device_id = d.id
+	LEFT JOIN device_inventory inv ON inv.device_id = d.id
 	LEFT JOIN LATERAL (
 		SELECT jsonb_object_agg(x.state, x.n) AS states
 		FROM (SELECT h.state, count(*) AS n FROM device_hardening h WHERE h.device_id = d.id GROUP BY h.state) x
@@ -251,7 +261,7 @@ func scan(row pgx.Row) (*Device, error) {
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
-		&checkedAt, &states)
+		&checkedAt, &states, &a.Accepts, &a.PowerShell7)
 	if err != nil {
 		return nil, err
 	}

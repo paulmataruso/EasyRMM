@@ -10,7 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, buttonClasses, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { OutputView, RunStatusBadge } from "../scripts/parts";
-import { formatElapsed, isOpen, runElapsed } from "../scripts/scriptText";
+import { formatElapsed, HELD_TEXT, isOpen, programNote, programText, runElapsed } from "../scripts/scriptText";
 
 const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
   failed: "danger",
@@ -22,6 +22,7 @@ const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
 
 /** What is happening with a run, in a sentence, while it has not finished. */
 function waitingFor(r: JobRun): string | null {
+  if (r.status === "queued" && r.held) return `${HELD_TEXT[r.held]} It is waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "queued") return `Waiting for ${r.deviceName} to pick it up. Offline devices are waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "sent") return `${r.deviceName} has the script and is about to start it.`;
   if (r.status === "running") {
@@ -30,6 +31,21 @@ function waitingFor(r: JobRun): string | null {
       : "Running. Output is sent when the script ends; this page updates on its own.";
   }
   return null;
+}
+
+/** The program the agent started, with its path, as the agent reported it (ADR-0064). */
+function RunProgramText({ run }: { run: JobRun }) {
+  const text = programText(run);
+  if (!text) return <>—</>;
+  const p = run.program;
+  const note = programNote(p);
+  return (
+    <>
+      <span className={p ? undefined : "text-muted"}>{text}</span>
+      {note && <span className="block text-xs text-warn">{note}</span>}
+      {p && <span className="block font-mono text-xs break-all text-muted">{p.path}</span>}
+    </>
+  );
 }
 
 /** Whether a finished run has output the caller may read: then the page asks for it, once. */
@@ -104,7 +120,7 @@ export function RunDetailPage() {
       />
 
       {waiting && (
-        <Alert tone="info" className="mb-5">
+        <Alert tone={r.held ? "warn" : "info"} className="mb-5">
           <span role="status">{waiting}</span>
         </Alert>
       )}
@@ -144,6 +160,7 @@ export function RunDetailPage() {
             items={[
               ["Status", <RunStatusBadge key="s" status={r.status} cancelRequested={r.cancelRequested} />],
               ["Exit code", r.exitCode === null ? "—" : <span className="font-mono text-xs tabular-nums">{r.exitCode}</span>],
+              ["Program", <RunProgramText key="p" run={r} />],
               [
                 "Device",
                 <Link key="d" to={`/devices/${r.deviceId}`} className="text-accent hover:underline">

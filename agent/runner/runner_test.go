@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +46,8 @@ type server struct {
 	// tamper changes the binary after signing it.
 	job    ed25519.PrivateKey
 	tamper bool
+	// protocol is the heartbeat answer's level, none when 0 (ADR-0009).
+	protocol int
 }
 
 // download serves a signed download, as the server does.
@@ -79,6 +82,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.uninstall != "" {
 			update += `,"uninstall":` + s.uninstall
+		}
+		if s.protocol != 0 {
+			update += `,"protocol":` + strconv.Itoa(s.protocol)
 		}
 		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}`+update+`}`)
 	case agentproto.PathInventory:

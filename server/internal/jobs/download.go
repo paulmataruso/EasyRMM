@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
@@ -64,6 +65,8 @@ type RunResult struct {
 	DeliveredAt    *time.Time `json:"deliveredAt"`
 	StartedAt      *time.Time `json:"startedAt"`
 	FinishedAt     *time.Time `json:"finishedAt"`
+	// Program is the program the agent started, nil when it reported none.
+	Program *Program `json:"program"`
 }
 
 // RunDownload is a run with its output, as ?download=json and each run's
@@ -86,6 +89,7 @@ func scanResult(row pgx.Row) (*RunResult, error) {
 	x.Organization, x.OrganizationID, x.Site, x.SiteID = r.OrganizationName, r.OrganizationID, r.SiteName, r.SiteID
 	x.ScriptName, x.Status, x.ExitCode, x.Error = r.ScriptName, r.Status, r.ExitCode, r.Error
 	x.QueuedAt, x.DeliveredAt, x.StartedAt, x.FinishedAt = r.CreatedAt, r.SentAt, r.StartedAt, r.FinishedAt
+	x.Program = r.Program
 	return &x, nil
 }
 
@@ -200,7 +204,32 @@ var resultsColumns = []reports.Column{
 	{Key: "queued", Label: "Queued", Type: reports.TypeTime},
 	{Key: "started", Label: "Started", Type: reports.TypeTime},
 	{Key: "finished", Label: "Finished", Type: reports.TypeTime},
+	{Key: "program", Label: "Program", Type: reports.TypeText},
+	{Key: "programVersion", Label: "Program version", Type: reports.TypeText},
+	{Key: "programArch", Label: "Program architecture", Type: reports.TypeText},
+	{Key: "programPath", Label: "Program path", Type: reports.TypeText},
 	{Key: "run", Label: "Run", Type: reports.TypeText},
+}
+
+// programName names the program a run started as the console does: the
+// PowerShell edition, or the program's file name for other shells.
+// Without a program it is "Not reported by this agent's version" when the
+// run's script exited (something ran, and its agent did not say what), and
+// empty otherwise.
+func programName(p *Program, exitCode *int) string {
+	switch {
+	case p == nil && exitCode != nil:
+		return "Not reported by this agent's version"
+	case p == nil:
+		return ""
+	case p.Edition == agentproto.EditionCore:
+		return "PowerShell"
+	case p.Edition == agentproto.EditionDesktop && p.Fallback:
+		return "Windows PowerShell (PowerShell 7 was not found)"
+	case p.Edition == agentproto.EditionDesktop:
+		return "Windows PowerShell"
+	}
+	return p.Path[strings.LastIndexAny(p.Path, `\/`)+1:]
 }
 
 // statusLabels name run statuses as the console does.
@@ -214,8 +243,12 @@ func resultRow(r *RunResult) []any {
 	if r.ExitCode != nil {
 		exit = *r.ExitCode
 	}
+	p := r.Program
+	if p == nil {
+		p = &Program{}
+	}
 	return []any{r.Device, r.Organization, r.Site, statusLabels[r.Status], exit, r.Error, r.QueuedAt, timeOrNil(r.StartedAt),
-		timeOrNil(r.FinishedAt), r.RunID.String()}
+		timeOrNil(r.FinishedAt), programName(r.Program, r.ExitCode), p.Version, p.Arch, p.Path, r.RunID.String()}
 }
 
 func timeOrNil(t *time.Time) any {

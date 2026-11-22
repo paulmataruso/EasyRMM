@@ -4,8 +4,11 @@ package inventory
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 // TestCollectWindows reads the real machine: only that each part is
@@ -29,5 +32,12 @@ func TestCollectWindows(t *testing.T) {
 	}
 	if inv.PackageManager != "windows" || len(inv.Packages) == 0 {
 		t.Errorf("%d programs from %q", len(inv.Packages), inv.PackageManager)
+	}
+	// Windows PowerShell first, then the runner's PowerShell 7 (ADR-0064;
+	// package powershell checks what each says, as LocalSystem).
+	if ps := inv.PowerShell; len(ps) < 2 || ps[0].Edition != agentproto.EditionDesktop || !slices.ContainsFunc(ps, func(p agentproto.PowerShellInstall) bool {
+		return p.Edition == agentproto.EditionCore && p.Version != ""
+	}) {
+		t.Errorf("PowerShell %+v", ps)
 	}
 }

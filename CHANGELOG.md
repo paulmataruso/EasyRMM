@@ -157,6 +157,49 @@ All notable changes to this project are documented here. The format follows
   cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
   `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`
   ([guide](docs/operations/scripts-and-jobs.md#downloading-output-and-results)).
+- **PowerShell 7 scripts** (ADR-0064, slice 1). A script's shell can be
+  **PowerShell 7** (`pwsh`); `powershell` scripts still run in Windows
+  PowerShell 5.1, unchanged, and the console now names that shell
+  *Windows PowerShell 5.1*. Run as LocalSystem, the agent uses only a
+  PowerShell 7 no standard user can change: it looks in Program Files and
+  Program Files (x86) only, never the `PATH` or a user's folders, takes the
+  newest stable 7 or later built for the processor, and before each run
+  checks that the install, the folders above it, the module folders and
+  configuration files the run reads can be changed only by Administrators,
+  SYSTEM and TrustedInstaller and hold no links or junctions. Previews,
+  32-bit builds, PowerShell 6 and Microsoft Store installs (winget's
+  default since PowerShell 7.6) are listed and never run. Runs get the
+  system's module folders only, and PowerShell 7's telemetry and update
+  check off. Where no usable PowerShell 7 is found the run fails without
+  running the script, unless its author set **Where PowerShell 7 is
+  missing** to Windows PowerShell 5.1 (`pwshFallback`, copied into each
+  job). Migration 00033 adds the shell and the new columns
+  ([guide](docs/operations/scripts-and-jobs.md#powershell-7)).
+- **Every run records the program it used**: edition, version,
+  architecture and path, read from the file just before it starts, and
+  whether a PowerShell 7 script fell back to 5.1. Shown on the run's page
+  ("PowerShell 7.6.10, 64-bit"), as the **Program** column of a job's runs,
+  and in the results CSV and downloads, to everyone with `job.view`. Runs
+  from agents of earlier releases say *Not reported by this agent's
+  version*.
+- **A Windows device's PowerShell installs**: the inventory lists Windows
+  PowerShell and each PowerShell 7 found, and the **Hardware** tab shows
+  which one PowerShell 7 scripts run in and why each other is not used.
+  The run dialog warns how many chosen devices reported no usable
+  PowerShell 7 and what the script does there.
+- **Agents say which jobs they take.** The agent's poll lists the job
+  capabilities its build takes (`accepts`; `job.pwsh` from Windows agents),
+  kept on the device for that build. A PowerShell 7 job is sent only to an
+  agent that listed it; starting one on a device whose agent cannot, or has
+  not said, is refused with the reason, the device picker leaves such
+  devices out, and a run left waiting says why and expires with that
+  reason. The agent sends the list, its PowerShell installs and a run's
+  program only to a server of protocol level 2 or higher (ADR-0009).
+  **Agents of 1.0.0-rc.4 and earlier never list it: update them to run
+  PowerShell 7 scripts.** Every other job runs on them as before: the
+  integration tests run the rc.4 agent, built from its tag, on Linux
+  through Bash, sh and Python scripts with arguments and exit codes, a
+  timeout and a cancel.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version

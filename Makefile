@@ -21,6 +21,10 @@ TEST_MESH_URL ?= http://127.0.0.1:24430
 # The OpenID Connect provider single sign-on is tested against.
 DEX_IMAGE ?= ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
 TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
+# The release before this one, whose agent the integration tests run every
+# kind of job on (ADR-0009, ADR-0064), and where its build goes.
+RELEASE_BEFORE ?= easyrmm-v1.0.0-rc.4
+RELEASE_BEFORE_AGENT ?= $(or $(TMPDIR),/tmp)/easyrmm-agent-$(RELEASE_BEFORE)
 # Machine tests (internal/vmtest; ADR-0051): where the cloud images and the
 # running machines' disks go (gigabytes, so not a small /tmp), the packages
 # with vm-tagged tests, how many machines boot at once, and how long the
@@ -98,14 +102,19 @@ print-test-agent-image:
 print-test-hardening-images:
 	@echo $(TEST_HARDENING_IMAGES)
 
+.PHONY: agent-release-before
+agent-release-before: ## Build the Linux agent of the release before, which the integration tests run jobs on
+	GO=$(GO) ./scripts/ci/build-release-before.sh $(RELEASE_BEFORE) $(RELEASE_BEFORE_AGENT)
+
 .PHONY: test-integration
-test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
+test-integration: agent-release-before ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
 	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
 	EASYRMM_TEST_HARDENING_IMAGES="$${EASYRMM_TEST_HARDENING_IMAGES:-$(TEST_HARDENING_IMAGES)}" \
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
+	EASYRMM_TEST_AGENT_RELEASE_BEFORE="$(RELEASE_BEFORE_AGENT)" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 

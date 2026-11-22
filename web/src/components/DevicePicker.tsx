@@ -10,7 +10,7 @@ import { cx, Dot, EmptyState, ErrorState, Field, Input, Spinner } from "./ui";
  * or not now (false, counted under the list), and which are beside the
  * point (null, not mentioned).
  */
-export function DevicePicker({ classify, selected, onChange, error, empty, excluded }: {
+export function DevicePicker({ classify, selected, onChange, error, empty, excluded, note }: {
   classify: (d: Device) => boolean | null;
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
@@ -19,6 +19,8 @@ export function DevicePicker({ classify, selected, onChange, error, empty, exclu
   empty: { title: string; body: ReactNode };
   /** The note under the list for devices left out. */
   excluded: (count: number) => ReactNode;
+  /** A warning about the chosen devices, shown under the list. */
+  note?: (chosen: Device[]) => ReactNode;
 }) {
   const devices = useList<Device>("/devices");
   const [query, setQuery] = useState("");
@@ -113,9 +115,15 @@ export function DevicePicker({ classify, selected, onChange, error, empty, exclu
           ))}
         </ul>
       </div>
+      {note && <ChosenNote note={note} chosen={eligible.filter((d) => selected.has(d.id))} />}
       {left > 0 && <p className="text-xs text-subtle">{excluded(left)}</p>}
     </Field>
   );
+}
+
+function ChosenNote({ note, chosen }: { note: (chosen: Device[]) => ReactNode; chosen: Device[] }) {
+  const text = note(chosen);
+  return text ? <p className="text-xs text-warn">{text}</p> : null;
 }
 
 /** "1 other device … is" / "3 other devices … are". */

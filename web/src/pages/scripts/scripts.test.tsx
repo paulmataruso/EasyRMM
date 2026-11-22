@@ -8,7 +8,7 @@ import { renderApp } from "../../test/render";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
 
 const SCRIPTS: Script[] = [
   script("sc1", "Disk usage", { description: "Shows free space on every mount.", body: "df -h\n" }),
@@ -112,13 +112,30 @@ describe("scripts", () => {
     const siteSelect = screen.getByLabelText(/^Site/);
     await waitFor(() => expect(within(siteSelect).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose…", "Head office"]));
     await user.selectOptions(siteSelect, "Head office");
-    // New scripts start as PowerShell, for Windows; each shell says where it runs and how.
+    // New scripts start as Windows PowerShell 5.1; each shell says where it runs and how.
     const shellSelect = screen.getByLabelText("Shell");
     expect(shellSelect).toHaveValue("powershell");
-    expect(within(shellSelect).getAllByRole("option").map((o) => o.textContent)).toEqual(["PowerShell", "Command Prompt (cmd)", "Bash", "POSIX sh", "Python 3"]);
+    expect(within(shellSelect).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Windows PowerShell 5.1",
+      "PowerShell 7",
+      "Command Prompt (cmd)",
+      "Bash",
+      "POSIX sh",
+      "Python 3",
+    ]);
     expect(screen.getByText("Runs on Windows devices.")).toBeInTheDocument();
     expect(screen.getByText(/Windows PowerShell 5\.1 as Local System/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Where PowerShell 7 is missing")).not.toBeInTheDocument();
+    // PowerShell 7 says which install it uses, and asks what to do where there is none; the setting goes with the shell.
+    await user.selectOptions(shellSelect, "PowerShell 7");
+    expect(screen.getByText(/PowerShell 7 as Local System/)).toHaveTextContent("winget installs the Store package unless given --installer-type wix");
+    const missing = screen.getByLabelText("Where PowerShell 7 is missing");
+    expect(missing).toHaveDisplayValue("Fails the run");
+    expect(screen.getByText(/so a script written for PowerShell 7 never runs in 5\.1/)).toBeInTheDocument();
+    await user.selectOptions(missing, "Runs in Windows PowerShell 5.1");
+    expect(screen.getByText(/Only for a script written to run in both/)).toBeInTheDocument();
     await user.selectOptions(shellSelect, "Command Prompt (cmd)");
+    expect(screen.queryByLabelText("Where PowerShell 7 is missing")).not.toBeInTheDocument();
     expect(screen.getByText(/cannot contain %, double quotes or line breaks/)).toBeInTheDocument();
     await user.selectOptions(shellSelect, "POSIX sh");
     expect(screen.getByText("Runs on Linux devices.")).toBeInTheDocument();
@@ -136,6 +153,7 @@ describe("scripts", () => {
       name: "Clear temp",
       description: "",
       shell: "sh",
+      pwshFallback: false,
       body: "rm -rf /tmp/app-cache",
       timeoutSeconds: 7200,
     });
@@ -175,7 +193,14 @@ describe("scripts", () => {
     await user.type(body, "df -h /");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(location()).toBe("/scripts/sc1"));
-    expect(server.call("PATCH /scripts/:id").body).toEqual({ name: "Disk usage", description: "Shows free space on every mount.", shell: "bash", body: "df -h /", timeoutSeconds: 300 });
+    expect(server.call("PATCH /scripts/:id").body).toEqual({
+      name: "Disk usage",
+      description: "Shows free space on every mount.",
+      shell: "bash",
+      pwshFallback: false,
+      body: "df -h /",
+      timeoutSeconds: 300,
+    });
     unmount();
 
     installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /scripts/:id": ok({ ...SCRIPTS[1], canEdit: false }) });
@@ -255,6 +280,84 @@ describe("scripts", () => {
 
     await waitFor(() => expect(location()).toBe("/jobs/j9"));
     expect(server.call("POST /jobs").body).toEqual({ scriptId: "sc2", deviceIds: ["d2", "d1"], args: ["--force", "queue one"], timeoutSeconds: 60, waitHours: 72 });
+  });
+
+  it("adds a PowerShell 7 script that falls back, shows the setting, and sends a change to it", async () => {
+    const user = userEvent.setup();
+    const seven = script("sc7", "Uptime", { shell: "pwsh", pwshFallback: true, body: "(Get-Uptime).TotalHours\n" });
+    const server = installFakeApi({
+      ...baseRoutes(ADMIN),
+      ...lists,
+      "POST /scripts": (r) => ({ status: 201, body: script("sc7", (r.body as Script).name, r.body as Script) }),
+      "PATCH /scripts/:id": (r) => ok({ ...seven, ...(r.body as object) }),
+      "GET /scripts/:id": ok(seven),
+      "GET /jobs": ok({ items: [] }),
+    });
+    const { unmount } = renderApp("/scripts/new");
+    await user.type(await screen.findByLabelText(/^Name/), "Uptime");
+    await user.selectOptions(screen.getByLabelText("Shell"), "PowerShell 7");
+    await user.selectOptions(screen.getByLabelText("Where PowerShell 7 is missing"), "Runs in Windows PowerShell 5.1");
+    await user.type(screen.getByLabelText(/^Body/), "(Get-Uptime).TotalHours");
+    await user.click(screen.getByRole("button", { name: "Add script" }));
+    await waitFor(() => expect(location()).toBe("/scripts/sc7"));
+    expect(server.call("POST /scripts").body).toMatchObject({ shell: "pwsh", pwshFallback: true });
+    // The script's page says what happens without PowerShell 7.
+    expect(await screen.findByText("Without PowerShell 7")).toBeInTheDocument();
+    expect(screen.getByText("Runs in Windows PowerShell 5.1")).toBeInTheDocument();
+    expect(screen.getByText("PowerShell 7")).toBeInTheDocument();
+    unmount();
+
+    // Editing: turning the fallback off is a change, and is sent.
+    renderApp("/scripts/sc7/edit");
+    await user.selectOptions(await screen.findByLabelText("Where PowerShell 7 is missing"), "Fails the run");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(server.callsTo("PATCH /scripts/:id")).toHaveLength(1));
+    expect(server.call("PATCH /scripts/:id").body).toMatchObject({ shell: "pwsh", pwshFallback: false });
+  });
+
+  it("runs a PowerShell 7 script only where the agent can, and warns where it reported none", async () => {
+    const user = userEvent.setup();
+    const windows = (accepts: string[] | null, powerShell7: boolean | null) => ({
+      platform: "windows" as const,
+      agent: { ...AGENT, accepts, powerShell7 },
+      canRunScripts: true,
+    });
+    let fallback = false;
+    installFakeApi({
+      ...baseRoutes(ADMIN),
+      "GET /scripts/:id": () => ok(script("sc7", "Uptime", { shell: "pwsh", pwshFallback: fallback, body: "(Get-Uptime).TotalHours\n" })),
+      "GET /jobs": ok({ items: [] }),
+      "GET /devices": ok({
+        items: [
+          device("d1", "PC-01", windows(["job.pwsh"], true)),
+          device("d2", "PC-02", windows(["job.pwsh"], false)),
+          device("d3", "PC-03", windows(["job.pwsh"], null)), // no inventory yet: no warning
+          device("d4", "PC-04", windows([], true)), // an agent that cannot
+          device("d5", "PC-05", windows(null, null)), // an agent that has not said
+        ],
+      }),
+    });
+    const { unmount } = renderApp("/scripts/sc7");
+    await user.click(await screen.findByRole("button", { name: "Run" }));
+    let dialog = await screen.findByRole("dialog", { name: "Run Uptime" });
+    const list = await within(dialog).findByRole("list", { name: "Devices" });
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(3);
+    expect(within(list).queryByText("PC-04")).not.toBeInTheDocument();
+    expect(within(list).queryByText("PC-05")).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/2 other devices where it could run are not listed: an agent that cannot run PowerShell 7 scripts yet/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("checkbox", { name: "All" }));
+    expect(within(dialog).getByText("1 of 3 devices reported no usable PowerShell 7 at their last inventory; this script fails there.")).toBeInTheDocument();
+    await user.click(within(list).getByRole("checkbox", { name: /PC-02/ }));
+    expect(within(dialog).queryByText(/reported no usable PowerShell 7/)).not.toBeInTheDocument();
+    unmount();
+
+    // A script that falls back says what happens there instead.
+    fallback = true;
+    renderApp("/scripts/sc7");
+    await user.click(await screen.findByRole("button", { name: "Run" }));
+    dialog = await screen.findByRole("dialog", { name: "Run Uptime" });
+    await user.click(within(await within(dialog).findByRole("list", { name: "Devices" })).getByRole("checkbox", { name: /PC-02/ }));
+    expect(within(dialog).getByText("The device reported no usable PowerShell 7 at its last inventory; this script runs in Windows PowerShell 5.1 there.")).toBeInTheDocument();
   });
 
   it("warns when a script installs system updates itself while EasyPatch patches devices", async () => {

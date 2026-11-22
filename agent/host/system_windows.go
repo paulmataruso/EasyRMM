@@ -313,45 +313,127 @@ func match(dir, name string) ([]string, error) {
 
 // trustedEntry reports whether p is a plain file with a single link, or a
 // plain folder, that a trusted account owns and no one else may change
-// (othersMayChange). It looks at p itself, never through a link. What it
-// may not look at is not trusted: only its owner can have kept the system
-// and administrators out.
+// (entryProblem).
 func trustedEntry(p string) (bool, error) {
+	why, err := entryProblem(p, false)
+	return why == "" && err == nil, err
+}
+
+// entryProblem says why p fails the test of trustedEntry, or "" when it
+// passes: it must be a plain file with a single link (any number, with
+// links), or a plain folder, that a trusted account owns and no one else may
+// change (writer). It looks at p itself, never through a link. What it may
+// not look at fails: only its owner can have kept the system and
+// administrators out.
+func entryProblem(p string, links bool) (string, error) {
 	name, err := windows.UTF16PtrFromString(p)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	h, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-		return false, nil
+		return "cannot be read by the agent", nil
 	}
 	if err != nil {
-		return false, &fs.PathError{Op: "open", Path: p, Err: err}
+		return "", &fs.PathError{Op: "open", Path: p, Err: err}
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return false, &fs.PathError{Op: "stat", Path: p, Err: err}
+		return "", &fs.PathError{Op: "stat", Path: p, Err: err}
 	}
 	folder := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || !folder && info.NumberOfLinks != 1 {
-		return false, nil
+	switch {
+	case info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
+		return "is a link, junction or other reparse point", nil
+	case !folder && !links && info.NumberOfLinks != 1:
+		return fmt.Sprintf("has %d hard links", info.NumberOfLinks), nil
 	}
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return false, &fs.PathError{Op: "read the owner and access list of", Path: p, Err: err}
+		return "", &fs.PathError{Op: "read the owner and access list of", Path: p, Err: err}
 	}
 	owner, _, err := sd.Owner()
-	if err != nil || owner == nil || !trusted(owner) {
-		return false, err
-	}
-	others, err := othersMayChange(sd, folder)
 	if err != nil {
-		return false, &fs.PathError{Op: "read the access list of", Path: p, Err: err}
+		return "", err
 	}
-	return !others, nil
+	if owner == nil {
+		return "has no owner", nil
+	}
+	if !trusted(owner) {
+		return "is owned by " + accountName(owner), nil
+	}
+	acl, ok, err := accessList(sd)
+	if err != nil {
+		return "", &fs.PathError{Op: "read the access list of", Path: p, Err: err}
+	}
+	if !ok {
+		return "can be changed by everyone: it has no access list", nil
+	}
+	if who, ok := writer(acl, folder); ok {
+		if who == "" {
+			return "can be changed by someone an access list entry names in a way the agent does not read", nil
+		}
+		sid, err := windows.StringToSid(who)
+		if err != nil {
+			return "can be changed by " + who, nil
+		}
+		return "can be changed by " + accountName(sid), nil
+	}
+	return "", nil
+}
+
+// accountName names an account as Windows does (BUILTIN\Users), or by its
+// SID when it has no name.
+func accountName(sid *windows.SID) string {
+	account, domain, _, err := sid.LookupAccount("")
+	switch {
+	case err != nil || account == "":
+		return sid.String()
+	case domain == "":
+		return account
+	}
+	return domain + `\` + account
+}
+
+// Untrusted is an entry that fails the test of trustedEntry, and why.
+type Untrusted struct {
+	Path string
+	// Reason completes a sentence about the entry: "can be changed by
+	// BUILTIN\Users".
+	Reason string
+}
+
+func (u *Untrusted) Error() string { return u.Path + " " + u.Reason }
+
+// CheckTree checks root and everything in it at any depth as trustedEntry
+// checks an entry of the agent's state, each before what it holds, and
+// never through a link (ADR-0064: a PowerShell install and its module
+// folders). links allows files more than one link: in System32 Windows
+// keeps many of its own files as hard links into its component store. It
+// returns an *Untrusted for the first entry that fails, or another error
+// when one could not be read.
+func CheckTree(root string, links bool) error {
+	return filepath.WalkDir(root, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return CheckEntry(p, links)
+	})
+}
+
+// CheckEntry checks one entry as CheckTree does, without what it holds.
+func CheckEntry(p string, links bool) error {
+	why, err := entryProblem(p, links)
+	if err != nil {
+		return err
+	}
+	if why != "" {
+		return &Untrusted{Path: p, Reason: why}
+	}
+	return nil
 }
 
 // plainFolder reports whether fi is a folder and not a link, junction or

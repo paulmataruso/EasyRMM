@@ -284,7 +284,9 @@ func (d *device) poll(ctx context.Context) {
 	for ctx.Err() == nil {
 		d.st.polling.Add(1)
 		start := time.Now()
-		resp, err := d.c.Poll(ctx)
+		// What a Linux agent's poll accepts: no job capabilities (ADR-0064);
+		// the client sends the list once a server of level 2 answers.
+		resp, err := d.c.Poll(ctx, []string{})
 		d.st.polling.Add(-1)
 		if ctx.Err() != nil {
 			return
@@ -323,6 +325,8 @@ func (d *device) job(ctx context.Context, j agentproto.SignedJob) {
 	res := agentproto.ResultRequest{
 		Status: agentproto.RunSucceeded, ExitCode: &exit, Stdout: "simulated on " + d.id.Hostname + "\n",
 		StartedAt: start.UTC(), FinishedAt: time.Now().UTC(),
+		// The program, as a Linux agent reports it: the path only.
+		Interpreter: &agentproto.Interpreter{Path: "/usr/bin/" + p.Shell},
 	}
 	start = time.Now()
 	err = d.c.Result(ctx, p.RunID, res)

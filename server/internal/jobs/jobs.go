@@ -28,17 +28,20 @@ type Job struct {
 	ID uuid.UUID `json:"id"`
 	// Kind is KindScript, KindSoftware or KindHardening; Software is the
 	// software action, Hardening what a hardening job does.
-	Kind           string     `json:"kind"`
-	Software       *Software  `json:"software"`
-	Hardening      *Hardening `json:"hardening"`
-	ScriptID       *uuid.UUID `json:"scriptId"`
-	ScriptName     string     `json:"scriptName"`
-	Shell          string     `json:"shell"`
-	SHA256         string     `json:"sha256"`
-	TimeoutSeconds int        `json:"timeoutSeconds"`
-	ExpiresAt      time.Time  `json:"expiresAt"`
-	CreatedBy      string     `json:"createdBy"`
-	CreatedAt      time.Time  `json:"createdAt"`
+	Kind       string     `json:"kind"`
+	Software   *Software  `json:"software"`
+	Hardening  *Hardening `json:"hardening"`
+	ScriptID   *uuid.UUID `json:"scriptId"`
+	ScriptName string     `json:"scriptName"`
+	Shell      string     `json:"shell"`
+	// PwshFallback is the script's setting, copied into the job: a pwsh
+	// run may use Windows PowerShell 5.1 where PowerShell 7 is missing.
+	PwshFallback   bool      `json:"pwshFallback"`
+	SHA256         string    `json:"sha256"`
+	TimeoutSeconds int       `json:"timeoutSeconds"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+	CreatedBy      string    `json:"createdBy"`
+	CreatedAt      time.Time `json:"createdAt"`
 	// Counts has a count for every status.
 	Counts map[string]int `json:"counts"`
 	Total  int            `json:"total"`
@@ -87,6 +90,14 @@ type Run struct {
 	ExitCode         *int       `json:"exitCode"`
 	Error            string     `json:"error"`
 	CancelRequested  bool       `json:"cancelRequested"`
+	// Program is the program the agent started, as it reported it; nil
+	// when it reported none: the run did not start, or its agent is too
+	// old to say (ADR-0064). Everyone who sees the run sees it.
+	Program *Program `json:"program"`
+	// Held says why a queued run is not delivered: HeldUnable when the
+	// device's agent said it cannot run it, HeldUnreported when the build
+	// it runs has not said yet. Empty otherwise.
+	Held string `json:"held,omitempty"`
 	// Job and RunDetail are filled in by GetRun only.
 	Job *Job `json:"job,omitempty"`
 	*RunDetail
@@ -115,13 +126,42 @@ type OutputState struct {
 	OutputRemovedAt *time.Time `json:"outputRemovedAt"`
 }
 
+// Program is the program a run started (agentproto.Interpreter, as kept).
+type Program struct {
+	// Edition is "Desktop" (Windows PowerShell) or "Core" (PowerShell 7),
+	// empty for other shells.
+	Edition string `json:"edition,omitempty"`
+	Version string `json:"version,omitempty"`
+	Arch    string `json:"arch,omitempty"`
+	Path    string `json:"path"`
+	// Fallback: a pwsh script ran in Windows PowerShell 5.1, as it allows,
+	// because no usable PowerShell 7 was found.
+	Fallback bool `json:"fallback,omitempty"`
+}
+
+// Why a queued run waits (Run.Held).
+const (
+	HeldUnable     = "unable"
+	HeldUnreported = "unreported"
+)
+
+// acceptsNow is the SQL form of what a device d's agent last said it
+// accepts (agentproto.PollRequest.Accepts), NULL when the build it runs now
+// has not said: a list holds for the build that sent it (ADR-0064).
+const acceptsNow = `(CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END)`
+
+// heldSQL is the SQL form of Run.Held, for a run r of job j on device d.
+const heldSQL = `CASE WHEN r.status <> 'queued' OR j.requires <@ coalesce(` + acceptsNow + `, '{}') THEN ''
+	WHEN ` + acceptsNow + ` IS NULL THEN 'unreported' ELSE 'unable' END`
+
 func (r *Run) open() bool {
 	return r.Status == StatusQueued || r.Status == StatusSent || r.Status == StatusRunning
 }
 
 const runColumns = `r.id, r.job_id, r.device_id, d.name, r.organization_id, o.name, r.site_id, si.name, j.script_name,
 	r.status, r.created_at, r.expires_at, r.sent_at, r.deliveries, r.started_at, r.finished_at, r.exit_code, r.error,
-	r.cancel_requested_at IS NOT NULL`
+	r.cancel_requested_at IS NOT NULL, coalesce(r.program_edition, ''), coalesce(r.program_version, ''),
+	coalesce(r.program_arch, ''), r.program_path, r.program_fallback, ` + heldSQL
 
 const runFrom = ` FROM job_runs r
 	JOIN jobs j ON j.id = r.job_id
@@ -130,12 +170,20 @@ const runFrom = ` FROM job_runs r
 	JOIN sites si ON si.id = r.site_id`
 
 func scanRun(row pgx.Row, extra ...any) (*Run, error) {
-	var r Run
+	var (
+		r    Run
+		p    Program
+		path *string
+	)
 	dst := append([]any{&r.ID, &r.JobID, &r.DeviceID, &r.DeviceName, &r.OrganizationID, &r.OrganizationName, &r.SiteID, &r.SiteName, &r.ScriptName,
 		&r.Status, &r.CreatedAt, &r.ExpiresAt, &r.SentAt, &r.Deliveries, &r.StartedAt, &r.FinishedAt, &r.ExitCode, &r.Error,
-		&r.CancelRequested}, extra...)
+		&r.CancelRequested, &p.Edition, &p.Version, &p.Arch, &path, &p.Fallback, &r.Held}, extra...)
 	if err := row.Scan(dst...); err != nil {
 		return nil, err
+	}
+	if path != nil {
+		p.Path = *path
+		r.Program = &p
 	}
 	return &r, nil
 }
@@ -161,6 +209,9 @@ type target struct {
 	id, org, site  uuid.UUID
 	name, platform string
 	enrolled       bool
+	// accepts is what its agent's build last said it accepts; nil when
+	// that build has not said.
+	accepts []string
 }
 
 // CreateJob runs a library script on devices. Every device must pass every
@@ -212,15 +263,19 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 		if in.TimeoutSeconds != 0 {
 			timeout = in.TimeoutSeconds
 		}
+		details := map[string]any{"script": sc.Name, "scriptId": sc.ID.String(), "shell": sc.Shell, "argCount": len(args)}
+		if sc.Shell == agentproto.ShellPwsh {
+			details["pwshFallback"] = sc.PwshFallback
+		}
 		*sp = spec{
-			kind: KindScript, scriptID: &sc.ID, name: sc.Name, shell: sc.Shell, body: sc.Body, args: args, timeout: timeout,
-			auditAction: "device.script_run",
-			details:     map[string]any{"script": sc.Name, "scriptId": sc.ID.String(), "shell": sc.Shell, "argCount": len(args)},
+			kind: KindScript, scriptID: &sc.ID, name: sc.Name, shell: sc.Shell, pwshFallback: sc.PwshFallback, body: sc.Body, args: args,
+			timeout: timeout, auditAction: "device.script_run", details: details,
 		}
 		org, site := sc.level()
 		return s.targets(ctx, tx, c, ids, rule{
 			perm: rbac.PermScriptRun, verb: "run scripts", org: org, site: site,
 			platforms: agentproto.ShellPlatforms(sc.Shell), runsOn: shellName(sc.Shell) + " scripts run on",
+			requires: agentproto.ShellRequires(sc.Shell), what: shellName(sc.Shell) + " scripts",
 		})
 	})
 }
@@ -270,9 +325,11 @@ type spec struct {
 	hardening *Hardening
 	name      string
 	shell     string
-	body      string
-	args      []string
-	timeout   int
+	// pwshFallback is the script's setting, for a pwsh job.
+	pwshFallback bool
+	body         string
+	args         []string
+	timeout      int
 	// auditAction and details describe each run in the audit log, with the
 	// device, job, script hash and timeout added.
 	auditAction string
@@ -294,10 +351,11 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		expires := now.Add(time.Duration(wait) * time.Hour)
 		sum := sha256.Sum256([]byte(sp.body))
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
-				expires_at, created_by, created_by_label, created_at, kind, software, hardening)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
-			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening); err != nil {
+			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening, sp.pwshFallback,
+			agentproto.ShellRequires(sp.shell)); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -337,11 +395,15 @@ type rule struct {
 	org, site uuid.UUID
 	platforms []string
 	runsOn    string // "Bash scripts run on"
+	// requires lists the capabilities the device's agent must accept
+	// (agentproto.ShellRequires); what names the jobs that need them.
+	requires []string
+	what     string // "PowerShell 7 scripts"
 }
 
 // targets resolves and checks the devices of a new job.
 func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids []uuid.UUID, r rule) ([]target, error) {
-	rows, err := tx.Query(ctx, `SELECT d.id, d.organization_id, d.site_id, d.name, d.platform, d.agent_public_key IS NOT NULL
+	rows, err := tx.Query(ctx, `SELECT d.id, d.organization_id, d.site_id, d.name, d.platform, d.agent_public_key IS NOT NULL, `+acceptsNow+`
 		FROM devices d WHERE d.id = ANY ($1) ORDER BY lower(d.name), d.id`, ids)
 	if err != nil {
 		return nil, err
@@ -349,7 +411,7 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 	var found []target
 	for rows.Next() {
 		var t target
-		if err := rows.Scan(&t.id, &t.org, &t.site, &t.name, &t.platform, &t.enrolled); err != nil {
+		if err := rows.Scan(&t.id, &t.org, &t.site, &t.name, &t.platform, &t.enrolled, &t.accepts); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -364,7 +426,7 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 	if missing := len(ids) - len(found); missing > 0 {
 		return nil, apperr.Invalid("deviceIds", fmt.Sprintf("%d %s", missing, pick(missing, "device does not exist or is not visible to you.", "devices do not exist or are not visible to you.")))
 	}
-	var forbidden, outside, noAgent, wrongOS []string
+	var forbidden, outside, noAgent, wrongOS, unable, unreported []string
 	for _, t := range found {
 		switch {
 		case !c.Can(r.perm, rbac.Site(t.org, t.site)):
@@ -375,6 +437,10 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 			noAgent = append(noAgent, t.name)
 		case !slices.Contains(r.platforms, t.platform):
 			wrongOS = append(wrongOS, t.name)
+		case len(r.requires) > 0 && t.accepts == nil:
+			unreported = append(unreported, t.name)
+		case !containsAll(t.accepts, r.requires):
+			unable = append(unable, t.name)
 		}
 	}
 	switch {
@@ -391,15 +457,35 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 	case len(wrongOS) > 0:
 		os := platformName(r.platforms)
 		return nil, apperr.Invalid("deviceIds", r.runsOn+" "+os+"; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not "+article(os)+" "+os+" device.")
+	case len(unable) == 1:
+		return nil, apperr.Invalid("deviceIds", unable[0]+"'s agent cannot run "+r.what+"; update the agent.")
+	case len(unable) > 0:
+		return nil, apperr.Invalid("deviceIds", "The agents of "+names(unable)+" cannot run "+r.what+"; update them.")
+	case len(unreported) == 1:
+		return nil, apperr.Invalid("deviceIds", unreported[0]+"'s agent has not yet said whether it can run "+r.what+"; try again in a minute, and update the agent if it still has not.")
+	case len(unreported) > 0:
+		return nil, apperr.Invalid("deviceIds", "The agents of "+names(unreported)+" have not yet said whether they can run "+r.what+"; try again in a minute, and update them if they still have not.")
 	}
 	return found, nil
+}
+
+// containsAll reports whether list holds every one of want.
+func containsAll(list, want []string) bool {
+	for _, w := range want {
+		if !slices.Contains(list, w) {
+			return false
+		}
+	}
+	return true
 }
 
 // shellName is how people write a shell's name.
 func shellName(shell string) string {
 	switch shell {
 	case agentproto.ShellPowerShell:
-		return "PowerShell"
+		return "Windows PowerShell 5.1"
+	case agentproto.ShellPwsh:
+		return "PowerShell 7"
 	case agentproto.ShellCmd:
 		return "cmd"
 	}
@@ -459,13 +545,13 @@ type JobQuery struct {
 
 // jobColumns leaves out the arguments: the server's database role cannot
 // read them (ADR-0063).
-const jobColumns = `j.id, j.kind, j.software, j.hardening, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.timeout_seconds,
-	j.expires_at, j.created_by_label, j.created_at`
+const jobColumns = `j.id, j.kind, j.software, j.hardening, j.script_id, j.script_name, j.shell, j.pwsh_fallback, encode(j.body_sha256, 'hex'),
+	j.timeout_seconds, j.expires_at, j.created_by_label, j.created_at`
 
 // jobDest is where jobColumns are scanned into.
 func jobDest(j *Job) []any {
-	return []any{&j.ID, &j.Kind, &j.Software, &j.Hardening, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.TimeoutSeconds,
-		&j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}
+	return []any{&j.ID, &j.Kind, &j.Software, &j.Hardening, &j.ScriptID, &j.ScriptName, &j.Shell, &j.PwshFallback, &j.SHA256,
+		&j.TimeoutSeconds, &j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}
 }
 
 func scanJob(row pgx.Row, extra ...any) (*Job, error) {

@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/paulmataruso/easyrmm/agent/powershell"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -30,22 +31,58 @@ const cpOEM = 1
 
 func systemRoot() string { return cmp.Or(os.Getenv("SystemRoot"), `C:\Windows`) }
 
+// Accepts lists the job capabilities this build takes, for its polls
+// (agentproto.PollRequest.Accepts): pwsh jobs, their fallback and the
+// program a result reports.
+func Accepts() []string { return []string{agentproto.CapJobPwsh} }
+
+// pwshRoots are where a pwsh run looks for PowerShell 7: Program Files and
+// Program Files (x86). Tests point them at folders of their own, since the
+// runner's PowerShell 7 cannot be removed while a test runs in it.
+var pwshRoots = powershell.Roots
+
 // interpreter finds a shell's program: Windows PowerShell 5.1 and cmd.exe,
-// both part of Windows.
-func interpreter(shell string) (string, error) {
-	var p string
-	switch shell {
+// both part of Windows, or for pwsh the PowerShell 7 chosen at this moment,
+// its install and module folders checked (ADR-0064). Where none is usable a
+// pwsh script runs in Windows PowerShell 5.1 if it allows that, recorded as
+// a fallback, and fails if not.
+func interpreter(p agentproto.JobPayload) (program, error) {
+	switch p.Shell {
 	case agentproto.ShellPowerShell:
-		p = filepath.Join(systemRoot(), `System32\WindowsPowerShell\v1.0\powershell.exe`)
+		return desktop()
 	case agentproto.ShellCmd:
-		p = filepath.Join(systemRoot(), `System32\cmd.exe`)
-	default:
-		return "", fmt.Errorf("%s scripts do not run on Windows", shell)
+		path := filepath.Join(systemRoot(), `System32\cmd.exe`)
+		if _, err := os.Stat(path); err != nil {
+			return program{}, errors.New("cmd is not installed on this device")
+		}
+		return program{path: path, info: agentproto.Interpreter{Path: path}}, nil
+	case agentproto.ShellPwsh:
+		roots, err := pwshRoots()
+		if err != nil {
+			return program{}, err
+		}
+		run, err := powershell.ForRun(roots)
+		var missing *powershell.NotFound
+		if errors.As(err, &missing) && p.PwshFallback {
+			prog, err := desktop()
+			prog.info.Fallback = true
+			return prog, err
+		}
+		if err != nil {
+			return program{}, err
+		}
+		return program{path: run.Interpreter.Path, info: run.Interpreter, env: run.Env}, nil
 	}
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("%s is not installed on this device", shell)
+	return program{}, fmt.Errorf("%s scripts do not run on Windows", p.Shell)
+}
+
+// desktop is Windows PowerShell 5.1.
+func desktop() (program, error) {
+	info := powershell.DesktopInterpreter()
+	if _, err := os.Stat(info.Path); err != nil {
+		return program{}, errors.New("Windows PowerShell is not installed on this device") //nolint:staticcheck // ST1005: a name
 	}
-	return p, nil
+	return program{path: info.Path, info: info}, nil
 }
 
 // environment is the agent's own environment, which as a service is

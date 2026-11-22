@@ -40,6 +40,33 @@ type Inventory struct {
 	// EasyPatch is what the device's EasyPatch agent says about itself
 	// (ADR-0030); nil when it is not installed.
 	EasyPatch *EasyPatchAgent `json:"easyPatch,omitempty"`
+	// PowerShell lists Windows PowerShell and the PowerShell 7 installs
+	// the agent found, usable or not (ADR-0064), at most MaxPowerShell;
+	// nil (absent) on Linux and from agents that do not look, empty when
+	// none was found. Added after protocol level 2: sent only to a server
+	// of level 2 or higher.
+	PowerShell []PowerShellInstall `json:"powerShell,omitzero"`
+}
+
+// MaxPowerShell is the most PowerShell installs an inventory lists.
+const MaxPowerShell = 16
+
+// PowerShellInstall is one PowerShell the agent found on Windows.
+type PowerShellInstall struct {
+	// Edition is EditionDesktop (Windows PowerShell) or EditionCore.
+	Edition string `json:"edition"`
+	Version string `json:"version"`
+	// Arch is ArchX64, ArchARM64 or ArchX86, empty when unread.
+	Arch    string `json:"arch"`
+	Path    string `json:"path"`
+	Preview bool   `json:"preview,omitempty"`
+	// Store says it is a Microsoft Store (MSIX) install, reported and
+	// never run.
+	Store bool `json:"store,omitempty"`
+	// Usable says a pwsh run may choose it; Reason says why it may not,
+	// or why it could not be read.
+	Usable bool   `json:"usable"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // EasyPatchAgent is the EasyPatch agent's own account of its enrollment, from

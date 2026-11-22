@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -31,6 +33,13 @@ type Client struct {
 	key    ed25519.PrivateKey
 	now    func() time.Time
 	agent  string
+	// level is the protocol level of the last heartbeat answer, 1 for an
+	// answer without one; known is closed at the first answer. Request
+	// fields added after level 2 are sent only while level is 2 or higher
+	// (ADR-0009).
+	level     atomic.Int32
+	known     chan struct{}
+	knownOnce sync.Once
 }
 
 // Options configure a Client.
@@ -74,8 +83,18 @@ func New(o Options) (*Client, error) {
 		http:  &http.Client{Transport: rt, Timeout: 5 * time.Minute},
 		now:   time.Now,
 		agent: "easyrmm-agent/" + o.Version,
+		known: make(chan struct{}),
 	}, nil
 }
+
+// Level is the protocol level of the server's last heartbeat answer
+// (ADR-0009): 1 for an answer without a level, 0 before the first answer
+// in this process.
+func (c *Client) Level() int { return int(c.level.Load()) }
+
+// newFields reports whether request fields added after protocol level 2
+// may be sent: the last heartbeat answer was of level 2 or higher.
+func (c *Client) newFields() bool { return c.level.Load() >= 2 }
 
 // ParseServer checks a server URL: https (or http for loopback testing),
 // with a host and no path, query or credentials.
@@ -147,11 +166,18 @@ func (c *Client) Heartbeat(ctx context.Context, req agentproto.HeartbeatRequest)
 		return nil, err
 	}
 	var out agentproto.HeartbeatResponse
-	return &out, c.call(ctx, http.MethodPost, agentproto.PathHeartbeat, body, true, &out)
+	if err := c.call(ctx, http.MethodPost, agentproto.PathHeartbeat, body, true, &out); err != nil {
+		return &out, err
+	}
+	c.level.Store(int32(max(min(out.Protocol, 1<<20), 1))) //nolint:gosec // bounded above
+	c.knownOnce.Do(func() { close(c.known) })
+	return &out, nil
 }
 
 // Inventory uploads the device's inventory, body being its JSON exactly
-// as hashed (ADR-0018). It returns the hash the server stored.
+// as hashed (ADR-0018). It returns the hash the server stored. The caller
+// leaves out the fields added after protocol level 2 while Level is below
+// 2, as the hash covers exactly what is sent.
 func (c *Client) Inventory(ctx context.Context, body []byte) (string, error) {
 	var out agentproto.InventoryResponse
 	if err := c.call(ctx, http.MethodPost, agentproto.PathInventory, body, true, &out); err != nil {
@@ -286,11 +312,22 @@ func (c *Client) send(ctx context.Context, method, target string, body []byte, s
 }
 
 // Poll waits for jobs (ADR-0017). The server holds the request for up to
-// agentproto.PollWait.
-func (c *Client) Poll(ctx context.Context) (*agentproto.PollResponse, error) {
+// agentproto.PollWait. accepts, the job capabilities this build takes
+// (ADR-0064), is sent only while the last heartbeat answer was of protocol
+// level 2 or higher: a process's first poll, before any answer, says
+// nothing, and the server keeps what it was told before.
+func (c *Client) Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error) {
+	var req agentproto.PollRequest
+	if c.newFields() {
+		req.Accepts = append([]string{}, accepts...)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
 	var out agentproto.PollResponse
 	// Eight jobs with 64 KiB scripts and their arguments, base64-encoded.
-	return &out, c.callLimit(ctx, http.MethodPost, agentproto.PathJobsPoll, []byte("{}"), true, &out, 8<<20)
+	return &out, c.callLimit(ctx, http.MethodPost, agentproto.PathJobsPoll, body, true, &out, 8<<20)
 }
 
 // Start asks whether a delivered run may start now.
@@ -299,8 +336,21 @@ func (c *Client) Start(ctx context.Context, runID string) (*agentproto.StartResp
 	return &out, c.call(ctx, http.MethodPost, agentproto.PathJobStart(runID), []byte("{}"), true, &out)
 }
 
-// Result reports how a run ended.
+// Result reports how a run ended. The program it started goes only to a
+// server of protocol level 2 or higher; a result that names one waits for
+// this process's first heartbeat answer to know the level, so a result kept
+// across a restart still carries it (ADR-0064).
 func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRequest) error {
+	if r.Interpreter != nil {
+		select {
+		case <-c.known:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if !c.newFields() {
+			r.Interpreter = nil
+		}
+	}
 	body, err := json.Marshal(r)
 	if err != nil {
 		return err

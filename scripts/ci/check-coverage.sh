@@ -93,6 +93,9 @@ floors=(
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
+  # Finding and choosing PowerShell 7 (ADR-0064): the platform-neutral part;
+  # the Windows part is tested as LocalSystem on CI's Windows runners.
+  "agent/powershell                        95"
 )
 
 if [[ ! -f "$profile" ]]; then

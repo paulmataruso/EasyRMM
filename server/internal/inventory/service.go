@@ -235,6 +235,35 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 			EndpointID: text(e.EndpointID, 64), KeyFingerprint: text(e.KeyFingerprint, 128), Error: text(e.Error, maxLong),
 		}
 	}
+	out.PowerShell = cleanPowerShell(in.PowerShell)
+	return out
+}
+
+// cleanPowerShell keeps the PowerShell installs an agent found (ADR-0064):
+// those with a path and a known edition, at most agentproto.MaxPowerShell.
+// nil, from an agent too old to look, stays nil: not reported.
+func cleanPowerShell(in []agentproto.PowerShellInstall) []agentproto.PowerShellInstall {
+	if in == nil {
+		return nil
+	}
+	out := []agentproto.PowerShellInstall{}
+	for _, p := range in {
+		path := text(p.Path, agentproto.MaxInterpreterPath)
+		if path == "" || (p.Edition != agentproto.EditionDesktop && p.Edition != agentproto.EditionCore) {
+			continue
+		}
+		if len(out) == agentproto.MaxPowerShell {
+			break
+		}
+		arch := p.Arch
+		if arch != agentproto.ArchX64 && arch != agentproto.ArchARM64 && arch != agentproto.ArchX86 {
+			arch = ""
+		}
+		out = append(out, agentproto.PowerShellInstall{
+			Edition: p.Edition, Version: text(p.Version, agentproto.MaxInterpreterVersion), Arch: arch, Path: path,
+			Preview: p.Preview, Store: p.Store, Usable: p.Usable, Reason: text(p.Reason, maxLong),
+		})
+	}
 	return out
 }
 
