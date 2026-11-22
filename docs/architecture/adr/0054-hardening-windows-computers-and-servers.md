@@ -1,6 +1,6 @@
 # ADR-0054: Hardening Windows computers and servers
 
-* Status: Accepted (2026-11-22, after an independent review and its check). Not implemented.
+* Status: Accepted (2026-11-22, after an independent review and its check). W1, check, built in #92; W2 and W3 not started.
 * Revised (2026-11-21) after its independent review and again after that
   review's check. On acceptance, brought up to date with the ADRs merged
   since (ADR-0060, and ADR-0063 to ADR-0068), each where it touches this
