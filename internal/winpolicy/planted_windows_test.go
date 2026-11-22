@@ -74,7 +74,7 @@ func noReason(t *testing.T, what string, a *answers, reason string) {
 // without a discovery service, does not; enrolments that cannot be read make
 // every answer cannot_tell (unreadable).
 func TestQueryMDMAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	key := `SOFTWARE\Microsoft\Enrollments\{5E0F1E4B-3C1A-4E2B-9A61-EA5E7C0DE001}`
 	wintest.Plant(t, key, map[string]any{
 		"ProviderID":              "MS DM Server",
@@ -207,7 +207,7 @@ func TestQueryAuditHistoryAsSystem(t *testing.T) {
 // owns the values it sets and deletes; one that cannot be read makes every
 // registry value cannot_tell (unreadable).
 func TestQueryLocalGpoAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	const key = `Software\Policies\EasyRMM-winpolicy-lgpo`
 	file := filepath.Join(os.Getenv("SystemRoot"), `System32\GroupPolicy\Machine\Registry.pol`)
 	saved, err := os.ReadFile(file)
@@ -362,7 +362,7 @@ func TestQueryDefenderOnboardingAsSystem(t *testing.T) {
 // ApplyAndAutoCorrect, makes every answer cannot_tell (dsc); a meta
 // configuration that cannot be read, cannot_tell (unreadable).
 func TestQueryDSCAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	dir := filepath.Join(os.Getenv("SystemRoot"), `System32\Configuration`)
 	meta, current := filepath.Join(dir, "MetaConfig.mof"), filepath.Join(dir, "Current.mof")
 	for _, f := range []string{meta, current} {
@@ -553,7 +553,7 @@ func TestQueryOtherFirewallAsSystem(t *testing.T) {
 // service. The guest configuration extension's folder, which a standard
 // user may make where C:\Packages is missing, is not one.
 func TestQueryAzureAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	for _, s := range []string{"GCService", "GCArcService"} {
 		if exec.Command("sc.exe", "query", s).Run() == nil {
 			t.Skipf("the computer has %s", s)
@@ -633,7 +633,7 @@ func standIn(t *testing.T, dir string) string {
 // one that fails the check, or OSConfig's record of a scenario without the
 // module, makes every answer cannot_tell (osconfig).
 func TestQueryOSConfigAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	programFiles := filepath.Join(os.Getenv("ProgramFiles"), `WindowsPowerShell\Modules`)
 	system32 := filepath.Join(os.Getenv("SystemRoot"), `System32\WindowsPowerShell\v1.0\Modules`)
 	for _, d := range append([]string{programFiles, system32}, filepath.SplitList(os.Getenv("PSModulePath"))...) {

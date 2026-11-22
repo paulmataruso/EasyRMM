@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -34,6 +35,25 @@ func systemTest(t *testing.T) {
 	u, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || !u.User.Sid.IsWellKnown(windows.WinLocalSystemSid) {
 		t.Fatalf("not running as LocalSystem (%v)", err)
+	}
+}
+
+// runnerTest: a systemTest that expects no domain's Group Policy to hold
+// what it asks about, as on GitHub's runners. On a member of a domain or
+// its controller the domain's policies hold those values and its
+// preference items make the rest cannot_tell; TestQueryDomainAsSystem
+// checks the answers there.
+func runnerTest(t *testing.T) {
+	t.Helper()
+	systemTest(t)
+	var name *uint16
+	var status uint32
+	if err := windows.NetGetJoinInformation(nil, &name, &status); err != nil {
+		t.Fatal(err)
+	}
+	_ = windows.NetApiBufferFree((*byte)(unsafe.Pointer(name)))
+	if status == windows.NetSetupDomainName {
+		t.Skip("expects no domain's Group Policy; this computer is in a domain, where TestQueryDomainAsSystem runs")
 	}
 }
 
@@ -177,7 +197,7 @@ var baseRequest = `{"registry": [
 // preference items, Configuration Manager, DSC configuration or OSConfig
 // baseline), each answer is the one Windows' own state gives.
 func TestQueryAsSystem(t *testing.T) {
-	systemTest(t)
+	runnerTest(t)
 	// A value under Policies that no owner the reader knows explains.
 	wintest.Plant(t, plantedKey, map[string]any{"Planted": uint32(1)})
 
