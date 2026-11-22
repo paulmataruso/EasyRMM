@@ -103,3 +103,55 @@ the hardening script or its server side, `go.mod` or the `Makefile`
 change, and on the merge queue and manual runs.
 Images are kept between runs with `actions/cache`; a failed job uploads
 the serial console log.
+
+## Windows
+
+Hardening Windows computers ([ADR-0054](../architecture/adr/0054-hardening-windows-computers-and-servers.md#testing))
+is tested in two places. CI's job *Windows hardening as LocalSystem*
+(`backend-tests.yml`) runs the Go tests named `AsSystem` on GitHub's
+`windows-2025`, `windows-2022` and `windows-11-arm` runners, each test
+binary started as LocalSystem by `scripts/ci/run-as-system.ps1`:
+
+* `internal/winpolicy` (`query_windows_test.go`): the ownership reader
+  started on its own with a request file, as the agent will start it.
+* `server/internal/jobs` (`hardening_windows_test.go`): the hardening
+  script's `check all`, its result read as the server reads it, and the
+  Hardening folder's refusals.
+
+Runners have no domain, so the domain scenario runs on Windows guests
+under KVM, not on GitHub yet (ADR-0054 says why, and what CI should do).
+W1 ran it on a Proxmox VE host with Windows Server 2025's evaluation media:
+
+1. Two guests, each with 2 CPUs, 2 GiB, an AHCI disk and an e1000e card,
+   installed unattended with Server Core. One is promoted to a test
+   forest's domain controller; the other joins it.
+2. On the controller, as a Domain Admin,
+   `internal/winpolicy/testdata/domain-gpos.ps1` makes and links the
+   test's policies; then `gpupdate /target:computer /force` on the member.
+3. On the member and on the controller, both `AsSystem` test binaries,
+   cross-compiled (`GOOS=windows go test -c`), run as LocalSystem through
+   `run-as-system.ps1`. On the member they run with `EASYRMM_TEST_DOMAIN=1`
+   as well, which runs `TestQueryDomainAsSystem`: each owner the reader
+   names must be the policy the script made.
+4. With `EasyRMM-W1-RSoPOff` linked and the member refreshed, the same
+   test expects *cannot tell* with `group_policy_record_off`. Windows
+   keeps the last record in WMI after it is turned off; the reader must
+   not use it.
+
+What the guests showed, on 2026-11-22:
+
+| Scenario | Result |
+|---|---|
+| Reader and hardening `AsSystem` tests, member and controller | Passed |
+| `TestQueryDomainAsSystem`, every policy linked | Passed: each policy named, Default Domain Policy's too |
+| The same with the record turned off | Passed, after the reader stopped reading the old record |
+| `EasyRMM-W1-Preferences` unlinked | Its history is emptied and the reason `group_policy_preferences` goes (the test, which expects it linked, fails as it should) |
+| Advanced audit policy | `gpresult /x` names the extension without its settings; the reader takes them from the extension's own record |
+| OSConfig's member-server baseline applied | See ADR-0054, OSConfig |
+
+`server/internal/jobs/testdata/windows-hardening-check.txt` is the
+member's `check all` output from that run; the server's integration tests
+read it.
+
+Delete the guests when done: the evaluation media expire after 180 days,
+and a domain left running holds memory others need.

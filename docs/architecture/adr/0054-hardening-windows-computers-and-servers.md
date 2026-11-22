@@ -526,7 +526,15 @@ ADR-0067's registry editor and ADR-0068's log settings show its answer
 before a change: ADR-0067's `registry` builtin starts the agent's copy as a
 child process of its own, with the values' paths in a file, and shows
 *cannot tell* where PowerShell cannot run it. W1 builds the reader so that
-it can be started that way.
+it can be started that way. As built in W1: `internal/winpolicy`'s
+`Query()` is the reader followed by `query.ps1`, started as
+`powershell.exe -File <script> <request file>`; the request names registry
+values under HKLM (with the Policy CSP policy that sets each, if any),
+security settings by their security template names and audit
+subcategories by GUID, at most 1000 in all; it prints one line,
+`EASYRMM-WINPOLICY-V1` and the answers in the request's order, and exits
+with 3 where it cannot run (no administrator, or not Full Language Mode),
+which the caller shows as *cannot tell*.
 For each registry value, security setting and audit subcategory it
 returns exactly one of three results:
 
@@ -541,7 +549,8 @@ returns exactly one of three results:
   items, MDM until its reader is proven, Defender for Endpoint's security
   settings management (for Defender, attack surface reduction and
   firewall values), a Configuration Manager client, DSC correcting drift,
-  Azure machine configuration, a policy value (under a `Policies` key)
+  Azure machine configuration, an active OSConfig scenario (added in W1,
+  see OSConfig below), a policy value (under a `Policies` key)
   that none of these explains and EasyRMM did not write (a tool the
   reader does not know), and *owner unknown* (a value EasyRMM set that
   was set back twice). The list grows
@@ -560,7 +569,16 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   `gpresult /scope computer /x` is a cross-check, the source of the
   policy's name, and the source of advanced audit policy, which Group
   Policy applies through an extension of its own rather than as registry
-  policy (W1 confirms this against a domain policy). Whether Windows
+  policy (W1 confirms this against a domain policy). **Found in W1,
+  decided in review:** on a Server 2025 domain member, `gpresult /x`
+  named the advanced audit extension and none of its settings, though
+  `auditpol` showed them applied. So the reader also reads that
+  extension's own record: the policies in its history under
+  `Group Policy\History\{F3CCC681-…}`, and the merged copy it keeps in
+  `%SystemRoot%\security\audit\audit.csv`, for the subcategories
+  `gpresult` did not report; with no policy in the history, the copy is
+  not Group Policy's. The copy does not say which policy set which
+  subcategory, so with two such policies both are named. Whether Windows
   records the resultant set of policy on a computer in a workgroup, where
   only local Group Policy applies, is settled in W1; if it does not, the
   local Group Policy object's `Registry.pol` is read instead.
@@ -569,13 +587,24 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
     applied, so the reader cannot tell who owns what. The reader detects
     the value, and the computer gets check only, with the reason. W1 tests
     whether `gpresult` still reports anything then; nothing is assumed.
+    **Found in W1, decided in review:** with the policy linked and
+    applied, WMI still held the last record written before it, naming
+    policies as if current. So with the record off the reader reads
+    neither that record nor `gpresult`, which reports from it; the
+    extensions' own histories (preferences, audit) are still read.
+    Unlinking the policy brought the record back on the next refresh.
   * **Group Policy Preferences.** Registry items set through preferences
     are applied by a different extension. Microsoft documents how
     registry-based policy appears in the resultant set of policy, not how
     preference items do. W1 finds how to read them, on the test domain
     with a Group Policy object that sets registry preference items; until
     that reading is proven, a computer whose Group Policy carries registry
-    preference items gets check only.
+    preference items gets check only. **As built in W1:** the reader finds
+    them by the preferences extension's history (and `gpresult`'s
+    registry settings), not per value, so every registry value not held
+    by registry policy is *cannot tell* with `group_policy_preferences`
+    while that history has an entry. Unlinking the test's preferences
+    policy emptied the history and the reason went.
 * **MDM** (Intune and others through the Policy CSP): the **MDM Bridge WMI
   provider** (`root\cimv2\mdm\dmmap`), read as Local System, the agent's
   account. **Ownership comes from the Policy CSP's `Config` node** (the
@@ -592,7 +621,16 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   class reference gives "None supported" as the minimum server, so an
   MDM-enrolled server is check only. W1 proves the reader on an
   Intune-enrolled Windows 11 (see Open questions); until then, a computer
-  enrolled in MDM gets check only.
+  enrolled in MDM gets check only. What counts as enrolled, decided in
+  review in W1: an enrolment under `HKLM\SOFTWARE\Microsoft\Enrollments`
+  that is enrolled (`EnrollmentState` 1) and records the discovery service
+  it was found through (`DiscoveryServiceFullURL`). Windows keeps
+  enrolments of its own under the same key (providers *Local Authority*,
+  *Deploy Authority*, *Cloud Authority*, *WMI_Bridge_SCCM_Server*, and
+  some with no provider; all seen on an evaluation Windows Server 2025
+  that was never enrolled), and these are not an MDM. The reader not yet
+  proven, the setting's MDM values (`Config`, `Result` and the winning
+  provider) are shown beside its *cannot tell*.
 * **Microsoft Defender for Endpoint's security settings management**,
   which applies Intune's antivirus, attack surface reduction, EDR and
   firewall policies to computers not enrolled in Intune. Microsoft
@@ -629,7 +667,20 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   reader asks it (`Get-OSConfigDesiredConfiguration`), using the
   computer's own copy, which EasyRMM never installs; where it is not, no
   baseline was applied through it on that computer. W1 tests both on a
-  Server 2025 guest.
+  Server 2025 guest. **Amended in W1, decided in review:** on that guest
+  (module 1.4.16 from the PowerShell Gallery, scenario
+  `SecurityBaseline\WindowsServer\2025\MemberServer` 2610.2 applied with
+  its defaults: 343 settings, drift control on, every four hours),
+  OSConfig names its settings (`AfdDisableAddressSharing`) and its output
+  gives no registry path for any of them. So the reader cannot name
+  OSConfig as one value's owner. It lists the active scenarios with
+  `Get-OSConfigMetadata` (status *Active*; the read-only
+  `SecuredCoreState` sets nothing), and while one is active, every value
+  is *cannot tell* with the reason `osconfig`, until a table maps
+  OSConfig's names to values. *Set by OSConfig* is not shown until then.
+  On the same guest, with that baseline applied, the reader listed the
+  scenario and gave `osconfig` for every value Group Policy did not hold;
+  without the module, it gave none.
 * **Microsoft Defender's own guards**: Tamper Protection blocks changes to
   real-time protection, behaviour monitoring, cloud protection and more
   ("changes made through a management tool, including Group Policy, might
@@ -885,7 +936,7 @@ cite, and whether they meet the rule, is in the next section.
 | `winrm` | WinRM's client and service: no Basic authentication, no unencrypted traffic, no Digest (client), no stored RunAs credentials (service). These are Windows' defaults; where Basic or unencrypted traffic is on (someone turned it on, often for Ansible or a monitoring tool) it is left and reported, unless the option `winrm-basic-off` is given. WinRM is never stopped and its listeners never removed | Yes |
 | `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"); on other servers only with the option `spooler-off`. On any server, domain controllers included, the spooler is left, and the result says why, where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet; on domain controllers, the spooler's pruning of stale print queue objects from Active Directory, which Microsoft calls the trade-off of disabling it (they must then be pruned some other way) | Yes |
 | `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept), never applied while a restart is pending. An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports | Yes |
-| `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
+| `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect, and where no value is set on build 26100 or later it reports *unknown* (decided in review in W1). SSL 2.0 and 3.0 with no value set are taken as off. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
 | `audit` | Report only: see **Audit policy** below | (report) |
 | `device-guard` | Report only: whether virtualization-based security, memory integrity (HVCI) and Credential Guard are running. Turning them on needs hardware and firmware support and a restart, cannot be undone remotely when locked in UEFI, and Credential Guard is not recommended on domain controllers | (report) |
 | `bitlocker` | Report only: whether the system volume is protected; by which protectors (TPM only, TPM and PIN, and others), so whether a PIN is asked before Windows starts, and the minimum PIN length policy sets (the Windows 11 STIG's rules ask for a PIN of at least six digits); whether a recovery password exists. Turning BitLocker on before its recovery key is kept somewhere can lose data; escrowing keys is a feature of its own | (report) |
@@ -1507,7 +1558,9 @@ As in ADR-0051, with Windows' places and tools:
   2022 and 2019, Desktop Experience and Server Core; Windows Server 2016
   until its extended support ends (13 January 2027 on its lifecycle page;
   Microsoft's FAQ gives a different date in one place). A newer build is
-  *not supported on this version* until tested, as on Linux.
+  *not supported on this version* until tested, as on Linux. Windows 11
+  Enterprise LTSC, serviced on dates of its own and not listed here, is
+  check only until tested (decided in review in W1).
 * **ARM64** waits for the agent's ARM64 build to have run on a real
   Windows ARM64 computer, which IMPLEMENTATION_STATUS.md lists as not yet
   verified, as well as for the `windows-11-arm` runner's results.
@@ -1571,11 +1624,15 @@ As in ADR-0051, with Windows' places and tools:
 * **CI's Windows runners**, from the first module on. For this public
   repository GitHub provides `windows-2025` and `windows-2022` (x64) and
   `windows-11-arm` (Windows 11 Enterprise on ARM64), each with 4 CPUs and
-  16 GB. The hardening tests are `OnWindows` Go tests like the software
-  scripts', in a matrix over those three labels; the existing *Agent tests
-  on Windows* job keeps its tests and its `windows-latest`. The script runs
-  as LocalSystem, as the agent's service would run it, through a scheduled
-  task. For each module: check, apply, check, apply again (no change),
+  16 GB. The hardening tests are Go tests named `AsSystem`, in a job of
+  their own, *Windows hardening as LocalSystem*, in a matrix over those
+  three labels; the existing *Agent tests on Windows* job keeps its tests
+  and its `windows-latest`. The test binary runs as LocalSystem through a
+  scheduled task, with ADR-0064's harness (`scripts/ci/run-as-system.ps1`),
+  and starts the script with Windows PowerShell 5.1 and the agent's
+  arguments, as the agent's service would. Decided in review in W1: an
+  `OnWindows` name, as the software scripts' tests have, would also run
+  them in *Agent tests on Windows* as the runner's administrator. For each module: check, apply, check, apply again (no change),
   undo, check, with every recorded value as before. ADR-0064's Windows
   test job (the MSP plan's step 6, before W1), ADR-0067's and ADR-0068's
   run the agent's own tests the same way, as LocalSystem through a
@@ -1622,6 +1679,44 @@ As in ADR-0051, with Windows' places and tools:
     virtualization-based security inside a nested guest probably cannot
     run. The fallback is a self-hosted runner the owner provides, or the
     same scenarios run by hand on the owner's machines and recorded.
+  * **Decided in W1, in review:** Windows guests work under KVM with the
+    devices above; GitHub's runners are not tried yet. Shown on a Proxmox
+    VE host (KVM and QEMU) the owner runs, not as a runner:
+    * The media: Windows Server 2025's evaluation ISO (build 26100.1742,
+      6,014,152,704 bytes, SHA-256 `d0ef4502…b23d`, which Microsoft
+      publishes nowhere we found) downloads with no form, cookie or
+      sign-in from the link `go.microsoft.com/fwlink/?linkid=2293312`.
+      The evaluation centre's own button asks for a name, company, email
+      and phone first; that the link is the one the form gives is not
+      confirmed. Its setup programs carry valid Microsoft signatures
+      (checked inside a guest, against that guest's own trust store). The
+      terms found say the evaluation "expires in 180 days" and "must be
+      activated over the internet in the first 10 days"; the licence in
+      the image has no evaluation clause and points to `aka.ms/useterms`,
+      which could not be read by script. **Whether the terms allow
+      automated testing is still not settled.**
+    * Unattended installs (SeaBIOS, an AHCI disk, an e1000e card, 2 CPUs,
+      2 GiB, no virtio drivers) took 15 minutes each; the domain
+      controller's AD DS role 12, its promotion 7 and its restart 7; the
+      member's join under 2. OpenSSH Server, a Windows capability, drove
+      the guests; the serial-port runner service is not built.
+    * The domain scenario: a domain controller and a member, with the
+      policies of `internal/winpolicy/testdata/domain-gpos.ps1`. The
+      `AsSystem` tests passed on both, and `TestQueryDomainAsSystem` named
+      each policy's owner, and *cannot tell* with Group Policy's record
+      off (see docs/development/machine-tests.md). OSConfig's baseline was
+      applied there too (see OSConfig, above).
+    * What CI should do: build the images in each run on GitHub's Ubuntu
+      runners with KVM, in jobs that run on pushes to `main` and on a
+      schedule, never for pull requests, and never cached; extend
+      `internal/vmtest` to Windows with the serial-port service. Not built
+      or run on GitHub yet: a domain takes about 45 minutes to build on 2
+      CPUs before any test, and the evaluation's terms must be settled
+      first. Until then the domain scenarios run on the owner's Proxmox
+      with the committed scripts, and are recorded.
+    * The Proxmox host is not made a self-hosted runner: GitHub advises
+      against self-hosted runners for public repositories, since a fork's
+      pull request can run code on them.
   * **Other ADRs wait for these machines.** ADR-0064, ADR-0065, ADR-0067
     and ADR-0068 plan Windows tests on them: Windows with and without
     PowerShell 7, `AllSigned` from Group Policy and Constrained Language

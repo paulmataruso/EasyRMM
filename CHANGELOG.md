@@ -138,6 +138,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Hardening checks for Windows computers and servers, through the API**
+  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
+  W1; [guide](docs/operations/hardening.md#windows-computers-and-servers)).
+  `POST /api/v1/jobs/hardening` takes `"platform": "windows"` and checks 23
+  modules, from accounts and the firewall to BitLocker and LAPS, with
+  Windows PowerShell 5.1 as LocalSystem. A check changes nothing it
+  reports on. For each setting it reports the value, what EasyRMM wants,
+  and who else owns it: Group Policy (read from Windows' own record of what
+  it applied), registry preference items, an MDM, Defender for Endpoint, a
+  Configuration Manager client, DSC, Azure machine configuration, OSConfig
+  or Tamper Protection. Where EasyRMM cannot tell, the setting is *check only*, with
+  the reason. The platform says which Windows it is, its role, how it is
+  joined, and whether apply will be supported there. Each module lists
+  the NIST SP 800-53, SP 800-171 and ISO/IEC 27001 controls that DISA's and
+  NIST's published mappings relate it to, with their sources. Every run
+  first checks `%ProgramData%\EasyRMM\Hardening`, where apply will keep its
+  record. It refuses a folder that someone other than SYSTEM or
+  Administrators could write to, or that is reached through a link. The
+  console's **Hardening** tab and its check dialog stay Linux's until W3;
+  a checked Windows device's summary shows in **Devices**. Applying and
+  undoing come with W2.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version
