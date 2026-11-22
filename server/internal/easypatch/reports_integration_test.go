@@ -279,7 +279,7 @@ func TestMonthlyReports(t *testing.T) {
 	var readErr error
 	// Without a mail source, EasyRMM had none, and gave the engine none.
 	base := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings"))
-	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return inForce, readErr }))
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return inForce, readErr }, mailKey))
 	f.reconcile()
 	f.reconcile()
 	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")) - base; n != 1 {

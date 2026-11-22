@@ -2,8 +2,8 @@ package easypatch
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/subtle"
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/argon2"
 
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
@@ -49,6 +48,7 @@ type engine struct {
 	// and mailCompared is what a server that does not give it last
 	// compared with that record.
 	mail         func(context.Context) (MailConfig, error)
+	mailKey      []byte
 	mailLock     chan struct{}
 	mailGiven    *MailConfig
 	mailFailures int
@@ -118,9 +118,12 @@ type MailConfig struct {
 // when it is not the one last given or the engine's differs, at start and
 // after every change, and removes the engine's when EasyRMM has none, so
 // the deployment has one mail server. EasyRMM is its one source: a change
-// made in the engine itself is overwritten.
-func Mail(source func(context.Context) (MailConfig, error)) EngineOption {
-	return func(e *engine) { e.mail = source }
+// made in the engine itself is overwritten. key, derived from EasyRMM's
+// secret key, keys the digest of the mail server given that EasyRMM's
+// servers compare theirs with (mail_engine_given); every server has the
+// same.
+func Mail(source func(context.Context) (MailConfig, error), key []byte) EngineOption {
+	return func(e *engine) { e.mail, e.mailKey = source, key }
 }
 
 // mailSettings is cfg as the engine's mail settings, keeping what EasyRMM
@@ -167,6 +170,28 @@ const mailCallTimeout = 10 * time.Second
 // servers, gives the engine its mail server.
 const lockEngineMail = 4471209853362
 
+// lockEngineMailChange is the advisory lock each of EasyRMM's servers
+// holds, for a transaction, while it reads and then changes the engine's
+// mail settings, so that no two such changes interleave.
+const lockEngineMailChange = 4471209853363
+
+// changeEngineMail runs f, which reads and then changes the engine's mail
+// settings, holding lockEngineMailChange across EasyRMM's servers. f
+// reaches nothing in the database, so one connection is held at a time;
+// its calls to the engine are bounded (mailTimeout), and so is how long
+// it holds the lock.
+func (s *Service) changeEngineMail(ctx context.Context, f func() error) error {
+	if s.db == nil {
+		return f()
+	}
+	return s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(lockEngineMailChange)); err != nil {
+			return err
+		}
+		return f()
+	})
+}
+
 // lockMail takes mailLock, or gives up when ctx ends.
 func (e *engine) lockMail(ctx context.Context) error {
 	select {
@@ -191,14 +216,6 @@ func (e *engine) setMailSettings(st context.Context, c *Client, in MailSettingsI
 	ctx, cancel := context.WithTimeout(st, e.mailTimeout)
 	defer cancel()
 	return c.SetMailSettings(ctx, in)
-}
-
-// mailInForce reads EasyRMM's mail server in force.
-func (e *engine) mailInForce(ctx context.Context) (MailConfig, error) {
-	if e.mail == nil {
-		return MailConfig{}, nil
-	}
-	return e.mail(ctx)
 }
 
 // mailStatement is EasyRMM's own statement for the engine's mail settings,
@@ -253,23 +270,29 @@ func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult)
 		res.problem("could not record the mail server given to the patching engine, which EasyRMM's other servers compare theirs with: %v", err)
 	}
 	st := mailStatement(ctx)
-	current, err := e.mailSettings(st, c)
+	given := e.mailGiven != nil && *e.mailGiven == cfg
+	changed := false
+	err = s.changeEngineMail(ctx, func() error {
+		current, err := e.mailSettings(st, c)
+		if err != nil {
+			return err
+		}
+		in := cfg.mailSettings(current)
+		if given && sameMail(current, in) {
+			return nil
+		}
+		changed = true
+		return e.setMailSettings(st, c, in)
+	})
 	if err != nil {
 		s.mailFailed(ctx, c, res, fmt.Sprintf("could not give the patching engine EasyRMM's mail server: %v", err))
 		return
 	}
-	in := cfg.mailSettings(current)
-	given := e.mailGiven != nil && *e.mailGiven == cfg
-	if given && sameMail(current, in) {
-		s.mailSucceeded()
-		return
-	}
-	if err := e.setMailSettings(st, c, in); err != nil {
-		s.mailFailed(ctx, c, res, fmt.Sprintf("could not give the patching engine EasyRMM's mail server: %v", err))
+	s.mailSucceeded()
+	if !changed {
 		return
 	}
 	e.mailGiven = &cfg
-	s.mailSucceeded()
 	switch {
 	case given:
 		s.log.Warn("patching: the engine's mail settings were changed in the engine; EasyRMM gave it its own mail server again", "host", cfg.Host)
@@ -308,15 +331,17 @@ func (s *Service) stopLeadingMail() {
 	}
 }
 
-// mailDigest is an Argon2id digest of cfg with salt, so that EasyRMM's
-// servers can tell whether theirs is the mail server given to the engine
-// without the mail server, or its password, being stored anywhere.
-func mailDigest(cfg MailConfig, salt []byte) []byte {
-	var b strings.Builder
+// mailDigest is an HMAC-SHA-256 of cfg, keyed by key, which is derived
+// from EasyRMM's secret key, so that EasyRMM's servers can tell whether
+// theirs is the mail server given to the engine without the mail server
+// being stored, and without someone who can read the database being able
+// to guess its password from the digest.
+func mailDigest(cfg MailConfig, key []byte) []byte {
+	m := hmac.New(sha256.New, key)
 	for _, f := range []string{strings.ToLower(cfg.Host), strconv.Itoa(cfg.Port), cfg.Security, cfg.Username, cfg.Password, cfg.FromAddress, cfg.FromName} {
-		fmt.Fprintf(&b, "%d:%s;", len(f), f)
+		fmt.Fprintf(m, "%d:%s;", len(f), f)
 	}
-	return argon2.IDKey([]byte(b.String()), salt, 2, 19*1024, 1, 32)
+	return m.Sum(nil)
 }
 
 // recordMail records cfg as the mail server given to the engine, as a
@@ -326,14 +351,10 @@ func (s *Service) recordMail(ctx context.Context, cfg MailConfig) error {
 	if s.db == nil || (e.mailRecorded != nil && *e.mailRecorded == cfg) {
 		return nil
 	}
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return err
-	}
-	digest := mailDigest(cfg, salt)
+	digest := mailDigest(cfg, e.mailKey)
 	if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO mail_engine_given (id, salt, digest) VALUES (true, $1, $2)
-			ON CONFLICT (id) DO UPDATE SET salt = excluded.salt, digest = excluded.digest, given_at = clock_timestamp()`, salt, digest)
+		_, err := tx.Exec(ctx, `INSERT INTO mail_engine_given (id, digest) VALUES (true, $1)
+			ON CONFLICT (id) DO UPDATE SET digest = excluded.digest, given_at = clock_timestamp()`, digest)
 		return err
 	}); err != nil {
 		return err
@@ -345,9 +366,9 @@ func (s *Service) recordMail(ctx context.Context, cfg MailConfig) error {
 // mailComparison is a mail server compared with the record of the one
 // given to the engine, and whether it was the same.
 type mailComparison struct {
-	salt, digest string
-	cfg          MailConfig
-	same         bool
+	digest string
+	cfg    MailConfig
+	same   bool
 }
 
 // mailDiffers is why a server's mail server is not the engine's.
@@ -355,17 +376,17 @@ const mailDiffers = "This server's mail server (EASYRMM_SMTP_* in .env, or the c
 
 // compareMail, on a server that does not give the engine its mail server,
 // says when its own is not the one given: an error in the log once per
-// change, of either, and the reason on Settings → Patching. A digest is
-// made only when either changed. Call it with mailLock held.
+// change, of either, and the reason on Settings → Patching. Call it with
+// mailLock held.
 func (s *Service) compareMail(ctx context.Context) {
 	e := s.engine
 	cfg, err := e.mail(ctx)
 	if err != nil || s.db == nil {
 		return
 	}
-	var salt, digest []byte
+	var digest []byte
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT salt, digest FROM mail_engine_given`).Scan(&salt, &digest)
+		return tx.QueryRow(ctx, `SELECT digest FROM mail_engine_given`).Scan(&digest)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return
@@ -375,11 +396,11 @@ func (s *Service) compareMail(ctx context.Context) {
 		return
 	}
 	last := e.mailCompared
-	if last != nil && last.salt == string(salt) && last.digest == string(digest) && last.cfg == cfg {
+	if last != nil && last.digest == string(digest) && last.cfg == cfg {
 		return
 	}
-	same := subtle.ConstantTimeCompare(mailDigest(cfg, salt), digest) == 1
-	e.mailCompared = &mailComparison{salt: string(salt), digest: string(digest), cfg: cfg, same: same}
+	same := hmac.Equal(mailDigest(cfg, e.mailKey), digest)
+	e.mailCompared = &mailComparison{digest: string(digest), cfg: cfg, same: same}
 	e.mu.Lock()
 	if same {
 		e.mailProblem = ""
@@ -412,21 +433,26 @@ func (s *Service) mailFailed(ctx context.Context, c *Client, res *ReconcileResul
 	e.mailProblem = problem
 	e.mu.Unlock()
 	st := mailStatement(ctx)
-	current, err := e.mailSettings(st, c)
+	removed := false
+	err := s.changeEngineMail(ctx, func() error {
+		current, err := e.mailSettings(st, c)
+		if err != nil {
+			return err
+		}
+		none := MailConfig{}.mailSettings(current)
+		if sameMail(current, none) {
+			return nil
+		}
+		removed = true
+		return e.setMailSettings(st, c, none)
+	})
 	if err != nil {
 		if first {
 			s.log.Error("patching: could not give the engine EasyRMM's mail server, nor remove its own", "problem", problem, "error", err)
 		}
 		return
 	}
-	none := MailConfig{}.mailSettings(current)
-	if sameMail(current, none) {
-		return
-	}
-	if err := e.setMailSettings(st, c, none); err != nil {
-		if first {
-			s.log.Error("patching: could not give the engine EasyRMM's mail server, nor remove its own", "problem", problem, "error", err)
-		}
+	if !removed {
 		return
 	}
 	e.mailGiven = &MailConfig{}
@@ -467,6 +493,9 @@ func (s *Service) UseEngine(c *Client, opts ...EngineOption) error {
 	}
 	for _, o := range opts {
 		o(e)
+	}
+	if e.mail != nil && s.db != nil && len(e.mailKey) < 32 {
+		return errors.New("easypatch: the mail digest key must be at least 32 bytes")
 	}
 	s.engine = e
 	s.fleet.clear()

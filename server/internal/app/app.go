@@ -201,7 +201,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.OnRemoved(d.EasyPatch.Kick)
 	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
-	if err := usePatchingEngine(cfg, d, log); err != nil {
+	if err := usePatchingEngine(cfg, d, sealer, log); err != nil {
 		return nil, err
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
@@ -232,7 +232,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 // buildRemote assembles the MeshCentral integration.
 // usePatchingEngine gives d.EasyPatch the patching engine in this
 // deployment, on loopback (ADR-0038).
-func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
+func usePatchingEngine(cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
 	p := cfg.Patching
 	signer, err := easypatch.NewSigner(p.Key)
 	if err != nil {
@@ -253,7 +253,13 @@ func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
 	}
 	// The engine emails through EasyRMM's mail server in force, which
-	// reaches it within seconds of every change (ADR-0053).
+	// reaches it within seconds of every change (ADR-0053). Its digest,
+	// which EasyRMM's servers compare theirs with, is keyed by a key of its
+	// own, derived from the secret key.
+	mailKey, err := sealer.DeriveKey("easyrmm engine mail digest v1")
+	if err != nil {
+		return err
+	}
 	opts = append(opts, easypatch.Mail(func(ctx context.Context) (easypatch.MailConfig, error) {
 		m, err := d.Mail.InForce(ctx)
 		if err != nil || m == nil {
@@ -261,7 +267,7 @@ func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 		}
 		return easypatch.MailConfig{Host: m.Host, Port: m.Port, Username: m.Username, Password: m.Password, FromAddress: m.FromAddress,
 			FromName: m.FromName, Security: m.Security}, nil
-	}))
+	}, mailKey))
 	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
 		return fmt.Errorf("patching engine: %w", err)
 	}

@@ -1439,7 +1439,7 @@ func TestContract(t *testing.T) {
 		inForce := MailConfig{Host: "smtp-a.example.test", Port: 587, Username: "rmm", Password: "contract-only-1", FromAddress: "rmm@example.test",
 			FromName: "EasyRMM Contract", Security: "starttls"}
 		follower := New(nil, nil, "contract", slog.New(slog.NewTextHandler(io.Discard, nil)))
-		if err := follower.UseEngine(engine, Mail(func(context.Context) (MailConfig, error) { return inForce, nil })); err != nil {
+		if err := follower.UseEngine(engine, Mail(func(context.Context) (MailConfig, error) { return inForce, nil }, nil)); err != nil {
 			t.Fatal(err)
 		}
 		follow := func(step string, want MailSettings) {

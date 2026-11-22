@@ -404,10 +404,13 @@ type NotificationSettings struct {
 // mail server goes with the switch. On the server that gives the engine its
 // mail server, that is EasyRMM's in force, read under the lock syncMail
 // holds, never the engine's copy, which may be a mail server EasyRMM no
-// longer has. On another, it is the engine's, without a password, so that
-// the engine keeps the one it has: that server's own may not be the one
-// given (compareMail), and whatever such a change mixes is in what the
-// engine shows, which the next pass of the server that gives it repairs.
+// longer has. Otherwise, and when EasyRMM's cannot be read, it is the
+// engine's own, sent back without a password so that the engine keeps the
+// one it has: the switch never removes the engine's mail server (passes
+// do, when they cannot give it), and another server's own mail server may
+// not be the one given (compareMail). Each server reads and changes the
+// engine's mail settings holding one lock across servers
+// (changeEngineMail), so that no two such changes interleave.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
 	cl, err := s.notifications(ctx, c)
 	if err != nil {
@@ -425,46 +428,59 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 		return err
 	}
 	defer e.unlockMail()
-	st := s.everywhere(ctx, c, RoleSuperAdmin)
-	m, err := e.mailSettings(st, cl)
-	if err != nil {
-		s.noteError(err)
-		return epError(err)
+	var cfg *MailConfig
+	if e.mail != nil {
+		lead, err := s.leadsMail(ctx)
+		if err != nil {
+			return err
+		}
+		if lead {
+			in, err := e.mail(ctx)
+			if err != nil {
+				problem := fmt.Sprintf("could not read EasyRMM's mail server for the patching engine: %v", err)
+				s.log.Error("patching: " + problem + "; the webhook switch leaves the engine's mail server as it is")
+				e.mu.Lock()
+				e.mailProblem = problem
+				e.mu.Unlock()
+			} else {
+				cfg = &in
+			}
+		}
 	}
-	if m.AllowPrivateNetworkWebhooks == allow {
+	st := s.everywhere(ctx, c, RoleSuperAdmin)
+	var from, changed bool
+	var engineErr error
+	err := s.changeEngineMail(ctx, func() error {
+		m, err := e.mailSettings(st, cl)
+		if err != nil {
+			engineErr = err
+			return err
+		}
+		if from = m.AllowPrivateNetworkWebhooks; from == allow {
+			return nil
+		}
+		put := m.unchanged(allow)
+		if cfg != nil {
+			put = cfg.mailSettings(m)
+			put.AllowPrivateNetworkWebhooks = allow
+		}
+		changed = true
+		engineErr = e.setMailSettings(st, cl, put)
+		return engineErr
+	})
+	switch {
+	case engineErr != nil:
+		s.noteError(engineErr)
+		return epError(engineErr)
+	case err != nil:
+		return err
+	case !changed:
 		return nil
 	}
-	lead, err := s.leadsMail(ctx)
-	if err != nil {
-		return err
+	if cfg != nil {
+		e.mailGiven = cfg
 	}
-	if !lead {
-		if err := e.setMailSettings(st, cl, m.unchanged(allow)); err != nil {
-			s.noteError(err)
-			return epError(err)
-		}
-		return s.recordSwitch(ctx, c, m.AllowPrivateNetworkWebhooks, allow)
-	}
-	// EasyRMM's mail server unreadable (a password sealed with another
-	// key) does not stop the switch: no mail server goes with it, as when
-	// passes cannot give one, and the console says why.
-	cfg, err := e.mailInForce(ctx)
-	if err != nil {
-		problem := fmt.Sprintf("could not read EasyRMM's mail server for the patching engine: %v", err)
-		s.log.Error("patching: " + problem + "; the engine is given no mail server with the webhook switch")
-		cfg = MailConfig{}
-		e.mu.Lock()
-		e.mailProblem = problem
-		e.mu.Unlock()
-	}
-	put := cfg.mailSettings(m)
-	put.AllowPrivateNetworkWebhooks = allow
-	if err := e.setMailSettings(st, cl, put); err != nil {
-		s.noteError(err)
-		return epError(err)
-	}
-	e.mailGiven = &cfg
-	return s.recordSwitch(ctx, c, m.AllowPrivateNetworkWebhooks, allow)
+	return s.recordSwitch(ctx, c, from, allow)
 }
 
 func (s *Service) recordSwitch(ctx context.Context, c access.Caller, from, to bool) error {

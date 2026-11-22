@@ -76,12 +76,13 @@ CREATE TABLE mail_waits (
 );
 
 -- The mail server the patching engine is given, by the one of EasyRMM's
--- servers that gives it (holding a session advisory lock): an Argon2id
--- digest of it, with its salt, never the mail server itself, so that the
--- others can tell whether theirs is the same.
+-- servers that gives it (holding a session advisory lock): an
+-- HMAC-SHA-256 of it, keyed by a key derived from EASYRMM_SECRET_KEY,
+-- never the mail server itself, so that the others can tell whether theirs
+-- is the same and someone who reads the database cannot guess its
+-- password from it.
 CREATE TABLE mail_engine_given (
     id        boolean PRIMARY KEY DEFAULT true CHECK (id),
-    salt      bytea NOT NULL CHECK (length(salt) = 16),
     digest    bytea NOT NULL CHECK (length(digest) = 32),
     given_at  timestamptz NOT NULL DEFAULT clock_timestamp()
 );

@@ -533,7 +533,7 @@ func TestNotificationSettingsCarryEasyRMMsMailServer(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		return inForce, nil
-	}))
+	}, mailKey))
 	f.reconcile()
 	holds := func(step string, c MailConfig) {
 		t.Helper()
@@ -625,7 +625,7 @@ func TestEngineMailServerRemovedAfterFailures(t *testing.T) {
 	ctx := f.ctx
 	cfg := MailConfig{Host: "smtp.example.com", Port: 587, Username: "rmm", Password: "pw", FromAddress: "rmm@example.com", Security: "starttls"}
 	var readErr error
-	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return cfg, readErr }))
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return cfg, readErr }, mailKey))
 	f.reconcile()
 	readErr = errors.New("the stored password cannot be opened")
 	for pass := 1; pass < mailFailLimit; pass++ {
