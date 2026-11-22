@@ -52,8 +52,8 @@
   built: its Windows test job, the plan's step 6, runs the agent's tests
   as LocalSystem on CI's runners; nothing else of it is needed here),
   and these proposed ADRs:
-  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (Windows
-  machines under KVM; tests run as LocalSystem),
+  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (accepted
+  since, on 2026-11-22; Windows machines under KVM; tests run as LocalSystem),
   [ADR-0058](0058-signed-settings-that-reach-the-agent.md) (settings
   per organization, for later). ADR-0063 (who sees job output) is on a
   branch of its own and not merged, so it is cited without a link; the

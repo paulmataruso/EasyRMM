@@ -34,8 +34,8 @@
   accepted [ADR-0064](0064-remote-powershell-management.md) (the poll's
   `accepts`, targets, the hash rule, Windows tests as LocalSystem), and
   these proposed ADRs:
-  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (W1's
-  ownership reader, W2's job amendments),
+  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (accepted
+  since, on 2026-11-22; W1's ownership reader, W2's job amendments),
   [ADR-0055](0055-lets-encrypt-in-one-step.md#step-up-authentication)
   (step-up) and [ADR-0060](0060-collecting-logs.md) (arguments on the
   command line; the PowerShell logs it collects), and
