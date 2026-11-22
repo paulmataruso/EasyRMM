@@ -251,12 +251,13 @@ describe("Patch all on the patching overview", () => {
         "POST /patching/install": ok(
           result({
             succeeded: 1000,
-            failed: 500,
+            failed: 700,
             results: [{ deviceId: "d9", deviceName: "PC-9", ok: false, message: "Not sent: the patching engine did not take this batch (engine busy)." }],
             scope: ORG_SCOPE,
             batches: [
               { devices: 1000, sent: 1000 },
               { devices: 500, sent: 0, error: "engine busy" },
+              { devices: 200, sent: 0, error: "The connection was lost.", unknown: true },
             ],
           }),
         ),
@@ -291,9 +292,11 @@ describe("Patch all on the patching overview", () => {
 
     // The jobs, the batch the engine did not take, and who was left out; never "all".
     const outcome = await screen.findByRole("dialog", { name: "Install started in Northwind Traders" });
-    expect(outcome).toHaveTextContent("1,000 jobs created, one per device; 500 devices did not start.");
-    expect(within(outcome).getByText("The patching engine did not take 1 batch")).toBeInTheDocument();
-    expect(outcome).toHaveTextContent("Batch 2 of 2: 500 devices not sent. engine busy");
+    expect(outcome).toHaveTextContent("1,000 jobs created, one per device; 700 devices did not start.");
+    expect(within(outcome).getByText("2 batches not sent, or not known to have been")).toBeInTheDocument();
+    expect(outcome).toHaveTextContent("Batch 2 of 3: 500 devices not sent. engine busy");
+    // A batch the engine did not answer for is not known, as its devices say, not "not sent".
+    expect(outcome).toHaveTextContent("Batch 3 of 3: not known whether its 200 devices were sent; see Jobs before sending again. The connection was lost.");
     expect(within(outcome).getByText("3 devices with no EasyPatch agent")).toBeInTheDocument();
     expect(within(outcome).getByRole("link", { name: "PC-9" })).toHaveAttribute("href", "/devices/d9?tab=patches");
     expect(outcome.textContent).not.toMatch(/\ball\b/i);
@@ -304,7 +307,18 @@ describe("Patch all on the patching overview", () => {
     const server = installFakeApi(
       overviewRoutes(TECH, {
         "POST /patching/install/plan": ok(PLAN),
-        "POST /patching/install": ok(result({ succeeded: 10, results: [], scope: ORG_SCOPE, batches: [{ devices: 10, sent: 10 }] })),
+        "POST /patching/install": ok(
+          result({
+            succeeded: 2,
+            upToDate: 1,
+            results: [
+              { deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j3", jobIds: ["j1", "j2", "j3"], message: "Installs its 1,203 updates in 3 jobs of at most 500, one after another." },
+              { deviceId: "d2", deviceName: "DB-01", ok: true, jobId: "j4" },
+              { deviceId: "d3", deviceName: "APP-01", ok: true, upToDate: true, message: "Already up to date: it has no available update." },
+            ],
+            scope: ORG_SCOPE,
+          }),
+        ),
       }),
     );
     renderApp("/patching?organizationId=o1");
@@ -316,7 +330,10 @@ describe("Patch all on the patching overview", () => {
     expect(within(dialog).getByRole("checkbox", { name: "Include feature upgrades (new Windows versions)" })).not.toBeChecked();
 
     const preview = await within(dialog).findByRole("region", { name: "What would be installed" });
-    expect(server.call("POST /patching/install/plan").body).toEqual({ all: true, organizationId: "o1", features: false });
+    expect(server.call("POST /patching/install/plan").body).toEqual({ all: true, organizationId: "o1", features: false, skipDelayed: false });
+    // Updates in the rollout delay are included unless unticked.
+    expect(within(dialog).getByRole("checkbox", { name: "Include updates still in the rollout delay (5)" })).toBeChecked();
+    expect(within(dialog).getByText(/holds new updates back for a few days after release/)).toBeInTheDocument();
     expect(preview).toHaveTextContent("42 updates on 10 devices; 2 devices already up to date");
     expect(preview).toHaveTextContent("Security: 20");
     expect(preview).toHaveTextContent("Servicing stack: 2");
@@ -332,13 +349,21 @@ describe("Patch all on the patching overview", () => {
     // Feature upgrades are asked for again with the tick.
     await user.click(within(dialog).getByRole("checkbox", { name: "Include feature upgrades (new Windows versions)" }));
     await waitFor(() => expect(server.callsTo("POST /patching/install/plan")).toHaveLength(2));
-    expect(server.call("POST /patching/install/plan", 1).body).toEqual({ all: true, organizationId: "o1", features: true });
+    expect(server.call("POST /patching/install/plan", 1).body).toEqual({ all: true, organizationId: "o1", features: true, skipDelayed: false });
     await within(dialog).findByRole("region", { name: "What would be installed" });
+    // And without the updates in the rollout delay, which are then left out.
+    await user.click(within(dialog).getByRole("checkbox", { name: "Include updates still in the rollout delay (5)" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/install/plan")).toHaveLength(3));
+    expect(server.call("POST /patching/install/plan", 2).body).toEqual({ all: true, organizationId: "o1", features: true, skipDelayed: true });
+    const again = await within(dialog).findByRole("region", { name: "What would be installed" });
+    expect(within(again).getByText("5 updates still in the rollout delay, as chosen above")).toBeInTheDocument();
+    expect(again).not.toHaveTextContent("installs them anyway");
     await user.click(within(dialog).getByRole("button", { name: "Install now" }));
     await waitFor(() => expect(server.callsTo("POST /patching/install")).toHaveLength(1));
-    expect(server.call("POST /patching/install").body).toEqual({ all: true, organizationId: "o1", updates: "available", features: true });
+    expect(server.call("POST /patching/install").body).toEqual({ all: true, organizationId: "o1", updates: "available", features: true, skipDelayed: true });
+    // A device with more updates than one install takes gets several jobs; one with none is up to date, not a job.
     const outcome = await screen.findByRole("dialog", { name: "Install started in Northwind Traders" });
-    expect(outcome).toHaveTextContent("10 jobs created, one per device.");
+    expect(outcome).toHaveTextContent("4 jobs created for 2 devices; 1 device already up to date.");
   });
 
   it("asks for a site or fewer platforms before installing every available update on more than 1,000 devices", async () => {
@@ -379,7 +404,14 @@ describe("Patch all on the patching overview", () => {
     expect(within(dialog).getByRole("radio", { name: "Now" })).toBeChecked();
     expect(within(dialog).getByRole("radio", { name: "Restart if the updates need it" })).toBeChecked();
     await within(dialog).findByRole("region", { name: "What would be installed" });
-    expect(server.call("POST /patching/install/plan").body).toEqual({ all: true, organizationId: "o1", siteId: "s1", platforms: ["windows"], features: false });
+    expect(server.call("POST /patching/install/plan").body).toEqual({
+      all: true,
+      organizationId: "o1",
+      siteId: "s1",
+      platforms: ["windows"],
+      features: false,
+      skipDelayed: false,
+    });
 
     // The restart is checked first, as it would be after the install; servers start unticked.
     expect(await within(dialog).findByText("Servers restart only when you tick them")).toBeInTheDocument();
@@ -400,10 +432,11 @@ describe("Patch all on the patching overview", () => {
     expect(within(dialog).getByRole("radio", { name: "Count down, then restart" })).toBeChecked();
     expect(within(dialog).getByLabelText("If a device is offline, wait for it")).toHaveValue("120");
 
-    // Every preset can be changed: Linux too checks again for every platform.
+    // Every preset can be changed: Linux too is checked again, still naming each platform, so a device enrolled
+    // since on another cannot slip in.
     await user.click(within(dialog).getByRole("checkbox", { name: "Linux (1)" }));
     await waitFor(() => expect(server.callsTo("POST /patching/restart/plan")).toHaveLength(2));
-    expect((server.call("POST /patching/restart/plan", 1).body as { platforms?: string[] }).platforms).toBeUndefined();
+    expect((server.call("POST /patching/restart/plan", 1).body as { platforms?: string[] }).platforms).toEqual(["windows", "linux"]);
     await user.click(within(dialog).getByRole("checkbox", { name: "Linux (1)" }));
     await waitFor(() => expect(server.callsTo("POST /patching/restart/plan")).toHaveLength(3));
 
@@ -417,6 +450,7 @@ describe("Patch all on the patching overview", () => {
       platforms: ["windows"],
       updates: "available",
       features: false,
+      skipDelayed: false,
       restart: { condition: "OnlyIfPending", mode: "Countdown", countdownMinutes: 5, expiresAfterMinutes: 120 },
       confirmServers: ["d4"],
     });

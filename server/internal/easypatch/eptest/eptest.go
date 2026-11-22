@@ -154,6 +154,15 @@ type Job struct {
 	RetryOf *uuid.UUID
 	// RebootRequired says the job's updates need a restart.
 	RebootRequired bool
+	// TimedOut marks a job the engine failed because its agent stopped
+	// reporting (TimeOutJob); the agent's late result still replaces that.
+	TimedOut bool
+	// LastProgressAt is the agent's last report, CompletedAt when the job
+	// ended (SetJobStatus, ReportJob).
+	LastProgressAt, CompletedAt *time.Time
+	// Force is a restart asked for with force, which the duplicate guard
+	// lets through.
+	Force bool
 }
 
 // Request is a call the server received.
@@ -355,19 +364,104 @@ func (s *Server) Jobs() []Job {
 	return out
 }
 
-// SetJobStatus changes a job's status, as its agent's reports would. An
-// uninstall that completes unenrolls its endpoint, as the agent does.
+// SetJobStatus changes a job's status, as its agent's reports would,
+// whatever it was. An uninstall that completes unenrolls its endpoint, as
+// the agent does.
 func (s *Server) SetJobStatus(id uuid.UUID, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if j := s.job(id); j != nil {
+		s.setStatus(j, status)
+	}
+}
+
+func (s *Server) job(id uuid.UUID) *Job {
 	for _, j := range s.jobs {
 		if j.ID == id {
-			j.Status = status
-			if e := s.endpoints[j.Endpoint]; e != nil && j.Type == "UninstallAgent" && status == "Completed" {
-				e.Status = "Decommissioned"
-			}
+			return j
 		}
 	}
+	return nil
+}
+
+func (s *Server) setStatus(j *Job, status string) {
+	now := time.Now().UTC()
+	j.Status = status
+	switch status {
+	case "Running", "WaitingForReboot":
+		j.LastProgressAt = &now
+	case "Completed", "Failed", StatusCanceled, "Expired":
+		j.LastProgressAt, j.CompletedAt = &now, &now
+	}
+	if e := s.endpoints[j.Endpoint]; e != nil && j.Type == "UninstallAgent" && status == "Completed" {
+		e.Status = "Decommissioned"
+	}
+}
+
+// TimeOutJob fails a job whose agent stopped reporting, as the engine's
+// maintenance does after RunningJobTimeoutHours (MaintenanceTasks.cs, step
+// 3: Failed, timedOut). A late result from the agent still replaces it
+// (ReportJob).
+func (s *Server) TimeOutJob(id uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if j := s.job(id); j != nil {
+		s.setStatus(j, "Failed")
+		j.TimedOut = true
+	}
+}
+
+// ReportJob is the job's agent reporting a status, and says whether the
+// engine took it: as JobTransitions.AgentMayTransition, a job the agent
+// holds may move on, and one the engine timed out may still take the
+// agent's genuine late result, which clears the timeout (JobService.cs,
+// ReportStatusAsync).
+func (s *Server) ReportJob(id uuid.UUID, status string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.job(id)
+	if j == nil || !agentMayTransition(j.Status, status, j.TimedOut) {
+		return false
+	}
+	if j.Status == "Failed" && j.TimedOut {
+		j.TimedOut = false
+	}
+	s.setStatus(j, status)
+	return true
+}
+
+// agentMayTransition is the engine's JobTransitions.AgentMayTransition.
+func agentMayTransition(from, to string, timedOut bool) bool {
+	switch to {
+	case "Queued", "Delivered", "Acknowledged":
+		return false
+	case "Expired":
+		return from == "Delivered" || from == "Acknowledged" || from == "Running"
+	}
+	switch from {
+	case "Delivered", "Acknowledged", "Running", "WaitingForReboot":
+		return true
+	case "Failed":
+		return timedOut
+	}
+	return false
+}
+
+// dedupeStatuses are the statuses the engine's duplicate guard covers
+// (JobTransitions.DedupeStatuses).
+var dedupeStatuses = []string{"Queued", "Delivered", "Acknowledged", "Running", "WaitingForReboot"}
+
+// duplicateRestart is the restart an endpoint already has queued or
+// running: the engine's duplicate guard keys every restart of an endpoint
+// "restart", whenever it is to start (JobService.CreateAsync), unless it is
+// forced.
+func (s *Server) duplicateRestart(endpoint uuid.UUID) *Job {
+	for _, j := range s.jobs {
+		if j.Endpoint == endpoint && j.Type == "Restart" && !j.Force && slices.Contains(dedupeStatuses, j.Status) {
+			return j
+		}
+	}
+	return nil
 }
 
 // SetJobRebootRequired says whether a job's updates need a restart, as its
@@ -485,14 +579,17 @@ func (e *Endpoint) detail() map[string]any {
 
 func (j *Job) summary() map[string]any {
 	var completed any
-	if j.Status == "Completed" || j.Status == StatusCanceled {
+	switch {
+	case j.CompletedAt != nil:
+		completed = j.CompletedAt
+	case j.Status == "Completed" || j.Status == StatusCanceled:
 		completed = "2026-11-16T15:10:00+00:00"
 	}
 	return map[string]any{
 		"id": j.ID, "endpointId": j.Endpoint, "hostname": j.Hostname, "organizationId": j.Org, "organizationName": "Acme Patch",
 		"type": j.Type, "status": j.Status, "trigger": "Manual", "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
 		"startedAt": nil, "completedAt": completed, "expiresAt": j.CreatedAt.Add(7 * 24 * time.Hour), "progressPercent": nil,
-		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": false,
+		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": j.TimedOut,
 		"cancelRequested": j.Status == StatusCanceled, "itemCount": 0, "succeededCount": 0, "failedCount": 0,
 	}
 }
@@ -500,7 +597,7 @@ func (j *Job) summary() map[string]any {
 func (j *Job) detail() map[string]any {
 	return map[string]any{
 		"summary": j.summary(), "installMode": nil, "notBefore": j.NotBefore, "deliveredAt": nil, "acknowledgedAt": nil,
-		"lastProgressAt": nil, "deliveryCount": 0, "retryOfJobId": nil, "cancelRequestedAt": nil,
+		"lastProgressAt": j.LastProgressAt, "deliveryCount": 0, "retryOfJobId": nil, "cancelRequestedAt": nil,
 		"items": []map[string]any{{"updateGuid": uuid.New(), "title": "openssl", "kbNumber": nil, "category": "Security",
 			"status": "Pending", "skipReason": nil, "resultCode": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": false,
 			"downloadPercent": nil, "installPercent": nil, "startedAt": nil, "completedAt": nil}},
@@ -771,6 +868,13 @@ func (s *Server) newJob(e *Endpoint, typ string, notBefore *time.Time) *Job {
 	return j
 }
 
+// forced is a bulk restart asked for with force.
+func forced(body map[string]any) bool {
+	restart, _ := body["restart"].(map[string]any)
+	force, _ := restart["force"].(bool)
+	return force
+}
+
 func scheduled(body map[string]any) *time.Time {
 	v, ok := body["scheduledAt"].(string)
 	if !ok {
@@ -836,6 +940,10 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 		}
 		if guids, _ := body["updateGuids"].([]any); body["mode"] == "Selected" && len(guids) == 0 {
 			problem(w, 400, "validation_failed", "Choose updates.")
+			return
+		} else if len(guids) > 500 {
+			// As the engine: JobService.CreateAsync refuses more than 500.
+			problem(w, 400, "validation_failed", "At most 500 updates can be selected.")
 			return
 		}
 		if e.Missing == 0 {
@@ -976,6 +1084,10 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
 				"errorCode": "nothing_to_install", "message": e.Hostname + " has no eligible updates."})
 			failed++
+		case kind == "restart" && !forced(body) && s.duplicateRestart(e.ID) != nil:
+			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": s.duplicateRestart(e.ID).ID,
+				"errorCode": "duplicate_job", "message": "An identical job is already queued or running for this endpoint."})
+			failed++
 		case kind == "notify" && !e.Windows:
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
 				"errorCode": "not_supported_on_linux", "message": e.Hostname + " is a Linux endpoint. Messages to users are only available on Windows."})
@@ -988,6 +1100,7 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 				at = scheduled(restart)
 			}
 			j := s.newJob(e, typ, at)
+			j.Force = kind == "restart" && forced(body)
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": true, "jobId": j.ID,
 				"errorCode": nil, "message": nil})
 			succeeded++

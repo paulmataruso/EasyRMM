@@ -2286,6 +2286,11 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 	}
 	at := time.Now().Add(4 * time.Hour).UTC().Truncate(time.Second)
 	install := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{}, "force": false, "scheduledAt": at}
+	many := make([]uuid.UUID, MaxSelected+1)
+	for i := range many {
+		many[i] = uuid.New()
+	}
+	tooMany := map[string]any{"mode": "Selected", "updateGuids": many, "force": false}
 	// The fake's endpoint has its own update GUIDs; ask each for one of its own.
 	pick := func(base string, e uuid.UUID) uuid.UUID {
 		_, data := send(base, http.MethodGet, "/api/v1/endpoints/"+e.String()+"/updates", nil)
@@ -2351,6 +2356,15 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "bulk restart", method: "POST", fake: "/api/v1/endpoints/bulk/restart", real: "/api/v1/endpoints/bulk/restart",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}},
 			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}}},
+		// Another restart, to start now, while that one is queued: refused as
+		// a duplicate, naming it (the duplicate key is "restart", whenever
+		// either is to start).
+		{name: "bulk restart, duplicate", method: "POST", fake: "/api/v1/endpoints/bulk/restart", real: "/api/v1/endpoints/bulk/restart",
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": RestartOptions{Mode: "Immediate", Condition: "Always"}},
+			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": RestartOptions{Mode: "Immediate", Condition: "Always"}}},
+		// More than 500 chosen updates: refused.
+		{name: "install, more than 500 updates", method: "POST", fake: "/api/v1/endpoints/" + fEndpoint.String() + "/install-updates",
+			real: "/api/v1/endpoints/" + endpoint.String() + "/install-updates", fBody: tooMany, rBody: tooMany},
 		q("organization", "GET", "/api/v1/organizations/"+fOrg.String(), "/api/v1/organizations/"+org.String()),
 		{name: "organizations, archived ones too", method: "GET", fake: "/api/v1/organizations?includeArchived=true",
 			real: "/api/v1/organizations?includeArchived=true", element: true, fElem: fOrg, rElem: org},

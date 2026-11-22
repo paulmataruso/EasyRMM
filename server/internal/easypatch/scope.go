@@ -261,52 +261,92 @@ func (v ScopeView) skippedDetails() map[string]any {
 	return out
 }
 
+// patchAllBatch is how many devices a Patch all sends the engine at once.
+// The engine starts a bulk request's jobs one after another, each with its
+// own install preview and commit (EndpointEndpoints.BulkAsync,
+// JobService.CreateAsync), and EasyRMM waits 30 seconds for an answer: a
+// batch of 200 answers well within that, where 1,000 may not.
+const patchAllBatch = 200
+
 // Batch is one request of a Patch all to the engine.
 type Batch struct {
 	Devices int `json:"devices"`
 	// Sent counts the devices the engine started a job for.
 	Sent int `json:"sent"`
-	// Error says why the engine did not take the batch.
-	Error string `json:"error,omitempty"`
+	// Error says why the engine did not take the batch, or why it was not
+	// sent; Unknown, that the engine did not answer, so whether it took the
+	// batch is not known.
+	Error   string `json:"error,omitempty"`
+	Unknown bool   `json:"unknown,omitempty"`
 }
 
-// batches sends devices to the engine at most MaxBulk at a time. A batch the
-// engine does not take is recorded, its devices reported as not sent, and
-// the next batch still goes. The error is EasyRMM's own (the audit trail).
+// requestEnded is a batch's devices once the request ended before it went.
+const requestEnded = "Not sent: the request ended before this batch was sent."
+
+// batches sends devices to the engine at most batchSize at a time. A batch
+// the engine does not take is recorded, its devices reported as not sent
+// (or not known, when it did not answer), and the next batch still goes. A
+// batch is sent, and what it started saved (after), whatever becomes of the
+// request; once the request has ended, no further batch goes. The error is
+// EasyRMM's own (the audit trail).
 func (s *Service) batches(ctx context.Context, c access.Caller, devices []deviceRow, res *ActionResult, action string, details map[string]any,
-	send func(ctx context.Context, ids []uuid.UUID) (BulkResult, error)) ([]Batch, error) {
+	send func(ctx context.Context, ids []uuid.UUID) (BulkResult, error),
+	after func(ctx context.Context, part []deviceRow, items []ActionItem) error) ([]Batch, error) {
 	out := []Batch{}
 	var failed error
-	for lo := 0; lo < len(devices); lo += MaxBulk {
-		part := devices[lo:min(lo+MaxBulk, len(devices))]
-		ids := make([]uuid.UUID, 0, len(part))
-		for _, d := range part {
-			ids = append(ids, *d.endpointID)
-		}
+	for lo := 0; lo < len(devices); lo += s.batchSize {
+		part := devices[lo:min(lo+s.batchSize, len(devices))]
 		b := Batch{Devices: len(part)}
-		br, err := send(s.as(ctx, c, RoleAdmin, orgsOf(part)...), ids)
-		if err != nil {
-			s.noteError(err)
-			b.Error = message(epError(err))
-			msg := "Not sent: the patching engine refused this batch (" + cut(b.Error, 300) + ")."
-			var ee *Error
-			if !errors.As(err, &ee) || ee.Status < 400 || ee.Status >= 500 {
-				msg = "Not known: the patching engine did not answer for this batch (" + cut(b.Error, 300) + "); see Jobs before sending it again."
-			}
+		if ctx.Err() != nil {
+			b.Error = "The request ended before this batch was sent."
 			for _, d := range part {
-				res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: msg})
+				res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: requestEnded})
 			}
 			out = append(out, b)
 			continue
 		}
-		before := res.Succeeded
-		if err := s.settle(ctx, c, part, br, res, action, details); err != nil && failed == nil {
+		b, err := s.batch(ctx, c, part, res, action, details, send, after)
+		if err != nil && failed == nil {
 			failed = err
 		}
-		b.Sent = res.Succeeded - before
 		out = append(out, b)
 	}
 	return out, failed
+}
+
+// batch sends one batch, and saves what it started.
+func (s *Service) batch(ctx context.Context, c access.Caller, part []deviceRow, res *ActionResult, action string, details map[string]any,
+	send func(ctx context.Context, ids []uuid.UUID) (BulkResult, error),
+	after func(ctx context.Context, part []deviceRow, items []ActionItem) error) (Batch, error) {
+	ctx, cancel := detached(ctx)
+	defer cancel()
+	ids := make([]uuid.UUID, 0, len(part))
+	for _, d := range part {
+		ids = append(ids, *d.endpointID)
+	}
+	b := Batch{Devices: len(part)}
+	br, err := send(s.as(ctx, c, RoleAdmin, orgsOf(part)...), ids)
+	if err != nil {
+		s.noteError(err)
+		b.Error = message(epError(err))
+		msg := "Not sent: the patching engine refused this batch (" + cut(b.Error, 300) + ")."
+		var ee *Error
+		if !errors.As(err, &ee) || ee.Status < 400 || ee.Status >= 500 {
+			b.Unknown = true
+			msg = "Not known: the patching engine did not answer for this batch (" + cut(b.Error, 300) + "); see Jobs before sending it again."
+		}
+		for _, d := range part {
+			res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: msg})
+		}
+		return b, nil
+	}
+	before, start := res.Succeeded, len(res.Results)
+	err = s.settle(ctx, c, part, br, res, action, details)
+	if after != nil {
+		err = errors.Join(err, after(ctx, part, res.Results[start:]))
+	}
+	b.Sent = res.Succeeded - before
+	return b, err
 }
 
 // batchDetails is a Patch all's batches for the audit trail.
@@ -316,6 +356,9 @@ func batchDetails(bs []Batch) []map[string]any {
 		m := map[string]any{"devices": b.Devices, "sent": b.Sent}
 		if b.Error != "" {
 			m["error"] = b.Error
+		}
+		if b.Unknown {
+			m["unknown"] = true
 		}
 		out = append(out, m)
 	}

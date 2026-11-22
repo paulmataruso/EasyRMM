@@ -69,6 +69,13 @@ export function useOutcome() {
   return { report, dialog };
 }
 
+/** The jobs a bulk action created: one per device, or more for a device with more updates than one install takes. */
+function jobsText(r: PatchActionResult): string {
+  const jobs = r.results.reduce((n, x) => n + Math.max((x.jobIds?.length ?? 1) - 1, 0), r.succeeded);
+  if (jobs === r.succeeded) return `${plural(jobs, "job")} created, one per device`;
+  return `${plural(jobs, "job")} created for ${plural(r.succeeded, "device")}`;
+}
+
 function ResultDialog({ result, onClose }: { result: { verb: string; r: PatchActionResult } | null; onClose: () => void }) {
   const r = result?.r;
   const failed = r?.results.filter((x) => !x.ok) ?? [];
@@ -88,7 +95,9 @@ function ResultDialog({ result, onClose }: { result: { verb: string; r: PatchAct
           <>
             <ul className="space-y-0.5 text-sm">
               <li>
-                {plural(r.succeeded, "job")} created, one per device{r.failed > 0 ? `; ${plural(r.failed, "device")} did not start` : ""}.
+                {jobsText(r)}
+                {r.upToDate ? `; ${plural(r.upToDate, "device")} already up to date` : ""}
+                {r.failed > 0 ? `; ${plural(r.failed, "device")} did not start` : ""}.
               </li>
               {r.restartAfter !== undefined && (
                 <li>
@@ -97,12 +106,16 @@ function ResultDialog({ result, onClose }: { result: { verb: string; r: PatchAct
               )}
             </ul>
             {notTaken.length > 0 && (
-              <Alert tone="danger" title={`The patching engine did not take ${plural(notTaken.length, "batch", "batches")}`}>
+              <Alert tone="danger" title={`${plural(notTaken.length, "batch", "batches")} not sent, or not known to have been`}>
                 <ul className="space-y-0.5">
                   {r.batches!.map((b, i) =>
                     b.error ? (
                       <li key={i}>
-                        Batch {i + 1} of {r.batches!.length}: {plural(b.devices, "device")} not sent. {b.error}
+                        Batch {i + 1} of {r.batches!.length}:{" "}
+                        {b.unknown
+                          ? `not known whether its ${plural(b.devices, "device")} ${b.devices === 1 ? "was" : "were"} sent; see Jobs before sending again.`
+                          : `${plural(b.devices, "device")} not sent.`}{" "}
+                        {b.error}
                       </li>
                     ) : null,
                   )}
@@ -111,7 +124,7 @@ function ResultDialog({ result, onClose }: { result: { verb: string; r: PatchAct
               </Alert>
             )}
             {r.batches && r.batches.length > 1 && notTaken.length === 0 && (
-              <p className="text-xs text-muted">Sent in {plural(r.batches.length, "batch", "batches")} of at most {MAX_BULK.toLocaleString()} devices.</p>
+              <p className="text-xs text-muted">Sent in {plural(r.batches.length, "batch", "batches")}.</p>
             )}
             {r.scope && <SkippedList skipped={r.scope.skipped} intro="Left out, as they stood when it was sent:" />}
           </>
@@ -408,6 +421,9 @@ export function InstallDialog({
   const plat = usePlatforms(sc.data, open, !updateNow);
   const [what, setWhat] = useState<"policy" | "available">(updateNow ? "available" : "policy");
   const [features, setFeatures] = useState(false);
+  // Updates in the rollout delay are included by default (decided in review): installing everything now is what
+  // Update all now and every available update are for.
+  const [delayed, setDelayed] = useState(true);
   const [when, setWhen] = useState<"now" | "later">("now");
   const [at, setAt] = useState(() => localInput(tonight()));
   const whatName = useId();
@@ -419,6 +435,7 @@ export function InstallDialog({
       // Back to the start once closed, so opening again checks nothing twice.
       setWhat(updateNow ? "available" : "policy");
       setFeatures(false);
+      setDelayed(true);
     }
   }, [open, updateNow]);
 
@@ -430,10 +447,11 @@ export function InstallDialog({
     : { deviceIds: devices.map((d) => d.id) };
   const available = scope !== undefined && what === "available";
   const tooManyAvailable = available && count > MAX_BULK;
-  const availKey = open && available && targets && !tooManyAvailable ? JSON.stringify({ ...targets, features }) : "";
-  const avail = useApiMutation((body: PatchTargets & { features: boolean }) => api.post<PatchAvailablePlan>("/patching/install/plan", body));
+  const availKey = open && available && targets && !tooManyAvailable ? JSON.stringify({ ...targets, features, skipDelayed: !delayed }) : "";
+  type AvailBody = PatchTargets & { features: boolean; skipDelayed: boolean };
+  const avail = useApiMutation((body: AvailBody) => api.post<PatchAvailablePlan>("/patching/install/plan", body));
   const checkAvailable = () => {
-    if (availKey) avail.mutate(JSON.parse(availKey) as PatchTargets & { features: boolean });
+    if (availKey) avail.mutate(JSON.parse(availKey) as AvailBody);
   };
   useEffect(() => {
     if (availKey) checkAvailable();
@@ -501,6 +519,7 @@ export function InstallDialog({
                   updateIds: updates?.map((u) => u.id),
                   updates: scope ? what : undefined,
                   features: available ? features : undefined,
+                  skipDelayed: available ? !delayed : undefined,
                   scheduledAt: scheduledAt && !badTime ? scheduledAt.toISOString() : undefined,
                   ...rs.body,
                 })
@@ -541,6 +560,13 @@ export function InstallDialog({
                     <input type="checkbox" checked={features} onChange={(e) => setFeatures(e.target.checked)} className="size-4 accent-accent" />
                     Include feature upgrades (new Windows versions)
                   </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={delayed} onChange={(e) => setDelayed(e.target.checked)} className="size-4 accent-accent" />
+                    Include updates still in the rollout delay{avail.data ? ` (${avail.data.deferred.toLocaleString()})` : ""}
+                  </label>
+                  <p className="pl-6 text-xs text-muted">
+                    The patch policy holds new updates back for a few days after release; untick to leave them for the policy to install later.
+                  </p>
                 </div>
               )}
             </fieldset>
@@ -552,7 +578,7 @@ export function InstallDialog({
                 This reaches {plural(count, "device")}. Choose a site or fewer platforms, or install the updates each device&apos;s policy allows.
               </Alert>
             ) : (
-              targets && <AvailablePlanView plan={avail} onRetry={checkAvailable} />
+              targets && <AvailablePlanView plan={avail} onRetry={checkAvailable} skipDelayed={!delayed} />
             ))}
           {reached && (
             <WhenFields

@@ -147,11 +147,13 @@ All notable changes to this project are documented here. The format follows
   page has Patch all, a site's Update all now. The server reads "every
   device" when the request runs: those with a linked EasyPatch agent, not
   stopped, that you may patch; the dialog says how many, by platform, and
-  how many are left out and why. Installs go to the engine 1,000 devices at
+  how many are left out and why. Installs go to the engine 200 devices at
   a time with no limit on the organization's size, and each batch is
-  reported; every available update reaches at most 1,000 devices, and
-  leaves out updates excluded on a device, held, application updates the
-  policy does not approve, and feature upgrades unless ticked. One audit
+  reported, even if the page is closed meanwhile; every available update
+  reaches at most 1,000 devices, splits a device's updates into jobs of at
+  most 500 (the engine's limit), and leaves out updates excluded on a
+  device, held, application updates the policy does not approve, feature
+  upgrades unless ticked, and updates in the rollout delay if unticked. One audit
   record per request (`patch.install_all`, `patch.restart_all`) names the
   organization or site, the counts, what was left out, the batches and the
   presets. New: `GET /api/v1/patching/scope`,
@@ -166,8 +168,10 @@ All notable changes to this project are documented here. The format follows
   restart when an install ends, so EasyRMM does: it keeps the choice in its
   database (migration 00038), watches each install every minute, and asks
   the engine for one restart once the install has completed, never after
-  one that failed, was cancelled or expired; an install that waits for a
-  restart gets one then, and the last when it ends. A restart of EasyRMM's
+  one that failed, was cancelled or expired; it waits for an install the
+  engine timed out; an install that waits for a restart gets one then, up
+  to three, and the last when it ends; a restart already scheduled for
+  later is left as it is. A restart of EasyRMM's
   server neither loses nor repeats it. The install's job shows the choice
   and what became of it. See
   [Restart after the install](docs/operations/patching.md#restart-after-the-install).

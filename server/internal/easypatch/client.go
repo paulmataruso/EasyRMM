@@ -858,6 +858,10 @@ type bulkRequest struct {
 // MaxBulk is the most endpoints one bulk request takes.
 const MaxBulk = 1000
 
+// MaxSelected is the most updates one install of chosen updates takes: the
+// engine refuses more (JobService.CreateAsync).
+const MaxSelected = 500
+
 // BulkScan has endpoints scan for updates.
 func (c *Client) BulkScan(ctx context.Context, ids []uuid.UUID, onBehalfOf string) (BulkResult, error) {
 	var r BulkResult

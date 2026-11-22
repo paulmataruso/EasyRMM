@@ -7,9 +7,14 @@
 
 -- +goose Up
 
--- One install job asked to restart its device afterwards.
+-- One device's install asked to restart it afterwards.
 CREATE TABLE easypatch_install_restarts (
+    -- The device's last install job of the request.
     install_job_id        uuid PRIMARY KEY,
+    -- Each of its install jobs, that one included: more than one when the
+    -- device had more updates than the engine takes in one job (500), so
+    -- they were split. The device restarts once they have all completed.
+    install_job_ids       uuid[] NOT NULL CHECK (cardinality(install_job_ids) >= 1),
     device_id             uuid NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
     -- The device's endpoint and organization in the engine when the install
     -- was asked for: the restart goes to them.
@@ -25,16 +30,24 @@ CREATE TABLE easypatch_install_restarts (
     -- A server restarts only when the person ticked it by name.
     server_confirmed      boolean NOT NULL DEFAULT false,
     requested_by          uuid REFERENCES users (id) ON DELETE SET NULL,
+    -- A person asked: once requested_by is NULL, they were deleted, and the
+    -- device is not restarted on their behalf.
+    by_user               boolean NOT NULL DEFAULT false,
     -- Who asked, as the engine records it on the restart.
     requested_label       text NOT NULL DEFAULT '' CHECK (length(requested_label) <= 255),
     requested_at          timestamptz NOT NULL DEFAULT now(),
+    -- When the install was scheduled to start (NULL: at once). EasyRMM
+    -- waits up to 40 days from then for it to end.
+    scheduled_at          timestamptz,
     -- waiting: for the install to end; done: the restart was asked for;
     -- skipped: no restart, as message says; failed: the engine refused it.
     state                 text NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'done', 'skipped', 'failed')),
     message               text NOT NULL DEFAULT '' CHECK (length(message) <= 1000),
-    -- The restart asked for while the install waited for one to go on,
-    -- and the one asked for once it ended.
+    -- The last restart asked for while the install waited for one to go
+    -- on, and how many were (at most 3, one each time it waited again); the
+    -- one asked for once it ended.
     midway_job_id         uuid,
+    midway_count          integer NOT NULL DEFAULT 0 CHECK (midway_count BETWEEN 0 AND 3),
     restart_job_id        uuid,
     -- Set while a request for a restart may have reached the engine, and
     -- which one (midway or final). A claim left by a server that stopped is
@@ -46,12 +59,20 @@ CREATE TABLE easypatch_install_restarts (
     CHECK ((claimed_at IS NULL) = (claimed_for IS NULL)),
     CHECK ((state = 'waiting') = (finished_at IS NULL)),
     CHECK (state <> 'done' OR restart_job_id IS NOT NULL),
-    CHECK (state = 'waiting' OR claimed_at IS NULL)
+    CHECK (state = 'waiting' OR claimed_at IS NULL),
+    CHECK (install_job_id = ANY (install_job_ids)),
+    CHECK ((midway_count = 0) = (midway_job_id IS NULL))
 );
 CREATE INDEX easypatch_install_restarts_waiting ON easypatch_install_restarts (checked_at NULLS FIRST) WHERE state = 'waiting';
 CREATE INDEX easypatch_install_restarts_device ON easypatch_install_restarts (device_id);
 CREATE INDEX easypatch_install_restarts_restart ON easypatch_install_restarts (restart_job_id) WHERE restart_job_id IS NOT NULL;
 CREATE INDEX easypatch_install_restarts_midway ON easypatch_install_restarts (midway_job_id) WHERE midway_job_id IS NOT NULL;
+-- A job's restart afterwards is found from any of its install's jobs.
+CREATE INDEX easypatch_install_restarts_jobs ON easypatch_install_restarts USING gin (install_job_ids);
+-- Deleting a user sets requested_by to NULL on their rows.
+CREATE INDEX easypatch_install_restarts_requested_by ON easypatch_install_restarts (requested_by) WHERE requested_by IS NOT NULL;
+-- Finished rows are deleted after 180 days, as the engine deletes its jobs.
+CREATE INDEX easypatch_install_restarts_finished ON easypatch_install_restarts (finished_at) WHERE finished_at IS NOT NULL;
 
 -- Read through the device, whose own policy decides; changed with the
 -- system scope only.

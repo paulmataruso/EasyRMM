@@ -99,6 +99,7 @@ func TestRestart(t *testing.T) {
 	f.ep.Set(func() { f.e1.CannotRestart = false })
 
 	// Later.
+	f.finishRestarts()
 	soon, far, later := time.Now().Add(30*time.Second), time.Now().Add(32*24*time.Hour), time.Now().Add(3*time.Hour)
 	_, err = f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web}}, ScheduledAt: &soon})
 	wantField(t, err, "scheduledAt", "in the future")
@@ -166,6 +167,7 @@ func TestRestartOptions(t *testing.T) {
 	}
 	for mode, want := range map[string]string{"Immediate": "at once", "PromptNoDeadline": "when a signed-in user agrees",
 		"Countdown": "after a 15-minute countdown"} {
+		f.finishRestarts()
 		if _, err := f.svc.Restart(ctx, f.tech, RestartInput{Targets: Targets{DeviceIDs: web},
 			RestartOptions: RestartOptions{Mode: mode, CountdownMinutes: n(15), DeadlineMinutes: n(60)}}); err != nil {
 			t.Fatal(err)
@@ -198,6 +200,7 @@ func TestRestartOptions(t *testing.T) {
 	always := RestartOptions{Condition: "Always"}
 	_, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, RestartOptions: always})
 	wantField(t, err, "confirmServers", "These are servers; confirm restarting them: db-01.")
+	f.finishRestarts()
 	res, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{DeviceIDs: []uuid.UUID{f.web, f.db}}, RestartOptions: always, ConfirmServers: []uuid.UUID{f.db}})
 	if err != nil || res.Succeeded != 2 {
 		t.Fatalf("restart always: %+v, %v", res, err)

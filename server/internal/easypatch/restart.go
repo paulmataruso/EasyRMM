@@ -359,10 +359,12 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 	sc := &scope{view: *plan.Scope, devices: devices}
 	request := uuid.New()
 	details["patchAll"], details["requestId"] = sc.view.where(), request.String()
-	res.Batches, err = s.batches(ctx, c, devices, &res, "patch.restart", details, send)
+	res.Batches, err = s.batches(ctx, c, devices, &res, "patch.restart", details, send, nil)
 	s.fleet.clear()
 	extra := map[string]any{"restarted": len(devices), "serversLeftOut": len(unconfirmed)}
-	err = errors.Join(err, s.recordAll(ctx, c, "patch.restart_all", sc, request, &res, details, extra))
+	rctx, cancel := detached(ctx)
+	defer cancel()
+	err = errors.Join(err, s.recordAll(rctx, c, "patch.restart_all", sc, request, &res, details, extra))
 	return res, err
 }
 
