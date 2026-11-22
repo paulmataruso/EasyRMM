@@ -20,6 +20,20 @@ async function open(path: string) {
 
 const READY: PatchStatus = { configured: true };
 
+/** The organization and site pages ask whether Patch all is offered; it is tested in patchAll.test.tsx, so none here. */
+const NO_PATCH_ALL = {
+  "GET /patching/scope": ok({
+    organizationId: "o1",
+    organizationName: "Northwind Traders",
+    siteId: null,
+    siteName: "",
+    devices: 0,
+    byPlatform: [],
+    skipped: [],
+    canManage: false,
+  }),
+};
+
 /** Configures patching in its organizations; not a super administrator. */
 const ORG_ADMIN = sessionView({
   isSuperAdmin: false,
@@ -150,6 +164,7 @@ function orgRoutes(session = ORG_ADMIN, extra: Record<string, FakeHandler | Fake
     "GET /organizations/:id/sites": ok({ items: [] }),
     "GET /patching": ok(READY),
     "GET /patching/tags/of/organization/:id": ok({ tags: [], canAssign: false }),
+    ...NO_PATCH_ALL,
     ...policyRoutes("organization", view("organization", "Northwind Traders")),
     ...extra,
   };
@@ -404,6 +419,7 @@ describe("policy editor", () => {
       "GET /organizations/:id": ok(org("o1", "Northwind Traders")),
       "GET /sites/:id/device-groups": ok({ items: [] }),
       "GET /patching": ok(READY),
+      ...NO_PATCH_ALL,
       "GET /patching/tags/of/site/:id": ok({ tags: [{ id: "t1", name: "Servers", color: "teal" }], canAssign: false }),
       ...policyRoutes(
         "site",

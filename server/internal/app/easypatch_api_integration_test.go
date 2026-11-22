@@ -316,7 +316,9 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
-	// How users are asked, and whether a restart need be pending.
+	// How users are asked, and whether a restart need be pending, once the
+	// first restart ran: the engine refuses another while one is queued.
+	ep.SetJobStatus(uuid.MustParse(res.Results[0].JobID), "Completed")
 	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device},
 		"mode": "PromptWithDeadline", "deadlineMinutes": 120, "expiresAfterMinutes": 60}, &res)
 	if res.Succeeded != 1 {
@@ -334,6 +336,71 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}, "condition": "Sometimes"}),
 		http.StatusUnprocessableEntity, "validation_failed")
 
+	// Patch all of Acme, or of HQ (ADR-0030, amended 2026-11-22).
+	var scope struct {
+		OrganizationName string  `json:"organizationName"`
+		SiteID           *string `json:"siteId"`
+		SiteName         string  `json:"siteName"`
+		Devices          int     `json:"devices"`
+		ByPlatform       []struct {
+			Platform string `json:"platform"`
+			Count    int    `json:"count"`
+		} `json:"byPlatform"`
+		Skipped   []any `json:"skipped"`
+		CanManage bool  `json:"canManage"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/scope?organizationId="+acme, nil, &scope)
+	if scope.OrganizationName != "Acme" || scope.SiteID != nil || scope.Devices != 1 || !scope.CanManage || len(scope.ByPlatform) != 1 ||
+		len(scope.Skipped) != 0 {
+		t.Fatalf("scope: %+v", scope)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/scope?organizationId="+acme+"&siteId="+hq.ID, nil, &scope)
+	if scope.SiteName != "HQ" || scope.Devices != 1 {
+		t.Fatalf("site scope: %+v", scope)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/patching/scope?organizationId=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("GET", "/api/v1/patching/scope?organizationId="+acme+"&siteId=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	var avail struct {
+		Devices int `json:"devices"`
+		Updates int `json:"updates"`
+		Scope   *struct {
+			Devices int `json:"devices"`
+		} `json:"scope"`
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/install/plan", map[string]any{"all": true, "organizationId": acme, "siteId": hq.ID,
+		"platforms": []string{"linux", "windows"}}, &avail)
+	if avail.Devices != 1 || avail.Updates != 2 || avail.Scope == nil || avail.Scope.Devices != 1 {
+		t.Fatalf("available plan: %+v", avail)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/install/plan", "x"), http.StatusBadRequest, "bad_request")
+	var all struct {
+		Succeeded    int `json:"succeeded"`
+		RestartAfter int `json:"restartAfter"`
+		Batches      []struct {
+			Devices int `json:"devices"`
+			Sent    int `json:"sent"`
+		} `json:"batches"`
+		Scope *struct {
+			Devices int `json:"devices"`
+		} `json:"scope"`
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/install", map[string]any{"all": true, "organizationId": acme, "updates": "available",
+		"restart": map[string]any{"condition": "OnlyIfPending", "mode": "Countdown", "countdownMinutes": 15}, "confirmServers": []string{device}}, &all)
+	if all.Succeeded != 1 || all.RestartAfter != 1 || all.Scope == nil || all.Scope.Devices != 1 || len(all.Batches) != 0 {
+		t.Fatalf("update all now: %+v", all)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart/plan", map[string]any{"all": true, "organizationId": acme, "afterInstall": true,
+		"condition": "OnlyIfPending"}, &plan)
+	if len(plan.Devices) != 1 || !plan.Devices[0].Server {
+		t.Fatalf("restart plan after the install: %+v", plan)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"all": true, "organizationId": acme}, &all)
+	if all.Succeeded != 0 || len(all.Batches) != 0 || all.Scope == nil {
+		t.Fatalf("restart all, the server not ticked: %+v", all)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/install", map[string]any{"all": true, "organizationId": acme, "deviceIds": []string{device}}),
+		http.StatusUnprocessableEntity, "validation_failed")
+
 	// The device's Patches tab. web-01 is a Linux endpoint: EasyPatch refuses
 	// messages and removals there.
 	var guid string
@@ -345,6 +412,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	notObject := []int{1}
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/api/v1/patching/restart/plan"}, {"POST", "/api/v1/patching/restart"}, {"POST", "/api/v1/patching/stop"},
+		{"POST", "/api/v1/patching/install/plan"},
 		{"POST", "/api/v1/patching/allow"}, {"POST", dp + "/exclusions"}, {"POST", dp + "/updates/" + guid + "/remove"},
 		{"POST", "/api/v1/patching/notify"}, {"POST", "/api/v1/patching/agent-update"},
 		{"POST", "/api/v1/patching/updates/" + guid + "/remove"}, {"POST", "/api/v1/patching/updates/" + guid + "/holds"},
@@ -610,7 +678,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		got = append(got, a.Action)
 	}
 	if strings.Join(got, ",") != "patch.release_hold,patch.hold,patch.install,patch.install,patch.agent_update,patch.include,patch.exclude,"+
-		"patch.restart,patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
+		"patch.restart_all,patch.install_all,patch.install,patch.restart,patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 

@@ -2618,18 +2618,134 @@ export interface PatchJobDetail {
   deviceId: string;
   deviceName: string;
   canManage: boolean;
+  /** On an install asked to restart the device afterwards: the choice, and what became of it. */
+  restartAfter?: PatchRestartAfter | null;
+  /** On a restart EasyRMM asked for after an install: the install job's id. */
+  restartFor?: string | null;
 }
 
-export interface PatchActionInput {
-  deviceIds: string[];
+/** A restart asked for with an install, and what became of it. */
+export interface PatchRestartAfter {
+  /** OnlyIfPending: if the updates need it; Always: when done. */
+  condition: RestartCondition;
+  mode: RestartMode;
+  countdownMinutes: number | null;
+  deadlineMinutes: number | null;
+  expiresAfterMinutes: number | null;
+  /** waiting: for the install to end; done: the restart was asked for; skipped: no restart (message says why); failed: the engine refused it. */
+  state: "waiting" | "done" | "skipped" | "failed";
+  message: string;
+  /** The restart EasyRMM asked for once the install ended. */
+  restartJobId: string | null;
+  /** A restart asked for while the install waited for one to go on. */
+  midwayJobId: string | null;
+  /** A server ticked by name. */
+  server: boolean;
+  /** Who asked, by email; "" when unknown. */
+  requestedBy: string;
+  requestedAt: string;
+}
+
+/**
+ * The devices an action reaches: chosen devices, or every device of an organization (or one of its sites) the caller
+ * may patch, optionally narrowed to some platforms.
+ */
+export interface PatchTargets {
+  deviceIds?: string[];
+  all?: boolean;
+  organizationId?: string;
+  siteId?: string;
+  /** Device platforms to include; every platform when absent. */
+  platforms?: Platform[];
+}
+
+/** Why a device of an organization or site is left out of an action on all of it. */
+export type PatchScopeSkip = "not_permitted" | "stopped" | "no_agent" | "not_linked" | "platform";
+
+/** An organization, or one of its sites, as an action on all of it would reach it. */
+export interface PatchScope {
+  organizationId: string;
+  organizationName: string;
+  siteId: string | null;
+  /** "" without a site. */
+  siteName: string;
+  /** Devices the action reaches: linked to an EasyPatch agent, patching not stopped, and the caller may patch them. */
+  devices: number;
+  /** Of those, how many of each platform (counts above 0, Windows first). */
+  byPlatform: { platform: Platform; count: number }[];
+  /** Devices left out, and why (counts above 0). Devices the caller may not see are not counted at all. */
+  skipped: { reason: PatchScopeSkip; count: number }[];
+  /** The caller may install and restart here. */
+  canManage: boolean;
+}
+
+/** What installing every available update would do across devices (POST /patching/install/plan). */
+export interface PatchAvailablePlan {
+  /** Devices with at least one update to install, and how many updates in all. */
+  devices: number;
+  updates: number;
+  /** Devices with nothing to install. */
+  upToDate: number;
+  categories: { category: string; count: number }[];
+  /** Feature upgrades found: installed only when asked for. */
+  features: number;
+  /** Updates left out because they are excluded on the device; `devices` lists the first 50. */
+  excluded: { count: number; devices: { deviceId: string; deviceName: string; count: number }[] };
+  /** Left out: on hold. */
+  held: number;
+  /** Left out: application updates the policy does not approve. */
+  notApproved: number;
+  /** Still in their rollout delay: included unless skipDelayed was asked for. */
+  deferred: number;
+  /** Devices whose updates could not be read. */
+  errors: { deviceId: string; deviceName: string; message: string }[];
+  scope?: PatchScope;
+}
+
+export type RestartCondition = "OnlyIfPending" | "Always";
+
+/** A restart asked for with an install: each device restarts once its install has finished. */
+export interface AfterInstallRestart {
+  condition: RestartCondition;
+  mode?: RestartMode;
+  countdownMinutes?: number;
+  deadlineMinutes?: number;
+  expiresAfterMinutes?: number;
+}
+
+export interface PatchActionInput extends PatchTargets {
   updateIds?: string[];
   scheduledAt?: string;
+  /** policy (the default): what each device's policy allows; available: every update the engine reports, but those left out. */
+  updates?: "policy" | "available";
+  /** With available: feature upgrades too. */
+  features?: boolean;
+  /** With available: leave out the updates still in the policy's rollout delay. */
+  skipDelayed?: boolean;
+  restart?: AfterInstallRestart;
+  /** Servers ticked by name: only these restart after the install; other servers install but do not restart. */
+  confirmServers?: string[];
 }
 
 export interface PatchActionResult {
   succeeded: number;
   failed: number;
-  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
+  /** Devices with nothing to install: no job, and no failure. */
+  upToDate?: number;
+  /**
+   * Each device's outcome. jobIds lists its jobs when there are several (more updates than one install takes), jobId
+   * being the last.
+   */
+  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; jobIds?: string[]; upToDate?: boolean; message?: string }[];
+  /** On all of an organization or site: the scope as it was when the request ran. */
+  scope?: PatchScope;
+  /**
+   * On all of an organization or site: each batch sent to the patching engine. error says why it was not taken;
+   * unknown, that the engine did not answer, so whether it took the batch is not known.
+   */
+  batches?: { devices: number; sent: number; error?: string; unknown?: boolean }[];
+  /** Devices that restart once their install has finished. */
+  restartAfter?: number;
 }
 
 /** Where a link from EasyPatch opens the console; `notice` says why it is not the page the link named. */
@@ -2652,16 +2768,17 @@ export interface RestartCheck {
 
 export interface RestartPlan {
   devices: RestartCheck[];
+  /** On all of an organization or site. */
+  scope?: PatchScope;
 }
 
 /** How a restart treats the people signed in. */
 export type RestartMode = "Countdown" | "PromptWithDeadline" | "PromptNoDeadline" | "Immediate";
 
-export interface RestartInput {
-  deviceIds: string[];
+export interface RestartInput extends PatchTargets {
   mode?: RestartMode;
   /** OnlyIfPending (the default): only if a restart is still pending when the job runs; Always: whatever the device reports. */
-  condition?: "OnlyIfPending" | "Always";
+  condition?: RestartCondition;
   /** Countdown: 1 to 60 minutes. */
   countdownMinutes?: number;
   /** PromptWithDeadline: 15 minutes to 7 days. */
@@ -2669,7 +2786,10 @@ export interface RestartInput {
   /** How long a restart waits for an offline device: 15 minutes to 24 hours (EasyPatch's default is two hours). */
   expiresAfterMinutes?: number;
   scheduledAt?: string;
-  /** The servers the person ticked; any server not listed stops the whole request. */
+  /**
+   * The servers the person ticked. With chosen devices, any server not listed stops the whole request; with all of an
+   * organization or site, servers not listed are left out.
+   */
   confirmServers?: string[];
 }
 

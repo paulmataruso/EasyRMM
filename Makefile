@@ -208,7 +208,8 @@ web-test: web-deps ## Typecheck and unit-test the web console, with coverage flo
 	cd web && npm run typecheck && npm run test:coverage
 
 .PHONY: e2e
-e2e: web build build-agents ## Browser end-to-end tests against a real server (needs `make test-db`)
+e2e: web build build-agents ## Browser end-to-end tests against a real server and the patching engine's stand-in (needs `make test-db`)
+	CGO_ENABLED=0 $(GO) build -o bin/eptest-engine ./server/internal/easypatch/eptest/cmd/eptest-engine
 	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test
 
 .PHONY: e2e-bundle

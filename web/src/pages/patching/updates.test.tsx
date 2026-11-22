@@ -219,6 +219,8 @@ function routes(session = TECH, extra: Record<string, FakeHandler | FakeReply> =
     "GET /patching/devices": ok(FLEET),
     "GET /patching/jobs": ok({ items: [] }),
     "GET /patching/alerts/summary": ok({ open: 0, acknowledged: 0, critical: 0, warning: 0, info: 0, capped: false }),
+    // With an organization chosen, the overview asks whether Patch all is offered (patchAll.test.tsx): not here.
+    "GET /patching/scope": fail(409, "easypatch_not_linked", "The organization is not in the patching engine yet."),
     ...extra,
   };
 }

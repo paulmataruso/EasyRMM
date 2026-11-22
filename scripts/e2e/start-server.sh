@@ -13,13 +13,14 @@
 #   EASYRMM_E2E_INSECURE_COOKIES  true (default) for plain HTTP on loopback;
 #                          false behind a TLS proxy
 #
-# Remote access is enabled but no MeshCentral runs, nor a patching engine
-# (none listens on PORT+13): the console shows devices and reports remote
-# access and patching as unavailable.
+# Remote access is enabled but no MeshCentral runs: the console reports remote
+# access as unavailable. The patching engine is a stand-in (bin/eptest-engine,
+# eptest's server in a process of its own) on PORT+13, with the run's key; the
+# tests add its endpoints and finish its jobs through its /__eptest/ calls.
 #
 # Playwright starts this script (web/playwright.config.ts) and stops it when the
-# suite ends. It expects bin/easyrmm-server to be built with the web UI embedded
-# (make e2e does both).
+# suite ends. It expects bin/easyrmm-server to be built with the web UI embedded,
+# and bin/eptest-engine (make e2e builds them).
 set -eu
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,8 +31,10 @@ db=${EASYRMM_E2E_DB:-easyrmm_e2e}
 public_url=${EASYRMM_E2E_PUBLIC_URL:-https://rmm.localhost}
 insecure_cookies=${EASYRMM_E2E_INSECURE_COOKIES:-true}
 binary=$root/bin/easyrmm-server
+engine=$root/bin/eptest-engine
 
 [ -x "$binary" ] || { echo "start-server: $binary is missing; run make build (or make e2e)" >&2; exit 1; }
+[ -x "$engine" ] || { echo "start-server: $engine is missing; run make e2e" >&2; exit 1; }
 
 owner_pw=$(openssl rand -hex 24)
 app_pw=$(openssl rand -hex 24)
@@ -58,6 +61,12 @@ rm -rf "$run_dir"
 mkdir -p "$run_dir/data" "$run_dir/meshcentral"
 chmod 700 "$run_dir/data" "$run_dir/meshcentral"
 
+patching_key=$(openssl rand -base64 32)
+EASYRMM_PATCHING_KEY=$patching_key "$engine" -listen "127.0.0.1:$((port + 13))" &
+engine_pid=$!
+server_pid=
+trap 'kill $server_pid $engine_pid 2>/dev/null' EXIT INT TERM
+
 EASYRMM_PUBLIC_URL=$public_url \
 EASYRMM_TLS_MODE=offload \
 EASYRMM_TRUSTED_PROXIES=127.0.0.1/32 \
@@ -71,7 +80,9 @@ EASYRMM_AGENT_DIR=$root/bin/agents \
 EASYRMM_DATABASE_URL="postgres://easyrmm_app:$app_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_DATABASE_MIGRATION_URL="postgres://easyrmm_owner:$owner_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_SECRET_KEY=$(openssl rand -base64 32) \
-EASYRMM_PATCHING_KEY=$(openssl rand -base64 32) \
+EASYRMM_PATCHING_KEY=$patching_key \
 EASYRMM_PATCHING_URL=http://127.0.0.1:$((port + 13)) \
 EASYRMM_LOG_LEVEL=warn \
-exec "$binary" serve
+"$binary" serve &
+server_pid=$!
+wait "$server_pid"

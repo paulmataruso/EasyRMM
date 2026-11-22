@@ -2,6 +2,7 @@ package easypatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -90,6 +91,8 @@ type RestartCheck struct {
 // RestartPlan is what a restart of chosen devices would do.
 type RestartPlan struct {
 	Devices []RestartCheck `json:"devices"`
+	// Scope is a Patch all's organization or site.
+	Scope *ScopeView `json:"scope,omitempty"`
 }
 
 // restartTarget is a linked device a restart could go to, and its check
@@ -99,52 +102,102 @@ type restartTarget struct {
 	check  int
 }
 
+// RestartPlanInput chooses the devices of a restart plan.
+type RestartPlanInput struct {
+	Targets
+	// Condition is OnlyIfPending (the default) or Always.
+	Condition string `json:"condition"`
+	// AfterInstall plans a restart once an install has finished: each device
+	// is read from the engine, whether or not a restart is pending now.
+	AfterInstall bool `json:"afterInstall"`
+}
+
 // PlanRestart says what a restart of the devices would do, without doing it:
 // with condition Always, also on devices with no restart pending.
-func (s *Service) PlanRestart(ctx context.Context, c access.Caller, ids []uuid.UUID, condition string) (RestartPlan, error) {
-	if condition != "" && !slices.Contains(restartConditions, condition) {
+func (s *Service) PlanRestart(ctx context.Context, c access.Caller, in RestartPlanInput) (RestartPlan, error) {
+	if in.Condition != "" && !slices.Contains(restartConditions, in.Condition) {
 		return RestartPlan{}, apperr.Invalid("condition", "Choose whether it restarts only when a restart is pending.")
+	}
+	if err := in.checkTargets(); err != nil {
+		return RestartPlan{}, err
 	}
 	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return RestartPlan{}, err
 	}
-	plan, _, err := s.planRestart(ctx, c, cl, ids, condition == "Always")
+	plan, _, err := s.planRestart(ctx, c, cl, in.Targets, in.Condition == conditionAlways, in.AfterInstall)
 	return plan, err
 }
 
-func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, ids []uuid.UUID, always bool) (RestartPlan, []restartTarget, error) {
-	if len(ids) == 0 || len(ids) > MaxBulk {
-		return RestartPlan{}, nil, apperr.Invalid("deviceIds", fmt.Sprintf("Choose from 1 to %d devices.", MaxBulk))
-	}
-	if always && len(dedupe(ids)) > maxAlwaysRestart {
-		return RestartPlan{}, nil, apperr.Invalid("deviceIds",
-			fmt.Sprintf("Choose at most %d devices to restart whether or not a restart is pending.", maxAlwaysRestart))
-	}
+func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, t Targets, always, afterInstall bool) (RestartPlan, []restartTarget, error) {
 	plan := RestartPlan{Devices: []RestartCheck{}}
 	var targets []restartTarget
-	byOrg := map[uuid.UUID][]int{} // EasyPatch organization → indexes into targets
-	seen := map[uuid.UUID]bool{}
-	for _, id := range ids {
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		d, err := s.device(ctx, c, id, rbac.PermPatchManage)
+	if t.All {
+		sc, err := s.resolveAll(ctx, c, t)
 		if err != nil {
 			return RestartPlan{}, nil, err
 		}
-		check := RestartCheck{DeviceID: d.id, DeviceName: d.name}
-		if err := notLinked(d); err != nil {
-			check.Reason = message(err)
-		} else if d.easyPatchOrg == nil {
-			check.Reason = "Its organization is not in the patching engine yet."
+		plan.Scope = &sc.view
+		if always && len(sc.devices) > maxAlwaysRestart {
+			return RestartPlan{}, nil, apperr.Invalid("condition", fmt.Sprintf("%s has %s devices: restarting whether or not a restart is "+
+				"pending reaches at most %d devices at once. Restart only those with a restart pending, or choose devices.",
+				sc.view.where(), thousands(len(sc.devices)), maxAlwaysRestart))
 		}
-		plan.Devices = append(plan.Devices, check)
-		if check.Reason == "" {
-			byOrg[*d.easyPatchOrg] = append(byOrg[*d.easyPatchOrg], len(targets))
+		for _, d := range sc.devices {
+			plan.Devices = append(plan.Devices, RestartCheck{DeviceID: d.id, DeviceName: d.name})
 			targets = append(targets, restartTarget{device: d, check: len(plan.Devices) - 1})
 		}
+	} else {
+		ids := t.DeviceIDs
+		if len(ids) == 0 || len(ids) > MaxBulk {
+			return RestartPlan{}, nil, apperr.Invalid("deviceIds", fmt.Sprintf("Choose from 1 to %d devices.", MaxBulk))
+		}
+		if always && len(dedupe(ids)) > maxAlwaysRestart {
+			return RestartPlan{}, nil, apperr.Invalid("deviceIds",
+				fmt.Sprintf("Choose at most %d devices to restart whether or not a restart is pending.", maxAlwaysRestart))
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, id := range ids {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			d, err := s.device(ctx, c, id, rbac.PermPatchManage)
+			if err != nil {
+				return RestartPlan{}, nil, err
+			}
+			check := RestartCheck{DeviceID: d.id, DeviceName: d.name}
+			if err := notLinked(d); err != nil {
+				check.Reason = message(err)
+			} else if d.easyPatchOrg == nil {
+				check.Reason = "Its organization is not in the patching engine yet."
+			}
+			plan.Devices = append(plan.Devices, check)
+			if check.Reason == "" {
+				targets = append(targets, restartTarget{device: d, check: len(plan.Devices) - 1})
+			}
+		}
+	}
+	if afterInstall {
+		// After an install, what is pending now does not matter: each
+		// device is read for whether it is a server and can restart.
+		if len(targets) > MaxBulk {
+			return RestartPlan{}, nil, apperr.Invalid("restart", fmt.Sprintf("Restarting after the install reaches at most %s devices at once.",
+				thousands(MaxBulk)))
+		}
+		errs := make([]error, len(targets))
+		forEach(len(targets), func(i int) {
+			tg := targets[i]
+			errs[i] = s.checkAnyRestart(s.as(ctx, c, RoleReadOnly, *tg.device.easyPatchOrg), cl, *tg.device.endpointID, &plan.Devices[tg.check])
+		})
+		if err := errors.Join(errs...); err != nil {
+			return RestartPlan{}, nil, err
+		}
+		return plan, targets, nil
+	}
+	byOrg := map[uuid.UUID][]int{} // EasyPatch organization → indexes into targets
+	for i, tg := range targets {
+		byOrg[*tg.device.easyPatchOrg] = append(byOrg[*tg.device.easyPatchOrg], i)
 	}
 	for org, idx := range byOrg {
 		rctx := s.as(ctx, c, RoleReadOnly, org)
@@ -158,11 +211,11 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 			listed[e.ID] = e
 		}
 		for _, i := range idx {
-			t := targets[i]
-			check := &plan.Devices[t.check]
-			e, ok := listed[*t.device.endpointID]
+			tg := targets[i]
+			check := &plan.Devices[tg.check]
+			e, ok := listed[*tg.device.endpointID]
 			if !ok && always {
-				if err := s.checkAnyRestart(rctx, cl, *t.device.endpointID, check); err != nil {
+				if err := s.checkAnyRestart(rctx, cl, *tg.device.endpointID, check); err != nil {
 					return RestartPlan{}, nil, err
 				}
 				continue
@@ -203,7 +256,7 @@ func (s *Service) checkAnyRestart(ctx context.Context, cl *Client, endpointID uu
 
 // RestartInput chooses the devices of a restart, and how it restarts them.
 type RestartInput struct {
-	DeviceIDs []uuid.UUID `json:"deviceIds"`
+	Targets
 	RestartOptions
 	// ConfirmServers lists the servers the person confirmed restarting.
 	ConfirmServers []uuid.UUID `json:"confirmServers"`
@@ -233,41 +286,51 @@ func deref(n *int, def int) int {
 
 // Restart restarts the devices: those that have a restart pending, or all of
 // them with condition Always. A server not confirmed in ConfirmServers stops
-// the whole request.
+// a restart of chosen devices; a restart of every device of an organization
+// or site (All) leaves it out.
 func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput) (ActionResult, error) {
 	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
+	if err := in.checkTargets(); err != nil {
+		return ActionResult{}, err
+	}
 	if err := in.normalize(s.now()); err != nil {
 		return ActionResult{}, err
 	}
-	always := in.Condition == "Always"
-	plan, targets, err := s.planRestart(ctx, c, cl, in.DeviceIDs, always)
+	always := in.Condition == conditionAlways
+	plan, targets, err := s.planRestart(ctx, c, cl, in.Targets, always, false)
 	if err != nil {
 		return ActionResult{}, err
 	}
+	res := ActionResult{Results: []ActionItem{}, Scope: plan.Scope}
 	var unconfirmed, servers []string
+	left := map[uuid.UUID]bool{}
 	for _, t := range targets {
 		if check := plan.Devices[t.check]; check.Restart && check.Server {
-			if !slices.Contains(in.ConfirmServers, t.device.id) {
-				unconfirmed = append(unconfirmed, t.device.name)
+			if slices.Contains(in.ConfirmServers, t.device.id) {
+				servers = append(servers, t.device.name)
+				continue
 			}
-			servers = append(servers, t.device.name)
+			unconfirmed = append(unconfirmed, t.device.name)
+			left[t.device.id] = true
 		}
 	}
-	if len(unconfirmed) > 0 {
+	if len(unconfirmed) > 0 && !in.All {
 		return ActionResult{}, apperr.Invalid("confirmServers", "These are servers; confirm restarting them: "+strings.Join(unconfirmed, ", ")+".")
 	}
-	res := ActionResult{Results: []ActionItem{}}
 	var devices []deviceRow
 	for _, ch := range plan.Devices {
-		if !ch.Restart {
+		switch {
+		case left[ch.DeviceID]:
+			res.add(ActionItem{DeviceID: ch.DeviceID, DeviceName: ch.DeviceName, Message: "A server that was not ticked by name: not restarted."})
+		case !ch.Restart:
 			res.add(ActionItem{DeviceID: ch.DeviceID, DeviceName: ch.DeviceName, Message: ch.Reason})
 		}
 	}
 	for _, t := range targets {
-		if plan.Devices[t.check].Restart {
+		if plan.Devices[t.check].Restart && !left[t.device.id] {
 			devices = append(devices, t.device)
 		}
 	}
@@ -284,11 +347,24 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 	if len(servers) > 0 {
 		details["confirmedServers"] = servers
 	}
-	actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
-	err = s.bulk(ctx, c, devices, &res, "patch.restart", details, func(ids []uuid.UUID) (BulkResult, error) {
+	send := func(actx context.Context, ids []uuid.UUID) (BulkResult, error) {
 		return cl.BulkRestart(actx, ids, in.RestartOptions, c.Actor.Label)
-	})
+	}
+	if !in.All {
+		actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
+		err = s.bulk(ctx, c, devices, &res, "patch.restart", details, func(ids []uuid.UUID) (BulkResult, error) { return send(actx, ids) })
+		s.fleet.clear()
+		return res, err
+	}
+	sc := &scope{view: *plan.Scope, devices: devices}
+	request := uuid.New()
+	details["patchAll"], details["requestId"] = sc.view.where(), request.String()
+	res.Batches, err = s.batches(ctx, c, devices, &res, "patch.restart", details, send, nil)
 	s.fleet.clear()
+	extra := map[string]any{"restarted": len(devices), "serversLeftOut": len(unconfirmed)}
+	rctx, cancel := detached(ctx)
+	defer cancel()
+	err = errors.Join(err, s.recordAll(rctx, c, "patch.restart_all", sc, request, &res, details, extra))
 	return res, err
 }
 

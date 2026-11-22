@@ -25,6 +25,7 @@ import {
 } from "../../components/ui";
 import { formatDateTime } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { PatchAllButton } from "../patching/PatchAllButton";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
 import { ContactsPanel } from "./Contacts";
@@ -92,6 +93,7 @@ export function SiteDetailPage() {
         subtitle={[s.timezone, addressLines(s).join(", ")].filter(Boolean).join(" · ")}
         actions={
           <>
+            {patched && <PatchAllButton organizationId={s.organizationId} siteId={s.id} preset="update-now" />}
             {can("enrollment.manage") && (
               <Link to={`/devices/add?siteId=${s.id}`} className={buttonClasses("secondary")}>
                 <MonitorDown className="size-4" aria-hidden />

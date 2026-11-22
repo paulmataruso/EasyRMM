@@ -1,16 +1,19 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Trash2, Unlink, WifiOff } from "lucide-react";
-import { api } from "../../api/client";
-import { useApi, useApiMutation, useList } from "../../api/hooks";
+import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Trash2, Unlink, WifiOff, Zap } from "lucide-react";
+import { api, errorMessage } from "../../api/client";
+import { useApi, useApiMutation, useList, useSites } from "../../api/hooks";
 import type { ComplianceStatus, PatchAlertCounts, PatchFleet, PatchJobView, PatchUnmatchedEndpoint } from "../../api/types";
+import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
-import { OrganizationSelect } from "../../components/Filters";
+import { OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, Toolbar, type Tone } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { InstallDialog, RestartDialog } from "./PatchDialogs";
 import { COMPLIANCE, ComplianceBadge } from "./patchText";
+import { scopeLabel, usePatchScope, type ScopeTarget } from "./scopeParts";
 
 /**
  * Patching → Overview: how up to date the devices are, what needs attention, worst first, each
@@ -19,17 +22,34 @@ import { COMPLIANCE, ComplianceBadge } from "./patchText";
  */
 export function PatchingOverview() {
   const url = useUrlState();
+  const { can } = useAuth();
   const organizationId = url.get("organizationId");
-  const fleet = useApi<PatchFleet>("/patching/devices", { organizationId: organizationId || undefined }, { keepPrevious: true, refetchInterval: 60_000 });
+  const siteId = url.get("siteId");
+  const sites = useSites(organizationId || null);
+  const fleet = useApi<PatchFleet>(
+    "/patching/devices",
+    { organizationId: organizationId || undefined, siteId: siteId || undefined },
+    { keepPrevious: true, refetchInterval: 60_000 },
+  );
+  // Jobs and alerts are counted by organization; the patching engine does not list them by site.
   const jobs = useList<PatchJobView>("/patching/jobs", { organizationId: organizationId || undefined, active: "true" }, { refetchInterval: 30_000 });
   const alerts = useApi<PatchAlertCounts>("/patching/alerts/summary", { organizationId: organizationId || undefined }, { refetchInterval: 60_000 });
   const t = useMemo(() => (fleet.data ? tally(fleet.data) : null), [fleet.data]);
+  const keep: Keep = { ...(organizationId && { organizationId }), ...(siteId && { siteId }) };
 
   return (
     <>
       <Toolbar>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null })} />
+        <SiteSelect
+          organizationId={organizationId}
+          value={siteId}
+          // A site chosen across organizations chooses its organization too: Patch all acts on one organization.
+          onChange={(v) => url.set({ siteId: v, organizationId: organizationId || sites.items.find((s) => s.id === v)?.organizationId || null })}
+          className="max-w-64"
+        />
       </Toolbar>
+      {organizationId && can("patch.manage") && <PatchAll organizationId={organizationId} siteId={siteId} />}
       {fleet.isPending ? (
         <Spinner />
       ) : fleet.isError ? (
@@ -50,14 +70,8 @@ export function PatchingOverview() {
               </Alert>
             ))}
             <div className="mb-5 grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              <Compliance t={t} organizationId={organizationId} />
-              <Attention
-                t={t}
-                unmatched={fleet.data.unmatched.length}
-                activeJobs={jobs.items.length}
-                alerts={alerts.data}
-                organizationId={organizationId}
-              />
+              <Compliance t={t} keep={keep} />
+              <Attention t={t} unmatched={fleet.data.unmatched.length} activeJobs={jobs.items.length} alerts={alerts.data} keep={keep} />
             </div>
             {t.orgs.length > 1 && <Organizations orgs={t.orgs} />}
             <Unmatched fleet={fleet.data} />
@@ -67,6 +81,49 @@ export function PatchingOverview() {
         )
       )}
     </>
+  );
+}
+
+/**
+ * Patch all, Schedule restart all, and for a site Update all now: an install or restart of every device of the
+ * organization or site chosen, for those who may patch there.
+ */
+function PatchAll({ organizationId, siteId }: { organizationId: string; siteId: string }) {
+  const scope = usePatchScope({ organizationId, siteId: siteId || undefined });
+  const [open, setOpen] = useState<"install" | "update-now" | "restart" | null>(null);
+  if (scope.isPending) return null;
+  if (scope.isError) {
+    return <p className="mb-4 text-xs text-muted">Patch all is not available here: {errorMessage(scope.error)}</p>;
+  }
+  const s = scope.data;
+  if (!s.canManage) return null;
+  const label = scopeLabel(s.organizationName, s.siteName);
+  const target: ScopeTarget = { organizationId, siteId: siteId || undefined, label };
+  const left = s.skipped.reduce((n, k) => n + k.count, 0);
+  const close = () => setOpen(null);
+  return (
+    <section aria-label={`Every device in ${label}`} className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3 shadow-xs">
+      <p className="min-w-0 text-sm">
+        These act on every device in <span className="font-medium">{label}</span> you may patch: {plural(s.devices, "device")}
+        {left > 0 && <span className="text-muted">; {left.toLocaleString()} more are left out</span>}.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {siteId && (
+          <Button variant="primary" icon={<Zap className="size-4" aria-hidden />} onClick={() => setOpen("update-now")}>
+            Update all now…
+          </Button>
+        )}
+        <Button icon={<Download className="size-4" aria-hidden />} onClick={() => setOpen("install")}>
+          Patch all…
+        </Button>
+        <Button icon={<Power className="size-4" aria-hidden />} onClick={() => setOpen("restart")}>
+          Schedule restart all…
+        </Button>
+      </div>
+      <InstallDialog open={open === "install"} onClose={close} scope={target} />
+      {siteId && <InstallDialog open={open === "update-now"} onClose={close} scope={target} preset="update-now" />}
+      <RestartDialog open={open === "restart"} onClose={close} scope={target} initialWhen="later" />
+    </section>
   );
 }
 
@@ -139,11 +196,15 @@ function percent(o: Pick<OrgTally, "reporting" | "upToDate">): number {
   return Math.floor((o.upToDate / o.reporting) * 100);
 }
 
-/** A link to the device list, filtered, keeping the organization chosen here. */
-function devicesLink(filter: Record<string, string>, organizationId: string): string {
-  const q = new URLSearchParams({ tab: "devices", ...filter });
-  if (organizationId) q.set("organizationId", organizationId);
-  return `/patching?${q.toString()}`;
+/** The organization and site chosen here, which links keep. */
+interface Keep {
+  organizationId?: string;
+  siteId?: string;
+}
+
+/** A link to the device list, filtered, keeping the organization and site chosen here. */
+function devicesLink(filter: Record<string, string>, keep: Keep): string {
+  return `/patching?${new URLSearchParams({ tab: "devices", ...filter, ...keep }).toString()}`;
 }
 
 // The bar's order keeps amber and red apart: side by side they are hard to tell apart even with full color vision.
@@ -166,7 +227,7 @@ const FILL: Record<Tone, string> = {
 };
 
 /** The share of devices up to date, and how the others stand, as a bar with its legend. */
-function Compliance({ t, organizationId }: { t: Tally; organizationId: string }) {
+function Compliance({ t, keep }: { t: Tally; keep: Keep }) {
   const legend: ComplianceStatus[] = ["Compliant", "MissingUpdates", "RebootRequired", "FailedUpdates", "ScanStale", "NeverScanned"];
   const segments = SEGMENTS.map((s) => ({ ...s, count: s.statuses.reduce((n, st) => n + t.status[st], 0) })).filter((s) => s.count > 0);
   return (
@@ -196,7 +257,7 @@ function Compliance({ t, organizationId }: { t: Tally; organizationId: string })
               <li key={st} className="flex items-center gap-2">
                 <Dot tone={COMPLIANCE[st].tone} />
                 {t.status[st] > 0 ? (
-                  <Link to={devicesLink({ compliance: st }, organizationId)} className="min-w-0 truncate rounded-sm hover:text-accent">
+                  <Link to={devicesLink({ compliance: st }, keep)} className="min-w-0 truncate rounded-sm hover:text-accent">
                     {COMPLIANCE[st].label}
                   </Link>
                 ) : (
@@ -238,13 +299,13 @@ const TEXT: Record<Tone, string> = {
 };
 
 /** What needs attention, worst first; only what has a count. */
-function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
+function Attention({ t, unmatched, activeJobs, alerts, keep }: {
   t: Tally;
   unmatched: number;
   activeJobs: number;
   /** Missing while they load, or when EasyPatch could not count them. */
   alerts?: PatchAlertCounts;
-  organizationId: string;
+  keep: Keep;
 }) {
   const icon = (I: typeof ShieldAlert) => <I className="size-4" aria-hidden />;
   const show = "Show devices";
@@ -256,7 +317,8 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       count: alerts?.open ?? 0,
       more: alerts?.capped,
       text: (n) => (n === 1 ? "patching alert is open" : "patching alerts are open"),
-      to: `/patching?${new URLSearchParams({ tab: "alerts", ...(organizationId ? { organizationId } : {}) }).toString()}`,
+      // Alerts are listed by organization only.
+      to: `/patching?${new URLSearchParams({ tab: "alerts", ...(keep.organizationId ? { organizationId: keep.organizationId } : {}) }).toString()}`,
       action: "Show alerts",
     },
     {
@@ -265,7 +327,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(ShieldAlert),
       count: t.exploited,
       text: (n) => (n === 1 ? "device misses updates for vulnerabilities exploited in the wild" : "devices miss updates for vulnerabilities exploited in the wild"),
-      to: `/patching?${new URLSearchParams({ tab: "updates", exploited: "true", ...(organizationId ? { organizationId } : {}) }).toString()}`,
+      to: `/patching?${new URLSearchParams({ tab: "updates", exploited: "true", ...keep }).toString()}`,
       action: "Show the updates",
     },
     {
@@ -274,7 +336,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(CircleX),
       count: t.status.FailedUpdates,
       text: (n) => (n === 1 ? "device has updates that failed to install" : "devices have updates that failed to install"),
-      to: devicesLink({ compliance: "FailedUpdates" }, organizationId),
+      to: devicesLink({ compliance: "FailedUpdates" }, keep),
       action: show,
     },
     {
@@ -283,7 +345,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(Download),
       count: t.status.MissingUpdates,
       text: (n) => (n === 1 ? "device misses required updates" : "devices miss required updates"),
-      to: devicesLink({ compliance: "MissingUpdates" }, organizationId),
+      to: devicesLink({ compliance: "MissingUpdates" }, keep),
       action: show,
     },
     {
@@ -292,7 +354,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(Power),
       count: t.status.RebootRequired,
       text: (n) => (n === 1 ? "device needs a restart to finish installing" : "devices need a restart to finish installing"),
-      to: devicesLink({ compliance: "RebootRequired" }, organizationId),
+      to: devicesLink({ compliance: "RebootRequired" }, keep),
       action: show,
     },
     {
@@ -301,7 +363,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(Radar),
       count: t.status.ScanStale,
       text: (n) => (n === 1 ? "device has not scanned as often as its policy asks" : "devices have not scanned as often as their policy asks"),
-      to: devicesLink({ compliance: "ScanStale" }, organizationId),
+      to: devicesLink({ compliance: "ScanStale" }, keep),
       action: show,
     },
     {
@@ -310,7 +372,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(Radar),
       count: t.status.NeverScanned,
       text: (n) => (n === 1 ? "device has never scanned" : "devices have never scanned"),
-      to: devicesLink({ compliance: "NeverScanned" }, organizationId),
+      to: devicesLink({ compliance: "NeverScanned" }, keep),
       action: show,
     },
     {
@@ -333,7 +395,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       icon: icon(Unlink),
       count: t.unlinked,
       text: (n) => (n === 1 ? "device is not patched from EasyRMM" : "devices are not patched from EasyRMM"),
-      to: devicesLink({ compliance: "unlinked" }, organizationId),
+      to: devicesLink({ compliance: "unlinked" }, keep),
       action: show,
     },
     {
@@ -434,7 +496,7 @@ function Organizations({ orgs }: { orgs: OrgTally[] }) {
             {orgs.map((o) => (
               <tr key={o.id}>
                 <td>
-                  <Link to={devicesLink({}, o.id)} className="rounded-sm font-medium hover:text-accent">
+                  <Link to={devicesLink({}, { organizationId: o.id })} className="rounded-sm font-medium hover:text-accent">
                     {o.name}
                   </Link>
                 </td>

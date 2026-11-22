@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -434,9 +435,13 @@ func (s *Service) forget(ctx context.Context, deviceID uuid.UUID) error {
 }
 
 // Run keeps the engine in step and checks device links and agent installs
-// every minute and when Kick asks, and the server every ten minutes, until
-// ctx ends.
+// every minute, the engine also when Kick asks, and the server every ten
+// minutes, until ctx ends. Restarts after installs move on beside it
+// (RunRestarts), so that neither holds up the other.
 func (s *Service) Run(ctx context.Context) {
+	var restarts sync.WaitGroup
+	restarts.Go(func() { s.RunRestarts(ctx) })
+	defer restarts.Wait()
 	// Stopping, this server stops giving the engine its mail server, so
 	// that another takes it over at its next pass.
 	defer s.stopLeadingMail()

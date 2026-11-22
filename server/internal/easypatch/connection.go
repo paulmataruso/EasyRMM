@@ -37,12 +37,19 @@ type Service struct {
 	// kick starts a reconcile pass (Kick); sync is what passes remember.
 	kick chan struct{}
 	sync syncState
+
+	// batchSize is how many devices a Patch all sends the engine at once;
+	// restartEvery, how often restarts after installs move on, and
+	// restartPass how long one pass may take.
+	batchSize                 int
+	restartEvery, restartPass time.Duration
 }
 
 // New builds the service; UseEngine gives it the engine.
 func New(db *database.DB, auditLog *audit.Logger, version string, log *slog.Logger) *Service {
 	return &Service{db: db, audit: auditLog, version: version, log: log, now: time.Now,
-		fleet: fleetCache{entries: map[uuid.UUID]fleetEntry{}}, kick: make(chan struct{}, 1)}
+		fleet: fleetCache{entries: map[uuid.UUID]fleetEntry{}}, kick: make(chan struct{}, 1), batchSize: patchAllBatch,
+		restartEvery: time.Minute, restartPass: restartPassLimit}
 }
 
 // Connection is the patching engine as Settings shows it.
