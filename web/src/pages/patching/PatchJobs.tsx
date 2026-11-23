@@ -1,7 +1,6 @@
 import { ListChecks } from "lucide-react";
 import { useApi } from "../../api/hooks";
 import type { PatchJobList } from "../../api/types";
-import { OrganizationSelect } from "../../components/Filters";
 import { Button, Card, EmptyState, ErrorState, Segmented, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -77,7 +76,6 @@ export function PatchJobs({ onJob }: { onJob: (id: string) => void }) {
             { value: "all", label: "All recent" },
           ]}
         />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} />
         <FilterSelect
           label="Type"
           value={type}

@@ -142,7 +142,7 @@ describe("Patching → Alerts", () => {
     await user.selectOptions(main().getByRole("combobox", { name: "Show" }), "Resolved");
     await user.selectOptions(main().getByRole("combobox", { name: "Severity" }), "Critical");
     await user.selectOptions(main().getByRole("combobox", { name: "Type" }), "Restart pending");
-    await user.selectOptions(main().getByRole("combobox", { name: "Organization" }), "Globex");
+    await user.click(await within(screen.getByRole("tree", { name: "Patching: organizations, sites" })).findByRole("treeitem", { name: "Globex" }));
     await user.type(main().getByRole("searchbox", { name: "Search" }), "kiosk");
     await waitFor(() => expect(server.callsTo("GET /patching/alerts").at(-1)!.query.get("search")).toBe("kiosk"));
     const q = server.callsTo("GET /patching/alerts").at(-1)!.query;

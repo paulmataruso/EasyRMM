@@ -83,6 +83,7 @@ const SECTION_HOME: Record<SectionId, string> = {
   alerts: "/alerts",
   scripts: "/scripts",
   jobs: "/jobs",
+  patching: "/patching",
   settings: "/settings",
 };
 

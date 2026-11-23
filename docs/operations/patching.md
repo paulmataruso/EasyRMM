@@ -233,7 +233,9 @@ them, and refreshes every minute:
 
 #### Patch all, Schedule restart all, Update all now
 
-Choose an organization, and a site if you like, and the overview names it,
+Choose an organization, and a site if you like, in the sidebar tree (the same
+tree as on Devices, limited to what you may see; it narrows every tab of
+Patching and keeps its tab and filters), and the overview names it,
 how many of its devices can be patched from EasyRMM and how many are left
 out. With `patch.manage` there it offers:
 

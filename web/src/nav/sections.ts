@@ -6,7 +6,7 @@ import { deviceKey, orgKey, siteKey } from "./tree";
  * organizations and sites (and devices, where they matter) that narrows the section's list, or, for settings, its
  * parts.
  */
-export type SectionId = "organizations" | "devices" | "alerts" | "scripts" | "jobs" | "settings";
+export type SectionId = "organizations" | "devices" | "alerts" | "scripts" | "jobs" | "patching" | "settings";
 
 /** The permission that shows a section in the main menu, and its navigation. */
 export const SECTION_PERMISSION: Record<Exclude<SectionId, "organizations" | "settings">, Permission> = {
@@ -14,6 +14,7 @@ export const SECTION_PERMISSION: Record<Exclude<SectionId, "organizations" | "se
   alerts: "alert.view",
   scripts: "script.view",
   jobs: "job.view",
+  patching: "patch.view",
 };
 
 export function sectionFor(pathname: string): SectionId | null {
@@ -23,6 +24,7 @@ export function sectionFor(pathname: string): SectionId | null {
   if (under("/alerts")) return "alerts";
   if (under("/scripts")) return "scripts";
   if (under("/jobs")) return "jobs";
+  if (under("/patching")) return "patching";
   if (under("/settings") || under("/users")) return "settings";
   return null;
 }
@@ -42,6 +44,7 @@ const LIST: Partial<Record<SectionId, string>> = {
   alerts: "/alerts",
   scripts: "/scripts",
   jobs: "/jobs",
+  patching: "/patching",
 };
 
 const one = (re: RegExp, pathname: string) => {
@@ -87,6 +90,13 @@ export function selectedKey(section: SectionId, pathname: string, search: string
     }
     case "jobs":
       return pathname === "/jobs" ? scope() : null;
+    // The patching engine narrows by organization and site, not by device.
+    case "patching": {
+      if (pathname !== "/patching") return null;
+      const site = p.get("siteId");
+      const org = p.get("organizationId");
+      return site ? siteKey(site) : org ? orgKey(org) : "all";
+    }
     case "settings":
       return null;
   }
@@ -114,7 +124,7 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
     }
   };
   // Paging restarts with a new scope.
-  set({ before: null, after: null });
+  set({ before: null, after: null, ...(section === "patching" ? { page: null } : {}) });
   if (section === "scripts") {
     if (target.kind === "shared") set({ library: "shared", siteId: null });
     else if (target.kind === "org") set({ library: target.id, siteId: null });

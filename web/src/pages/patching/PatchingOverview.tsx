@@ -2,13 +2,12 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Trash2, Unlink, WifiOff, Zap } from "lucide-react";
 import { api, errorMessage } from "../../api/client";
-import { useApi, useApiMutation, useList, useSites } from "../../api/hooks";
+import { useApi, useApiMutation, useList } from "../../api/hooks";
 import type { ComplianceStatus, PatchAlertCounts, PatchFleet, PatchJobView, PatchUnmatchedEndpoint } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
-import { OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { useToast } from "../../components/Toast";
-import { Alert, Badge, Button, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, Toolbar, type Tone } from "../../components/ui";
+import { Alert, Badge, Button, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, type Tone } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { InstallDialog, RestartDialog } from "./PatchDialogs";
@@ -25,7 +24,6 @@ export function PatchingOverview() {
   const { can } = useAuth();
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
-  const sites = useSites(organizationId || null);
   const fleet = useApi<PatchFleet>(
     "/patching/devices",
     { organizationId: organizationId || undefined, siteId: siteId || undefined },
@@ -39,16 +37,6 @@ export function PatchingOverview() {
 
   return (
     <>
-      <Toolbar>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null })} />
-        <SiteSelect
-          organizationId={organizationId}
-          value={siteId}
-          // A site chosen across organizations chooses its organization too: Patch all acts on one organization.
-          onChange={(v) => url.set({ siteId: v, organizationId: organizationId || sites.items.find((s) => s.id === v)?.organizationId || null })}
-          className="max-w-64"
-        />
-      </Toolbar>
       {organizationId && can("patch.manage") && <PatchAll organizationId={organizationId} siteId={siteId} />}
       {fleet.isPending ? (
         <Spinner />

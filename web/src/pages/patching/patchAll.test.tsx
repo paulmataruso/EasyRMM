@@ -13,6 +13,8 @@ import { PatchJobDialog } from "./PatchJobDialog";
 
 const T = "2026-11-22T10:00:00Z";
 const main = () => within(screen.getByRole("main"));
+/** The sidebar tree that chooses the organization and site. */
+const tree = () => within(screen.getByRole("tree", { name: "Patching: organizations, sites" }));
 
 const TECH = sessionView({
   isSuperAdmin: false,
@@ -172,8 +174,7 @@ describe("Patch all on the patching overview", () => {
     expect(server.callsTo("GET /patching/scope")).toHaveLength(0);
 
     // An organization the technician only views there: still nothing.
-    await main().findByRole("option", { name: "Northwind Traders" });
-    await user.selectOptions(main().getByLabelText("Organization"), "o1");
+    await user.click(await tree().findByRole("treeitem", { name: "Northwind Traders" }));
     await waitFor(() => expect(server.callsTo("GET /patching/scope")).toHaveLength(1));
     expect(server.call("GET /patching/scope").query.get("organizationId")).toBe("o1");
     expect(server.call("GET /patching/scope").query.get("siteId")).toBeNull();
@@ -213,8 +214,7 @@ describe("Patch all on the patching overview", () => {
     expect(within(bar).queryByRole("button", { name: "Update all now…" })).not.toBeInTheDocument();
 
     // A site narrows the devices and the buttons, and adds Update all now.
-    await main().findByRole("option", { name: "Head office" });
-    await user.selectOptions(main().getByLabelText("Site"), "s1");
+    await user.click(await tree().findByRole("treeitem", { name: "Head office" }));
     const siteBar = await main().findByRole("region", { name: "Every device in Head office (Northwind Traders)" });
     expect(siteBar).toHaveTextContent("These act on every device in Head office (Northwind Traders) you may patch: 5 devices.");
     expect(within(siteBar).getByRole("button", { name: "Update all now…" })).toBeInTheDocument();
@@ -227,10 +227,10 @@ describe("Patch all on the patching overview", () => {
     );
 
     // Another organization clears the site.
-    await user.selectOptions(main().getByLabelText("Organization"), "o2");
+    await user.click(await tree().findByRole("treeitem", { name: "Contoso Dental" }));
     await waitFor(() => expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("organizationId")).toBe("o2"));
     expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("siteId")).toBeNull();
-    expect(main().getByLabelText("Site")).toHaveValue("");
+    expect(tree().getByRole("treeitem", { name: "Contoso Dental" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("chooses the organization of a site chosen across organizations", async () => {
@@ -238,11 +238,11 @@ describe("Patch all on the patching overview", () => {
     const server = installFakeApi(overviewRoutes());
     renderApp("/patching");
     await screen.findByRole("main");
-    await main().findByRole("option", { name: "Contoso Dental / Clinic" });
-    await user.selectOptions(main().getByLabelText("Site"), "s2");
+    await screen.findByRole("tree", { name: "Patching: organizations, sites" });
+    await user.click(await tree().findByRole("treeitem", { name: "Clinic" }));
     await waitFor(() => expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("siteId")).toBe("s2"));
     expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("organizationId")).toBe("o2");
-    expect(main().getByLabelText("Organization")).toHaveValue("o2");
+    expect(tree().getByRole("treeitem", { name: "Clinic" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("installs what each policy allows on every device of the platforms ticked, and sums up the batches", async () => {
