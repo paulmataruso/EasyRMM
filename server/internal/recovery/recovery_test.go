@@ -73,7 +73,7 @@ func TestWhenATargetIsBack(t *testing.T) {
 		"EasyRMM agent checked in since the step":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(2 * time.Minute)}, false, true},
 		"EasyRMM agent checked in before the step":     {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(30 * time.Minute)}, false, false},
 		"EasyRMM agent recent when the wait ends":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(AgentFresh - time.Minute)}, true, true},
-		"EasyRMM agent silent when the wait ends":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(AgentFresh + time.Minute)}, true, false},
+		"EasyRMM agent silent when the wait ends":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(20 * time.Minute)}, true, false},
 	} {
 		if got := c.f.back(c.target, now, done, c.waitOver); got != c.want {
 			t.Errorf("%s: %v, want %v", name, got, c.want)

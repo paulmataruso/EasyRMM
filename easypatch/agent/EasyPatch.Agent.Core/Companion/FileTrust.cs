@@ -233,15 +233,15 @@ internal static class FileTrust
     /// <summary>Every path from the root down to the copy: the directories above it, then the copy.</summary>
     internal static List<string> UnixChain(string path)
     {
-        var chain = new List<string>();
-        var current = path;
-        while (!string.IsNullOrEmpty(current))
+        // Split at '/' itself: the rule is about Unix paths and is tested on every system.
+        var chain = new List<string> { "/" };
+        var current = "";
+        foreach (var part in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {
+            current += "/" + part;
             chain.Add(current);
-            current = Path.GetDirectoryName(current);
         }
 
-        chain.Reverse();
         return chain;
     }
 
