@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
@@ -32,6 +33,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentlogsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
@@ -103,6 +105,8 @@ type Deps struct {
 	Inventory *inventory.Service
 	// Hardware stores devices' disk health (ADR-0065).
 	Hardware *hardware.Service
+	// AgentLogs stores agents' log records (ADR-0069).
+	AgentLogs *agentlogs.Service
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
 	// Recovery repairs agents that stopped working (ADR-0069).
@@ -195,6 +199,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		mesh = remote.NewMeshAgents(d.Remote, files)
 	}
 	d.Devices = devices.New(db, cfg.Mesh.Enabled)
+	d.Devices.SetAudit(auditLog)
+	if d.Remote != nil {
+		d.Devices.OnMoved(d.Remote.DevicesChanged)
+	}
 	d.Agents = agents.New(db, auditLog, mesh, log)
 	d.Agents.SetSealer(sealer)
 	jobKey, err := jobs.LoadKey(ctx, db, sealer)
@@ -205,6 +213,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
+	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
 	if d.Mesh != nil {
@@ -492,6 +501,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
+	agentlogsapi.New(d.AgentLogs).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
@@ -529,7 +539,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -648,7 +658,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	} else {
 		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
 	}
-	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge)
+	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge, deps.AgentLogs.Purge)
 	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })

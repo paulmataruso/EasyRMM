@@ -88,14 +88,44 @@ describe("device tree", () => {
     ]);
   });
 
-  it("lists only the chosen devices but counts every one", () => {
-    const roots = buildTree(ORGS, SITES, DEVICES, (d) => d.id === "d2");
+  it("counts from the server's counts while only the loaded devices are listed", () => {
+    const counts = [
+      { siteId: "s1", groupId: null, total: 5, online: 3 },
+      { siteId: "s1", groupId: "g1", total: 20, online: 10 },
+    ];
+    const roots = buildTree(ORGS, SITES, [DEVICES[1]!], { counts, groups: [{ id: "g1", organizationId: "o1", siteId: "s1", name: "Servers", description: "" }] });
     const northwind = roots.find((o) => o.id === "o1")!;
-    expect(northwind.total).toBe(3);
-    expect(northwind.online).toBe(2);
+    expect([northwind.total, northwind.online]).toEqual([25, 13]);
     const head = northwind.children.find((s) => s.id === "s1")!;
-    expect(names(head.children)).toEqual(["front-desk"]);
-    expect([head.total, head.online]).toEqual([2, 1]);
-    expect(buildTree(ORGS, SITES, DEVICES, () => false).every((o) => o.children.every((s) => s.children.length === 0))).toBe(true);
+    expect([head.total, head.online, head.own]).toEqual([25, 13, 5]);
+    // The group is openable before its devices load; the loaded device sits in the site, since it is in no group.
+    const servers = head.children.find((g) => g.kind === "group")!;
+    expect([servers.total, servers.own, servers.expandable, servers.children.length]).toEqual([20, 20, true, 0]);
+    expect(names(head.children)).toEqual(["Servers", "ACCOUNTS"]);
+    expect(buildTree(ORGS, SITES, DEVICES, { counts: [] }).every((o) => o.total === 0)).toBe(true);
+  });
+
+  it("puts a group's devices under it at the next level, after the site's groups", () => {
+    const groups = [
+      { id: "g2", organizationId: "o1", siteId: "s1", name: "desks", description: "" },
+      { id: "g1", organizationId: "o1", siteId: "s1", name: "Servers", description: "" },
+    ];
+    const inGroup = device("d5", "SQL-01", { deviceGroupId: "g1" });
+    const roots = buildTree(ORGS, SITES, [...DEVICES, inGroup], { groups });
+    const head = roots.find((o) => o.id === "o1")!.children.find((s) => s.id === "s1")!;
+    expect(names(head.children)).toEqual(["desks", "Servers", "ACCOUNTS", "front-desk"]);
+    const servers = head.children[1]!;
+    expect(names(servers.children)).toEqual(["SQL-01"]);
+    expect(servers.children[0]).toMatchObject({ level: 4, parent: "g:g1", groupId: "g1" });
+    expect(head.children[2]!.level).toBe(3);
+    expect([head.total, servers.total]).toEqual([3, 1]);
+    const index = indexTree(roots);
+    expect(ancestors(index, "d:d5")).toEqual(["g:g1", "s:s1", "o:o1"]);
+    // Groups open with everything else in a small fleet.
+    expect(initialExpanded(roots).has("g:g1")).toBe(true);
+    const rows = visibleRows(roots, (k) => k === "o:o1" || k === "s:s1" || k === "g:g1").map((r) => r.node.key);
+    expect(rows.slice(rows.indexOf("g:g1"))).toEqual(["g:g1", "d:d5", "d:d1", "d:d2", "s:s4", "s:s2"]);
+    // A search matches a group by name and keeps its devices.
+    expect(filterTree(roots, "servers").matches).toBe(1);
   });
 });

@@ -1,9 +1,9 @@
 import type { Permission } from "../api/types";
-import { deviceKey, orgKey, siteKey } from "./tree";
+import { deviceKey, groupKey, orgKey, siteKey } from "./tree";
 
 /**
  * The console's sections. On a section's pages the sidebar shows that section's own navigation (ADR-0021): a tree of
- * organizations and sites (and devices, where they matter) that narrows the section's list, or, for settings, its
+ * organizations, sites, device groups and devices that narrows the section's list (ADR-0069), or, for settings, its
  * parts.
  */
 export type SectionId = "organizations" | "devices" | "alerts" | "scripts" | "jobs" | "patching" | "settings";
@@ -36,7 +36,8 @@ export type Target =
   | { kind: "approvals" }
   | { kind: "org"; id: string }
   | { kind: "site"; id: string; organizationId: string }
-  | { kind: "device"; id: string; organizationId: string; siteId: string };
+  | { kind: "group"; id: string; organizationId: string; siteId: string }
+  | { kind: "device"; id: string; organizationId: string; siteId: string; groupId?: string | null };
 
 /** The section's list page, which its tree narrows. */
 const LIST: Partial<Record<SectionId, string>> = {
@@ -57,9 +58,10 @@ export function selectedKey(section: SectionId, pathname: string, search: string
   const p = new URLSearchParams(search);
   const scope = () => {
     const device = p.get("deviceId");
+    const group = p.get("groupId");
     const site = p.get("siteId");
     const org = p.get("organizationId");
-    return device ? deviceKey(device) : site ? siteKey(site) : org ? orgKey(org) : "all";
+    return device ? deviceKey(device) : group ? groupKey(group) : site ? siteKey(site) : org ? orgKey(org) : "all";
   };
   switch (section) {
     case "organizations": {
@@ -67,6 +69,7 @@ export function selectedKey(section: SectionId, pathname: string, search: string
       const org = one(/^\/organizations\/([^/]+)$/, pathname);
       if (org) return orgKey(org);
       const site = one(/^\/sites\/([^/]+)$/, pathname);
+      if (site && p.get("groupId")) return groupKey(p.get("groupId")!);
       return site ? siteKey(site) : null;
     }
     case "devices": {
@@ -85,18 +88,15 @@ export function selectedKey(section: SectionId, pathname: string, search: string
       const library = p.get("library");
       const site = p.get("siteId");
       if (library === "shared") return "shared";
+      if (p.get("deviceId")) return deviceKey(p.get("deviceId")!);
+      if (p.get("groupId")) return groupKey(p.get("groupId")!);
       if (site) return siteKey(site);
       return library ? orgKey(library) : "all";
     }
     case "jobs":
       return pathname === "/jobs" ? scope() : null;
-    // The patching engine narrows by organization and site, not by device.
-    case "patching": {
-      if (pathname !== "/patching") return null;
-      const site = p.get("siteId");
-      const org = p.get("organizationId");
-      return site ? siteKey(site) : org ? orgKey(org) : "all";
-    }
+    case "patching":
+      return pathname === "/patching" ? scope() : null;
     case "settings":
       return null;
   }
@@ -110,6 +110,9 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
   if (section === "organizations") {
     if (target.kind === "org") return `/organizations/${encodeURIComponent(target.id)}`;
     if (target.kind === "site") return `/sites/${encodeURIComponent(target.id)}`;
+    if (target.kind === "group") return `/sites/${encodeURIComponent(target.siteId)}?groupId=${encodeURIComponent(target.id)}`;
+    // A device's own page is its part of this view.
+    if (target.kind === "device") return `/devices/${encodeURIComponent(target.id)}`;
     return "/organizations";
   }
   if (section === "devices" && target.kind === "device") return `/devices/${encodeURIComponent(target.id)}`;
@@ -126,19 +129,25 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
   // Paging restarts with a new scope.
   set({ before: null, after: null, ...(section === "patching" ? { page: null } : {}) });
   if (section === "scripts") {
-    if (target.kind === "shared") set({ library: "shared", siteId: null });
-    else if (target.kind === "org") set({ library: target.id, siteId: null });
-    else if (target.kind === "site") set({ library: target.organizationId, siteId: target.id });
-    else set({ library: null, siteId: null });
+    const none = { groupId: null, deviceId: null };
+    if (target.kind === "shared") set({ library: "shared", siteId: null, ...none });
+    else if (target.kind === "org") set({ library: target.id, siteId: null, ...none });
+    else if (target.kind === "site") set({ library: target.organizationId, siteId: target.id, ...none });
+    // The scripts that run on a group's or a device's computers are those of its organization and its site.
+    else if (target.kind === "group") set({ library: target.organizationId, siteId: null, groupId: target.id, deviceId: null });
+    else if (target.kind === "device") set({ library: target.organizationId, siteId: null, groupId: null, deviceId: target.id });
+    else set({ library: null, siteId: null, ...none });
   } else {
     const scope =
       target.kind === "org"
-        ? { organizationId: target.id, siteId: null, deviceId: null }
+        ? { organizationId: target.id, siteId: null, groupId: null, deviceId: null }
         : target.kind === "site"
-          ? { organizationId: target.organizationId, siteId: target.id, deviceId: null }
-          : target.kind === "device"
-            ? { organizationId: target.organizationId, siteId: target.siteId, deviceId: target.id }
-            : { organizationId: null, siteId: null, deviceId: null };
+          ? { organizationId: target.organizationId, siteId: target.id, groupId: null, deviceId: null }
+          : target.kind === "group"
+            ? { organizationId: target.organizationId, siteId: target.siteId, groupId: target.id, deviceId: null }
+            : target.kind === "device"
+              ? { organizationId: target.organizationId, siteId: target.siteId, groupId: target.groupId ?? null, deviceId: target.id }
+              : { organizationId: null, siteId: null, groupId: null, deviceId: null };
     set(scope);
     // Alert policies can be narrowed to an organization; anything else shows the alerts themselves.
     if (section === "alerts" && target.kind !== "org") set({ tab: null });

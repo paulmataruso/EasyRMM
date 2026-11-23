@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -412,5 +413,72 @@ func TestEnrollmentLimits(t *testing.T) {
 	}
 	if _, err := f.svc.Enroll(f.ctx, netip.MustParseAddr("198.51.100.8"), agentproto.EnrollRequest{Token: agentproto.TokenPrefix + "x", PublicKey: "!"}); err == nil {
 		t.Error("bad public key accepted")
+	}
+}
+
+// A device moved to another site (ADR-0069): its node, still in the old
+// site's group, is accepted while the move is pending, and the heartbeat
+// carries the new site's settings until the agent reports applying them.
+func TestMovedDeviceHeartbeat(t *testing.T) {
+	f := newFixture(t)
+	f.mesh.groups[f.hq], f.mesh.groups[f.other] = "mesh//hq", "mesh//branch"
+	dev, _ := f.enroll(f.hq, "web-01")
+	node := nodeHex()
+	nodeKey, _ := agentproto.MeshNodeKey(node)
+	// MeshCentral lists the node in HQ's group, as a discovered device.
+	f.exec(`INSERT INTO devices (organization_id, site_id, name, mesh_node_id) VALUES ($1, $2, 'web-01 (mesh)', $3)`, f.org, f.hq, nodeKey)
+	f.exec(`UPDATE devices SET site_id = $2, mesh_from_site_id = $3, mesh_settings_pending = true WHERE id = $1`, dev.ID, f.other, f.hq)
+	dev.SiteID = f.other
+
+	beat := func(applied string) *agentproto.HeartbeatResponse {
+		t.Helper()
+		resp, err := f.svc.Heartbeat(f.ctx, dev, netip.MustParseAddr("192.0.2.10"), agentproto.HeartbeatRequest{Facts: agentproto.Facts{
+			Hostname: "web-01", Platform: "linux", Arch: "amd64", AgentVersion: "1", MeshNodeID: node, MeshSettingsSHA256: applied,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	sum := sha256.Sum256([]byte("MeshID=mesh//branch"))
+	want := hex.EncodeToString(sum[:])
+
+	// The node of the old site is the device's: it is linked, and the new
+	// site's settings are announced.
+	if resp := beat(""); resp.MeshAgent.SettingsSHA256 != want {
+		t.Fatalf("announced %q, want %q", resp.MeshAgent.SettingsSHA256, want)
+	}
+	if f.nodeOf(dev.ID) != nodeKey {
+		t.Fatalf("a pending move's node was refused: %q", f.nodeOf(dev.ID))
+	}
+	// Announced until the agent reports what it applied; then the instruction ends.
+	if resp := beat("old"); resp.MeshAgent.SettingsSHA256 != want {
+		t.Errorf("announced after another hash: %q", resp.MeshAgent.SettingsSHA256)
+	}
+	if resp := beat(want); resp.MeshAgent.SettingsSHA256 != "" {
+		t.Errorf("announced after it was applied: %q", resp.MeshAgent.SettingsSHA256)
+	}
+	if f.count(`SELECT count(*) FROM devices WHERE id = $1 AND NOT mesh_settings_pending`, dev.ID) != 1 {
+		t.Error("the pending flag stayed")
+	}
+	if resp := beat(""); resp.MeshAgent.SettingsSHA256 != "" {
+		t.Errorf("announced with nothing pending: %q", resp.MeshAgent.SettingsSHA256)
+	}
+}
+
+// Without a pending move, a node known in another site is never claimed
+// (the exception above is for the site a device came from only).
+func TestMovedDeviceDoesNotClaimOtherNodes(t *testing.T) {
+	f := newFixture(t)
+	dev, _ := f.enroll(f.hq, "web-01")
+	third := f.uuid(`INSERT INTO sites (organization_id, name) VALUES ($1, 'Third') RETURNING id`, f.org)
+	foreign := nodeHex()
+	foreignKey, _ := agentproto.MeshNodeKey(foreign)
+	victim := f.uuid(`INSERT INTO devices (organization_id, site_id, name, mesh_node_id) VALUES ($1, $2, 'third-pc', $3) RETURNING id`, f.org, third, foreignKey)
+	f.exec(`UPDATE devices SET site_id = $2, mesh_from_site_id = $3 WHERE id = $1`, dev.ID, f.other, f.hq)
+	dev.SiteID = f.other
+	f.beat(dev, "web-01", foreign)
+	if f.nodeOf(victim) != foreignKey || f.nodeOf(dev.ID) != "" {
+		t.Errorf("a node of another site was claimed: victim %q, claimant %q", f.nodeOf(victim), f.nodeOf(dev.ID))
 	}
 }

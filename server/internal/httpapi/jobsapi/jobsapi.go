@@ -80,9 +80,13 @@ func (a *API) listScripts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	q := r.URL.Query()
 	items, err := a.svc.ListScripts(r.Context(), httpapi.Caller(r), jobs.ScriptQuery{
-		OrganizationID: org, SiteID: site, DeviceID: device, Shared: q.Get("level") == jobs.LevelShared, Search: q.Get("q"),
+		OrganizationID: org, SiteID: site, DeviceID: device, GroupID: group, Shared: q.Get("level") == jobs.LevelShared, Search: q.Get("q"),
 	})
 	if err != nil {
 		return err
@@ -163,8 +167,12 @@ func (a *API) listJobs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	items, err := a.svc.ListJobs(r.Context(), httpapi.Caller(r), jobs.JobQuery{
-		OrganizationID: org, SiteID: site, DeviceID: device, ScriptID: script, Status: r.URL.Query().Get("status"),
+		OrganizationID: org, SiteID: site, GroupID: group, DeviceID: device, ScriptID: script, Status: r.URL.Query().Get("status"),
 		Kind: r.URL.Query().Get("kind"),
 	})
 	if err != nil {
@@ -273,7 +281,11 @@ func (a *API) listRuns(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device, Kind: r.URL.Query().Get("kind")})
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
+	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device, GroupID: group, Kind: r.URL.Query().Get("kind")})
 	if err != nil {
 		return err
 	}

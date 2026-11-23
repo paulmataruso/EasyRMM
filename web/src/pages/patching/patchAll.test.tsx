@@ -14,7 +14,7 @@ import { PatchJobDialog } from "./PatchJobDialog";
 const T = "2026-11-22T10:00:00Z";
 const main = () => within(screen.getByRole("main"));
 /** The sidebar tree that chooses the organization and site. */
-const tree = () => within(screen.getByRole("tree", { name: "Patching: organizations, sites" }));
+const tree = () => within(screen.getByRole("tree", { name: "Patching: organizations, sites, groups and devices" }));
 
 const TECH = sessionView({
   isSuperAdmin: false,
@@ -238,7 +238,7 @@ describe("Patch all on the patching overview", () => {
     const server = installFakeApi(overviewRoutes());
     renderApp("/patching");
     await screen.findByRole("main");
-    await screen.findByRole("tree", { name: "Patching: organizations, sites" });
+    await screen.findByRole("tree", { name: "Patching: organizations, sites, groups and devices" });
     await user.click(await tree().findByRole("treeitem", { name: "Clinic" }));
     await waitFor(() => expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("siteId")).toBe("s2"));
     expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("organizationId")).toBe("o2");

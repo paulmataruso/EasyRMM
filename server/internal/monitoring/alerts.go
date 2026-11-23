@@ -99,6 +99,7 @@ type AlertQuery struct {
 	DeviceID       uuid.UUID
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
+	GroupID        uuid.UUID
 	Severity       string
 	// PolicyID and Subject narrow to one policy's alerts, and for disk
 	// health to one disk's: an alert's earlier and later openings.
@@ -141,9 +142,10 @@ func (s *Service) ListAlerts(ctx context.Context, c access.Caller, q AlertQuery)
 			  AND ($6 = 0 OR a.seq < $6)
 			  AND ($8::uuid IS NULL OR a.policy_id = $8)
 			  AND ($9 = '' OR a.subject = $9)
+			  AND ($10::uuid IS NULL OR d.device_group_id = $10)
 			ORDER BY a.seq DESC LIMIT $7`,
 			q.Status, nullUUID(q.DeviceID), nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Severity, q.Before, q.Limit+1,
-			nullUUID(q.PolicyID), q.Subject)
+			nullUUID(q.PolicyID), q.Subject, nullUUID(q.GroupID))
 		if err != nil {
 			return err
 		}
@@ -233,8 +235,10 @@ type DeviceAlerts struct {
 	DeviceID       uuid.UUID `json:"deviceId"`
 	OrganizationID uuid.UUID `json:"organizationId"`
 	SiteID         uuid.UUID `json:"siteId"`
-	Active         int       `json:"active"`
-	Critical       int       `json:"critical"`
+	// GroupID is the device's group, nil when it has none.
+	GroupID  *uuid.UUID `json:"groupId"`
+	Active   int        `json:"active"`
+	Critical int        `json:"critical"`
 }
 
 // ActiveByDevice counts the active alerts on every device the caller can see
@@ -243,10 +247,10 @@ func (s *Service) ActiveByDevice(ctx context.Context, c access.Caller) ([]Device
 	var out []DeviceAlerts
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		out = []DeviceAlerts{}
-		rows, err := tx.Query(ctx, `SELECT a.device_id, d.organization_id, d.site_id, count(*), count(*) FILTER (WHERE a.severity = $1)
+		rows, err := tx.Query(ctx, `SELECT a.device_id, d.organization_id, d.site_id, d.device_group_id, count(*), count(*) FILTER (WHERE a.severity = $1)
 			FROM alerts a JOIN devices d ON d.id = a.device_id
 			WHERE a.status <> 'resolved'
-			GROUP BY 1, 2, 3
+			GROUP BY 1, 2, 3, 4
 			ORDER BY 1`, SeverityCritical)
 		if err != nil {
 			return err
@@ -254,7 +258,7 @@ func (s *Service) ActiveByDevice(ctx context.Context, c access.Caller) ([]Device
 		defer rows.Close()
 		for rows.Next() {
 			var d DeviceAlerts
-			if err := rows.Scan(&d.DeviceID, &d.OrganizationID, &d.SiteID, &d.Active, &d.Critical); err != nil {
+			if err := rows.Scan(&d.DeviceID, &d.OrganizationID, &d.SiteID, &d.GroupID, &d.Active, &d.Critical); err != nil {
 				return err
 			}
 			if c.Can(rbac.PermAlertView, rbac.Site(d.OrganizationID, d.SiteID)) {

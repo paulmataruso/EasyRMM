@@ -189,6 +189,15 @@ func (c *Client) RemoveDevice(ctx context.Context, nodeID string) error {
 	return err
 }
 
+// MoveDevice moves a device to another device group (MeshCentral's
+// changeDeviceMesh). The node keeps its identity, so its MeshAgent stays
+// known; the agent's settings name the group it connects to, so they are
+// rewritten as well (ADR-0069).
+func (c *Client) MoveDevice(ctx context.Context, nodeID, meshID string) error {
+	_, err := c.call(ctx, "changeDeviceMesh", map[string]any{"nodeids": []string{nodeID}, "meshid": meshID})
+	return err
+}
+
 // UninstallAgent asks a device's MeshAgent to uninstall itself. MeshCentral
 // passes it on only while MeshAgent is connected, and answers nothing.
 func (c *Client) UninstallAgent(ctx context.Context, nodeID string) error {

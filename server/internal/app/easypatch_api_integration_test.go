@@ -163,7 +163,15 @@ func TestEasyPatchAPI(t *testing.T) {
 	if len(fleet.Devices) != 1 || fleet.Devices[0].DeviceID != device || fleet.Devices[0].Link != "linked" || fleet.Devices[0].Endpoint == nil {
 		t.Fatalf("fleet: %+v", fleet)
 	}
-	for _, q := range []string{"organizationId=x", "siteId=x", "groupId=x", "compliance=Great"} {
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/devices?deviceId="+device, nil, &fleet)
+	if len(fleet.Devices) != 1 || fleet.Devices[0].DeviceID != device {
+		t.Fatalf("fleet of one device: %+v", fleet)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/devices?deviceId=00000000-0000-0000-0000-000000000001", nil, &fleet)
+	if len(fleet.Devices) != 0 {
+		t.Fatalf("fleet of another device: %+v", fleet)
+	}
+	for _, q := range []string{"organizationId=x", "siteId=x", "groupId=x", "deviceId=x", "compliance=Great"} {
 		wantStatus(t, admin.do("GET", "/api/v1/patching/devices?"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
 	}
 	var dev struct {

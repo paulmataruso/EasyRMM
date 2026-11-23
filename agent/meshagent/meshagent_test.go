@@ -396,3 +396,38 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// Reconfigure rewrites the settings and records their hash, and a running
+// child MeshAgent is stopped so that its supervisor starts it with them
+// (ADR-0069).
+func TestReconfigure(t *testing.T) {
+	m := newManager(t, ModeChild, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Reconfigure(ctx, []byte("MeshID=0x2\n")); err == nil {
+		t.Error("reconfigured without being installed")
+	}
+	if m.AppliedSettings() != "" {
+		t.Errorf("applied before installing: %q", m.AppliedSettings())
+	}
+	if err := m.Install(ctx, download(fakeAgent), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	first := m.AppliedSettings()
+	if len(first) != 64 {
+		t.Fatalf("applied after installing: %q", first)
+	}
+	if err := m.Reconfigure(ctx, []byte("MeshID=0x2\n")); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(m.Dir, "meshagent.msh"))
+	if string(b) != "MeshID=0x2\n" || m.AppliedSettings() == first || len(m.AppliedSettings()) != 64 {
+		t.Errorf("settings %q, applied %q", b, m.AppliedSettings())
+	}
+	st, _ := os.Stat(filepath.Join(m.Dir, "meshagent.msh"))
+	if st.Mode().Perm() != 0o600 {
+		t.Errorf("settings mode = %v", st.Mode().Perm())
+	}
+	cancel()
+	m.Wait()
+}

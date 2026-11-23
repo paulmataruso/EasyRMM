@@ -50,7 +50,7 @@ describe("section navigation", () => {
     installFakeApi({ ...routes(), ...unreportedRoutes() });
     renderApp("/devices");
 
-    const tree = await screen.findByRole("tree", { name: "Devices: organizations, sites and devices" });
+    const tree = await screen.findByRole("tree", { name: "Devices: organizations, sites, groups and devices" });
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: "All devices, 2 of 3 devices online" })).toHaveAttribute("aria-current", "page");
@@ -82,7 +82,7 @@ describe("section navigation", () => {
 
     // Choosing a section from the menu opens its navigation again, with focus on Back.
     await user.click(devicesLink);
-    expect(await screen.findByRole("tree", { name: "Devices: organizations, sites and devices" })).toBeInTheDocument();
+    expect(await screen.findByRole("tree", { name: "Devices: organizations, sites, groups and devices" })).toBeInTheDocument();
     await waitFor(() => expect(within(nav).getByRole("button", { name: "Back to the main menu" })).toHaveFocus());
     expect(location()).toBe("/devices");
   });
@@ -174,17 +174,17 @@ describe("section navigation", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("counts active alerts down the tree and lists only the devices that have them", async () => {
+  it("counts active alerts down the tree and lists every device", async () => {
     const user = userEvent.setup();
-    const counts: DeviceAlertCount[] = [{ deviceId: "d2", organizationId: "o1", siteId: "s2", active: 2, critical: 1 }];
+    const counts: DeviceAlertCount[] = [{ deviceId: "d2", organizationId: "o1", siteId: "s2", groupId: null, active: 2, critical: 1 }];
     const server = installFakeApi({ ...routes(), "GET /alerts/devices": ok({ items: counts }) });
     renderApp("/alerts");
 
-    const tree = await screen.findByRole("tree", { name: "Alerts: organizations, sites and devices" });
+    const tree = await screen.findByRole("tree", { name: "Alerts: organizations, sites, groups and devices" });
     expect(screen.getByRole("button", { name: "All alerts, 2 active alerts, 1 critical" })).toBeInTheDocument();
     expect(within(tree).getByRole("treeitem", { name: "Northwind Traders, 2 active alerts, 1 critical" })).toBeInTheDocument();
     expect(within(tree).getByRole("treeitem", { name: "Head office" })).toBeInTheDocument();
-    expect(within(tree).queryByRole("treeitem", { name: /^DB-01/ })).not.toBeInTheDocument();
+    expect(within(tree).getByRole("treeitem", { name: "DB-01, online" })).toBeInTheDocument();
     expect(screen.getByText("2 active alerts on 1 device")).toBeInTheDocument();
 
     await user.click(within(tree).getByRole("treeitem", { name: "FRONT-DESK, offline, 2 active alerts, 1 critical" }));
@@ -195,12 +195,12 @@ describe("section navigation", () => {
 
   it("pulses the name of a device with an active critical alert in red", async () => {
     const counts: DeviceAlertCount[] = [
-      { deviceId: "d1", organizationId: "o1", siteId: "s1", active: 1, critical: 0 },
-      { deviceId: "d2", organizationId: "o1", siteId: "s2", active: 2, critical: 1 },
+      { deviceId: "d1", organizationId: "o1", siteId: "s1", groupId: null, active: 1, critical: 0 },
+      { deviceId: "d2", organizationId: "o1", siteId: "s2", groupId: null, active: 2, critical: 1 },
     ];
     installFakeApi({ ...routes(), "GET /alerts/devices": ok({ items: counts }) });
     renderApp("/alerts?organizationId=o1&siteId=s2&deviceId=d2");
-    const tree = await screen.findByRole("tree", { name: "Alerts: organizations, sites and devices" });
+    const tree = await screen.findByRole("tree", { name: "Alerts: organizations, sites, groups and devices" });
     const front = within(tree).getByRole("treeitem", { name: "FRONT-DESK, offline, 2 active alerts, 1 critical" });
     expect(within(front).getByText("FRONT-DESK")).toHaveClass("alert-active-pulse", "alert-active-pulse--sidebar");
     // The chosen row rests in white (index.css), so the name must sit directly in it.
@@ -216,11 +216,11 @@ describe("section navigation", () => {
     const server = installFakeApi({ ...routes(), "GET /scripts": ok({ items: scripts }) });
     renderApp("/scripts");
 
-    const tree = await screen.findByRole("tree", { name: "Scripts: organizations, sites" });
+    const tree = await screen.findByRole("tree", { name: "Scripts: organizations, sites, groups and devices" });
     expect(screen.getByRole("button", { name: "All scripts, 2 scripts" })).toHaveAttribute("aria-current", "page");
     expect(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: "New script" })).toHaveAttribute("href", "/scripts/new");
-    // The library lists no devices.
-    expect(within(tree).queryByRole("treeitem", { name: /^DB-01/ })).not.toBeInTheDocument();
+    // The same tree, devices included, as on every view.
+    expect(within(tree).getByRole("treeitem", { name: "DB-01, online" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Shared library, 1 script" }));
     await waitFor(() => expect(location()).toBe("/scripts?library=shared"));
@@ -228,13 +228,18 @@ describe("section navigation", () => {
     await waitFor(() => expect(location()).toBe("/scripts?library=o1&siteId=s1"));
     await waitFor(() => expect(server.callsTo("GET /scripts").at(-1)?.query.get("siteId")).toBe("s1"));
     expect(await screen.findByLabelText("Site")).toHaveValue("s1");
+
+    // A device shows the scripts that can run on it.
+    await user.click(within(tree).getByRole("treeitem", { name: "DB-01, online" }));
+    await waitFor(() => expect(location()).toBe("/scripts?library=o1&deviceId=d1"));
+    await waitFor(() => expect(server.callsTo("GET /scripts").at(-1)?.query.get("deviceId")).toBe("d1"));
   });
 
   it("narrows jobs to where they ran", async () => {
     const user = userEvent.setup();
     const server = installFakeApi({ ...routes(), "GET /jobs": ok({ items: [] }) });
     renderApp("/jobs");
-    const tree = await screen.findByRole("tree", { name: "Jobs: organizations, sites and devices" });
+    const tree = await screen.findByRole("tree", { name: "Jobs: organizations, sites, groups and devices" });
     await user.click(within(tree).getByRole("treeitem", { name: "Warehouse" }));
     await waitFor(() => expect(server.callsTo("GET /jobs").at(-1)?.query.get("siteId")).toBe("s2"));
     expect(server.callsTo("GET /jobs").at(-1)?.query.get("organizationId")).toBe("o1");
@@ -245,7 +250,7 @@ describe("section navigation", () => {
     const user = userEvent.setup();
     installFakeApi({ ...routes({ ...ADMIN, permissions: [...ADMIN.permissions, "patch.view"] }), "GET /patching": ok({ configured: false }) });
     renderApp("/patching?tab=updates&page=3&q=kb");
-    const tree = await screen.findByRole("tree", { name: "Patching: organizations, sites" });
+    const tree = await screen.findByRole("tree", { name: "Patching: organizations, sites, groups and devices" });
     await user.click(within(tree).getByRole("treeitem", { name: "Warehouse" }));
     await waitFor(() => expect(location()).toBe("/patching?tab=updates&q=kb&organizationId=o1&siteId=s2"));
   });
@@ -259,7 +264,7 @@ describe("section navigation", () => {
       "GET /sites/:id/device-groups": ok({ items: [] }),
     });
     renderApp("/organizations");
-    const tree = await screen.findByRole("tree", { name: "Organizations: organizations, sites" });
+    const tree = await screen.findByRole("tree", { name: "Organizations: organizations, sites, groups and devices" });
     expect(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: "New organization" })).toHaveAttribute("href", "/organizations?new=1");
     expect(within(tree).getByRole("treeitem", { name: "Northwind Traders, 2 devices" })).toBeInTheDocument();
     await user.click(within(tree).getByRole("treeitem", { name: "Warehouse, 1 device" }));

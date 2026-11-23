@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
-import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
-import { SearchInput } from "../../components/Filters";
+import type { PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
+import { DeviceScope, GroupSelect, SearchInput } from "../../components/Filters";
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -45,7 +45,6 @@ type PatchingTab = (typeof TABS)[number]["id"];
 
 const CLEARED = {
   q: null,
-  groupId: null,
   compliance: null,
   category: null,
   state: null,
@@ -94,6 +93,12 @@ export function PatchingPage() {
             onChange={(t) => url.set({ tab: t === "overview" ? null : t, ...CLEARED })}
             tabs={[...TABS]}
           />
+          {tab !== "devices" && (url.get("groupId") || url.get("deviceId")) && (
+            <p className="mb-3 text-sm text-muted">
+              The patching engine counts updates, jobs and alerts for a whole site, so this tab shows the site of the {url.get("deviceId") ? "device" : "group"} you chose.
+              The Devices tab narrows to it.
+            </p>
+          )}
           <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
             {tab === "overview" ? (
               <PatchingOverview />
@@ -111,24 +116,6 @@ export function PatchingPage() {
         </>
       )}
     </>
-  );
-}
-
-function GroupSelect({ siteId, value, onChange }: { siteId: string; value: string; onChange: (v: string) => void }) {
-  const id = useId();
-  const groups = useList<DeviceGroup>(siteId ? `/sites/${siteId}/device-groups` : null, undefined, { staleTime: 30_000 });
-  if (!siteId || groups.items.length === 0) return null;
-  return (
-    <Field label="Device group" htmlFor={id} className="min-w-40">
-      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="max-w-56">
-        <option value="">Every group</option>
-        {groups.items.map((g) => (
-          <option key={g.id} value={g.id}>
-            {g.name}
-          </option>
-        ))}
-      </Select>
-    </Field>
   );
 }
 
@@ -156,13 +143,15 @@ function Fleet({ status }: { status: PatchStatus }) {
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
   const groupId = url.get("groupId");
+  const deviceId = url.get("deviceId");
   const compliance = url.get("compliance");
-  const filtered = Boolean(q || organizationId || siteId || groupId || compliance);
+  const filtered = Boolean(q || organizationId || siteId || groupId || deviceId || compliance);
   const params = {
     q: q || undefined,
     organizationId: organizationId || undefined,
     siteId: siteId || undefined,
     groupId: groupId || undefined,
+    deviceId: deviceId || undefined,
     compliance: compliance || undefined,
   };
   const fleet = useApi<PatchFleet>("/patching/devices", params, {
@@ -174,7 +163,8 @@ function Fleet({ status }: { status: PatchStatus }) {
     <>
       <Toolbar>
         <SearchInput value={q} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
-        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v, deviceId: null })} />
+        {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show every device" onClear={() => url.set({ deviceId: null })} />}
         <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />
       </Toolbar>
       {fleet.isPending ? (

@@ -16,7 +16,7 @@ enforce that higher roles are strict supersets of lower ones.
 | Permission | Read-Only | Technician | Site Admin | Org Admin | Super Admin |
 |---|:-:|:-:|:-:|:-:|:-:|
 | `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view`, `doc.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files`, `doc.manage` | | ✓ | ✓ | ✓ | ✓ |
+| `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files`, `doc.manage`, `log.view` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
@@ -36,6 +36,13 @@ contacts and places. They apply where the role is, and a site-scoped role
 sees its sites' contacts and places, not the organization's own contacts
 ([The customer record](../operations/customer-record.md#who-can-see-and-change-what),
 [ADR-0066](../architecture/adr/0066-customer-documentation-and-assets.md)).
+
+`log.view` reads a device's agent logs: the records of the EasyRMM agent,
+the EasyPatch agent and MeshAgent. It is held from Technician up, not by
+Read-Only, as logs can hold user names, paths and host names. Turning
+verbose logging on or off for a device or a group needs `device.edit`
+([Agent logs](../operations/agent-logs.md),
+[ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
 
 ## Granting roles
 

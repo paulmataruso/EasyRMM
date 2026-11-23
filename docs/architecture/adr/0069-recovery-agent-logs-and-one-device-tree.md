@@ -337,9 +337,12 @@ settled:
   cancelling in the engine a job that did not run within 15 minutes so that it
   cannot run after the repair moved on. The step's diagnostics are kept on the
   repair (`agent_repairs.diagnostics`, redacted again by the server, 256 KiB,
-  14 days) because the agent log table (slice L1) is not on this branch's
-  base; when L1 lands, the server writes them to `agent_log_records` with
-  a source per agent instead. A `CollectLogs` job is built and tested through
+  14 days) because the agent log table (slice L1) was not on this branch's
+  base. Amended 2026-11-23 (decided in review): L1 has landed, but moving them
+  into `agent_log_records` is not a few lines (free text must be split into
+  records, `recovery` would depend on `agentlogs`, and the column and its
+  retention go), so they stay on the repair until a slice of their own does it,
+  with a source per agent. A `CollectLogs` job is built and tested through
   the connector (`easypatch.Service.CollectLogs`, `CompanionResult`) for L1's
   Logs tab to ask for when the EasyRMM agent is down; nothing in R3 asks
   for it.
@@ -456,6 +459,36 @@ patching* (with `patch.manage`), each showing its steps and outcome.
   equivalent: *Move to…* in the row's menu, in bulk actions and on the
   device's page opens the same tree as a picker.
 
+### Amended 2026-11-23 (decided in review), slice L1
+
+Found while building slice L1; the safe choice was made and is recorded
+here.
+
+* **`logs.follow {until}` travels in answers, not on the channel.**
+  ADR-0059's channel is not built (the ADR is Proposed). The EasyRMM agent
+  receives `logs.followUntil` and `logs.verboseUntil` (Unix seconds) in the
+  heartbeat answer and in the answer to each log batch, with the meaning
+  this ADR gives `logs.follow`. The first 2-second sends can therefore
+  start up to a minute after someone opens the Logs tab (the heartbeat's
+  interval); once sending, each batch's answer renews them. When the
+  channel exists, the same message moves there. The agent never follows
+  longer than 15 minutes, nor logs at Debug longer than 24 hours, from
+  what an answer says, and ends verbose mode at its end time by itself.
+* **Sequence numbers** start at the time in microseconds the first time an
+  agent runs and rise from there, kept across restarts (the buffer file and
+  a small file of the last acknowledged), so an agent whose state was lost
+  never repeats one the server holds. The server keeps one record per
+  device and sequence, and writes records of its own, sequence -1, to say
+  how many records an agent dropped or the server refused at the daily cap.
+* **The retention setting** is the deployment setting
+  `EASYRMM_AGENT_LOG_RETENTION_DAYS` (1 to 90, default 14), counted from
+  when the server received a record, since a device's clock may be wrong.
+* **Verbose mode on a group** is kept as its own row and covers devices
+  added to the group later. A device's own setting and its group's are
+  both in force; the later end wins.
+* **Not in slice L1:** verbose mode does not change the EasyPatch agent's
+  own level yet; the agent reads its log file at the level the file has.
+
 ## Slices
 
 Each is one pull request, in this order within its chain; the three
@@ -510,6 +543,33 @@ The owner confirmed (2026-11-23):
    both default alerts open after 15 minutes.
 2. Agent logs are kept 14 days by default.
 3. Settings keeps its own list rather than the tree.
+
+## Amendments
+
+* **Amended 2026-11-23 (decided in review): alerts do not stay with the old
+  organization.** Part D said alert history keeps its organization and site.
+  Alerts have no organization of their own; they follow their device. Keeping
+  them would show the old organization's alert history to the new one, so a
+  move to another organization deletes the device's alerts, open and
+  resolved. Job runs, patch history and audit records keep their organization
+  and site as written. The move's pull request lists every table and tests
+  each (`docs/operations/moving-devices.md`).
+* **Amended 2026-11-23 (decided in review): agent logs do not stay with the
+  old organization either.** For the same reason, a move to another
+  organization deletes the device's agent log records and their counters. A
+  device's verbose-logging setting ends with any move to another site, since
+  someone with rights on the old site set it and its row names that site.
+* **Amended 2026-11-23 (decided in review): patching tabs stay per site.** The
+  patching engine has no device groups, so Patching's Updates, Jobs and
+  Alerts tabs show the site of a chosen group or device and say so; the
+  Devices tab narrows to the group or device.
+* **Amended 2026-11-23 (decided in review): the tree has its own counts.**
+  Loading a node's devices only when it opens needs counts and groups
+  beforehand, so `GET /device-tree` returns them.
+* **Amended 2026-11-23 (decided in review): the settings instruction.** The
+  heartbeat reply carries the hash of the new site's MeshAgent settings, not
+  the settings; the agent fetches them from the signed settings download,
+  checks the hash and reports the hash it applied, which ends the instruction.
 
 ## References
 

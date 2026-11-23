@@ -133,7 +133,10 @@ type ScriptQuery struct {
 	Shared bool
 	// DeviceID lists the scripts that can run on a device.
 	DeviceID uuid.UUID
-	Search   string
+	// GroupID lists the scripts that can run on the devices of a device
+	// group: those of its organization and site, and the shared ones.
+	GroupID uuid.UUID
+	Search  string
 }
 
 // MaxScripts bounds the script list.
@@ -151,6 +154,16 @@ func (s *Service) ListScripts(ctx context.Context, c access.Caller, q ScriptQuer
 	}
 	out := []*Script{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		var groupOrg, groupSite uuid.UUID
+		if q.GroupID != uuid.Nil {
+			err := tx.QueryRow(ctx, `SELECT organization_id, site_id FROM device_groups WHERE id = $1`, q.GroupID).Scan(&groupOrg, &groupSite)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return apperr.NotFound()
+			}
+			if err != nil {
+				return err
+			}
+		}
 		rows, err := tx.Query(ctx, `SELECT `+scriptColumns+scriptFrom+`
 			WHERE ($1::uuid IS NULL OR sc.organization_id = $1)
 			  AND ($2::uuid IS NULL OR sc.site_id = $2)
@@ -174,6 +187,9 @@ func (s *Service) ListScripts(ctx context.Context, c access.Caller, q ScriptQuer
 			// For a device, the scripts that run on it: in its organization or
 			// site, in a shell for its platform.
 			if dev != nil && (!covers(org, site, dev.OrganizationID, dev.SiteID) || !slices.Contains(agentproto.ShellPlatforms(sc.Shell), dev.Platform)) {
+				continue
+			}
+			if q.GroupID != uuid.Nil && !covers(org, site, groupOrg, groupSite) {
 				continue
 			}
 			s.decorateScript(c, sc)

@@ -537,8 +537,10 @@ type JobQuery struct {
 	// OrganizationID, SiteID and DeviceID list the jobs with a run there.
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
-	DeviceID       uuid.UUID
-	ScriptID       uuid.UUID
+	// GroupID lists the jobs with a run on a device now in the group.
+	GroupID  uuid.UUID
+	DeviceID uuid.UUID
+	ScriptID uuid.UUID
 	// Status is "", "open" (some run has not ended) or "finished".
 	Status string
 	// Kind is "", KindScript or KindSoftware.
@@ -597,8 +599,11 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			  AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.organization_id = $5))
 			  AND ($6::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.site_id = $6))
 			  AND ($7 = '' OR j.kind = $7)
+			  AND ($8::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r JOIN devices rd ON rd.id = r.device_id
+			        WHERE r.job_id = j.id AND rd.device_group_id = $8))
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
-			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind)
+			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind,
+			nullUUID(q.GroupID))
 		if err != nil {
 			return err
 		}
@@ -713,7 +718,9 @@ func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*J
 
 // RunQuery filters the run list.
 type RunQuery struct {
+	// DeviceID or GroupID is required; a group lists the runs of the devices now in it.
 	DeviceID uuid.UUID
+	GroupID  uuid.UUID
 	// Kind is "" or a job kind: a device's hardening runs, for its
 	// Hardening tab.
 	Kind string
@@ -721,7 +728,7 @@ type RunQuery struct {
 
 // ListRuns returns a device's newest runs.
 func (s *Service) ListRuns(ctx context.Context, c access.Caller, q RunQuery) ([]*Run, error) {
-	if q.DeviceID == uuid.Nil {
+	if q.DeviceID == uuid.Nil && q.GroupID == uuid.Nil {
 		return nil, apperr.Invalid("deviceId", "Choose a device.")
 	}
 	switch q.Kind {
@@ -731,9 +738,10 @@ func (s *Service) ListRuns(ctx context.Context, c access.Caller, q RunQuery) ([]
 	}
 	out := []*Run{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE r.device_id = $1 AND ($3 = '' OR j.kind = $3)
+		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE ($1::uuid IS NULL OR r.device_id = $1) AND ($3 = '' OR j.kind = $3)
+			  AND ($4::uuid IS NULL OR r.device_id IN (SELECT gd.id FROM devices gd WHERE gd.device_group_id = $4))
 			ORDER BY r.created_at DESC, r.id LIMIT $2`,
-			q.DeviceID, MaxList, q.Kind)
+			nullUUID(q.DeviceID), MaxList, q.Kind, nullUUID(q.GroupID))
 		if err != nil {
 			return err
 		}

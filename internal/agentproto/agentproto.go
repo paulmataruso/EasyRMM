@@ -68,6 +68,9 @@ type Facts struct {
 	// MeshNodeID is MeshAgent's node identifier as `meshagent -nodeid`
 	// prints it (96 hex digits), once MeshAgent is installed.
 	MeshNodeID string `json:"meshNodeId,omitempty"`
+	// MeshSettingsSHA256 is the SHA-256 of the MeshAgent settings the agent
+	// last applied from the server, in lowercase hex (ADR-0069).
+	MeshSettingsSHA256 string `json:"meshSettingsSha256,omitempty"`
 }
 
 // EnrollRequest exchanges a deployment token for a device identity.
@@ -180,6 +183,9 @@ type HeartbeatResponse struct {
 	Uninstall *SignedUninstall `json:"uninstall,omitempty"`
 	// Repair tells the agent to carry out a repair step (ADR-0069).
 	Repair *SignedRepair `json:"repair,omitempty"`
+	// Logs says how the agent logs: verbose, and whether someone watches
+	// (ADR-0069).
+	Logs *LogInstructions `json:"logs,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.
@@ -187,6 +193,12 @@ type MeshAgentInfo struct {
 	// Available is false when the server runs without remote access, or
 	// MeshCentral has no device group for the device's site yet.
 	Available bool `json:"available"`
+	// SettingsSHA256 is set while the device's site has changed: the
+	// SHA-256 of the settings for its new site's device group. An agent
+	// whose applied settings differ fetches them (PathMeshSettings, signed
+	// like every download), rewrites MeshAgent's settings and restarts it
+	// (ADR-0069).
+	SettingsSHA256 string `json:"settingsSha256,omitempty"`
 }
 
 // MeshArch is MeshCentral's agent identifier for a platform, or 0 when it has

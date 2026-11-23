@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
-import { useApi, useOrganizations, useSites } from "../api/hooks";
-import type { Device } from "../api/types";
+import { useApi, useList, useOrganizations, useSites } from "../api/hooks";
+import type { Device, DeviceGroup } from "../api/types";
 import { Field, Input, Select, cx } from "./ui";
 
 /**
@@ -80,6 +80,25 @@ export function SiteSelect({ organizationId, value, onChange, className }: {
         {sites.items.map((s) => (
           <option key={s.id} value={s.id}>
             {organizationId ? s.name : `${s.organizationName} / ${s.name}`}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** Narrows a list to one device group of the chosen site; shows only when the site has groups (ADR-0069). */
+export function GroupSelect({ siteId, value, onChange, className }: { siteId: string; value: string; onChange: (v: string) => void; className?: string }) {
+  const id = useId();
+  const groups = useList<DeviceGroup>(siteId ? `/sites/${siteId}/device-groups` : null, undefined, { staleTime: 30_000 });
+  if (groups.items.length === 0) return null;
+  return (
+    <Field label="Device group" htmlFor={id} className={cx("min-w-40", className)}>
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="max-w-56">
+        <option value="">Every group</option>
+        {groups.items.map((g) => (
+          <option key={g.id} value={g.id}>
+            {g.name}
           </option>
         ))}
       </Select>

@@ -15,7 +15,7 @@ import type {
 } from "../../api/types";
 import { auditTarget } from "../../components/StatusBadges";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, type FakeHandler, type FakeReply, type FakeRequest } from "../../test/fakeApi";
-import { org } from "../../test/fixtures";
+import { device, org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { deliveryError } from "./Notifications";
 import { acknowledgedBy, RULE_KIND_ORDER, RULE_KINDS, thresholdText } from "./patchAlertText";
@@ -142,7 +142,7 @@ describe("Patching → Alerts", () => {
     await user.selectOptions(main().getByRole("combobox", { name: "Show" }), "Resolved");
     await user.selectOptions(main().getByRole("combobox", { name: "Severity" }), "Critical");
     await user.selectOptions(main().getByRole("combobox", { name: "Type" }), "Restart pending");
-    await user.click(await within(screen.getByRole("tree", { name: "Patching: organizations, sites" })).findByRole("treeitem", { name: "Globex" }));
+    await user.click(await within(screen.getByRole("tree", { name: "Patching: organizations, sites, groups and devices" })).findByRole("treeitem", { name: "Globex" }));
     await user.type(main().getByRole("searchbox", { name: "Search" }), "kiosk");
     await waitFor(() => expect(server.callsTo("GET /patching/alerts").at(-1)!.query.get("search")).toBe("kiosk"));
     const q = server.callsTo("GET /patching/alerts").at(-1)!.query;
@@ -184,7 +184,11 @@ describe("Patching → Alerts", () => {
 
   it("shows one device's alerts, and lets the caller go back to every device", async () => {
     const user = userEvent.setup();
-    const server = installFakeApi(patchingRoutes(TECH, { "GET /patching/alerts": (r) => ok({ items: r.query.get("deviceId") ? [ALERTS[0]] : ALERTS, capped: false }) }));
+    const server = installFakeApi(patchingRoutes(TECH, {
+        "GET /patching/alerts": (r) => ok({ items: r.query.get("deviceId") ? [ALERTS[0]] : ALERTS, capped: false }),
+        "GET /devices/:id": ok({ ...device("d1", "WEB-01") }),
+      }),
+    );
     await open("/patching?tab=alerts&deviceId=d1");
     expect(await main().findByText("Alerts of WEB-01")).toBeInTheDocument();
     expect(server.call("GET /patching/alerts").query.get("deviceId")).toBe("d1");

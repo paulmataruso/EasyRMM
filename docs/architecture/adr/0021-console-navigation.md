@@ -1,6 +1,8 @@
 # ADR-0021: Console navigation by section
 
-* Status: Accepted (2026-11-16). Replaces the device tree dock.
+* Status: Accepted (2026-11-16). Replaces the device tree dock. Amended by
+  ADR-0069: the tree gains a device group level and shows on every device
+  view, devices included.
 
 ## Context
 Technicians work inside one area at a time (one customer's devices, the
@@ -75,5 +77,7 @@ software belongs to a device: technicians look it up on the device page.
   alerts (`/alerts/devices`) and scripts (`/scripts`).
 * Fleets over 5,000 devices see the first 5,000 in the devices and jobs
   trees, and the readout says so; the lists themselves page on the server.
+  (Amended by ADR-0069: the tree no longer fetches the fleet; it loads a
+  node's devices when the node opens, and searches on the server.)
 * The fleet-wide software search (`GET /software`) stays in the API for
   reporting; the console no longer calls it.

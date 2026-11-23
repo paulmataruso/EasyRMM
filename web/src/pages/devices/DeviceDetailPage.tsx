@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { AppWindow, ExternalLink, Play } from "lucide-react";
+import { AppWindow, ExternalLink, MoveRight, Play } from "lucide-react";
 import { useState } from "react";
 import { useApi, useList } from "../../api/hooks";
 import type { AuditEntry, Device, JobRun, PatchStatus, RemoteKind } from "../../api/types";
@@ -10,6 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner, Tabs } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { MoveDialog } from "../../nav/MoveDialog";
 import { RunStatusBadge } from "../scripts/parts";
 import { RunScriptDialog } from "../scripts/RunScriptDialog";
 import { cannotRunReason, isOpen } from "../scripts/scriptText";
@@ -19,6 +20,7 @@ import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { PatchesPanel } from "./DevicePatches";
 import { HardeningPanel } from "./DeviceHardening";
+import { AgentLogsPanel } from "./DeviceLogs";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
@@ -69,6 +71,7 @@ export function DeviceDetailPage() {
   // The Patches tab shows once EasyPatch is set up (ADR-0030).
   const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
   const [running, setRunning] = useState(false);
+  const [moving, setMoving] = useState(false);
   const showHistory = can("audit.view");
 
   if (device.isPending) return <Spinner />;
@@ -81,6 +84,8 @@ export function DeviceDetailPage() {
     { id: "patches", label: "Patches", hidden: !hasAgent || patching.data?.configured !== true },
     // Hardening covers Linux (ADR-0051); viewing its findings needs only device.view.
     { id: "hardening", label: "Hardening", hidden: !hasAgent || d.platform !== "linux" },
+    // Agent logs (ADR-0069) need log.view: Technicians and above.
+    { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
   ];
   const requested = url.get("tab");
   const tab = tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
@@ -131,12 +136,18 @@ export function DeviceDetailPage() {
             <ReconnectRemoteButton device={d} />
             <RepairPatchingButton device={d} />
             <RepairEasyRmmButton device={d} />
+            {can("device.edit") && (
+              <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(true)}>
+                Move to…
+              </Button>
+            )}
             <RemoveDeviceButton device={d} />
           </>
         }
       />
 
       <RemovalBanner device={d} />
+      <MoveDialog devices={[d]} open={moving} onClose={() => setMoving(false)} />
 
       {kinds.length > 0 && reason && (
         <Alert tone="info" className="mb-5" title={reason}>
@@ -183,6 +194,12 @@ export function DeviceDetailPage() {
       {tab === "hardening" && (
         <div role="tabpanel" aria-labelledby="tab-hardening">
           <HardeningPanel device={d} />
+        </div>
+      )}
+
+      {tab === "logs" && (
+        <div role="tabpanel" aria-labelledby="tab-logs">
+          <AgentLogsPanel device={d} />
         </div>
       )}
 

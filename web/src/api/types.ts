@@ -35,6 +35,7 @@ export type Permission =
   | "report.view"
   | "doc.view"
   | "doc.manage"
+  | "log.view"
   | "settings.manage";
 
 export type Role = "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
@@ -295,6 +296,29 @@ export interface DeviceGroup {
   description: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A device group, as the tree shows it. */
+export interface DeviceTreeGroup {
+  id: string;
+  organizationId: string;
+  siteId: string;
+  name: string;
+  description: string;
+}
+
+/** The devices directly in a site (groupId null: those in no group) or in one of its groups, and how many are online. */
+export interface DeviceTreeCount {
+  siteId: string;
+  groupId: string | null;
+  total: number;
+  online: number;
+}
+
+/** What the tree needs beyond the organizations and sites (ADR-0069). */
+export interface DeviceTreeData {
+  groups: DeviceTreeGroup[];
+  counts: DeviceTreeCount[];
 }
 
 export interface DeviceGroupInput {
@@ -1641,6 +1665,7 @@ export interface DeviceAlertCount {
   deviceId: string;
   organizationId: string;
   siteId: string;
+  groupId: string | null;
   active: number;
   critical: number;
 }
@@ -2985,4 +3010,31 @@ export interface LinkedIdentity {
   email: string;
   createdAt: string;
   lastUsedAt?: string | null;
+}
+
+/** One record of an agent's log (ADR-0069): the EasyRMM agent's own, or lines it read from the EasyPatch agent's log or MeshAgent's. */
+export interface AgentLogRecord {
+  /** The cursor: it rises with the order records were stored in. */
+  id: number;
+  time: string;
+  receivedAt: string;
+  source: AgentLogSource;
+  level: AgentLogLevel;
+  message: string;
+  attrs: Record<string, string>;
+}
+
+export type AgentLogSource = "agent" | "easypatch" | "meshagent";
+export type AgentLogLevel = "debug" | "info" | "warn" | "error";
+
+/** A read of a device's agent logs, oldest record first. */
+export interface AgentLogPage {
+  items: AgentLogRecord[];
+  /** More records exist beyond these, in the direction asked. */
+  more: boolean;
+  /** The verbose mode in force: set on the device, or on its group. */
+  verbose: { until: string; scope: "device" | "group"; groupId?: string } | null;
+  retentionDays: number;
+  /** The device's agent reported recently. */
+  online: boolean;
 }

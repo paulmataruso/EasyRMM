@@ -36,6 +36,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/agent/jobs"
+	"github.com/paulmataruso/easyrmm/agent/logship"
 	"github.com/paulmataruso/easyrmm/agent/meshagent"
 	"github.com/paulmataruso/easyrmm/agent/metrics"
 	"github.com/paulmataruso/easyrmm/agent/removal"
@@ -422,7 +423,13 @@ func (e *env) run(ctx context.Context) error {
 		Key: pinnedKey(cfg),
 	}
 	var mesh *meshagent.Manager
+	var ship *logship.Shipper
 	if supported() {
+		// The agent's log level and its records for the server come first,
+		// so that everything below logs through them (ADR-0069).
+		ship = e.shipLogs()
+		r.Log = e.log
+		r.OnLogs = ship.Apply
 		// Windows MeshAgent runs only as a service; an agent that was only
 		// enrolled goes without it.
 		if m := e.mesh(cfg); !m.Windows || m.Mode != meshagent.ModeChild {
@@ -492,6 +499,7 @@ func (e *env) run(ctx context.Context) error {
 	defer cancel()
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
+	g.Go(func() { ship.Run(ctx, sendLogs(c)) })
 	err = r.Run(ctx)
 	cancel()
 	g.Wait()

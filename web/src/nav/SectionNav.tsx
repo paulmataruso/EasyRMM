@@ -1,3 +1,4 @@
+import { useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
@@ -8,9 +9,16 @@ import {
   ChevronRight,
   ChevronsDownUp,
   FileCode2,
+  FolderTree,
   Hourglass,
   Library,
   ListChecks,
+  LoaderCircle,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  FolderPlus,
+  MoveRight,
   LogIn,
   Mail,
   MapPin,
@@ -26,8 +34,9 @@ import {
   SlidersHorizontal,
   UsersRound,
 } from "lucide-react";
-import { useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
-import type { Device, DeviceAlertCount, Permission, Script } from "../api/types";
+import { api } from "../api/client";
+import { useApi, useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
+import type { Device, DeviceAlertCount, DeviceGroup, DeviceTreeData, List, Permission, Script } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cx, Dot, ErrorState, Spinner } from "../components/ui";
 import { plural } from "../lib/format";
@@ -35,7 +44,14 @@ import { platformName } from "../pages/devices/platform";
 import { useCanWriteScripts } from "../pages/scripts/ScriptsPage";
 import { canQuickConnect, QuickConnectPanel } from "./QuickConnect";
 import { selectedKey, targetHref, type SectionId, type Target } from "./sections";
-import { ancestors, buildTree, filterTree, indexTree, initialExpanded, visibleRows, type TreeNode } from "./tree";
+import { ancestors, buildTree, filterTree, indexTree, initialExpanded, orgKey, siteKey, visibleRows, type TreeNode } from "./tree";
+import { useDebounced } from "./useDebounced";
+import { DeleteGroupDialog, DeviceGroupDialog } from "../pages/organizations/GroupDialogs";
+import { ConfirmDialog } from "../components/Dialog";
+import { useToast } from "../components/Toast";
+import { MoveDialog } from "./MoveDialog";
+import { consequences, draggingDevices, dragged, endDrag, movedText, startDrag, useMoveDevices, widest, type Movable, type MoveTarget } from "./move";
+import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { scrollbarWidth, textMeasure, treeWidth, type RowSpec } from "./width";
 
 const META: Record<SectionId, { title: string; icon: ReactNode }> = {
@@ -120,7 +136,14 @@ function rowClasses(selected: boolean): string {
   );
 }
 
-const indent = { 1: "pl-1", 2: "pl-4", 3: "pl-7" } as const;
+const indent = { 1: "pl-1", 2: "pl-4", 3: "pl-7", 4: "pl-10" } as const;
+
+/** A row's height in pixels (h-7); the windowing below depends on it. */
+const ROW_HEIGHT = 28;
+/** A tree with fewer rows than this renders them all; a longer one only those on screen and a few beyond. */
+const WINDOW_AFTER = 120;
+const OVERSCAN = 8;
+
 
 interface Badge {
   text: string;
@@ -188,10 +211,10 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const canWriteScripts = useCanWriteScripts();
   const filterId = useId();
 
-  const wantsDevices = can("device.view") && section !== "scripts" && section !== "patching";
+  const wantsDevices = can("device.view");
   const orgs = useOrganizations();
   const sites = useSites();
-  const devices = useList<Device>(wantsDevices ? "/devices" : null, undefined, { refetchInterval: 30_000 });
+  const tree = useApi<DeviceTreeData>(wantsDevices ? "/device-tree" : null, undefined, { refetchInterval: 30_000 });
   const alertCounts = useDeviceAlertCounts(section === "alerts");
   const scripts = useList<Script>(section === "scripts" ? "/scripts" : null);
 
@@ -204,28 +227,94 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const [connect, setConnect] = useState<{ device: Device; anchor: HTMLElement } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const scrollArea = useRef<HTMLDivElement>(null);
+  const treeEl = useRef<HTMLDivElement>(null);
+  const toast = useToast();
+  // Moving devices and managing groups (ADR-0069).
+  const canMove = can("device.edit");
+  const canGroups = can("site.manage");
+  const [menu, setMenu] = useState<{ node: TreeNode; anchor: HTMLElement } | null>(null);
+  const [picker, setPicker] = useState<{ devices: Movable[]; organizationId?: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ devices: Movable[]; target: MoveTarget } | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const [groupForm, setGroupForm] = useState<{ siteId: string; group?: DeviceGroup } | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<{ group: DeviceGroup; siteName: string } | null>(null);
+  const mover = useMoveDevices((r, req) => {
+    toast.success(movedText(r, req));
+    setConfirming(null);
+  });
 
   const selected = selectedKey(section, location.pathname, location.search);
   const byDevice = useMemo(() => new Map(alertCounts.items.map((c) => [c.deviceId, c])), [alertCounts.items]);
-  const leaf = useMemo<(d: Device) => boolean>(() => {
-    switch (section) {
-      case "devices":
-      case "jobs":
-        return () => true;
-      // The devices that need attention, and the one the list is narrowed to.
-      case "alerts":
-        return (d) => byDevice.has(d.id) || selected === `d:${d.id}`;
-      default:
-        return () => false;
-    }
-  }, [section, byDevice, selected]);
 
-  const loading = orgs.isPending || sites.isPending || (wantsDevices && devices.isPending) || (section === "alerts" && alertCounts.isPending);
-  const failed = orgs.isError || sites.isError || devices.isError || alertCounts.isError || scripts.isError;
-  const roots = useMemo(() => buildTree(orgs.items, sites.items, devices.items, leaf), [orgs.items, sites.items, devices.items, leaf]);
+  const loading = orgs.isPending || sites.isPending || (wantsDevices && tree.isPending) || (section === "alerts" && alertCounts.isPending);
+  const failed = orgs.isError || sites.isError || tree.isError || alertCounts.isError || scripts.isError;
+
+  // The structure: everything but devices, which load as their node opens.
+  const skeleton = useMemo(
+    () => buildTree(orgs.items, sites.items, [], { groups: tree.data?.groups ?? [], counts: tree.data?.counts ?? [] }),
+    [orgs.items, sites.items, tree.data],
+  );
+  const skeletonIndex = useMemo(() => indexTree(skeleton), [skeleton]);
+
+  const text = query.trim();
+  const searchText = useDebounced(text, 250);
+  const filtering = text !== "";
+  const changes = filterChanges.query === query ? filterChanges.open : null;
+
+  // A node's devices load once it is open (ADR-0069), and stay for the filter to search; the filter's own matches come
+  // from the server, which finds devices in nodes that are closed.
+  const wanted = useMemo(() => {
+    const out: TreeNode[] = [];
+    for (const n of skeletonIndex.values()) {
+      if ((n.kind !== "site" && n.kind !== "group") || n.own === 0) continue;
+      if ((expanded?.has(n.key) ?? false) || (filtering && changes?.get(n.key) === true)) out.push(n);
+    }
+    return out;
+  }, [skeletonIndex, filtering, changes, expanded]);
+  const nodeLists = useQueries({
+    queries: wanted.map((n) => {
+      const params = n.kind === "group" ? { groupId: n.id } : { siteId: n.id, ungrouped: "true" };
+      return {
+        queryKey: ["devices", "tree", n.key],
+        queryFn: ({ signal }: { signal: AbortSignal }) => api.get<List<Device>>("/devices", params, signal),
+        refetchInterval: 30_000,
+        staleTime: 10_000,
+      };
+    }),
+  });
+  const found = useList<Device>(wantsDevices && searchText !== "" ? "/devices" : null, { q: searchText }, { keepPrevious: true });
+  // The device the page is about, wherever its node is, so the tree can show and open the way to it.
+  const selectedId = selected?.startsWith("d:") ? selected.slice(2) : null;
+  const selectedDevice = useApi<Device>(wantsDevices && selectedId ? `/devices/${selectedId}` : null, undefined, { staleTime: 30_000 });
+  const nodeKeys = wanted.map((n) => n.key).join(",");
+
+  const devices = useMemo(() => {
+    const byId = new Map<string, Device>();
+    const add = (d: Device) => {
+      // A reply can include devices from elsewhere (a stale list after a move); keep those whose node asked.
+      if (!byId.has(d.id)) byId.set(d.id, d);
+    };
+    nodeLists.forEach((q, i) => {
+      const n = wanted[i];
+      if (!n) return;
+      for (const d of q.data?.items ?? []) {
+        if (n.kind === "group" ? d.deviceGroupId === n.id : d.siteId === n.id && !d.deviceGroupId) add(d);
+      }
+    });
+    if (filtering) for (const d of found.items) add(d);
+    if (selectedDevice.data) add(selectedDevice.data);
+    return [...byId.values()];
+    // nodeLists changes identity every render; its contents change with the data and the nodes asked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeLists.map((q) => q.dataUpdatedAt).join(","), nodeKeys, filtering, found.items, selectedDevice.data]);
+  const loadingKeys = useMemo(() => new Set(wanted.filter((_, i) => nodeLists[i]?.isPending).map((n) => n.key)), [wanted, nodeLists]);
+
+  const roots = useMemo(
+    () => buildTree(orgs.items, sites.items, devices, { groups: tree.data?.groups ?? [], counts: tree.data?.counts ?? [] }),
+    [orgs.items, sites.items, devices, tree.data],
+  );
   const index = useMemo(() => indexTree(roots), [roots]);
   const filtered = useMemo(() => filterTree(roots, query), [roots, query]);
-  const filtering = query.trim() !== "";
 
   // Section counts for organizations and sites.
   const badges = useMemo(() => {
@@ -239,6 +328,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
       for (const c of alertCounts.items) {
         add(`o:${c.organizationId}`, c);
         add(`s:${c.siteId}`, c);
+        if (c.groupId) add(`g:${c.groupId}`, c);
         add(`d:${c.deviceId}`, c);
         add("all", c);
       }
@@ -268,7 +358,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         if (typeof node === "object" && node.kind === "device") return null;
         return typeof node === "object" ? onlineBadge(node.online, node.total) : onlineBadge(online, total);
       case "organizations": {
-        if (!wantsDevices || devices.isPending) return null;
+        if (!wantsDevices || tree.isPending || (typeof node === "object" && node.kind === "device")) return null;
         const n = typeof node === "object" ? node.total : total;
         return { text: n.toLocaleString(), label: plural(n, "device") };
       }
@@ -301,7 +391,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     walk(roots);
     onWidth(treeWidth(specs, textMeasure(getComputedStyle(scrollArea.current).fontFamily), scrollbarWidth()));
     // badgeFor and extras follow from the dependencies listed.
-  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, devices.isPending, waiting, selected]);
+  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, tree.isPending, waiting, selected]);
 
   // Open the way to whatever the page is showing, so the tree always says where you are. Only when the page changes:
   // closing a branch afterwards is the reader's choice.
@@ -313,16 +403,62 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     if (chain.some((k) => !expanded.has(k))) setExpanded(new Set([...expanded, ...chain]));
   }, [selected, index, expanded]);
 
-  const changes = filterChanges.query === query ? filterChanges.open : null;
   const isOpen = useCallback(
     (key: string) => (filtering ? (changes?.get(key) ?? filtered.expand.has(key)) : (expanded?.has(key) ?? false)),
     [filtering, changes, filtered.expand, expanded],
   );
   const rows = useMemo(() => visibleRows(filtered.roots, isOpen), [filtered.roots, isOpen]);
 
+  // Only the rows on screen, and a few beyond, are rendered once the tree is long (ADR-0069).
+  const [view, setView] = useState({ first: 0, count: 40 });
+  const windowed = rows.length > WINDOW_AFTER;
+  const start = windowed ? Math.max(0, view.first - OVERSCAN) : 0;
+  const end = windowed ? Math.min(rows.length, view.first + view.count + OVERSCAN) : rows.length;
+  const measureView = useCallback(() => {
+    const el = scrollArea.current;
+    if (!el) return;
+    const first = Math.floor(Math.max(0, el.scrollTop - (treeEl.current?.offsetTop ?? 0)) / ROW_HEIGHT);
+    const count = Math.ceil((el.clientHeight || 600) / ROW_HEIGHT) + 1;
+    setView((v) => (v.first === first && v.count === count ? v : { first, count }));
+  }, []);
   useEffect(() => {
-    if (selected) rowRefs.current.get(selected)?.scrollIntoView?.({ block: "nearest" });
-  }, [selected, rows.length]);
+    measureView();
+    const el = scrollArea.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measureView);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureView, rows.length, loading]);
+  /** Scrolls the tree so that a row is on screen, rendered or not. */
+  const scrollToRow = useCallback(
+    (i: number, centre: boolean) => {
+      const el = scrollArea.current;
+      if (!el || i < 0) return;
+      const top = (treeEl.current?.offsetTop ?? 0) + i * ROW_HEIGHT;
+      const height = el.clientHeight || 600;
+      if (centre) el.scrollTop = Math.max(0, top - height / 2);
+      else if (top < el.scrollTop) el.scrollTop = top;
+      else if (top + ROW_HEIGHT > el.scrollTop + height) el.scrollTop = top + ROW_HEIGHT - height;
+      measureView();
+    },
+    [measureView],
+  );
+  const pendingFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const key = pendingFocus.current;
+    const el = key ? rowRefs.current.get(key) : undefined;
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    }
+  });
+
+  useEffect(() => {
+    if (!selected) return;
+    const el = rowRefs.current.get(selected);
+    if (el) el.scrollIntoView?.({ block: "nearest" });
+    else scrollToRow(rows.findIndex((r) => r.node.key === selected), false);
+  }, [selected, rows.length, scrollToRow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setOpen = useCallback(
     (key: string, value: boolean) => {
@@ -355,17 +491,90 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   function activate(node: TreeNode) {
     if (node.kind === "device") {
       const d = node.device!;
-      go({ kind: "device", id: d.id, organizationId: d.organizationId, siteId: d.siteId });
-    } else if (node.kind === "site") go({ kind: "site", id: node.id, organizationId: node.organizationId });
+      go({ kind: "device", id: d.id, organizationId: d.organizationId, siteId: d.siteId, groupId: d.deviceGroupId });
+    } else if (node.kind === "group") go({ kind: "group", id: node.id, organizationId: node.organizationId, siteId: node.siteId! });
+    else if (node.kind === "site") go({ kind: "site", id: node.id, organizationId: node.organizationId });
     else go({ kind: "org", id: node.id });
   }
 
   const tabbable = rows.some((r) => r.node.key === focusKey) ? focusKey : rows.some((r) => r.node.key === selected) ? selected : (rows[0]?.node.key ?? null);
+  // The tab stop is on screen: the first rendered row when the usual one is not.
+  const shown = rows.slice(start, end);
+  const tabStop = shown.some((r) => r.node.key === tabbable) ? tabbable : (shown[0]?.node.key ?? null);
 
   function focusRow(key: string | null | undefined) {
     if (!key) return;
     setFocusKey(key);
-    rowRefs.current.get(key)?.focus();
+    const el = rowRefs.current.get(key);
+    if (el) return el.focus();
+    // Not rendered: scroll to it, and the effect above focuses it once it is.
+    pendingFocus.current = key;
+    scrollToRow(
+      rows.findIndex((r) => r.node.key === key),
+      true,
+    );
+  }
+
+  const movable = (d: Device): Movable => d;
+
+  /** What a row's menu offers; none when the caller may do nothing with the row. */
+  function menuItems(node: TreeNode): RowMenuItem[] {
+    const items: RowMenuItem[] = [];
+    const d = node.device;
+    if (d) {
+      if (canMove) items.push({ key: "move", label: "Move to…", icon: <MoveRight className="size-4" aria-hidden />, onSelect: () => setPicker({ devices: [movable(d)] }) });
+      if (section === "devices" && canQuickConnect(d)) {
+        items.push({ key: "connect", label: "Quick connect", icon: <ScreenShare className="size-4" aria-hidden />, onSelect: () => openConnect(node) });
+      }
+    } else if (node.kind === "site" && canGroups) {
+      items.push({ key: "new-group", label: "New group", icon: <FolderPlus className="size-4" aria-hidden />, onSelect: () => setGroupForm({ siteId: node.id }) });
+    } else if (node.kind === "group" && canGroups) {
+      const g = tree.data?.groups.find((x) => x.id === node.id);
+      const group: DeviceGroup = { id: node.id, organizationId: node.organizationId, siteId: node.siteId!, name: node.name, description: g?.description ?? "", createdAt: "", updatedAt: "" };
+      const siteName = index.get(siteKey(node.siteId!))?.name ?? "";
+      items.push(
+        { key: "rename", label: "Rename", icon: <Pencil className="size-4" aria-hidden />, onSelect: () => setGroupForm({ siteId: node.siteId!, group }) },
+        { key: "delete", label: "Delete", icon: <Trash2 className="size-4" aria-hidden />, tone: "danger", onSelect: () => setGroupToDelete({ group, siteName }) },
+      );
+    }
+    return items;
+  }
+
+  /** Opens a row's menu; a row with only Quick connect keeps opening that panel at once. */
+  function openMenu(node: TreeNode): boolean {
+    const el = rowRefs.current.get(node.key);
+    const items = menuItems(node);
+    if (!el || items.length === 0) return false;
+    if (items.length === 1 && items[0]!.key === "connect") {
+      openConnect(node);
+      return true;
+    }
+    setMenu({ node, anchor: el });
+    return true;
+  }
+
+  /** The place a tree node stands for; null for an organization, which has several sites to choose from. */
+  function targetOf(node: TreeNode): MoveTarget | null {
+    if (node.kind !== "site" && node.kind !== "group") return null;
+    const org = index.get(orgKey(node.organizationId));
+    const site = index.get(siteKey(node.siteId!));
+    if (!org || !site) return null;
+    return { organizationId: org.id, organizationName: org.name, siteId: site.id, siteName: site.name, groupId: node.kind === "group" ? node.id : null, groupName: node.kind === "group" ? node.name : "" };
+  }
+
+  function dropOn(node: TreeNode) {
+    const devices = dragged();
+    endDrag();
+    setDropKey(null);
+    if (devices.length === 0 || !canMove) return;
+    if (node.kind === "org") return setPicker({ devices, organizationId: node.id });
+    const target = targetOf(node);
+    if (!target) return;
+    const kind = widest(devices, target);
+    if (kind === "none") return toast.info(`Already in ${target.groupName || target.siteName}.`);
+    // Another site or organization has consequences; the reader confirms them.
+    if (kind === "group") mover.mutate({ devices, target });
+    else setConfirming({ devices, target });
   }
 
   function openConnect(node: TreeNode) {
@@ -378,10 +587,11 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     const row = rows[i];
     if (!row) return;
     const node = row.node;
-    const hasChildren = node.children.length > 0;
+    const hasChildren = node.expandable;
     if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       e.preventDefault();
-      return openConnect(node);
+      openMenu(node);
+      return;
     }
     switch (e.key) {
       case "ArrowDown":
@@ -400,7 +610,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         e.preventDefault();
         if (!hasChildren) return;
         if (!isOpen(node.key)) return setOpen(node.key, true);
-        return focusRow(rows[i + 1]?.node.key);
+        return node.children.length > 0 ? focusRow(rows[i + 1]?.node.key) : undefined;
       case "ArrowLeft":
         e.preventDefault();
         if (hasChildren && isOpen(node.key)) return setOpen(node.key, false);
@@ -428,7 +638,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
               "site",
             )}`;
 
-  const placeholder = section === "organizations" || section === "scripts" ? "Filter by name" : "Filter by name or hostname";
+  const placeholder = "Filter by name or hostname";
   const extras: { key: "shared" | "approvals"; label: string; icon: ReactNode; target: Target }[] = [];
   if (section === "scripts") extras.push({ key: "shared", label: "Shared library", icon: <Library className="size-3.5 shrink-0" aria-hidden />, target: { kind: "shared" } });
   // Devices waiting for approval belong to no organization yet, so they sit beside the tree, not in it; the row shows
@@ -482,21 +692,20 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         </div>
         <p className="mt-1.5 truncate text-xs text-sidebar-fg/70 tabular-nums" aria-live="polite">
           {!loading && !failed ? readout : " "}
-          {!loading && devices.items.length >= 5000 && <span className="text-warn"> (the first 5,000 devices)</span>}
         </p>
       </div>
-      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={scrollArea} onScroll={windowed ? measureView : undefined} className="relative min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {loading ? (
           <Spinner />
         ) : failed ? (
           <div className="rounded-md bg-surface">
             <ErrorState
               compact
-              error={orgs.error ?? sites.error ?? devices.error ?? alertCounts.error ?? scripts.error}
+              error={orgs.error ?? sites.error ?? tree.error ?? alertCounts.error ?? scripts.error}
               onRetry={() => {
                 void orgs.refetch();
                 void sites.refetch();
-                if (wantsDevices) void devices.refetch();
+                if (wantsDevices) void tree.refetch();
                 if (section === "alerts") void alertCounts.refetch();
                 if (section === "scripts") void scripts.refetch();
               }}
@@ -540,13 +749,21 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
             ) : rows.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-sidebar-fg/70">Nothing matches &ldquo;{query.trim()}&rdquo;.</p>
             ) : (
-              <div role="tree" aria-label={`${META[section].title}: organizations, sites${section === "devices" || section === "jobs" || section === "alerts" ? " and devices" : ""}`} onKeyDown={onKeyDown}>
-                {rows.map(({ node, position, siblings }) => {
-                  const hasChildren = node.children.length > 0;
+              <div
+                ref={treeEl}
+                role="tree"
+                aria-label={`${META[section].title}: organizations, sites, groups and devices`}
+                onKeyDown={onKeyDown}
+                style={windowed ? { paddingTop: start * ROW_HEIGHT, paddingBottom: (rows.length - end) * ROW_HEIGHT } : undefined}
+              >
+                {shown.map(({ node, position, siblings }) => {
+                  const hasChildren = node.expandable;
                   const expandedRow = hasChildren && isOpen(node.key);
                   const isSelected = node.key === selected;
                   const d = node.device;
                   const quick = section === "devices" && d !== undefined && canQuickConnect(d);
+                  const items = menuItems(node);
+                  const target = node.kind === "device" ? false : node.kind === "org" || targetOf(node) !== null;
                   const connecting = connect !== null && d !== undefined && connect.device.id === d.id;
                   const badge = badgeFor(node);
                   return (
@@ -564,20 +781,48 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                       aria-setsize={siblings}
                       aria-expanded={hasChildren ? expandedRow : undefined}
                       aria-selected={isSelected}
-                      aria-keyshortcuts={quick ? "Shift+F10" : undefined}
-                      aria-haspopup={quick ? "dialog" : undefined}
-                      tabIndex={node.key === tabbable ? 0 : -1}
+                      aria-keyshortcuts={items.length > 0 ? "Shift+F10" : undefined}
+                      aria-haspopup={items.length > 1 || (items.length === 1 && !quick) ? "menu" : quick ? "dialog" : undefined}
+                      tabIndex={node.key === tabStop ? 0 : -1}
                       title={d ? deviceTitle(d) : node.name}
                       onClick={() => {
                         setFocusKey(node.key);
                         activate(node);
                       }}
                       onContextMenu={
-                        quick
+                        items.length > 0
                           ? (e) => {
                               e.preventDefault();
                               setFocusKey(node.key);
-                              openConnect(node);
+                              openMenu(node);
+                            }
+                          : undefined
+                      }
+                      draggable={canMove && d !== undefined}
+                      onDragStart={
+                        canMove && d
+                          ? (e) => {
+                              startDrag(e.dataTransfer, [movable(d)]);
+                            }
+                          : undefined
+                      }
+                      onDragEnd={d ? endDrag : undefined}
+                      onDragOver={
+                        canMove && target
+                          ? (e) => {
+                              if (!draggingDevices(e.dataTransfer)) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (dropKey !== node.key) setDropKey(node.key);
+                            }
+                          : undefined
+                      }
+                      onDragLeave={target ? () => setDropKey((k) => (k === node.key ? null : k)) : undefined}
+                      onDrop={
+                        canMove && target
+                          ? (e) => {
+                              e.preventDefault();
+                              dropOn(node);
                             }
                           : undefined
                       }
@@ -586,7 +831,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         if (d && section === "devices") prefetch(`/devices/${d.id}`);
                       }}
                       onMouseEnter={d && section === "devices" ? () => prefetch(`/devices/${d.id}`) : undefined}
-                      className={cx(rowClasses(isSelected), indent[node.level], connecting && "bg-sidebar-active/60 text-white")}
+                      className={cx(rowClasses(isSelected), indent[node.level], connecting && "bg-sidebar-active/60 text-white", dropKey === node.key && "bg-accent/40 text-white ring-2 ring-accent")}
                     >
                       {hasChildren ? (
                         <span
@@ -598,7 +843,11 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                           }}
                           className="inline-flex size-4 shrink-0 items-center justify-center rounded text-sidebar-fg/60 hover:bg-white/10 hover:text-white"
                         >
-                          <ChevronRight className={cx("size-3.5 transition-transform", expandedRow && "rotate-90")} />
+                          {expandedRow && loadingKeys.has(node.key) ? (
+                            <LoaderCircle className="size-3.5 animate-spin" />
+                          ) : (
+                            <ChevronRight className={cx("size-3.5 transition-transform", expandedRow && "rotate-90")} />
+                          )}
                         </span>
                       ) : (
                         <span className="size-4 shrink-0" aria-hidden />
@@ -607,6 +856,8 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         <Building2 className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
                       ) : node.kind === "site" ? (
                         <MapPin className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
+                      ) : node.kind === "group" ? (
+                        <FolderTree className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
                       ) : (
                         <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
                           <Dot tone={node.online ? "ok" : "neutral"} />
@@ -617,6 +868,26 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         {node.name}
                       </span>
                       <BadgeView badge={badge} />
+                      {items.length > 0 && !(items.length === 1 && quick) && (
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={`Actions for ${node.name}`}
+                          title="Actions"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFocusKey(node.key);
+                            if (menu?.node.key === node.key) setMenu(null);
+                            else openMenu(node);
+                          }}
+                          className={cx(
+                            "-my-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-sidebar-fg/80 hover:bg-white/15 hover:text-white",
+                            isSelected || menu?.node.key === node.key ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus:opacity-100 pointer-coarse:opacity-100",
+                          )}
+                        >
+                          <MoreHorizontal className="size-3.5" aria-hidden />
+                        </button>
+                      )}
                       {quick && (
                         <button
                           type="button"
@@ -645,6 +916,41 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
           </>
         )}
       </div>
+      {menu && (
+        <RowMenu
+          anchor={menu.anchor}
+          label={`Actions for ${menu.node.name}`}
+          items={menuItems(menu.node)}
+          onClose={(returnFocus) => {
+            const anchor = menu.anchor;
+            setMenu(null);
+            if (returnFocus) anchor.focus();
+          }}
+        />
+      )}
+      <MoveDialog devices={picker?.devices ?? []} open={picker !== null} organizationId={picker?.organizationId} onClose={() => setPicker(null)} />
+      <ConfirmDialog
+        open={confirming !== null}
+        onClose={() => {
+          setConfirming(null);
+          mover.reset();
+        }}
+        onConfirm={() => confirming && mover.mutate(confirming)}
+        title={confirming ? `Move ${confirming.devices.length === 1 ? confirming.devices[0]!.name : plural(confirming.devices.length, "device")} to ${confirming.target.groupName || confirming.target.siteName}?` : "Move"}
+        confirmLabel="Move"
+        loading={mover.isPending}
+        error={mover.error}
+      >
+        {confirming && (
+          <ul className="list-disc space-y-1 pl-5">
+            {consequences(confirming.devices, confirming.target).map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        )}
+      </ConfirmDialog>
+      <DeviceGroupDialog open={groupForm !== null} siteId={groupForm?.siteId ?? ""} group={groupForm?.group} onClose={() => setGroupForm(null)} />
+      <DeleteGroupDialog group={groupToDelete?.group ?? null} siteName={groupToDelete?.siteName ?? ""} onClose={() => setGroupToDelete(null)} />
       {connect && (
         <QuickConnectPanel
           device={connect.device}

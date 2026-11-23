@@ -1,15 +1,17 @@
-import { useId, useMemo, useRef } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowDown, ArrowUp, ArrowUpDown, Monitor, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Monitor, MoveRight, Plus } from "lucide-react";
 import { useApi, useList, usePrefetch } from "../../api/hooks";
 import type { Device, RemoteAccessStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
+import { GroupSelect, OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { DeviceStatusBadge } from "../../components/StatusBadges";
-import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
+import { Alert, Button, buttonClasses, EmptyState, ErrorState, Field, IconButton, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { MoveDialog } from "../../nav/MoveDialog";
+import { endDrag, startDrag } from "../../nav/move";
 import { DiskHealthCell } from "./DeviceDisks";
 import { deviceDiskHealth, DISK_FILTERS } from "./diskHealthText";
 import { HardeningCell } from "./hardeningParts";
@@ -28,16 +30,18 @@ export function DevicesPage() {
   const search = url.get("q");
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
   const status = url.get("status");
   const hardening = url.get("hardening");
   const diskHealth = url.get("diskHealth");
   const sort = parseSort(url.get("sort"));
-  const filtered = Boolean(search || organizationId || siteId || status || hardening || diskHealth);
+  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth);
 
   const params = {
     q: search || undefined,
     organizationId: organizationId || undefined,
     siteId: siteId || undefined,
+    groupId: groupId || undefined,
     status: status || undefined,
     hardening: hardening || undefined,
     diskHealth: diskHealth || undefined,
@@ -46,6 +50,26 @@ export function DevicesPage() {
   // The server lists by name; sorting by disk health keeps that order among devices with the same label.
   const devices = useMemo(() => sortDevices(list.items, sort), [list.items, sort]);
   const canEnroll = can("enrollment.manage");
+  // Devices can be moved to another group, site or organization: dragged onto the sidebar's tree, or with Move to…
+  // (ADR-0069). A row is dragged with the others chosen with it.
+  const canMove = can("device.edit");
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [moving, setMoving] = useState<Device[] | null>(null);
+  useEffect(() => {
+    setChosen((prev) => {
+      const ids = new Set(list.items.map((d) => d.id));
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [list.items]);
+  const toggle = (id: string, on: boolean) =>
+    setChosen((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const picked = devices.filter((d) => chosen.has(d.id));
   const addLink = (
     <Link to={siteId ? `/devices/add?siteId=${encodeURIComponent(siteId)}` : "/devices/add"} className={buttonClasses("primary")}>
       <Plus className="size-4" aria-hidden />
@@ -70,12 +94,19 @@ export function DevicesPage() {
       <RemoteAccessWarning />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null })} />
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
         <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />
+        {picked.length > 0 && (
+          <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(picked)}>
+            Move {plural(picked.length, "device")} to…
+          </Button>
+        )}
       </Toolbar>
+      <MoveDialog devices={moving ?? []} open={moving !== null} onClose={() => setMoving(null)} onMoved={() => setChosen(new Set())} />
 
       {list.isPending ? (
         <Spinner />
@@ -99,6 +130,16 @@ export function DevicesPage() {
               <table className="table-base">
                 <thead>
                   <tr>
+                    {canMove && (
+                      <th className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="Choose every device in the list"
+                          checked={devices.length > 0 && picked.length === devices.length}
+                          onChange={(e) => setChosen(e.target.checked ? new Set(devices.map((d) => d.id)) : new Set())}
+                        />
+                      </th>
+                    )}
                     <th>Name</th>
                     <th>Status</th>
                     <th className="hidden md:table-cell">Organization / site</th>
@@ -110,11 +151,29 @@ export function DevicesPage() {
                       </th>
                     )}
                     {linux && <th className="hidden lg:table-cell">Hardening</th>}
+                    {canMove && (
+                      <th className="w-10">
+                        <span className="sr-only">Move</span>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {devices.map((d) => (
-                    <tr key={d.id} className="cursor-pointer" onClick={() => navigate(`/devices/${d.id}`)} onMouseEnter={() => prefetch(`/devices/${d.id}`)}>
+                    <tr
+                      key={d.id}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/devices/${d.id}`)}
+                      onMouseEnter={() => prefetch(`/devices/${d.id}`)}
+                      draggable={canMove}
+                      onDragStart={canMove ? (e) => startDrag(e.dataTransfer, chosen.has(d.id) ? picked : [d]) : undefined}
+                      onDragEnd={canMove ? endDrag : undefined}
+                    >
+                      {canMove && (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" aria-label={`Choose ${d.name}`} checked={chosen.has(d.id)} onChange={(e) => toggle(d.id, e.target.checked)} />
+                        </td>
+                      )}
                       <td>
                         <Link
                           to={`/devices/${d.id}`}
@@ -151,6 +210,13 @@ export function DevicesPage() {
                       {linux && (
                         <td className="hidden whitespace-nowrap lg:table-cell">
                           <HardeningCell device={d} />
+                        </td>
+                      )}
+                      {canMove && (
+                        <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <IconButton label={`Move ${d.name} to…`} onClick={() => setMoving([d])}>
+                            <MoveRight className="size-4" aria-hidden />
+                          </IconButton>
                         </td>
                       )}
                     </tr>

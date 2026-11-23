@@ -7,6 +7,8 @@ package runner
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,10 @@ type MeshAgent interface {
 	// Repair puts MeshAgent's program, settings and service back in place,
 	// keeping its identity.
 	Repair(ctx context.Context, download func(io.Writer) error, settings []byte) error
+	// AppliedSettings is the hash of the settings last applied from the
+	// server; Reconfigure applies new ones and restarts MeshAgent.
+	AppliedSettings() string
+	Reconfigure(ctx context.Context, settings []byte) error
 }
 
 // Updater is the agent's self-update (package update, ADR-0027).
@@ -120,6 +126,9 @@ type Runner struct {
 	// on probation, until it returns true: the agent keeps its recovery
 	// copy then (ADR-0069). nil does nothing.
 	Settled func() bool
+	// OnLogs receives how the server wants the agent to log from each
+	// heartbeat answer (ADR-0069); nil ignores it.
+	OnLogs func(*agentproto.LogInstructions)
 	// Hardware reads the device's hardware health (ADR-0065); nil never
 	// does. It runs on a goroutine of its own, so that a slow disk never
 	// delays a heartbeat.
@@ -237,6 +246,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			r.Log.Warn("reading MeshAgent's node id failed", "error", err)
 		}
 		f.MeshNodeID = id
+		f.MeshSettingsSHA256 = r.Mesh.AppliedSettings()
 		r.status.MeshNodeID = id
 	}
 	req := agentproto.HeartbeatRequest{Facts: f}
@@ -294,6 +304,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		}
 		return next, nil
 	}
+	if r.OnLogs != nil {
+		r.OnLogs(resp.Logs)
+	}
 	if r.Inventory != nil {
 		r.syncInventory(ctx, resp.InventoryHash)
 	}
@@ -301,6 +314,14 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		switch {
 		case r.Mesh.Installed():
 			r.status.MeshAgent = "installed"
+			if want := resp.MeshAgent.SettingsSHA256; want != "" && want != r.Mesh.AppliedSettings() {
+				if err := r.applyMeshSettings(ctx, want); err != nil {
+					r.Log.Error("applying MeshAgent's new settings failed", "error", err)
+					r.status.MeshAgent = "settings update failed: " + err.Error()
+				} else {
+					r.Log.Info("MeshAgent joined its device group again after the device moved")
+				}
+			}
 		case !resp.MeshAgent.Available:
 			r.status.MeshAgent = "not available from the server"
 		case time.Since(r.lastInstall) >= r.InstallWait:
@@ -421,6 +442,28 @@ func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte
 		}
 		return nil
 	}, settings, nil
+}
+
+// applyMeshSettings replaces MeshAgent's settings after the device moved to
+// another site. MeshAgent runs as SYSTEM or root, so they are used only if
+// the server signed them with the pinned job key and they are the settings
+// the heartbeat announced.
+func (r *Runner) applyMeshSettings(ctx context.Context, want string) error {
+	key := r.Key()
+	if key == nil {
+		return errors.New("no server key is pinned yet to check MeshAgent's settings with")
+	}
+	settings, signed, err := r.Client.MeshSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if err := signed.Verify(key); err != nil {
+		return fmt.Errorf("MeshAgent's settings: %w", err)
+	}
+	if sum := sha256.Sum256(settings); hex.EncodeToString(sum[:]) != want {
+		return errors.New("MeshAgent's settings are not the ones the server announced")
+	}
+	return r.Mesh.Reconfigure(ctx, settings)
 }
 
 // heartbeatInterval is the server's heartbeat interval, kept within

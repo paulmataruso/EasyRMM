@@ -82,8 +82,12 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	out, err := a.svc.SearchSoftware(r.Context(), httpapi.Caller(r), inventory.SoftwareQuery{
-		Search: r.URL.Query().Get("q"), OrganizationID: org, SiteID: site,
+		Search: r.URL.Query().Get("q"), OrganizationID: org, SiteID: site, GroupID: group,
 	})
 	if err != nil {
 		return err
@@ -101,8 +105,12 @@ func (a *API) softwareDevices(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	q := r.URL.Query()
-	query := inventory.SoftwareDevicesQuery{Name: q.Get("name"), OrganizationID: org, SiteID: site}
+	query := inventory.SoftwareDevicesQuery{Name: q.Get("name"), OrganizationID: org, SiteID: site, GroupID: group}
 	if q.Has("version") {
 		v := q.Get("version")
 		query.Version = &v
