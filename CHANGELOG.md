@@ -25,7 +25,7 @@ All notable changes to this project are documented here. The format follows
   in, MeshAgent is not connected) and **EasyRMM agent silent** (MeshAgent
   is connected, the agent does not check in). They open nothing for a
   device being removed, and judge nothing while EasyRMM cannot see
-  MeshCentral or for 15 minutes after it can. Migration 00040.
+  MeshCentral or for 15 minutes after it can. Migration 00041.
 
 ### Security
 
