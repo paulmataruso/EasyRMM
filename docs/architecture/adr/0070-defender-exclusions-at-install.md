@@ -1,6 +1,14 @@
 # ADR-0070: Microsoft Defender exclusions at install
 
-* Status: Proposed (2026-11-23). Design only; nothing is implemented.
+* Status: Accepted (2026-11-23, after an independent review). Not implemented.
+* Revised after an independent review (2026-11-23), every point *decided in
+  review*: the subtree is verified, the install folder is made safely and
+  deleted by the script, the .NET extraction folder and the TEMP of the
+  tools the agents start are set per process, uninstall without a record
+  removes only the fixed set, Defender's "N/A" answers and
+  `DisableLocalAdminMerge` are handled, the AMSI probe comes first, the
+  hash list gains MeshAgent's version and adds no new text list, and the
+  work is split in two slices.
 * Asked for by the owner (2026-11-23), who suspects antivirus is blocking
   the agents on client machines. **Revised the same day to the owner's
   changed design** (below, *Owner decisions*): whole working folders are
@@ -154,7 +162,14 @@ write*) **moves**:
 * the Windows install script's download (`install.ps1.tmpl:61`, `:75`,
   today in the administrator's `%TEMP%`) goes to
   `%ProgramData%\EasyRMM\Agent\install\`, and the script, which already
-  runs elevated, does these in order **before it downloads anything**:
+  runs elevated, does these in order **before it downloads anything**
+  (*decided in review*: it creates `ProgramData\EasyRMM\Agent\install`
+  only after the same trusted-ancestor check as `Protect`
+  (`system_windows.go:103-112`: every folder from ProgramData down is a
+  plain folder owned by SYSTEM, Administrators, TrustedInstaller or the
+  account running), and creates it with its access list in one step, as
+  `mkdirProtected` does (`system_windows.go:817`), so there is no moment
+  it is open to users):
   (1) creates the agent's folders (`%ProgramData%\EasyRMM\Agent` with
   `install\`, and `%ProgramFiles%\EasyRMM\Agent` and `\MeshAgent`);
   (2) locks them down with the administrators-only list
@@ -165,18 +180,30 @@ write*) **moves**:
   downloading into an unprotected folder. `easyrmm-agent install` takes
   over the script's record of what it excluded (the script writes
   `defender-exclusions.json` in the state folder, in the agent's format),
-  so uninstall still removes exactly what was added. The agent deletes
-  `install\` after `install`. The only thing nothing can exclude is the
+  so uninstall still removes exactly what was added. The script's `finally` block deletes
+  `install\` (`install.ps1.tmpl:61-100`), not the agent, so it goes
+  whether or not the install succeeded. The only thing nothing can exclude is the
   text of `install.ps1` itself, which AMSI still checks when it runs
   (section 3);
+* the temp folder of every process the agents start: `TEMP` and `TMP`
+  are set to the agent's own work folder on the winget and `msiexec`
+  `ProcessStartInfo`s in the EasyPatch agent (`WingetProcessRunner.cs:38`,
+  `WindowsAgentUninstaller.cs:36`, the agent-update installer in
+  `AgentUpdateHandler.cs`) and on the Go agent's `msiexec` runs
+  (`agent/easypatch/system_windows.go:66`), as the job runner already does
+  (`agent/jobs/exec_windows.go:125`) (*decided in review*);
 * the EasyPatch agent's winget working directory
   (`WingetProcessRunner.cs:38`, `Path.GetTempPath()`) becomes
   `%ProgramData%\EasyPatch\work\`;
 * .NET's single-file extraction of the EasyPatch agent
   (`EasyPatch.Agent.csproj:11-12`, which extracts native libraries to a
   temp folder at start) is pointed at `%ProgramData%\EasyPatch\bundle\`
-  with `DOTNET_BUNDLE_EXTRACT_BASE_DIR` in the service's environment (the
-  installer sets it). *To confirm on the runner where it extracts today.*
+  with `DOTNET_BUNDLE_EXTRACT_BASE_DIR` set in the EasyPatch service's own
+  `Environment` REG_MULTI_SZ value (under `HKLM\SYSTEM\CurrentControlSet\Services\EasyPatchAgent`)
+  **only**, never machine-wide (*decided in review*). The `unenroll` and
+  `defender` commands that run under `msiexec` (`Package.wxs:89-99`) get
+  the variable explicitly, in the custom action's environment, since
+  they do not inherit the service's. *To confirm on the runner where it extracts today.*
   If it cannot be moved, that folder is not excluded and the page says so.
 
 Not ours, so never excluded: the Windows Update cache and Installer folder
@@ -214,7 +241,24 @@ For each folder, in order:
    are ignored: the rule of `FileTrust.cs:15-40`, ADR-0064). The EasyPatch
    agent reuses `FileTrust`; the EasyRMM agent gets the same check in
    `agent/host`, tested against the same table of lists.
+   **The verify step walks the whole subtree** (*decided in review*), not
+   only the ancestors: every file and folder below must have an owner of
+   SYSTEM, Administrators, TrustedInstaller or the agent's account,
+   entries from those principals only, and no link or reparse point.
+   Anything else is moved aside or fails the check, as `checkState` does
+   (`agent/host/system_windows.go:139-270`).
 3. **Only then** add the exclusion.
+
+**The EasyPatch agent gets the same handling as `checkState`**
+(*decided in review*): `SecureDataDirectory` (`SecureStorage.cs:20`), which
+today creates or re-lists the folder and sets the owner, instead
+(a) moves a pre-created folder that is not trustworthy aside (owner not
+trusted, a link, a user-added entry) and makes it anew, with its list set
+at creation; (b) checks the owner and that every entry is a trusted
+principal; and (c) walks the subtree for owner, access list and
+reparse points, with the same table of lists as the Go side. A folder it
+cannot make safe stops the agent from starting (it already fails closed:
+`Program.cs:49-58`).
 
 If a folder cannot be locked down or verified (a policy blocks the change,
 a parent is writable by users, a link), the agent **does not exclude it**,
@@ -250,14 +294,25 @@ executable: the executables sit in folders only administrators can write
 signed instructions, the release signature on the EasyPatch agent) before
 using them. The owner chose this knowing the cost.
 
+**Defender answers that are not data** (*decided in review*): where
+`Get-MpPreference` returns text such as "N/A: Must be an administrator or
+have Tamper Protection ... " instead of a list (Defender hides what it
+will not show), the state is `unavailable` with that reason, never
+`effective` and never a guess from an empty list.
+
 **AMSI.** What the Microsoft documentation says: Defender's exclusion
 lists (path, process, extension) apply to its file scanning; AMSI is a
 separate interface that script hosts such as PowerShell call with the
 script text, and I found no documented exclusion list for it. Not
 documented, so it is **to confirm on the Windows CI runner**: whether a
 script run by PowerShell from an excluded folder, or by an excluded process,
-is still passed to AMSI and blocked. The build must include a test (the
-Testing section) that runs an EICAR-style AMSI test string from the
+is still passed to AMSI and blocked. **The build's first step is a CI probe** (*decided in review*), before
+any feature code: with the exclusions of this section in place on the runner,
+run an EICAR-style AMSI test string from our script folder, and write the
+result into this ADR as an amendment **before the feature ships**; the
+status text on the device page follows that result and says nothing about
+scripts the probe did not show. The test (the
+Testing section) runs an EICAR-style AMSI test string from the
 agents' script folder and **records the result**; this ADR assumes
 scripts are still scanned until it shows otherwise. If the result is that
 they are, the answer to "can scripts be excluded" is no, and nothing
@@ -282,7 +337,10 @@ itself is likewise checked by AMSI when it runs.
 * Uninstall removes **exactly the recorded entries**, one
   `Remove-MpPreference` each with the parameter of its kind, then deletes
   the record. If
-  the record cannot be read the agent removes nothing and logs it. No
+  the record is **missing or corrupt**, the agent removes only entries
+  that exactly match the fixed set in section 3 and only for folders that
+  still verify as administrators-only; it never removes anything else,
+  and logs what it removed and what it left (*decided in review*). No
   wildcard, no "everything under EasyRMM".
 
 **When it runs.** The EasyRMM agent: in `easyrmm-agent install`
@@ -299,10 +357,15 @@ and in the MSI's install, and on uninstall by a deferred custom action in
 `REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`, so an upgrade keeps the
 exclusions.
 
-**How.** The documented Defender cmdlets, run from the fixed
+**How.** The Defender PowerShell module (`Add-MpPreference`,
+`Remove-MpPreference`, `Get-MpPreference`, `Get-MpComputerStatus`), run from the fixed
 `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` with a
 fixed script, `-NoProfile -NonInteractive`, and the path passed as an
-environment variable, never joined into the script text. A failed Defender
+environment variable, never joined into the script text; the command text
+is fixed and built only from our constant paths, with no user input.
+**Why not WMI** (`root\Microsoft\Windows\Defender`): the module matches how
+the agent already drives Windows (`agent/powershell`) and adds no COM
+dependency to the Go agent or the .NET one (*decided in review*). A failed Defender
 call is logged and reported; it never fails an install, an uninstall or a
 heartbeat.
 
@@ -328,7 +391,7 @@ real hosts on the CI runner):
 |---|---|---|
 | `Get-MpPreference` | `ExclusionPath`, `ExclusionProcess`, `AttackSurfaceReductionOnlyExclusions`, `ControlledFolderAccessAllowedApplications` | whether each entry is listed, per kind |
 | `Get-MpPreference` | `EnableControlledFolderAccess`, `AttackSurfaceReductionRules_Ids` and `_Actions` | whether Controlled Folder Access and ASR are on at all (if off, those two kinds are `not_needed`, not a failure) |
-| `Get-MpPreference` | `DisableLocalAdminMerge` | `True` means local exclusions are ignored in favour of the policy's (Intune, GPO, Configuration Manager): reason `local exclusions are ignored (DisableLocalAdminMerge)` |
+| `Get-MpPreference` | `DisableLocalAdminMerge`, **read before the exclusions are read back** (a null counts as false) | `True` means local exclusions are ignored in favour of the policy's (Intune, GPO, Configuration Manager): reason `local exclusions are ignored (DisableLocalAdminMerge)` |
 | `Get-MpComputerStatus` | `AMRunningMode` | `Passive`, `SxS Passive Mode` or `EDR Block Mode` instead of `Normal`: Defender is not the active antivirus; passive is the sign of a third-party AV |
 | `Get-MpComputerStatus` | `AntivirusEnabled`, `AMServiceEnabled`, `RealTimeProtectionEnabled` | Defender is off or its real-time scanner is, so exclusions are moot |
 | `Get-MpComputerStatus` | `IsTamperProtected` | Tamper Protection is on: an add made by the agent may be refused or reverted; reported next to the result of the add, not alone |
@@ -375,8 +438,10 @@ for anyone with `org.view` or higher. It lists every file the server hands
 out or the agents install, each with name, platform and architecture,
 version, size, **MD5** and **SHA-256** (with copy buttons), and the
 source. MD5 is shown because some allow lists still ask for it and is
-never used to trust anything. The server also serves it as text for allow
-lists, beside the existing `SHA256SUMS` (`agentapi.go:756`).
+never used to trust anything. There is **no new unauthenticated list**
+(*decided in review*): the existing public `SHA256SUMS`
+(`agentapi.go:756`) stays as it is, and the new list is only in the
+console, behind `org.view`.
 
 | Entry | Where the server reads it from |
 |---|---|
@@ -389,7 +454,9 @@ lists, beside the existing `SHA256SUMS` (`agentapi.go:756`).
 **Refresh.** The list is rebuilt when the server starts (so after an
 upgrade), when a signed build is accepted or removed, when the patching
 engine's package list changes (checked on the existing connector poll), and
-by an administrator's *Refresh* button; the page shows when each entry
+by a *Refresh* button that needs the permission that already guards
+signed-build uploads, `settings.manage` (`server/internal/agents/signed_builds.go:152`,
+platform-wide, `rbac.go:61`); the page shows when each entry
 was last computed. An entry that cannot be read (MeshCentral down) keeps
 its last value, marked stale, rather than disappearing.
 
@@ -399,11 +466,19 @@ SYSTEM and already reads the EasyPatch agent's folder
 the three program folders: `easyrmm-agent.exe`, MeshAgent's `meshagent.exe`
 (`meshagent.go:87`), and the files in `%ProgramFiles%\EasyPatch Agent`
 (from the per-file list above, or every file in the folder). It reports MD5 and
-SHA-256 of each in its facts, on enrollment, after each install or update,
+SHA-256 of each in its facts, with **MeshAgent's version** (new in `Facts`,
+since the hash alone says nothing about which build it is), at most 64
+files, names of at most 260 characters and a total `InstalledFiles` size
+the server caps (a few tens of KiB), refusing the facts that exceed it
+(*decided in review*), on enrollment, after each install or update,
 and once a day. State, logs, scripts and settings files are not hashed.
-The device page lists them **next to the expected values** from Part A
+The device page labels them **"reported by the device"**, as an agent
+could report anything, and lists them **next to the expected values** from Part A
 for the version the device reports, and flags a mismatch (a missing file,
-an unexpected file, a different hash) without acting on it. A mismatch on
+an unexpected file, a different hash) without acting on it. **MeshAgent
+is the exception**: MeshCentral updates its agents itself, so a MeshAgent
+hash that differs from the currently served build shows as "not the
+current build", not "mismatch". A mismatch on
 a build the operator signed compares against the signed build's hashes.
 A device whose version has no expected entry (an older build) shows the
 installed hashes and "no expected value".
@@ -472,7 +547,13 @@ can be revisited.
 * Integration (real PostgreSQL): the list endpoint and its `org.view`
   gate; the facts stored; the audit rows.
 * **A real Windows runner in CI** (Windows Server 2022 or 2025 with
-  Defender running, not mocked):
+  Defender running, not mocked). It reuses the `windows-system` and
+  `windows-hardening` jobs (`.github/workflows/backend-tests.yml:140`,
+  `:329`), which run as LocalSystem, as the agents do. Real-time
+  protection is turned on in the job where the image allows it;
+  where it does not, the assertions that depend on it are skipped with a
+  stated reason in the job log. The winget check is skipped on
+  `windows-11-arm`. The steps:
   1. add: after `install`, every working folder is locked down and listed
      in `Get-MpPreference`'s `ExclusionPath` and `AttackSurfaceReductionOnlyExclusions`, the three executables in `ExclusionProcess` and `ControlledFolderAccessAllowedApplications`, and `%TEMP%` and `powershell.exe` are not;
   2. check: `Get-MpComputerStatus` reports `Normal`; the facts say
@@ -491,7 +572,11 @@ can be revisited.
      excluded process, with the result **recorded** (blocked or not) in
      the job log and the ADR's amendment; the build fails if real-time
      protection or AMSI was disabled to get a result;
-  7. hashes: the reported installed hashes equal the list's; replacing a
+  7. MeshAgent: after a MeshAgent update, no file was written outside its
+     folder (compare the folders' contents and `%TEMP%` before and after);
+  8. DOTNET extraction: the EasyPatch service extracts into its `bundle\`
+     folder and nothing machine-wide has the variable set;
+  9. hashes: the reported installed hashes equal the list's; replacing a
      byte of an installed file shows a mismatch on the device page.
 * Not reachable by CI, stated as untested until run on real devices:
   Tamper Protection on, Intune/GPO-managed exclusions, a third-party AV,
@@ -523,11 +608,24 @@ can be revisited.
 * Code signing is still needed and still on hold; this is not a
   substitute.
 
-## Slices (proposed)
+## Build slices
 
-1. Folder check (Go and .NET), lock-down, record, add/remove/reconcile,
-   facts; the three moves of work.
-2. Device page and audit.
-3. EasyPatch agent, its installer changes and per-file hash list.
-4. Hash list service, Settings page, installed-file reporting and
-   comparison; the documentation page; the Windows CI job.
+Two slices, built separately (*decided in review*). The AMSI probe is the
+first step of slice A, before any feature code.
+
+**A. The EasyRMM side.** The Go agent (`agent/defender`, the folder check
+and subtree walk in `agent/host`, `Protect` of the Program Files folders,
+installed-file hashing, `TEMP`/`TMP` on its `msiexec` runs, the MSI
+order: exclusion, then download), `install.ps1` (create, lock down,
+verify, exclude, then download; its `finally`), `Facts` and its caps, the
+server (storage, audit, the hash list service and `describe`'s MD5), the
+console (device page, Settings "Agent files"), the documentation page and
+the Windows CI job.
+
+**B. The EasyPatch side.** The .NET agent (`DefenderExclusions`, the
+`defender` command, `SecureDataDirectory` brought to `checkState`'s
+handling, the subtree walk), `TEMP`/`TMP` on the winget and `msiexec`
+`ProcessStartInfo`s, `DOTNET_BUNDLE_EXTRACT_BASE_DIR` in the service
+`Environment` and the custom actions, `Package.wxs` (the list on
+`INSTALLFOLDER`, the custom action, the MSI order), the per-file hash
+list the build emits, and the `FileTrust` table shared with A.
