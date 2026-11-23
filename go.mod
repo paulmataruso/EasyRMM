@@ -14,7 +14,7 @@ require (
 	github.com/pressly/goose/v3 v3.30.1
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
 	github.com/sigstore/protobuf-specs v0.5.2
-	github.com/sigstore/sigstore v1.11.1
+	github.com/sigstore/sigstore v1.11.3
 	github.com/sigstore/sigstore-go v1.4.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.63.0
