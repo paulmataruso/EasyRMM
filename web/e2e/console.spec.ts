@@ -968,8 +968,7 @@ test("Update all now for a site installs every available update, and restarts th
 
   // The overview, for the clinic: once the device is linked, it is the one device there to patch.
   await page.goto("/patching");
-  await page.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
-  await page.getByLabel("Site").selectOption({ label: "Downtown clinic" });
+  await page.getByRole("tree", { name: "Patching: organizations, sites" }).getByRole("treeitem", { name: /^Downtown clinic/ }).click();
   const bar = page.getByRole("region", { name: "Every device in Downtown clinic (Contoso Dental Group)" });
   await expect(async () => {
     await page.reload();
