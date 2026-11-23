@@ -4,7 +4,7 @@ import { ListChecks, PackagePlus } from "lucide-react";
 import { useList, usePrefetch } from "../../api/hooks";
 import type { Job } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { DeviceScope, OrganizationSelect, SiteSelect } from "../../components/Filters";
+import { DeviceScope, GroupSelect, OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { Button, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
@@ -25,9 +25,10 @@ export function JobsPage() {
   const status = url.get("status");
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
   const deviceId = url.get("deviceId");
   const kind = url.get("kind");
-  const filtered = Boolean(status || organizationId || siteId || deviceId || kind);
+  const filtered = Boolean(status || organizationId || siteId || groupId || deviceId || kind);
   const { can } = useAuth();
   const [installing, setInstalling] = useState(false);
   return (
@@ -47,8 +48,9 @@ export function JobsPage() {
       <Toolbar>
         <KindSelect value={kind} onChange={(v) => url.set({ kind: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, deviceId: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, deviceId: null })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null, deviceId: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null, deviceId: null })} />
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v, deviceId: null })} />
         {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show jobs on every device" onClear={() => url.set({ deviceId: null })} />}
       </Toolbar>
       <JobsTable
@@ -57,6 +59,7 @@ export function JobsPage() {
           kind: kind || undefined,
           organizationId: organizationId || undefined,
           siteId: siteId || undefined,
+          groupId: groupId || undefined,
           deviceId: deviceId || undefined,
         }}
         empty={filtered ? "No jobs match these filters." : "No jobs yet. Run a script from the script library or a device, or install software."}

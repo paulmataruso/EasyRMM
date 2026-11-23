@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -57,6 +58,8 @@ type server struct {
 	logs string
 	// protocol is the heartbeat answer's level, none when 0 (ADR-0009).
 	protocol int
+	// settingsSHA is the MeshAgent settings hash the heartbeat announces (ADR-0069).
+	settingsSHA string
 }
 
 // download serves a signed download, as the server does.
@@ -109,7 +112,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.protocol != 0 {
 			update += `,"protocol":` + strconv.Itoa(s.protocol)
 		}
-		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}`+update+`}`)
+		announce := ""
+		if s.settingsSHA != "" {
+			announce = `,"settingsSha256":"` + s.settingsSHA + `"`
+		}
+		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+announce+`}`+update+`}`)
 	case agentproto.PathInventory:
 		if s.invStatus != 0 {
 			w.WriteHeader(s.invStatus)
@@ -135,6 +142,9 @@ type mesh struct {
 	nodeErr    error
 	settings   string
 	binary     string
+	applied    string
+	reconf     int
+	reconfErr  error
 }
 
 func (m *mesh) Installed() bool { return m.installed }
@@ -152,6 +162,18 @@ func (m *mesh) Install(_ context.Context, download func(io.Writer) error, settin
 }
 
 func (m *mesh) Start(context.Context) error { m.started++; return nil }
+
+func (m *mesh) AppliedSettings() string { return m.applied }
+
+func (m *mesh) Reconfigure(_ context.Context, settings []byte) error {
+	if m.reconfErr != nil {
+		return m.reconfErr
+	}
+	sum := sha256.Sum256(settings)
+	m.settings, m.applied = string(settings), hex.EncodeToString(sum[:])
+	m.reconf++
+	return nil
+}
 
 func (m *mesh) NodeID(context.Context) (string, error) { return m.node, m.nodeErr }
 
@@ -459,5 +481,55 @@ func TestBeatPassesLogInstructionsOn(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] == nil || got[0].VerboseUntil != 123 || got[0].FollowUntil != 456 || got[1] != nil {
 		t.Errorf("OnLogs received %+v", got)
+	}
+}
+
+// A device moved to another site: the heartbeat announces the new settings'
+// hash, and the agent fetches them, checks the signature and the hash, and
+// reconfigures MeshAgent once (ADR-0069).
+func TestBeatAppliesMovedSiteSettings(t *testing.T) {
+	ctx := context.Background()
+	sum := sha256.Sum256([]byte("MeshID=0x1"))
+	good := hex.EncodeToString(sum[:])
+
+	s := &server{available: true, settingsSHA: good}
+	m := &mesh{installed: true, applied: "old"}
+	r := newRunner(t, s, m)
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m.reconf != 1 || m.settings != "MeshID=0x1" || m.applied != good {
+		t.Fatalf("MeshAgent = %+v", m)
+	}
+	// The agent reports what it applied, and applies nothing again.
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m.reconf != 1 || s.heartbeats[1].Facts.MeshSettingsSHA256 != good {
+		t.Errorf("reconfigured %d times; reported %q", m.reconf, s.heartbeats[1].Facts.MeshSettingsSHA256)
+	}
+
+	// Settings that are not the ones announced, or not signed, are refused.
+	for name, c := range map[string]func(*Runner, *server){
+		"another hash":        func(_ *Runner, s *server) { s.settingsSHA = strings.Repeat("a", 64) },
+		"changed on the way":  func(_ *Runner, s *server) { s.tamper = true },
+		"no key pinned yet":   func(r *Runner, _ *server) { r.Key = func() ed25519.PublicKey { return nil } },
+		"reconfiguring fails": nil,
+	} {
+		s := &server{available: true, settingsSHA: good}
+		m := &mesh{installed: true, applied: "old"}
+		if name == "reconfiguring fails" {
+			m.reconfErr = errors.New("no permission")
+		}
+		r := newRunner(t, s, m)
+		if c != nil {
+			c(r, s)
+		}
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if m.reconf != 0 || m.applied != "old" || !strings.HasPrefix(r.status.MeshAgent, "settings update failed") {
+			t.Errorf("%s: reconfigured %d, applied %q, status %q", name, m.reconf, m.applied, r.status.MeshAgent)
+		}
 	}
 }

@@ -30,6 +30,7 @@ import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
 import { ContactsPanel } from "./Contacts";
 import { addressLines, confirmedCounts, OpenNowBadge, SiteDetailsDialog, SiteRecord } from "./CustomerRecord";
+import { DeleteGroupDialog, DeviceGroupDialog } from "./GroupDialogs";
 import { PlacesCard } from "./Places";
 import { SiteFormDialog } from "./SiteFormDialog";
 
@@ -58,13 +59,6 @@ export function SiteDetailPage() {
     onSuccess: () => {
       toast.success(`Site “${site.data?.name}” deleted.`);
       navigate(`/organizations/${site.data?.organizationId ?? ""}`, { replace: true });
-    },
-  });
-  const removeGroup = useApiMutation((g: DeviceGroup) => api.del(`/device-groups/${g.id}`), {
-    invalidate: ["/sites", "/organizations", "/audit"],
-    onSuccess: (_, g) => {
-      toast.success(`Device group “${g.name}” deleted.`);
-      setGroupToDelete(null);
     },
   });
 
@@ -180,8 +174,12 @@ export function SiteDetailPage() {
                   </thead>
                   <tbody>
                     {groups.items.map((g) => (
-                      <tr key={g.id}>
-                        <td className="font-medium">{g.name}</td>
+                      <tr key={g.id} aria-current={g.id === url.get("groupId") ? "true" : undefined} className={g.id === url.get("groupId") ? "bg-accent-soft" : undefined}>
+                        <td className="font-medium">
+                          <Link to={`/devices?organizationId=${s.organizationId}&siteId=${s.id}&groupId=${g.id}`} className="hover:text-accent hover:underline">
+                            {g.name}
+                          </Link>
+                        </td>
                         <td className="max-w-md truncate text-muted">{g.description || "—"}</td>
                         <td className="whitespace-nowrap text-muted">{formatDateTime(g.createdAt)}</td>
                         {s.canManage && (
@@ -270,80 +268,7 @@ export function SiteDetailPage() {
           deleted. Its contacts and places are deleted with it once you confirm them.
         </p>
       </ConfirmDialog>
-      <ConfirmDialog
-        open={groupToDelete !== null}
-        onClose={() => {
-          setGroupToDelete(null);
-          removeGroup.reset();
-        }}
-        onConfirm={() => groupToDelete && removeGroup.mutate(groupToDelete)}
-        title="Delete device group"
-        confirmLabel="Delete device group"
-        tone="danger"
-        loading={removeGroup.isPending}
-        error={removeGroup.error}
-      >
-        <p>
-          Delete <strong>{groupToDelete?.name}</strong> from {s.name}?
-        </p>
-      </ConfirmDialog>
+      <DeleteGroupDialog group={groupToDelete} siteName={s.name} onClose={() => setGroupToDelete(null)} />
     </>
-  );
-}
-
-function DeviceGroupDialog({ open, onClose, siteId, group }: { open: boolean; onClose: () => void; siteId: string; group?: DeviceGroup }) {
-  const toast = useToast();
-  const [form, setForm] = useState<DeviceGroupInput>({ name: "", description: "" });
-  useEffect(() => {
-    if (open) setForm(group ? { name: group.name, description: group.description } : { name: "", description: "" });
-  }, [open, group]);
-  const save = useApiMutation(
-    (req: DeviceGroupInput) => (group ? api.put<DeviceGroup>(`/device-groups/${group.id}`, req) : api.post<DeviceGroup>(`/sites/${siteId}/device-groups`, req)),
-    {
-      invalidate: ["/sites", "/organizations", "/audit"],
-      onSuccess: (g) => {
-        toast.success(group ? "Device group updated." : `Device group “${g.name}” created.`);
-        onClose();
-      },
-    },
-  );
-  useEffect(() => {
-    if (open) save.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    save.mutate({ name: form.name.trim(), description: form.description.trim() });
-  }
-
-  return (
-    <Dialog open={open} onClose={onClose} title={group ? "Edit device group" : "New device group"} size="sm">
-      <form onSubmit={submit} className="flex flex-col gap-3.5">
-        <TextField
-          label="Name"
-          value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          error={fieldError(save.error, "name")}
-          required
-          maxLength={200}
-          autoFocus
-        />
-        <TextareaField
-          label="Description"
-          value={form.description}
-          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-          error={fieldError(save.error, "description")}
-          maxLength={2000}
-        />
-        <InlineError error={save.error} fields={["name", "description"]} />
-        <div className="flex justify-end gap-2 pt-1">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" loading={save.isPending} disabled={!form.name.trim()}>
-            {group ? "Save changes" : "Create device group"}
-          </Button>
-        </div>
-      </form>
-    </Dialog>
   );
 }

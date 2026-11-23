@@ -195,6 +195,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		mesh = remote.NewMeshAgents(d.Remote, files)
 	}
 	d.Devices = devices.New(db, cfg.Mesh.Enabled)
+	d.Devices.SetAudit(auditLog)
+	if d.Remote != nil {
+		d.Devices.OnMoved(d.Remote.DevicesChanged)
+	}
 	d.Agents = agents.New(db, auditLog, mesh, log)
 	d.Agents.SetSealer(sealer)
 	jobKey, err := jobs.LoadKey(ctx, db, sealer)

@@ -212,6 +212,7 @@ type SoftwareQuery struct {
 	Search         string
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
+	GroupID        uuid.UUID
 }
 
 // SoftwareSummary is one package version and how many devices have it.
@@ -244,8 +245,9 @@ func (s *Service) SearchSoftware(ctx context.Context, c access.Caller, q Softwar
 			FROM device_software s JOIN devices d ON d.id = s.device_id
 			WHERE ($1 = '' OR lower(s.name) LIKE '%' || $1 || '%' ESCAPE '\')
 				AND ($2::uuid IS NULL OR d.organization_id = $2) AND ($3::uuid IS NULL OR d.site_id = $3)
+				AND ($4::uuid IS NULL OR d.device_group_id = $4)
 			GROUP BY s.name, s.version, d.organization_id, d.site_id
-			ORDER BY lower(s.name), s.name, s.version LIMIT 20000`, likeEscape(search), nullID(q.OrganizationID), nullID(q.SiteID))
+			ORDER BY lower(s.name), s.name, s.version LIMIT 20000`, likeEscape(search), nullID(q.OrganizationID), nullID(q.SiteID), nullID(q.GroupID))
 		if err != nil {
 			return err
 		}
@@ -304,6 +306,7 @@ type SoftwareDevicesQuery struct {
 	// OrganizationID and SiteID, when set, limit it as SoftwareQuery does.
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
+	GroupID        uuid.UUID
 }
 
 // SoftwareDevices lists the devices with a package.
@@ -318,7 +321,9 @@ func (s *Service) SoftwareDevices(ctx context.Context, c access.Caller, q Softwa
 				JOIN organizations o ON o.id = d.organization_id JOIN sites st ON st.id = d.site_id
 			WHERE s.name = $1 AND ($2::text IS NULL OR s.version = $2)
 				AND ($3::uuid IS NULL OR d.organization_id = $3) AND ($4::uuid IS NULL OR d.site_id = $4)
-			ORDER BY lower(d.name), d.id, s.version LIMIT $5`, q.Name, q.Version, nullID(q.OrganizationID), nullID(q.SiteID), MaxSoftwareDevices)
+				AND ($6::uuid IS NULL OR d.device_group_id = $6)
+			ORDER BY lower(d.name), d.id, s.version LIMIT $5`, q.Name, q.Version, nullID(q.OrganizationID), nullID(q.SiteID), MaxSoftwareDevices,
+			nullID(q.GroupID))
 		if err != nil {
 			return err
 		}

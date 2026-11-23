@@ -4,7 +4,7 @@ import { FileCode2, Plus } from "lucide-react";
 import { useList, useOrganizations, usePrefetch } from "../../api/hooks";
 import type { Script } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { SearchInput, SiteSelect } from "../../components/Filters";
+import { DeviceScope, GroupSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
@@ -27,6 +27,8 @@ export function ScriptsPage() {
   const library = url.get("library");
   const organizationId = library && library !== "shared" ? library : "";
   const siteId = organizationId ? url.get("siteId") : "";
+  const groupId = organizationId ? url.get("groupId") : "";
+  const deviceId = organizationId ? url.get("deviceId") : "";
   const filtered = Boolean(search || library);
 
   const params = {
@@ -34,6 +36,8 @@ export function ScriptsPage() {
     level: library === "shared" ? "shared" : undefined,
     organizationId: organizationId || undefined,
     siteId: siteId || undefined,
+    groupId: groupId || undefined,
+    deviceId: deviceId || undefined,
   };
   const list = useList<Script>("/scripts", params, { keepPrevious: true });
   const newLink = (
@@ -54,8 +58,10 @@ export function ScriptsPage() {
       />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or description" className="max-w-xs" />
-        <LibrarySelect value={library} onChange={(v) => url.set({ library: v, siteId: null })} />
-        {organizationId && <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v })} />}
+        <LibrarySelect value={library} onChange={(v) => url.set({ library: v, siteId: null, groupId: null, deviceId: null })} />
+        {organizationId && <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null, deviceId: null })} />}
+        {organizationId && <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v, deviceId: null })} />}
+        {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show the scripts of every device" onClear={() => url.set({ deviceId: null })} />}
       </Toolbar>
 
       {list.isPending ? (

@@ -23,7 +23,31 @@ func (a *API) Register(mux *http.ServeMux) {
 	}
 	r("GET /api/v1/devices", a.list)
 	r("GET /api/v1/devices/recent-connections", a.recent)
+	r("GET /api/v1/device-tree", a.tree)
+	r("POST /api/v1/devices/move", a.move)
 	r("GET /api/v1/devices/{id}", a.get)
+}
+
+func (a *API) move(w http.ResponseWriter, r *http.Request) error {
+	var in devices.MoveInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.Move(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, res)
+	return nil
+}
+
+func (a *API) tree(w http.ResponseWriter, r *http.Request) error {
+	t, err := a.svc.Tree(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, t)
+	return nil
 }
 
 func (a *API) recent(w http.ResponseWriter, r *http.Request) error {
@@ -44,9 +68,13 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	q := r.URL.Query()
 	items, err := a.svc.List(r.Context(), httpapi.Caller(r), devices.Query{
-		OrganizationID: org, SiteID: site, Search: q.Get("q"), Status: q.Get("status"), Hardening: q.Get("hardening"),
+		OrganizationID: org, SiteID: site, GroupID: group, Ungrouped: q.Get("ungrouped") == "true", Search: q.Get("q"), Status: q.Get("status"), Hardening: q.Get("hardening"),
 		DiskHealth: q.Get("diskHealth"),
 	})
 	if err != nil {

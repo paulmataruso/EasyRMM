@@ -154,6 +154,9 @@ func (a *API) fleet(w http.ResponseWriter, r *http.Request) error {
 	if q.GroupID, err = httpapi.QueryID(r, "groupId"); err != nil {
 		return err
 	}
+	if q.DeviceID, err = httpapi.QueryID(r, "deviceId"); err != nil {
+		return err
+	}
 	q.Compliance, q.Search = r.URL.Query().Get("compliance"), r.URL.Query().Get("q")
 	f, err := a.svc.Fleet(r.Context(), httpapi.Caller(r), q)
 	return ok(w, f, err)

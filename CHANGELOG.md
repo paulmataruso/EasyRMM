@@ -158,6 +158,38 @@ All notable changes to this project are documented here. The format follows
   EasyPatch agent's own level is not changed by verbose mode yet, and the
   collection of logs through patching when the EasyRMM agent is down is
   the next slice. Migration 00040.
+- **Move devices between groups, sites and organizations.** Drag a device
+  (or the devices chosen in the Devices list) onto a group, site or
+  organization in the tree, or use *Move to…* in a tree row's menu, the
+  Devices list or a device's page; a move to another site or organization
+  asks first and names what follows. `POST /api/v1/devices/move` moves up
+  to 500 devices all or none, audited, with `device.edit`, plus
+  `site.manage` on both sites for another site and `org.manage` on both
+  organizations for another organization. Remote access follows: the
+  MeshCentral node moves to the new site's device group and the agent
+  rewrites MeshAgent's settings. Moved to another organization, a device's
+  queued runs are canceled, a run in progress refuses the move, its remote
+  sessions end and its alerts are removed; job runs, patch history and audit
+  records stay with the old organization. A site's menu in the tree offers
+  *New group*, a group's *Rename* and *Delete*. See
+  [Moving devices](docs/operations/moving-devices.md) (ADR-0069).
+
+- **One device tree on every view, with device groups.** The sidebar's tree
+  now has four levels, organization, site, device group and device, and
+  the same tree shows on Organizations, Devices, Alerts, Scripts, Jobs and
+  Patching (ADR-0069).
+  Choosing a node narrows whatever the view lists: a group or a device
+  sets `groupId` or `deviceId` in the address, and the lists on every view
+  follow. The tree loads a node's devices when it is opened (the fleet is
+  no longer fetched whole), searches names on the server, and draws only
+  the rows on screen. New in the API: `groupId` on `GET /devices`,
+  `/alerts`, `/jobs`, `/job-runs`, `/scripts`, `/software` and
+  `/software/devices`; `ungrouped=true` on `GET /devices`; `deviceId` on
+  `GET /patching/devices`; `groupId` on each device's entry in
+  `GET /alerts/devices`; and `GET /device-tree` for the groups and the
+  device counts the tree shows before a node is opened. The patching
+  engine counts updates, jobs and alerts for a whole site, so those tabs
+  show the site of a chosen group or device and say so.
 
 - **Hardening checks for Windows computers and servers, through the API**
   ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),

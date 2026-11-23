@@ -2,6 +2,8 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -81,11 +83,53 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	return &agentproto.HeartbeatResponse{
 		Protocol:         agentproto.Protocol,
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
-		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
+		MeshAgent:        agentproto.MeshAgentInfo{Available: available, SettingsSHA256: s.pendingSettings(ctx, d, f, available)},
 		JobKey:           s.jobKey,
 		Update:           update,
 		Uninstall:        uninstall,
 	}, nil
+}
+
+// movingFrom reports whether d was moved to its site from the site whose
+// device group a node is in: the node is d's, on its way to the new group
+// (ADR-0069).
+func (s *Service) movingFrom(ctx context.Context, tx pgx.Tx, d *Device, site uuid.UUID) bool {
+	var from *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT mesh_from_site_id FROM devices WHERE id = $1`, d.ID).Scan(&from); err != nil {
+		return false
+	}
+	return from != nil && *from == site
+}
+
+// pendingSettings is the hash of the MeshAgent settings an agent must apply
+// after its device moved to another site, or "" when none are pending. The
+// agent reports the hash it applied; the instruction ends when they agree.
+func (s *Service) pendingSettings(ctx context.Context, d *Device, f facts, available bool) string {
+	if !available {
+		return ""
+	}
+	var pending bool
+	if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT mesh_settings_pending FROM devices WHERE id = $1`, d.ID).Scan(&pending)
+	}); err != nil || !pending {
+		return ""
+	}
+	b, err := s.MeshAgentSettings(ctx, d)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	want := hex.EncodeToString(sum[:])
+	if f.meshSettings != want {
+		return want
+	}
+	if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE devices SET mesh_settings_pending = false WHERE id = $1`, d.ID)
+		return err
+	}); err != nil {
+		s.log.Warn("agents: settling the MeshAgent settings failed", "error", err, "device_id", d.ID)
+	}
+	return ""
 }
 
 // link attaches the MeshCentral node the agent reported to its device.
@@ -120,7 +164,7 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 		return err == nil, err
 	case err != nil:
 		return false, err
-	case otherSite != d.SiteID:
+	case otherSite != d.SiteID && !s.movingFrom(ctx, tx, d, otherSite):
 		s.log.Warn("agents: a device reported a MeshAgent node of another site; not linked",
 			"device_id", d.ID, "node_device_id", otherID)
 		return false, nil

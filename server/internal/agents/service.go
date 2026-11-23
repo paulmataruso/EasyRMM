@@ -171,6 +171,7 @@ type facts struct {
 	hostname, os, platform, arch, version string
 	meshNode                              string // MeshCentral encoding, "" if none
 	sha256                                string // the agent's executable, "" if not reported
+	meshSettings                          string // the MeshAgent settings the agent applied, "" if not reported
 }
 
 // cleanFacts validates what an agent reports. Free text is cut to the
@@ -194,6 +195,9 @@ func cleanFacts(f agentproto.Facts) (facts, error) {
 	}
 	if agentproto.ValidSHA256(f.AgentSHA256) {
 		out.sha256 = f.AgentSHA256
+	}
+	if agentproto.ValidSHA256(f.MeshSettingsSHA256) {
+		out.meshSettings = f.MeshSettingsSHA256
 	}
 	if f.MeshNodeID != "" {
 		key, err := agentproto.MeshNodeKey(f.MeshNodeID)

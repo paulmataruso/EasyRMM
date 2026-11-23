@@ -398,6 +398,28 @@ The owner confirmed (2026-11-23):
 2. Agent logs are kept 14 days by default.
 3. Settings keeps its own list rather than the tree.
 
+## Amendments
+
+* **Amended 2026-11-23 (decided in review): alerts do not stay with the old
+  organization.** Part D said alert history keeps its organization and site.
+  Alerts have no organization of their own; they follow their device. Keeping
+  them would show the old organization's alert history to the new one, so a
+  move to another organization deletes the device's alerts, open and
+  resolved. Job runs, patch history and audit records keep their organization
+  and site as written. The move's pull request lists every table and tests
+  each (`docs/operations/moving-devices.md`).
+* **Amended 2026-11-23 (decided in review): patching tabs stay per site.** The
+  patching engine has no device groups, so Patching's Updates, Jobs and
+  Alerts tabs show the site of a chosen group or device and say so; the
+  Devices tab narrows to the group or device.
+* **Amended 2026-11-23 (decided in review): the tree has its own counts.**
+  Loading a node's devices only when it opens needs counts and groups
+  beforehand, so `GET /device-tree` returns them.
+* **Amended 2026-11-23 (decided in review): the settings instruction.** The
+  heartbeat reply carries the hash of the new site's MeshAgent settings, not
+  the settings; the agent fetches them from the signed settings download,
+  checks the hash and reports the hash it applied, which ends the instruction.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,
