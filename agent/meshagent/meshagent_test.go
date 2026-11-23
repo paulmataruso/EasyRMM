@@ -431,3 +431,95 @@ func TestReconfigure(t *testing.T) {
 	cancel()
 	m.Wait()
 }
+
+// forcing is a fakeServices whose service ignores its stop request until it
+// is ended by force.
+type forcing struct {
+	fakeServices
+	forced []string
+	// failForce makes ForceStop fail.
+	failForce error
+}
+
+func (f *forcing) Stop(_ context.Context, name string) error {
+	f.stopped = append(f.stopped, name)
+	if len(f.forced) == 0 {
+		return errors.New("the service did not stop within 30 seconds")
+	}
+	return nil
+}
+
+func (f *forcing) ForceStop(_ context.Context, name, image string) ([]string, error) {
+	f.forced = append(f.forced, name+" "+filepath.Base(image))
+	return []string{"meshagent.exe (pid 7)"}, f.failForce
+}
+
+func TestRestartForcesAStopThatIsIgnored(t *testing.T) {
+	svcs := &forcing{}
+	m := &Manager{Dir: t.TempDir(), Mode: ModeService, Services: svcs, Windows: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := os.WriteFile(m.binary(), []byte("x"), 0o755); err != nil { //nolint:gosec // a test program
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m.settings(), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(svcs.forced) != 1 || !strings.Contains(svcs.forced[0], "meshagent.exe") || len(svcs.restarted) != 1 {
+		t.Errorf("forced %v, restarted %v", svcs.forced, svcs.restarted)
+	}
+
+	svcs = &forcing{failForce: errors.New("access denied")}
+	m.Services = svcs
+	err := m.Restart(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "access denied") || !strings.Contains(err.Error(), "pid 7") || len(svcs.restarted) != 0 {
+		t.Errorf("a failed force: %v, restarted %v", err, svcs.restarted)
+	}
+}
+
+func TestRepairOnWindowsSweepsAndWaits(t *testing.T) {
+	svcs := &forcing{forced: []string{"already"}}
+	m := &Manager{Dir: t.TempDir(), Mode: ModeService, Services: svcs, Windows: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	stale := filepath.Join(m.Dir, ".meshagent-1987589644")
+	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Repair(context.Background(), download("new"), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("a leftover of an earlier attempt stayed")
+	}
+	if b, _ := os.ReadFile(m.binary()); string(b) != "new" {
+		t.Errorf("program = %q", b)
+	}
+
+	// A service that does not run after its start is an error.
+	runningWait = 10 * time.Millisecond
+	t.Cleanup(func() { runningWait = 30 * time.Second })
+	svcs.state = "stopped"
+	if err := m.Repair(context.Background(), download("new"), []byte("MeshID=0x1\n")); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("a service that does not run: %v", err)
+	}
+}
+
+func TestReplaceBinaryOnWindowsRetriesThenMovesAside(t *testing.T) {
+	renameBackoff = time.Millisecond
+	t.Cleanup(func() { renameBackoff = 200 * time.Millisecond })
+	m := &Manager{Dir: t.TempDir(), Windows: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	// The new program is missing: every try fails, and so does the
+	// move-aside's second step, which puts the old program back.
+	if err := os.WriteFile(m.binary(), []byte("old"), 0o755); err != nil { //nolint:gosec // a test program
+		t.Fatal(err)
+	}
+	if err := m.replaceBinary(filepath.Join(m.Dir, "absent")); err == nil {
+		t.Fatal("a missing program was put in place")
+	}
+	if b, _ := os.ReadFile(m.binary()); string(b) != "old" {
+		t.Errorf("the old program was not put back: %q", b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(m.Dir, ".meshagent-old-*")); len(left) != 0 {
+		t.Errorf("left %v", left)
+	}
+}
