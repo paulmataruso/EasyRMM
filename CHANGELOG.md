@@ -775,6 +775,11 @@ All notable changes to this project are documented here. The format follows
   link with "Host names differ". A name that is the other's first 15
   characters, ignoring case, now counts as the same.
 
+- **No stray scrollbar under a page's tabs.** Every tab strip (the Alerts
+  page's, a device's, Settings' and others) scrolled by a pixel, showing a
+  tiny scrollbar under the tabs. The end-to-end tests now fail on any box
+  that scrolls by a few pixels on the pages they visit.
+
 - **Remote sessions work from every address the server answers on.**
   MeshCentral accepted a session's control connection only from a page on
   its own name, so it closed every session started from a console reached

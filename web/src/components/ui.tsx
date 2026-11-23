@@ -366,7 +366,7 @@ export function Tabs({ tabs, active, onChange, className }: { tabs: TabDef[]; ac
     <div
       role="tablist"
       aria-orientation="horizontal"
-      className={cx("mb-4 flex gap-1 overflow-x-auto border-b border-line", className)}
+      className={cx("mb-4 flex gap-1 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-line)]", className)}
       onKeyDown={(e) => {
         if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
         const index = visible.findIndex((t) => t.id === active);
@@ -388,7 +388,7 @@ export function Tabs({ tabs, active, onChange, className }: { tabs: TabDef[]; ac
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.id)}
             className={cx(
-              "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors",
+              "flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors",
               selected ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg",
             )}
           >
