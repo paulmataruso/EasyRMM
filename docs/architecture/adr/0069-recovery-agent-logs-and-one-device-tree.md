@@ -559,6 +559,8 @@ The owner confirmed (2026-11-23):
   organization deletes the device's agent log records and their counters. A
   device's verbose-logging setting ends with any move to another site, since
   someone with rights on the old site set it and its row names that site.
+  Repair history goes with a move to another organization too: it names who
+  asked and keeps the steps' output.
 * **Amended 2026-11-23 (decided in review): patching tabs stay per site.** The
   patching engine has no device groups, so Patching's Updates, Jobs and
   Alerts tabs show the site of a chosen group or device and say so; the

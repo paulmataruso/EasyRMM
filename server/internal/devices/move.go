@@ -283,7 +283,9 @@ func (s *Service) leaveOrganization(ctx context.Context, tx pgx.Tx, c access.Cal
 	}
 	// Agent logs record what the old organization's people ran and set on
 	// the device, so they go too (ADR-0069).
-	for _, table := range []string{"agent_log_records", "agent_log_days", "agent_log_follow"} {
+	// Repairs name who asked for them and keep their steps' output, so the
+	// history goes as well; a report for a repair that is gone is ignored.
+	for _, table := range []string{"agent_log_records", "agent_log_days", "agent_log_follow", "agent_repairs"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE device_id = $1`, m.id); err != nil {
 			return 0, err
 		}
