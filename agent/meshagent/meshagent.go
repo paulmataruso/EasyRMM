@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -84,6 +86,54 @@ func (m *Manager) binary() string {
 
 func (m *Manager) settings() string { return filepath.Join(m.Dir, "meshagent.msh") }
 
+// applied records the hash of the settings the server gave, beside them.
+func (m *Manager) applied() string { return filepath.Join(m.Dir, "settings.sha256") }
+
+// AppliedSettings is the SHA-256, in hex, of the settings the server gave
+// MeshAgent last, or "" when none is recorded (an install from before the
+// server moved devices between sites).
+func (m *Manager) AppliedSettings() string {
+	b, err := os.ReadFile(m.applied())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// writeSettings writes MeshAgent's settings and the hash of what the server
+// gave.
+func (m *Manager) writeSettings(settings []byte) error {
+	sum := sha256.Sum256(settings)
+	if m.Windows {
+		settings = WithServiceName(settings, WindowsService)
+	}
+	if err := os.WriteFile(m.settings(), settings, 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(m.applied(), []byte(hex.EncodeToString(sum[:])+"\n"), 0o600)
+}
+
+// Reconfigure replaces MeshAgent's settings, which name the device group it
+// joins, and restarts it so that it joins the new one (ADR-0069).
+func (m *Manager) Reconfigure(ctx context.Context, settings []byte) error {
+	if !m.Installed() {
+		return errors.New("MeshAgent is not installed")
+	}
+	if err := m.writeSettings(settings); err != nil {
+		return err
+	}
+	if m.asService() {
+		return m.Services.Restart(ctx, m.service().Name)
+	}
+	// A child MeshAgent is started again by its supervisor once it exits.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.child != nil && m.child.Process != nil {
+		return m.child.Process.Signal(os.Interrupt)
+	}
+	return nil
+}
+
 func (m *Manager) service() host.Service {
 	s := host.Service{
 		Name:         Unit,
@@ -121,7 +171,6 @@ func (m *Manager) Install(ctx context.Context, download func(io.Writer) error, s
 		if err := host.Protect(m.Dir); err != nil {
 			return err
 		}
-		settings = WithServiceName(settings, WindowsService)
 	} else if err := os.MkdirAll(m.Dir, 0o755); err != nil { //nolint:gosec // MeshAgent's directory, like MeshCentral's own installer
 		return err
 	}
@@ -141,7 +190,7 @@ func (m *Manager) Install(ctx context.Context, download func(io.Writer) error, s
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(m.settings(), settings, 0o600); err != nil {
+	if err := m.writeSettings(settings); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), m.binary()); err != nil {

@@ -138,6 +138,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Move devices between groups, sites and organizations.** Drag a device
+  (or the devices chosen in the Devices list) onto a group, site or
+  organization in the tree, or use *Move to…* in a tree row's menu, the
+  Devices list or a device's page; a move to another site or organization
+  asks first and names what follows. `POST /api/v1/devices/move` moves up
+  to 500 devices all or none, audited, with `device.edit`, plus
+  `site.manage` on both sites for another site and `org.manage` on both
+  organizations for another organization. Remote access follows: the
+  MeshCentral node moves to the new site's device group and the agent
+  rewrites MeshAgent's settings. Moved to another organization, a device's
+  queued runs are canceled, a run in progress refuses the move, its remote
+  sessions end and its alerts are removed; job runs, patch history and audit
+  records stay with the old organization. A site's menu in the tree offers
+  *New group*, a group's *Rename* and *Delete*. See
+  [Moving devices](docs/operations/moving-devices.md) (ADR-0069).
+
 - **One device tree on every view, with device groups.** The sidebar's tree
   now has four levels, organization, site, device group and device, and
   the same tree shows on Organizations, Devices, Alerts, Scripts, Jobs and

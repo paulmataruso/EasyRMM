@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router";
-import { AppWindow, ExternalLink, Play } from "lucide-react";
+import { AppWindow, ExternalLink, MoveRight, Play } from "lucide-react";
 import { useState } from "react";
 import { useApi, useList } from "../../api/hooks";
 import type { AuditEntry, Device, JobRun, PatchStatus, RemoteKind } from "../../api/types";
@@ -10,6 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner, Tabs } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { MoveDialog } from "../../nav/MoveDialog";
 import { RunStatusBadge } from "../scripts/parts";
 import { RunScriptDialog } from "../scripts/RunScriptDialog";
 import { cannotRunReason, isOpen } from "../scripts/scriptText";
@@ -53,6 +54,7 @@ export function DeviceDetailPage() {
   // The Patches tab shows once EasyPatch is set up (ADR-0030).
   const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
   const [running, setRunning] = useState(false);
+  const [moving, setMoving] = useState(false);
   const showHistory = can("audit.view");
 
   if (device.isPending) return <Spinner />;
@@ -112,12 +114,18 @@ export function DeviceDetailPage() {
                 Run script
               </Button>
             )}
+            {can("device.edit") && (
+              <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(true)}>
+                Move to…
+              </Button>
+            )}
             <RemoveDeviceButton device={d} />
           </>
         }
       />
 
       <RemovalBanner device={d} />
+      <MoveDialog devices={[d]} open={moving} onClose={() => setMoving(false)} />
 
       {kinds.length > 0 && reason && (
         <Alert tone="info" className="mb-5" title={reason}>

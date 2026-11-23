@@ -93,7 +93,7 @@ describe("device tree", () => {
       { siteId: "s1", groupId: null, total: 5, online: 3 },
       { siteId: "s1", groupId: "g1", total: 20, online: 10 },
     ];
-    const roots = buildTree(ORGS, SITES, [DEVICES[1]!], { counts, groups: [{ id: "g1", organizationId: "o1", siteId: "s1", name: "Servers" }] });
+    const roots = buildTree(ORGS, SITES, [DEVICES[1]!], { counts, groups: [{ id: "g1", organizationId: "o1", siteId: "s1", name: "Servers", description: "" }] });
     const northwind = roots.find((o) => o.id === "o1")!;
     expect([northwind.total, northwind.online]).toEqual([25, 13]);
     const head = northwind.children.find((s) => s.id === "s1")!;
@@ -107,8 +107,8 @@ describe("device tree", () => {
 
   it("puts a group's devices under it at the next level, after the site's groups", () => {
     const groups = [
-      { id: "g2", organizationId: "o1", siteId: "s1", name: "desks" },
-      { id: "g1", organizationId: "o1", siteId: "s1", name: "Servers" },
+      { id: "g2", organizationId: "o1", siteId: "s1", name: "desks", description: "" },
+      { id: "g1", organizationId: "o1", siteId: "s1", name: "Servers", description: "" },
     ];
     const inGroup = device("d5", "SQL-01", { deviceGroupId: "g1" });
     const roots = buildTree(ORGS, SITES, [...DEVICES, inGroup], { groups });

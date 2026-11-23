@@ -14,6 +14,11 @@ import {
   Library,
   ListChecks,
   LoaderCircle,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  FolderPlus,
+  MoveRight,
   LogIn,
   Mail,
   MapPin,
@@ -31,7 +36,7 @@ import {
 } from "lucide-react";
 import { api } from "../api/client";
 import { useApi, useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
-import type { Device, DeviceAlertCount, DeviceTreeData, List, Permission, Script } from "../api/types";
+import type { Device, DeviceAlertCount, DeviceGroup, DeviceTreeData, List, Permission, Script } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cx, Dot, ErrorState, Spinner } from "../components/ui";
 import { plural } from "../lib/format";
@@ -39,8 +44,14 @@ import { platformName } from "../pages/devices/platform";
 import { useCanWriteScripts } from "../pages/scripts/ScriptsPage";
 import { canQuickConnect, QuickConnectPanel } from "./QuickConnect";
 import { selectedKey, targetHref, type SectionId, type Target } from "./sections";
-import { ancestors, buildTree, filterTree, indexTree, initialExpanded, visibleRows, type TreeNode } from "./tree";
+import { ancestors, buildTree, filterTree, indexTree, initialExpanded, orgKey, siteKey, visibleRows, type TreeNode } from "./tree";
 import { useDebounced } from "./useDebounced";
+import { DeleteGroupDialog, DeviceGroupDialog } from "../pages/organizations/GroupDialogs";
+import { ConfirmDialog } from "../components/Dialog";
+import { useToast } from "../components/Toast";
+import { MoveDialog } from "./MoveDialog";
+import { consequences, draggingDevices, dragged, endDrag, movedText, startDrag, useMoveDevices, widest, type Movable, type MoveTarget } from "./move";
+import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { scrollbarWidth, textMeasure, treeWidth, type RowSpec } from "./width";
 
 const META: Record<SectionId, { title: string; icon: ReactNode }> = {
@@ -217,6 +228,20 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const scrollArea = useRef<HTMLDivElement>(null);
   const treeEl = useRef<HTMLDivElement>(null);
+  const toast = useToast();
+  // Moving devices and managing groups (ADR-0069).
+  const canMove = can("device.edit");
+  const canGroups = can("site.manage");
+  const [menu, setMenu] = useState<{ node: TreeNode; anchor: HTMLElement } | null>(null);
+  const [picker, setPicker] = useState<{ devices: Movable[]; organizationId?: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ devices: Movable[]; target: MoveTarget } | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const [groupForm, setGroupForm] = useState<{ siteId: string; group?: DeviceGroup } | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<{ group: DeviceGroup; siteName: string } | null>(null);
+  const mover = useMoveDevices((r, req) => {
+    toast.success(movedText(r, req));
+    setConfirming(null);
+  });
 
   const selected = selectedKey(section, location.pathname, location.search);
   const byDevice = useMemo(() => new Map(alertCounts.items.map((c) => [c.deviceId, c])), [alertCounts.items]);
@@ -250,7 +275,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     queries: wanted.map((n) => {
       const params = n.kind === "group" ? { groupId: n.id } : { siteId: n.id, ungrouped: "true" };
       return {
-        queryKey: ["tree-devices", n.key],
+        queryKey: ["devices", "tree", n.key],
         queryFn: ({ signal }: { signal: AbortSignal }) => api.get<List<Device>>("/devices", params, signal),
         refetchInterval: 30_000,
         staleTime: 10_000,
@@ -490,6 +515,68 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     );
   }
 
+  const movable = (d: Device): Movable => d;
+
+  /** What a row's menu offers; none when the caller may do nothing with the row. */
+  function menuItems(node: TreeNode): RowMenuItem[] {
+    const items: RowMenuItem[] = [];
+    const d = node.device;
+    if (d) {
+      if (canMove) items.push({ key: "move", label: "Move to…", icon: <MoveRight className="size-4" aria-hidden />, onSelect: () => setPicker({ devices: [movable(d)] }) });
+      if (section === "devices" && canQuickConnect(d)) {
+        items.push({ key: "connect", label: "Quick connect", icon: <ScreenShare className="size-4" aria-hidden />, onSelect: () => openConnect(node) });
+      }
+    } else if (node.kind === "site" && canGroups) {
+      items.push({ key: "new-group", label: "New group", icon: <FolderPlus className="size-4" aria-hidden />, onSelect: () => setGroupForm({ siteId: node.id }) });
+    } else if (node.kind === "group" && canGroups) {
+      const g = tree.data?.groups.find((x) => x.id === node.id);
+      const group: DeviceGroup = { id: node.id, organizationId: node.organizationId, siteId: node.siteId!, name: node.name, description: g?.description ?? "", createdAt: "", updatedAt: "" };
+      const siteName = index.get(siteKey(node.siteId!))?.name ?? "";
+      items.push(
+        { key: "rename", label: "Rename", icon: <Pencil className="size-4" aria-hidden />, onSelect: () => setGroupForm({ siteId: node.siteId!, group }) },
+        { key: "delete", label: "Delete", icon: <Trash2 className="size-4" aria-hidden />, tone: "danger", onSelect: () => setGroupToDelete({ group, siteName }) },
+      );
+    }
+    return items;
+  }
+
+  /** Opens a row's menu; a row with only Quick connect keeps opening that panel at once. */
+  function openMenu(node: TreeNode): boolean {
+    const el = rowRefs.current.get(node.key);
+    const items = menuItems(node);
+    if (!el || items.length === 0) return false;
+    if (items.length === 1 && items[0]!.key === "connect") {
+      openConnect(node);
+      return true;
+    }
+    setMenu({ node, anchor: el });
+    return true;
+  }
+
+  /** The place a tree node stands for; null for an organization, which has several sites to choose from. */
+  function targetOf(node: TreeNode): MoveTarget | null {
+    if (node.kind !== "site" && node.kind !== "group") return null;
+    const org = index.get(orgKey(node.organizationId));
+    const site = index.get(siteKey(node.siteId!));
+    if (!org || !site) return null;
+    return { organizationId: org.id, organizationName: org.name, siteId: site.id, siteName: site.name, groupId: node.kind === "group" ? node.id : null, groupName: node.kind === "group" ? node.name : "" };
+  }
+
+  function dropOn(node: TreeNode) {
+    const devices = dragged();
+    endDrag();
+    setDropKey(null);
+    if (devices.length === 0 || !canMove) return;
+    if (node.kind === "org") return setPicker({ devices, organizationId: node.id });
+    const target = targetOf(node);
+    if (!target) return;
+    const kind = widest(devices, target);
+    if (kind === "none") return toast.info(`Already in ${target.groupName || target.siteName}.`);
+    // Another site or organization has consequences; the reader confirms them.
+    if (kind === "group") mover.mutate({ devices, target });
+    else setConfirming({ devices, target });
+  }
+
   function openConnect(node: TreeNode) {
     const el = rowRefs.current.get(node.key);
     if (section === "devices" && node.device && el && canQuickConnect(node.device)) setConnect({ device: node.device, anchor: el });
@@ -503,7 +590,8 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     const hasChildren = node.expandable;
     if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       e.preventDefault();
-      return openConnect(node);
+      openMenu(node);
+      return;
     }
     switch (e.key) {
       case "ArrowDown":
@@ -674,6 +762,8 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                   const isSelected = node.key === selected;
                   const d = node.device;
                   const quick = section === "devices" && d !== undefined && canQuickConnect(d);
+                  const items = menuItems(node);
+                  const target = node.kind === "device" ? false : node.kind === "org" || targetOf(node) !== null;
                   const connecting = connect !== null && d !== undefined && connect.device.id === d.id;
                   const badge = badgeFor(node);
                   return (
@@ -691,8 +781,8 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                       aria-setsize={siblings}
                       aria-expanded={hasChildren ? expandedRow : undefined}
                       aria-selected={isSelected}
-                      aria-keyshortcuts={quick ? "Shift+F10" : undefined}
-                      aria-haspopup={quick ? "dialog" : undefined}
+                      aria-keyshortcuts={items.length > 0 ? "Shift+F10" : undefined}
+                      aria-haspopup={items.length > 1 || (items.length === 1 && !quick) ? "menu" : quick ? "dialog" : undefined}
                       tabIndex={node.key === tabStop ? 0 : -1}
                       title={d ? deviceTitle(d) : node.name}
                       onClick={() => {
@@ -700,11 +790,39 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         activate(node);
                       }}
                       onContextMenu={
-                        quick
+                        items.length > 0
                           ? (e) => {
                               e.preventDefault();
                               setFocusKey(node.key);
-                              openConnect(node);
+                              openMenu(node);
+                            }
+                          : undefined
+                      }
+                      draggable={canMove && d !== undefined}
+                      onDragStart={
+                        canMove && d
+                          ? (e) => {
+                              startDrag(e.dataTransfer, [movable(d)]);
+                            }
+                          : undefined
+                      }
+                      onDragEnd={d ? endDrag : undefined}
+                      onDragOver={
+                        canMove && target
+                          ? (e) => {
+                              if (!draggingDevices(e.dataTransfer)) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (dropKey !== node.key) setDropKey(node.key);
+                            }
+                          : undefined
+                      }
+                      onDragLeave={target ? () => setDropKey((k) => (k === node.key ? null : k)) : undefined}
+                      onDrop={
+                        canMove && target
+                          ? (e) => {
+                              e.preventDefault();
+                              dropOn(node);
                             }
                           : undefined
                       }
@@ -713,7 +831,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         if (d && section === "devices") prefetch(`/devices/${d.id}`);
                       }}
                       onMouseEnter={d && section === "devices" ? () => prefetch(`/devices/${d.id}`) : undefined}
-                      className={cx(rowClasses(isSelected), indent[node.level], connecting && "bg-sidebar-active/60 text-white")}
+                      className={cx(rowClasses(isSelected), indent[node.level], connecting && "bg-sidebar-active/60 text-white", dropKey === node.key && "bg-accent/40 text-white ring-2 ring-accent")}
                     >
                       {hasChildren ? (
                         <span
@@ -750,6 +868,26 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         {node.name}
                       </span>
                       <BadgeView badge={badge} />
+                      {items.length > 0 && !(items.length === 1 && quick) && (
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={`Actions for ${node.name}`}
+                          title="Actions"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFocusKey(node.key);
+                            if (menu?.node.key === node.key) setMenu(null);
+                            else openMenu(node);
+                          }}
+                          className={cx(
+                            "-my-1 inline-flex size-6 shrink-0 items-center justify-center rounded text-sidebar-fg/80 hover:bg-white/15 hover:text-white",
+                            isSelected || menu?.node.key === node.key ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus:opacity-100 pointer-coarse:opacity-100",
+                          )}
+                        >
+                          <MoreHorizontal className="size-3.5" aria-hidden />
+                        </button>
+                      )}
                       {quick && (
                         <button
                           type="button"
@@ -778,6 +916,41 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
           </>
         )}
       </div>
+      {menu && (
+        <RowMenu
+          anchor={menu.anchor}
+          label={`Actions for ${menu.node.name}`}
+          items={menuItems(menu.node)}
+          onClose={(returnFocus) => {
+            const anchor = menu.anchor;
+            setMenu(null);
+            if (returnFocus) anchor.focus();
+          }}
+        />
+      )}
+      <MoveDialog devices={picker?.devices ?? []} open={picker !== null} organizationId={picker?.organizationId} onClose={() => setPicker(null)} />
+      <ConfirmDialog
+        open={confirming !== null}
+        onClose={() => {
+          setConfirming(null);
+          mover.reset();
+        }}
+        onConfirm={() => confirming && mover.mutate(confirming)}
+        title={confirming ? `Move ${confirming.devices.length === 1 ? confirming.devices[0]!.name : plural(confirming.devices.length, "device")} to ${confirming.target.groupName || confirming.target.siteName}?` : "Move"}
+        confirmLabel="Move"
+        loading={mover.isPending}
+        error={mover.error}
+      >
+        {confirming && (
+          <ul className="list-disc space-y-1 pl-5">
+            {consequences(confirming.devices, confirming.target).map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        )}
+      </ConfirmDialog>
+      <DeviceGroupDialog open={groupForm !== null} siteId={groupForm?.siteId ?? ""} group={groupForm?.group} onClose={() => setGroupForm(null)} />
+      <DeleteGroupDialog group={groupToDelete?.group ?? null} siteName={groupToDelete?.siteName ?? ""} onClose={() => setGroupToDelete(null)} />
       {connect && (
         <QuickConnectPanel
           device={connect.device}
