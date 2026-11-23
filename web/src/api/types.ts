@@ -299,6 +299,7 @@ export interface DeviceTreeGroup {
   organizationId: string;
   siteId: string;
   name: string;
+  description: string;
 }
 
 /** The devices directly in a site (groupId null: those in no group) or in one of its groups, and how many are online. */

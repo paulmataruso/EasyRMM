@@ -13,7 +13,7 @@ const ADMIN = sessionView({
 });
 const ORGS = [org("o1", "Northwind Traders")];
 const SITES = [site("s1", "o1", "Head office"), site("s2", "o1", "Warehouse")];
-const SERVERS = { id: "g1", organizationId: "o1", siteId: "s1", name: "Servers" };
+const SERVERS = { id: "g1", organizationId: "o1", siteId: "s1", name: "Servers", description: "" };
 const DB01 = device("d1", "DB-01", { deviceGroupId: "g1" });
 const ACCT = device("d2", "ACCOUNTS");
 const PACK = device("d3", "PACK-01", { siteId: "s2", siteName: "Warehouse" });

@@ -32,6 +32,7 @@ type Mesh interface {
 	RemoveMeshUser(ctx context.Context, meshID, userID string) error
 	Nodes(ctx context.Context) ([]meshcentral.Node, error)
 	RemoveDevice(ctx context.Context, nodeID string) error
+	MoveDevice(ctx context.Context, nodeID, meshID string) error
 	UninstallAgent(ctx context.Context, nodeID string) error
 }
 
@@ -396,6 +397,7 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		soonest time.Duration
 		retired map[string]retiredNode
 		doomed  []retiredNode
+		moves   []nodeMove
 	)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		waiting, soonest = map[string]time.Time{}, 0
@@ -411,12 +413,44 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		// reports; MeshCentral only says whether MeshAgent is connected. A
 		// link to a node in another site's group is refused: the node id an
 		// agent reports is not proof that the node is that device.
+		// The exception is a device moved to its site whose node is still in
+		// the group of the site it came from: the node follows below
+		// (ADR-0069).
+		if _, err := tx.Exec(ctx, `
+			UPDATE devices d SET mesh_from_site_id = NULL
+			FROM unnest($1::text[], $2::uuid[]) AS n(node, site)
+			WHERE d.mesh_node_id = n.node AND d.mesh_from_site_id IS NOT NULL AND d.site_id = n.site`,
+			present, sites); err != nil {
+			return fmt.Errorf("settling moved devices: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE devices d SET mesh_node_id = NULL, mesh_agent_type = NULL, remote_online = false
 			FROM unnest($1::text[], $2::uuid[]) AS n(node, site)
-			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL AND d.site_id <> n.site`,
+			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL AND d.site_id <> n.site
+			  AND d.mesh_from_site_id IS DISTINCT FROM n.site`,
 			present, sites); err != nil {
 			return fmt.Errorf("unlinking devices: %w", err)
+		}
+		pending, err := tx.Query(ctx, `
+			SELECT d.id, d.mesh_node_id, d.site_id
+			FROM devices d JOIN unnest($1::text[], $2::uuid[]) AS n(node, site) ON d.mesh_node_id = n.node
+			WHERE d.agent_public_key IS NOT NULL AND d.mesh_from_site_id = n.site AND d.site_id <> n.site`,
+			present, sites)
+		if err != nil {
+			return fmt.Errorf("finding moved devices: %w", err)
+		}
+		moves = moves[:0]
+		for pending.Next() {
+			var m nodeMove
+			if err := pending.Scan(&m.device, &m.node, &m.site); err != nil {
+				pending.Close()
+				return err
+			}
+			moves = append(moves, m)
+		}
+		pending.Close()
+		if err := pending.Err(); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE devices d SET mesh_agent_type = n.type, remote_online = n.online,
@@ -506,6 +540,7 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 	if err != nil {
 		return err
 	}
+	s.moveNodes(ctx, moves, known)
 	if wait := s.removeRetired(ctx, doomed); wait > 0 && (soonest == 0 || wait < soonest) {
 		soonest = wait
 	}
@@ -520,6 +555,41 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		s.recheck = time.AfterFunc(soonest, s.DevicesChanged)
 	}
 	return nil
+}
+
+// nodeMove is a device whose node is to move to its site's device group.
+type nodeMove struct {
+	device uuid.UUID
+	node   string
+	site   uuid.UUID
+}
+
+// moveNodes moves the nodes of devices moved to another site into their new
+// site's device group (ADR-0069). A node that cannot be moved now stays
+// pending, and the next sync tries again.
+func (s *Service) moveNodes(ctx context.Context, moves []nodeMove, known map[string]uuid.UUID) {
+	meshOf := make(map[uuid.UUID]string, len(known))
+	for mesh, site := range known {
+		meshOf[site] = mesh
+	}
+	moved := false
+	for _, m := range moves {
+		mesh, ok := meshOf[m.site]
+		if !ok {
+			s.log.Warn("remote access: the new site of a moved device has no device group yet", "device_id", m.device, "site_id", m.site)
+			continue
+		}
+		if err := s.mesh.MoveDevice(ctx, m.node, mesh); err != nil {
+			s.log.Warn("remote access: moving a device's node failed; it stays pending", "error", err, "device_id", m.device)
+			continue
+		}
+		moved = true
+		s.log.Info("remote access: moved a device to its new site's device group", "device_id", m.device, "site_id", m.site)
+	}
+	if moved {
+		// The next sync sees the nodes in their groups and settles the devices.
+		s.DevicesChanged()
+	}
 }
 
 // Removed devices' nodes (ADR-0050).

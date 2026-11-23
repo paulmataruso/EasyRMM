@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -347,6 +349,8 @@ type Service struct {
 	db     *database.DB
 	remote bool
 	builds BuildLookup
+	audit  *audit.Logger
+	moved  func()
 }
 
 // New returns a Service. remote says whether remote access is enabled on

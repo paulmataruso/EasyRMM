@@ -16,6 +16,7 @@ type TreeGroup struct {
 	OrganizationID uuid.UUID `json:"organizationId"`
 	SiteID         uuid.UUID `json:"siteId"`
 	Name           string    `json:"name"`
+	Description    string    `json:"description"`
 }
 
 // TreeCount is how many devices sit directly in a site (GroupID nil: those
@@ -40,13 +41,13 @@ type Tree struct {
 func (s *Service) Tree(ctx context.Context, c access.Caller) (*Tree, error) {
 	out := &Tree{Groups: []TreeGroup{}, Counts: []TreeCount{}}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT g.id, g.organization_id, g.site_id, g.name FROM device_groups g ORDER BY lower(g.name), g.id`)
+		rows, err := tx.Query(ctx, `SELECT g.id, g.organization_id, g.site_id, g.name, g.description FROM device_groups g ORDER BY lower(g.name), g.id`)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var g TreeGroup
-			if err := rows.Scan(&g.ID, &g.OrganizationID, &g.SiteID, &g.Name); err != nil {
+			if err := rows.Scan(&g.ID, &g.OrganizationID, &g.SiteID, &g.Name, &g.Description); err != nil {
 				rows.Close()
 				return err
 			}

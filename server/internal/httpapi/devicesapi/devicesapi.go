@@ -24,7 +24,21 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/devices", a.list)
 	r("GET /api/v1/devices/recent-connections", a.recent)
 	r("GET /api/v1/device-tree", a.tree)
+	r("POST /api/v1/devices/move", a.move)
 	r("GET /api/v1/devices/{id}", a.get)
+}
+
+func (a *API) move(w http.ResponseWriter, r *http.Request) error {
+	var in devices.MoveInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.Move(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, res)
+	return nil
 }
 
 func (a *API) tree(w http.ResponseWriter, r *http.Request) error {

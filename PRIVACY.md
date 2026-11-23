@@ -81,6 +81,10 @@ the audit log are kept for the periods set in the deployment's `.env`
 `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default, `EASYRMM_JOB_RETENTION`,
 `EASYRMM_AUDIT_RETENTION`), and devices and accounts until someone removes
 them. A run's output can also be removed at once from its page.
+A device moved to another organization leaves the old organization's
+history behind: its job runs and audit records keep the organization they
+were written for, and its alerts are removed, so the new organization does
+not see them.
 A backup of the deployment, whether one the operator makes
 ([Backup and restore](docs/operations/backup-restore.md)) or one EasyRMM
 takes automatically, such as before an upgrade, keeps the data as it was
