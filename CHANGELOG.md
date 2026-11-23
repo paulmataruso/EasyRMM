@@ -27,6 +27,25 @@ All notable changes to this project are documented here. The format follows
   device being removed, and judge nothing while EasyRMM cannot see
   MeshCentral or for 15 minutes after it can. Migration 00041.
 
+- **Repair patching agent, automatic repairs and the recovery copy**
+  ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),
+  slice R2). **Repair patching agent** (with `device.edit`) has the EasyRMM
+  agent restart the EasyPatch agent and, if the engine still does not hear
+  from it, reinstall its package of the same version over it
+  (`msiexec /fa`, `apt-get install --reinstall`, `dnf reinstall`), keeping
+  its enrollment; the install that enrolls an agent never runs. EasyRMM
+  reads each EasyPatch agent's last check-in from the engine every 5
+  minutes. Unless an organization turns **Repair agents automatically**
+  off (`org.manage`, on by default), EasyRMM now starts repairs itself for
+  MeshAgent not connected (10 minutes) and a silent EasyPatch agent (30
+  minutes), at most once per target per device in 6 hours and 3 a day,
+  judging nothing while MeshCentral or the engine cannot be reached or for
+  15 minutes after; an attempt that ends broken raises a **Repair failed**
+  warning with the last step's diagnostics. The agent keeps a copy of its
+  own program in its protected state folder after an update has reached the
+  server, and the new `easyrmm-agent repair-install` puts an enrolled agent
+  back in place (program, service, start). Migration 00042.
+
 ### Security
 
 - **Read-Only users no longer see what scripts printed or the arguments

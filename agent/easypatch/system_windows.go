@@ -45,6 +45,25 @@ func (windowsSystem) Install(ctx context.Context, p *agentproto.EasyPatchInstall
 	}
 	log := file + ".log"
 	args = append(args, "/l*v", log)
+	return msiexec(ctx, sys, log, args)
+}
+
+// Service is the EasyPatch agent's Windows service.
+func (windowsSystem) Service() string { return WindowsService }
+
+// Reinstall repairs the installed package: msiexec /fa puts back every file
+// that is missing or older and rewrites the registry entries and the
+// service, and takes no SERVERURL or token, so the enrollment stays.
+func (windowsSystem) Reinstall(ctx context.Context, _ agentproto.EasyPatchPackage, file string) error {
+	sys, err := windows.GetSystemDirectory()
+	if err != nil {
+		return fmt.Errorf("finding msiexec: %w", err)
+	}
+	log := file + ".log"
+	return msiexec(ctx, sys, log, []string{"/fa", file, "/qn", "/norestart", "/l*v", log})
+}
+
+func msiexec(ctx context.Context, sys, log string, args []string) error {
 	code, _, err := run(ctx, "", nil, filepath.Join(sys, "msiexec.exe"), args...)
 	if err != nil {
 		return err
@@ -54,7 +73,7 @@ func (windowsSystem) Install(ctx context.Context, p *agentproto.EasyPatchInstall
 		_ = os.Remove(log)
 		return nil
 	case 1618:
-		return errors.New("another installation is running on this device (msiexec exit code 1618); install again later")
+		return errors.New("another installation is running on this device (msiexec exit code 1618); try again later")
 	case 1603:
 		return fmt.Errorf("the EasyPatch agent's installer failed (msiexec exit code 1603); its log is %s", log)
 	case 1925, 1730:

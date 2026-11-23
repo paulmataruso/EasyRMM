@@ -40,7 +40,10 @@ needs systemd.
 * **Never a second agent, never a move.** A device whose EasyPatch agent is
   enrolled is left alone, whatever server it is enrolled with. EasyRMM never
   uses `--force`, so it never moves an endpoint from another EasyPatch
-  server.
+  server. *Amended by ADR-0069: an agent that stopped working is repaired in
+  place, by a restart or by reinstalling the package of the version it has
+  (`msiexec /fa`, `apt-get install --reinstall`, `dnf reinstall`), which
+  never runs this install path and keeps the enrollment.*
 * **The instruction travels in the heartbeat, signed.** Like an agent
   update (ADR-0027), the install is an instruction in the heartbeat answer.
   It is signed with the server's job key over a context string of its own,

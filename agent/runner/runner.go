@@ -61,6 +61,16 @@ type EasyPatch interface {
 	Start(ctx context.Context, s *agentproto.SignedEasyPatchInstall)
 }
 
+// PatchRepairs carries out repairs of the EasyPatch agent (package
+// easypatch, ADR-0069).
+type PatchRepairs interface {
+	// Restart restarts the EasyPatch agent's service.
+	Restart(ctx context.Context) error
+	// Repair reinstalls the package of the version installed, keeping the
+	// agent's enrollment. within bounds it.
+	Repair(ctx, within context.Context, r *agentproto.RepairEasyPatch) error
+}
+
 // Removal uninstalls the agent when the server says so (package removal,
 // ADR-0050).
 type Removal interface {
@@ -104,6 +114,12 @@ type Runner struct {
 	EasyPatch EasyPatch
 	// Removal uninstalls the agent (ADR-0050); nil never does.
 	Removal Removal
+	// Patch repairs the EasyPatch agent (ADR-0069); nil never does.
+	Patch PatchRepairs
+	// Settled is called after a heartbeat got through and the build is not
+	// on probation, until it returns true: the agent keeps its recovery
+	// copy then (ADR-0069). nil does nothing.
+	Settled func() bool
 	// Hardware reads the device's hardware health (ADR-0065); nil never
 	// does. It runs on a goroutine of its own, so that a slow disk never
 	// delays a heartbeat.
@@ -135,6 +151,8 @@ type Runner struct {
 	// meshErr is the last failure of installing MeshAgent, for its state.
 	meshErr string
 	repair  repairs
+	// settled: Settled has returned true.
+	settled bool
 }
 
 // RefreshInventory has the inventory collected again at the next heartbeat,
@@ -256,6 +274,11 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	r.failures = 0
 	if r.Update != nil {
 		r.Update.Reached()
+		if r.Settled != nil && !r.settled {
+			// A build that has reached the server is settled: the moment for
+			// its recovery copy (ADR-0069), never during probation.
+			r.settled = r.Settled()
+		}
 	}
 	if r.OnJobKey != nil && resp.JobKey != "" {
 		r.OnJobKey(resp.JobKey)

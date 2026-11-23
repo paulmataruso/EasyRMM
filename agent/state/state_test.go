@@ -252,3 +252,56 @@ func TestPendingEnrollment(t *testing.T) {
 		t.Error("pending file without a token accepted")
 	}
 }
+
+func TestRecoveryCopy(t *testing.T) {
+	s := open(t)
+	exe := filepath.Join(t.TempDir(), "easyrmm-agent")
+	if err := os.WriteFile(exe, []byte("build one"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.KeepRecovery(exe); err != nil {
+		t.Fatal(err)
+	}
+	cp := s.RecoveryCopy(exe)
+	if cp != filepath.Join(s.Dir(), "recovery", "easyrmm-agent") {
+		t.Errorf("copy at %s", cp)
+	}
+	if st, err := os.Stat(cp); err != nil || st.Mode().Perm() != 0o700 {
+		t.Fatalf("copy: %v", err)
+	}
+	if st, err := os.Stat(filepath.Dir(cp)); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("folder: %v", err)
+	}
+	// A new build replaces it, and nothing is left beside it.
+	if err := os.WriteFile(exe, []byte("build two"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.KeepRecovery(exe); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(cp); string(b) != "build two" {
+		t.Errorf("copy = %q", b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(cp), "*")); len(left) != 1 {
+		t.Errorf("recovery folder holds %v", left)
+	}
+	if err := s.RemoveRecovery(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(cp)); err == nil {
+		t.Error("recovery folder kept")
+	}
+	if err := s.RemoveRecovery(); err != nil {
+		t.Errorf("removing what is not there: %v", err)
+	}
+	if err := s.KeepRecovery(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("kept a copy of a program that is not there")
+	}
+	var unopened Store
+	if err := unopened.KeepRecovery(exe); !errors.Is(err, errNotOpened) {
+		t.Errorf("unchecked store: %v", err)
+	}
+	if err := unopened.RemoveRecovery(); !errors.Is(err, errNotOpened) {
+		t.Errorf("unchecked store: %v", err)
+	}
+}

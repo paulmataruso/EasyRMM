@@ -33,7 +33,7 @@ const STATUS = (
   </>
 );
 
-type Kind = Pick<AlertEntry, "kind" | "checkName" | "threshold" | "minutes">;
+type Kind = Pick<AlertEntry, "kind" | "checkName" | "threshold" | "minutes"> & { subjectLabel?: string };
 
 export function alertGuide(a: Kind): AlertGuide {
   const span = formatMinutes(a.minutes);
@@ -91,6 +91,16 @@ export function alertGuide(a: Kind): AlertGuide {
           "Open a remote terminal on the device and run the status command below.",
           STATUS,
           "It resolves as soon as the EasyRMM agent checks in.",
+        ],
+        tabs: [OVERVIEW],
+      };
+    case "repair_failed":
+      return {
+        means: `EasyRMM tried to repair this device's ${a.subjectLabel || "agent"} by itself and it is still not working. The alert's details are the last step's diagnostics.`,
+        next: [
+          "The repairs tried since the alert opened are listed below, each with its steps.",
+          "The device page's repair buttons try again by hand; automatic repairs wait 6 hours between attempts and make at most 3 a day.",
+          "It resolves on its own once the agent is back. An organization administrator can turn automatic repairs off in the organization's settings.",
         ],
         tabs: [OVERVIEW],
       };

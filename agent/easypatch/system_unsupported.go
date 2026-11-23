@@ -24,3 +24,9 @@ func (unsupported) Install(context.Context, *agentproto.EasyPatchInstallPayload,
 func (unsupported) Enroll(context.Context, *agentproto.EasyPatchInstallPayload) error {
 	return errUnsupported
 }
+
+func (unsupported) Service() string { return "" }
+
+func (unsupported) Reinstall(context.Context, agentproto.EasyPatchPackage, string) error {
+	return errUnsupported
+}

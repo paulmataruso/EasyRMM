@@ -118,7 +118,7 @@ jobs:
           EASYRMM_TEST_MACHINE: "1"
           EASYRMM_TEST_AGENT_BEFORE: ${{ runner.temp }}\easyrmm-agent-before.exe
           EASYRMM_TEST_AGENT_AFTER: ${{ runner.temp }}\easyrmm-agent-after.exe
-        run: go test -count=1 -v -run '^(TestStandardUserPlantsState|TestUpdateFromBeforeTheStateCheck)$' ./agent/cmd/easyrmm-agent/
+        run: go test -count=1 -v -run '^(TestStandardUserPlantsState|TestUpdateFromBeforeTheStateCheck|TestRepairInstallOnWindows)$' ./agent/cmd/easyrmm-agent/
       - name: Build the Windows agents
         run: |
           go build -trimpath -o easyrmm-agent-windows-amd64.exe ./agent/cmd/easyrmm-agent

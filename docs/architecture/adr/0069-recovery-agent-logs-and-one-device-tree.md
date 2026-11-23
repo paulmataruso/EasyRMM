@@ -241,6 +241,50 @@ settled:
   device that is leaving" rule covers all three tables in this slice, for
   alerts and for repairs by hand.
 
+**Amended 2026-11-23 (decided in review), slice R2.** What the code
+settled:
+
+* `devices.agent_sha256` already existed (ADR-0027: the SHA-256 the agent
+  reports for its build, and the server's published builds carry theirs);
+  R2 adds nothing there. The recovery copy is the running program, so its
+  hash is the device's.
+* The repair instruction carries the EasyPatch package for the
+  `easypatch-agent` `repair` step, and only for it (`RepairPayload.EasyPatch`:
+  the engine's CA and the packages of the version installed, size and
+  SHA-256 included, checked as an install checks them; no enrollment
+  token). The version is the one the device reported, or, where the agent's
+  program is gone and it reports none, the engine's last record of it; where
+  the engine no longer lists it, the repair ends with that reason, since an
+  update is not a repair. The agent refuses an agent that is not enrolled
+  and a package of another version than the one it finds installed.
+* An EasyPatch repair's step wait by hand is 7 minutes, not 2: the engine's
+  view of a check-in reaches EasyRMM every 5 minutes. Automatic repairs
+  wait 20 minutes (MeshAgent) and 30 minutes (EasyPatch agent) after each
+  step, so an automatic repair may run 2 hours (a repair by hand, 1).
+* "Silent past twice its check-in interval" is 10 minutes: twice the
+  engine's default interval of a minute is below what a 5-minute poll can
+  tell, and the engine's per-endpoint interval is not read. An organization
+  that sets it longer is waited on for the condition's 30 minutes.
+* The time since a condition holds is kept in `agent_conditions`, written by
+  the evaluator and forgotten for a target whenever its condition cannot be
+  judged, so after an outage the clocks start over.
+* MeshAgent is repaired automatically only where the EasyRMM agent
+  supervises it (it reported MeshAgent's state) and the site has a
+  MeshCentral group; the EasyPatch agent only where it is linked.
+* *Repair failed* is alert kind `repair_failed`, with no policy (the
+  subject is the target). The sweep that resolves alerts of changed or
+  deleted policies leaves it alone; the recovery service resolves it when
+  the target is back or the device starts to leave.
+* The row of the table where the EasyPatch agent repairs the EasyRMM agent
+  (and the EasyPatch agent's own `RepairCompanion` job) is slice R3. In R2
+  `repair-install`, the recovery copy and its removal exist and are tested
+  on Windows and Linux; nothing runs the copy yet but a person.
+* The recovery copy is made only by an agent that can read its own
+  executable (it has an updater), after its first heartbeat past probation,
+  and is tried again at each start; a failure is logged.
+* Removal: the recovery copy goes before the service in an uninstall by hand
+  and in a removal the server asked for.
+
 **By hand**: the device page offers *Reconnect remote access* and *Repair
 patching agent* (with `device.edit`) and *Repair EasyRMM agent through
 patching* (with `patch.manage`), each showing its steps and outcome.

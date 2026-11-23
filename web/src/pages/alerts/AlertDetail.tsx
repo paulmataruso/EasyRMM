@@ -67,7 +67,8 @@ export function AlertCard() {
 
 /** The repairs tried on the device since a remote access alert opened (ADR-0069). */
 function RepairsSection({ alert: a }: { alert: AlertEntry }) {
-  const repairs = a.repairs ?? [];
+  // A Repair failed alert is about one agent: only its repairs show.
+  const repairs = (a.repairs ?? []).filter((r) => a.kind !== "repair_failed" || r.target === a.subject);
   return (
     <Section title="Repairs tried">
       {repairs.length === 0 ? (
@@ -105,7 +106,7 @@ function AlertDetail({ alert: a }: { alert: AlertEntry }) {
       <WhyItOpened alert={a} device={device.data} />
       {MEASURED.has(a.kind) && <Measurements alert={a} />}
       {a.kind === "disk_health" && <DiskSection alert={a} />}
-      {(a.kind === "remote_down" || a.kind === "agent_silent") && <RepairsSection alert={a} />}
+      {(a.kind === "remote_down" || a.kind === "agent_silent" || a.kind === "repair_failed") && <RepairsSection alert={a} />}
       <Times alert={a} />
       <Guide alert={a} />
       <History alert={a} />

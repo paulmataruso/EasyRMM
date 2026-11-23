@@ -239,3 +239,108 @@ func TestRepairOutcomeIsKeptForAnHourOnly(t *testing.T) {
 		t.Error("begin allowed two steps at once, or one done again")
 	}
 }
+
+// patch records the repairs of the EasyPatch agent that were asked for.
+type patch struct {
+	restarts, repairs int
+	offered           *agentproto.RepairEasyPatch
+	err               error
+}
+
+func (p *patch) Restart(context.Context) error { p.restarts++; return p.err }
+
+func (p *patch) Repair(_, _ context.Context, r *agentproto.RepairEasyPatch) error {
+	p.repairs++
+	p.offered = r
+	return p.err
+}
+
+func easyPatchOffer() *agentproto.RepairEasyPatch {
+	return &agentproto.RepairEasyPatch{Packages: []agentproto.EasyPatchPackage{{
+		FileName: "EasyPatchAgent-1.9.0-x64.deb", URL: "https://patch.example.com/downloads/agent/EasyPatchAgent-1.9.0-x64.deb",
+		Format: "deb", Arch: "x64", Version: "1.9.0", Size: 10, SHA256: strings.Repeat("ab", 32),
+	}}}
+}
+
+func TestRepairOfTheEasyPatchAgent(t *testing.T) {
+	s := &server{protocol: 2}
+	r := newRunner(t, s, &mesh{installed: true})
+	p := &patch{}
+	r.Patch = p
+	ctx := context.Background()
+	if _, err := r.beat(ctx); err != nil { // the level
+		t.Fatal(err)
+	}
+	s.repair = signedRepair(t, s, agentproto.RepairPayload{ID: "r5.0", Target: agentproto.TargetEasyPatchAgent, Step: agentproto.StepRestart})
+	for range 2 {
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+		r.repair.wait()
+	}
+	if p.restarts != 1 || p.repairs != 0 {
+		t.Errorf("restarts %d, repairs %d", p.restarts, p.repairs)
+	}
+	if rep := lastBeat(s).Repair; rep == nil || rep.ID != "r5.0" || !rep.OK {
+		t.Errorf("report = %+v", rep)
+	}
+	s.repair = signedRepair(t, s, agentproto.RepairPayload{ID: "r5.1", Target: agentproto.TargetEasyPatchAgent, Step: agentproto.StepRepair, EasyPatch: easyPatchOffer()})
+	p.err = errors.New("apt-get could not reinstall")
+	for range 2 {
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+		r.repair.wait()
+	}
+	if p.repairs != 1 || p.offered == nil || p.offered.Packages[0].Version != "1.9.0" {
+		t.Errorf("repairs %d, offered %+v", p.repairs, p.offered)
+	}
+	if rep := lastBeat(s).Repair; rep == nil || rep.ID != "r5.1" || rep.OK || !strings.Contains(rep.Error, "could not reinstall") {
+		t.Errorf("report = %+v", rep)
+	}
+}
+
+func TestRepairOfTheEasyPatchAgentWithoutOneHere(t *testing.T) {
+	s := &server{protocol: 2}
+	r := newRunner(t, s, &mesh{installed: true})
+	ctx := context.Background()
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.repair = signedRepair(t, s, agentproto.RepairPayload{ID: "r6.0", Target: agentproto.TargetEasyPatchAgent, Step: agentproto.StepRestart})
+	for range 2 {
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+		r.repair.wait()
+	}
+	if rep := lastBeat(s).Repair; rep == nil || rep.OK {
+		t.Errorf("report = %+v", rep)
+	}
+}
+
+// Settled is asked after a heartbeat reached the server, until it says it
+// is done.
+func TestSettledAfterTheServerIsReached(t *testing.T) {
+	s := &server{protocol: 2}
+	r := newRunner(t, s, nil)
+	u := &updater{}
+	r.Update = u
+	calls, ready := 0, false
+	r.Settled = func() bool { calls++; return ready }
+	ctx := context.Background()
+	for range 2 {
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ready = true
+	for range 3 {
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 3 || u.reached != 5 {
+		t.Errorf("Settled called %d times, Reached %d", calls, u.reached)
+	}
+}

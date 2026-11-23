@@ -235,3 +235,31 @@ func TestLinuxEnrollServerCA(t *testing.T) {
 		t.Errorf("unreachable with the CA: %v", err)
 	}
 }
+
+func TestLinuxReinstall(t *testing.T) {
+	dir := fakeTools(t, "apt-get", "dnf")
+	l := linuxSystem{euid: func() int { return 0 }, systemd: t.TempDir()}
+	if l.Service() != "easypatch-agent.service" {
+		t.Errorf("service = %s", l.Service())
+	}
+	if err := l.Reinstall(t.Context(), agentproto.EasyPatchPackage{Format: agentproto.EasyPatchDeb}, "/x/EasyPatchAgent.deb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Reinstall(t.Context(), agentproto.EasyPatchPackage{Format: agentproto.EasyPatchRPM}, "/x/EasyPatchAgent.rpm"); err != nil {
+		t.Fatal(err)
+	}
+	got := calls(t, dir)
+	for _, want := range []string{"apt-get install --reinstall -y --no-install-recommends", "--force-confold /x/EasyPatchAgent.deb", "dnf reinstall -y /x/EasyPatchAgent.rpm"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("calls %q lack %q", got, want)
+		}
+	}
+	if strings.Contains(got, "enroll") {
+		t.Errorf("a repair enrolled: %q", got)
+	}
+	exits(t, dir, "dnf", "1")
+	err := l.Reinstall(t.Context(), agentproto.EasyPatchPackage{Format: agentproto.EasyPatchRPM}, "/x/a.rpm")
+	if err == nil || !strings.Contains(err.Error(), "could not reinstall the EasyPatch agent (exit code 1)") {
+		t.Errorf("failure: %v", err)
+	}
+}

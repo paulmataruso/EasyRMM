@@ -230,6 +230,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.EasyPatch.SetSigner(jobKey)
 	d.Recovery.SetKey(jobKey)
+	// The EasyPatch agent is repaired with packages from the engine, and
+	// judged by what the engine reports of it (ADR-0069).
+	d.Recovery.UsePatching(d.EasyPatch)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -651,6 +654,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
+	wg.Go(func() { deps.EasyPatch.RunAgentPoll(ctx) })
 	// The mail server in force: checked at start, after changes and daily,
 	// signing in without sending; its answer is logged and in the console.
 	wg.Go(func() { deps.Mail.Run(ctx) })

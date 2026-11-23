@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,9 @@ const (
 	Keep = 90 * 24 * time.Hour
 	// ListMax is how many repairs a device's list shows.
 	ListMax = 10
+	// ManualWaitPatching is the same for the EasyPatch agent, whose check-in
+	// reaches EasyRMM through the engine every 5 minutes.
+	ManualWaitPatching = 7 * time.Minute
 )
 
 // lockAdvance is the advisory lock that keeps two servers on one database
@@ -93,6 +97,18 @@ type Repair struct {
 	Error string `json:"error"`
 }
 
+// Patching is what recovery needs of patching (package easypatch): whether
+// the EasyPatch agents' check-ins can be trusted now, and the package that
+// repairs one in place.
+type Patching interface {
+	// AgentsSettled says whether conditions about EasyPatch agents may be
+	// judged: the engine answers, and has for a while.
+	AgentsSettled(now time.Time) bool
+	// RepairOffer builds what repairing a device's EasyPatch agent in place
+	// needs; why says what stops it.
+	RepairOffer(ctx context.Context, deviceID uuid.UUID) (offer *agentproto.RepairEasyPatch, why string, err error)
+}
+
 // MeshLink says whether EasyRMM's own connection to MeshCentral is up and
 // since when (ADR-0069: nothing is judged while it is down).
 type MeshLink func() (connected bool, since time.Time)
@@ -106,6 +122,7 @@ type Service struct {
 	key    ed25519.PrivateKey
 	remote bool
 	link   MeshLink
+	patch  Patching
 	wake   chan struct{}
 }
 
@@ -118,6 +135,10 @@ func New(db *database.DB, auditLog *audit.Logger, remote bool, log *slog.Logger)
 // SetKey sets the job key repair instructions are signed with. Without it
 // no repair is asked for.
 func (s *Service) SetKey(k ed25519.PrivateKey) { s.key = k }
+
+// UsePatching gives the service the patching side; without it the EasyPatch
+// agent is not repaired.
+func (s *Service) UsePatching(p Patching) { s.patch = p }
 
 // FollowMesh makes repairs wait while EasyRMM's connection to MeshCentral
 // is down.
@@ -133,22 +154,41 @@ func (s *Service) kick() {
 // carriedBy returns the agent that carries a repair of the target out, or
 // "" for a target this server cannot repair yet.
 func carriedBy(target string) string {
-	if target == agentproto.TargetMeshAgent {
+	switch target {
+	case agentproto.TargetMeshAgent, agentproto.TargetEasyPatchAgent:
 		return agentproto.TargetEasyRMMAgent
 	}
 	return ""
 }
 
+// waitFor is how long a target gets to come back after a step before the
+// next one is tried, and after the last.
+func waitFor(target, trigger string) time.Duration {
+	switch {
+	case trigger == TriggerAutomatic && target == agentproto.TargetMeshAgent:
+		return AutoWaitMesh
+	case trigger == TriggerAutomatic:
+		return AutoWaitPatching
+	case target == agentproto.TargetEasyPatchAgent:
+		return ManualWaitPatching
+	}
+	return ManualWait
+}
+
+// errRunning is a repair of the target that is running already.
+var errRunning = errors.New("recovery: a repair of this is already running")
+
 // repairSteps are the steps of a repair, tried in order.
 var repairSteps = []string{agentproto.StepRestart, agentproto.StepRepair}
 
 // Request starts a repair someone asked for in the console: "Reconnect
-// remote access" is a repair of MeshAgent through the EasyRMM agent. It
-// needs device.edit on the device.
+// remote access" is a repair of MeshAgent through the EasyRMM agent, and
+// "Repair patching agent" one of the EasyPatch agent. It needs device.edit
+// on the device.
 func (s *Service) Request(ctx context.Context, c access.Caller, deviceID uuid.UUID, target string) (*Repair, error) {
 	carrier := carriedBy(target)
 	if carrier == "" {
-		return nil, apperr.Invalid("target", "Choose meshagent.")
+		return nil, apperr.Invalid("target", "Choose meshagent or easypatch-agent.")
 	}
 	d, err := devices.Lookup(ctx, s.db, c, deviceID)
 	if err != nil {
@@ -158,10 +198,12 @@ func (s *Service) Request(ctx context.Context, c access.Caller, deviceID uuid.UU
 		return nil, err
 	}
 	switch {
-	case !s.remote:
+	case target == agentproto.TargetMeshAgent && !s.remote:
 		return nil, apperr.Conflict("no_remote_access", "This server runs without remote access.")
+	case target == agentproto.TargetEasyPatchAgent && s.patch == nil:
+		return nil, apperr.Conflict("no_patching", "This server runs without patching.")
 	case d.Agent == nil:
-		return nil, apperr.Conflict("no_agent", "The device has no EasyRMM agent to repair remote access with.")
+		return nil, apperr.Conflict("no_agent", "The device has no EasyRMM agent to repair with.")
 	case s.key == nil:
 		return nil, apperr.Conflict("no_job_key", "The server cannot sign instructions to agents.")
 	case !d.Agent.Online:
@@ -169,12 +211,20 @@ func (s *Service) Request(ctx context.Context, c access.Caller, deviceID uuid.UU
 	}
 	var out *Repair
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		var leaving bool
-		if err := tx.QueryRow(ctx, `SELECT `+devices.LeavingSQL+` FROM devices d WHERE d.id = $1`, d.ID).Scan(&leaving); err != nil {
+		var leaving, orgLinked, linked bool
+		if err := tx.QueryRow(ctx, `SELECT `+devices.LeavingSQL+`,
+				EXISTS (SELECT 1 FROM easypatch_organizations l WHERE l.organization_id = d.organization_id),
+				EXISTS (SELECT 1 FROM easypatch_devices e WHERE e.device_id = d.id AND e.state = 'linked')
+			FROM devices d WHERE d.id = $1`, d.ID).Scan(&leaving, &orgLinked, &linked); err != nil {
 			return err
 		}
-		if leaving {
+		switch {
+		case leaving:
 			return apperr.Conflict("device_leaving", "The device is being removed; nothing is repaired on it.")
+		case target == agentproto.TargetEasyPatchAgent && !orgLinked:
+			return apperr.Conflict("patching_off", "Patching is not set up for this device's organization, so the device has no EasyPatch agent to repair.")
+		case target == agentproto.TargetEasyPatchAgent && !linked:
+			return apperr.Conflict("no_patching_agent", "This device has no EasyPatch agent that is linked to it. Install it from the Patching page first.")
 		}
 		var by *uuid.UUID
 		if c.Principal != nil {
@@ -191,7 +241,7 @@ func (s *Service) Request(ctx context.Context, c access.Caller, deviceID uuid.UU
 			Details: map[string]any{"device": d.Name, "target": target, "repair": r.ID.String()},
 		})
 	})
-	if database.IsUniqueViolation(err) {
+	if errors.Is(err, errRunning) || database.IsUniqueViolation(err) {
 		return nil, apperr.Conflict("repair_running", "A repair of this is already running.")
 	}
 	if err != nil {
@@ -212,10 +262,15 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, deviceID uuid.UUID, tar
 		return nil, err
 	}
 	now := s.now()
-	if _, err := tx.Exec(ctx, `INSERT INTO agent_repairs (id, device_id, target, carried_by, trigger, requested_by, state, steps, step, wait_seconds, next_at, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'running', $7, 0, $8, $9, $10)`,
-		id, deviceID, target, carriedBy(target), trigger, by, b, int(ManualWait.Seconds()), now.Add(StepValid), now); err != nil {
+	tag, err := tx.Exec(ctx, `INSERT INTO agent_repairs (id, device_id, target, carried_by, trigger, requested_by, state, steps, step, wait_seconds, next_at, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'running', $7, 0, $8, $9, $10)
+		ON CONFLICT (device_id, target) WHERE state = 'running' DO NOTHING`,
+		id, deviceID, target, carriedBy(target), trigger, by, b, int(waitFor(target, trigger).Seconds()), now.Add(StepValid), now)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, errRunning
 	}
 	s.kick()
 	return &Repair{ID: id, Target: target, CarriedBy: carriedBy(target), Trigger: trigger, State: Running, Steps: list, StartedAt: now}, nil
@@ -270,9 +325,9 @@ func (s *Service) AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, rep *a
 	if s.key == nil {
 		return nil
 	}
-	var out *agentproto.SignedRepair
+	var cur *current
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		out = nil
+		cur = nil
 		if rep != nil {
 			if err := s.settle(ctx, tx, deviceID, *rep); err != nil {
 				return err
@@ -287,6 +342,7 @@ func (s *Service) AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, rep *a
 		// Nothing is handed to a device that is leaving.
 		err := tx.QueryRow(ctx, `SELECT r.id, r.steps, r.step, r.target FROM agent_repairs r JOIN devices d ON d.id = r.device_id
 			WHERE r.device_id = $1 AND r.state = 'running' AND r.carried_by = 'easyrmm-agent' AND NOT `+devices.LeavingSQL+`
+			  AND (r.target <> 'easypatch-agent' OR `+patchedSQL+`)
 			FOR UPDATE OF r`, deviceID).Scan(&id, &raw, &step, &target)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -312,21 +368,74 @@ func (s *Service) AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, rep *a
 				return err
 			}
 		}
-		sr, err := agentproto.SignRepair(s.key, agentproto.RepairPayload{
-			V: agentproto.RepairPayloadVersion, ID: list[step].ID, DeviceID: deviceID.String(), Target: target, Step: list[step].Step,
-			IssuedAt: now, ExpiresAt: now.Add(StepValid),
-		})
-		if err != nil {
-			return err
-		}
-		out = &sr
+		cur = &current{stepID: list[step].ID, step: list[step].Step, target: target, now: now}
 		return nil
 	})
 	if err != nil {
 		s.log.Error("recovery: settling a heartbeat failed", "error", err, "device_id", deviceID)
 		return nil
 	}
-	return out
+	if cur == nil {
+		return nil
+	}
+	p := agentproto.RepairPayload{
+		V: agentproto.RepairPayloadVersion, ID: cur.stepID, DeviceID: deviceID.String(), Target: cur.target, Step: cur.step,
+		IssuedAt: cur.now, ExpiresAt: cur.now.Add(StepValid),
+	}
+	if cur.target == agentproto.TargetEasyPatchAgent && cur.step == agentproto.StepRepair {
+		// The package comes from the patching engine, outside the
+		// transaction. A repair that cannot be offered ends as failed, with
+		// the reason.
+		why := "This server runs without patching."
+		var offer *agentproto.RepairEasyPatch
+		if s.patch != nil {
+			offer, why, err = s.patch.RepairOffer(ctx, deviceID)
+			if err != nil {
+				s.log.Error("recovery: preparing the EasyPatch agent's repair failed", "error", err, "device_id", deviceID)
+				why = "EasyRMM could not prepare the repair. The server log has the details."
+			}
+		}
+		if offer == nil {
+			s.failStep(ctx, deviceID, cur.stepID, why)
+			return nil
+		}
+		p.EasyPatch = offer
+	}
+	sr, err := agentproto.SignRepair(s.key, p)
+	if err != nil {
+		s.log.Error("recovery: signing a repair step failed", "error", err, "device_id", deviceID)
+		return nil
+	}
+	// What the agent would refuse is refused here, with its reason.
+	if pub, ok := s.key.Public().(ed25519.PublicKey); ok {
+		if _, err := agentproto.VerifyRepair(pub, sr, deviceID.String(), cur.now); err != nil {
+			s.failStep(ctx, deviceID, cur.stepID, "The patching engine's address or packages are not in a form the agent accepts: "+
+				strings.TrimPrefix(err.Error(), "agentproto: ")+".")
+			return nil
+		}
+	}
+	return &sr
+}
+
+// patchedSQL holds for a device (aliased d) whose organization is patched:
+// only then does it have an EasyPatch agent to repair.
+const patchedSQL = `EXISTS (SELECT 1 FROM easypatch_organizations lo WHERE lo.organization_id = d.organization_id)`
+
+// current is the step an agent is to carry out now.
+type current struct {
+	stepID, step, target string
+	now                  time.Time
+}
+
+// failStep ends a step the server could not hand out as failed, as if the
+// agent had reported it.
+func (s *Service) failStep(ctx context.Context, deviceID uuid.UUID, stepID, why string) {
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		return s.settle(ctx, tx, deviceID, agentproto.RepairReport{ID: stepID, Error: why})
+	})
+	if err != nil {
+		s.log.Error("recovery: ending a repair step failed", "error", err, "device_id", deviceID)
+	}
 }
 
 // settle records the outcome of the step an agent reports. A report for a
@@ -385,18 +494,30 @@ func (s *Service) nextStep(ctx context.Context, tx pgx.Tx, id uuid.UUID, list []
 	return s.end(ctx, tx, id, Failed, b, why, now)
 }
 
-// end finishes a repair and audits how it ended.
+// end finishes a repair and audits how it ended. An automatic repair that
+// fails raises the Repair failed alert.
 func (s *Service) end(ctx context.Context, tx pgx.Tx, id uuid.UUID, state string, steps []byte, why string, now time.Time) error {
+	return s.finish(ctx, tx, id, state, steps, why, now, false)
+}
+
+// endQuiet is end for a repair that stops because it is no longer wanted:
+// it raises no alert.
+func (s *Service) endQuiet(ctx context.Context, tx pgx.Tx, id uuid.UUID, why string, now time.Time) error {
+	return s.finish(ctx, tx, id, Failed, nil, why, now, true)
+}
+
+func (s *Service) finish(ctx context.Context, tx pgx.Tx, id uuid.UUID, state string, steps []byte, why string, now time.Time, quiet bool) error {
 	var (
-		dev    uuid.UUID
-		org    uuid.UUID
-		site   uuid.UUID
-		name   string
-		target string
+		dev     uuid.UUID
+		org     uuid.UUID
+		site    uuid.UUID
+		name    string
+		target  string
+		trigger string
 	)
 	err := tx.QueryRow(ctx, `UPDATE agent_repairs r SET state = $2, steps = coalesce($3, steps), error = $4, ended_at = $5, next_at = NULL
 		FROM devices d WHERE r.id = $1 AND d.id = r.device_id
-		RETURNING d.id, d.organization_id, d.site_id, d.name, r.target`, id, state, steps, truncate(why, 1000), now).Scan(&dev, &org, &site, &name, &target)
+		RETURNING d.id, d.organization_id, d.site_id, d.name, r.target, r.trigger`, id, state, steps, truncate(why, 1000), now).Scan(&dev, &org, &site, &name, &target, &trigger)
 	if err != nil {
 		return err
 	}
@@ -404,11 +525,41 @@ func (s *Service) end(ctx context.Context, tx pgx.Tx, id uuid.UUID, state string
 	if state != Succeeded {
 		outcome = audit.Failure
 	}
-	return s.audit.Write(ctx, tx, audit.Event{
+	if err := s.audit.Write(ctx, tx, audit.Event{
 		Actor: audit.SystemActor("recovery"), Action: "device.repair_end", Outcome: outcome,
 		OrganizationID: org, SiteID: site, DeviceID: dev, TargetType: "device", TargetID: dev.String(),
 		Details: map[string]any{"device": name, "target": target, "repair": id.String(), "state": state, "error": why},
-	})
+	}); err != nil {
+		return err
+	}
+	if state == Failed && trigger == TriggerAutomatic && !quiet {
+		return s.raiseFailed(ctx, tx, dev, target, why, now)
+	}
+	return nil
+}
+
+// targetLabel names a repair target for people.
+func targetLabel(target string) string {
+	switch target {
+	case agentproto.TargetMeshAgent:
+		return "MeshAgent"
+	case agentproto.TargetEasyPatchAgent:
+		return "EasyPatch agent"
+	}
+	return "EasyRMM agent"
+}
+
+// raiseFailed opens the Repair failed alert, a warning, for a device whose
+// automatic repair ended with its target still broken: its detail is the
+// last step's diagnostics. A device has one per target until the target is
+// back (Evaluate resolves it); another failed attempt updates it.
+func (s *Service) raiseFailed(ctx context.Context, tx pgx.Tx, device uuid.UUID, target, why string, now time.Time) error {
+	detail := "Repairing the " + targetLabel(target) + " did not bring it back. " + why
+	_, err := tx.Exec(ctx, `INSERT INTO alerts (policy_id, device_id, name, kind, threshold, minutes, severity, subject, subject_label, detail, value, last_value, opened_at)
+		VALUES (NULL, $1, 'Repair failed', 'repair_failed', NULL, 0, 'warning', $2, $3, left($4, 500), 0, 0, $5)
+		ON CONFLICT (device_id, subject) WHERE kind = 'repair_failed' AND status <> 'resolved' DO UPDATE SET detail = excluded.detail`,
+		device, target, targetLabel(target), detail, now)
+	return err
 }
 
 // Run looks at the running repairs every Interval (or when one starts) and
@@ -420,6 +571,9 @@ func (s *Service) Run(ctx context.Context) {
 	for {
 		if err := s.Advance(ctx); err != nil && ctx.Err() == nil {
 			s.log.Error("recovery: advancing repairs failed", "error", err)
+		}
+		if err := s.Evaluate(ctx); err != nil && ctx.Err() == nil {
+			s.log.Error("recovery: judging conditions for automatic repairs failed", "error", err)
 		}
 		if s.now().Sub(lastPurge) >= time.Hour {
 			if err := s.purge(ctx); err != nil && ctx.Err() == nil {
@@ -447,8 +601,10 @@ func (s *Service) purge(ctx context.Context) error {
 // Advance settles what the running repairs wait for: a target that came
 // back ends its repair; a step whose wait is over gives way to the next, or
 // to the end of the repair; a step the carrying agent never took ends it.
-// A device that is leaving ends its repair. Nothing is judged while
-// EasyRMM cannot see MeshCentral.
+// A device that is leaving ends its repair, and so does turning automatic
+// repairs off for an automatic one. Nothing is judged while EasyRMM cannot
+// see MeshCentral (for MeshAgent) or the patching engine (for the EasyPatch
+// agent).
 func (s *Service) Advance(ctx context.Context) error {
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var locked bool
@@ -460,9 +616,11 @@ func (s *Service) Advance(ctx context.Context) error {
 		if s.link != nil {
 			connected, _ = s.link()
 		}
-		rows, err := tx.Query(ctx, `SELECT r.id, r.target, r.steps, r.step, r.next_at, r.started_at, d.remote_online, d.remote_changed_at,
-				`+devices.LeavingSQL+`
-			FROM agent_repairs r JOIN devices d ON d.id = r.device_id
+		patchOK := s.patch != nil && s.patch.AgentsSettled(now)
+		rows, err := tx.Query(ctx, `SELECT r.id, r.target, r.trigger, r.steps, r.step, r.next_at, r.started_at, d.remote_online, d.remote_changed_at,
+				e.agent_seen_at, o.auto_repair, `+patchedSQL+`, `+devices.LeavingSQL+`
+			FROM agent_repairs r JOIN devices d ON d.id = r.device_id JOIN organizations o ON o.id = d.organization_id
+			LEFT JOIN easypatch_devices e ON e.device_id = d.id AND e.state = 'linked'
 			WHERE r.state = 'running' ORDER BY r.started_at FOR UPDATE OF r`)
 		if err != nil {
 			return err
@@ -470,12 +628,14 @@ func (s *Service) Advance(ctx context.Context) error {
 		type row struct {
 			id          uuid.UUID
 			target      string
+			trigger     string
 			steps       []byte
 			step        int
 			nextAt      *time.Time
 			startedAt   time.Time
-			online      bool
-			changedAt   *time.Time
+			facts       targetFacts
+			autoRepair  bool
+			patched     bool
 			leaving     bool
 			list        []Step
 			stepsParsed error
@@ -483,7 +643,8 @@ func (s *Service) Advance(ctx context.Context) error {
 		var list []row
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.id, &r.target, &r.steps, &r.step, &r.nextAt, &r.startedAt, &r.online, &r.changedAt, &r.leaving); err != nil {
+			if err := rows.Scan(&r.id, &r.target, &r.trigger, &r.steps, &r.step, &r.nextAt, &r.startedAt, &r.facts.online, &r.facts.changedAt,
+				&r.facts.patchSeen, &r.autoRepair, &r.patched, &r.leaving); err != nil {
 				rows.Close()
 				return err
 			}
@@ -501,15 +662,27 @@ func (s *Service) Advance(ctx context.Context) error {
 					return err
 				}
 			case r.leaving:
-				if err := s.end(ctx, tx, r.id, Failed, nil, "The device is being removed.", now); err != nil {
+				if err := s.endQuiet(ctx, tx, r.id, "The device is being removed.", now); err != nil {
 					return err
 				}
-			case now.Sub(r.startedAt) >= MaxRunning:
-				if err := s.end(ctx, tx, r.id, Failed, nil, "The repair took longer than an hour.", now); err != nil {
+			case r.target == agentproto.TargetEasyPatchAgent && !r.patched:
+				if err := s.endQuiet(ctx, tx, r.id, "Patching is off for the device's organization, so it has no EasyPatch agent to repair.", now); err != nil {
+					return err
+				}
+			case r.trigger == TriggerAutomatic && !r.autoRepair:
+				if err := s.endQuiet(ctx, tx, r.id, "Automatic repairs were turned off for the organization.", now); err != nil {
+					return err
+				}
+			case now.Sub(r.startedAt) >= maxRunning(r.trigger):
+				if err := s.end(ctx, tx, r.id, Failed, nil, "The repair took longer than "+maxRunning(r.trigger).String()+".", now); err != nil {
 					return err
 				}
 			default:
-				if err := s.advanceOne(ctx, tx, now, connected, r.id, r.list, r.step, r.nextAt, r.online, r.changedAt); err != nil {
+				judge := connected
+				if r.target == agentproto.TargetEasyPatchAgent {
+					judge = patchOK
+				}
+				if err := s.advanceOne(ctx, tx, now, judge, r.id, r.target, r.list, r.step, r.nextAt, r.facts); err != nil {
 					return err
 				}
 			}
@@ -518,7 +691,38 @@ func (s *Service) Advance(ctx context.Context) error {
 	})
 }
 
-func (s *Service) advanceOne(ctx context.Context, tx pgx.Tx, now time.Time, connected bool, id uuid.UUID, list []Step, step int, nextAt *time.Time, online bool, changedAt *time.Time) error {
+// maxRunning is the longest a repair may run: automatic repairs wait longer
+// between their steps.
+func maxRunning(trigger string) time.Duration {
+	if trigger == TriggerAutomatic {
+		return 2 * MaxRunning
+	}
+	return MaxRunning
+}
+
+// targetFacts is what says whether a target is back.
+type targetFacts struct {
+	// online and changedAt are MeshCentral's view of MeshAgent: connected,
+	// and since when; patchSeen is the EasyPatch agent's last check-in.
+	online    bool
+	changedAt *time.Time
+	patchSeen *time.Time
+}
+
+// back reports whether the target is back after a step done at doneAt,
+// where waitOver says its wait is over.
+func (f targetFacts) back(target string, now time.Time, doneAt *time.Time, waitOver bool) bool {
+	if target == agentproto.TargetEasyPatchAgent {
+		// Checked in since the step, or, when the wait is over, recently.
+		if f.patchSeen == nil {
+			return false
+		}
+		return (doneAt != nil && !f.patchSeen.Before(*doneAt)) || (waitOver && now.Sub(*f.patchSeen) < SilentAfter)
+	}
+	return f.online && ((f.changedAt != nil && doneAt != nil && !f.changedAt.Before(*doneAt)) || waitOver)
+}
+
+func (s *Service) advanceOne(ctx context.Context, tx pgx.Tx, now time.Time, judge bool, id uuid.UUID, target string, list []Step, step int, nextAt *time.Time, f targetFacts) error {
 	cur := list[step]
 	due := nextAt != nil && !now.Before(*nextAt)
 	switch cur.State {
@@ -534,16 +738,18 @@ func (s *Service) advanceOne(ctx context.Context, tx pgx.Tx, now time.Time, conn
 			return s.end(ctx, tx, id, Failed, b, cur.Error, now)
 		}
 	case StepDone:
-		if !connected {
-			return nil // MeshCentral cannot be asked
+		if !judge {
+			return nil // MeshCentral or the patching engine cannot be asked
 		}
-		// Back: connected after the step, or still connected when its wait is
-		// over.
-		if online && ((changedAt != nil && cur.DoneAt != nil && !changedAt.Before(*cur.DoneAt)) || due) {
+		if f.back(target, now, cur.DoneAt, due) {
 			return s.end(ctx, tx, id, Succeeded, nil, "", now)
 		}
 		if due {
-			return s.nextStep(ctx, tx, id, list, step, now, "MeshAgent did not connect to MeshCentral after the last step.")
+			why := "MeshAgent did not connect to MeshCentral after the last step."
+			if target == agentproto.TargetEasyPatchAgent {
+				why = "The EasyPatch agent did not check in with the patching engine after the last step."
+			}
+			return s.nextStep(ctx, tx, id, list, step, now, why)
 		}
 	}
 	return nil

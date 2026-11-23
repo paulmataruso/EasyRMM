@@ -437,3 +437,112 @@ func TestRunEmptiesWorkOnWindows(t *testing.T) {
 		t.Errorf("the journal went: %v", err)
 	}
 }
+
+// TestRepairInstall: repair-install puts an enrolled agent back in place:
+// its program in the program directory, its service registered as the
+// installer registers it, and started. It keeps the enrollment, makes none,
+// and refuses a machine that is not enrolled or a caller without rights.
+func TestRepairInstall(t *testing.T) {
+	linuxOnly(t)
+	var beats atomic.Int32
+	srv := fakeServer(t, &beats)
+	h := newHarness(t)
+
+	// Not enrolled: nothing is installed.
+	if err := h.run("repair-install"); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+		t.Fatalf("repair-install of a machine that is not enrolled: %v", err)
+	}
+	if _, err := os.Stat(h.e.paths.Binary()); err == nil {
+		t.Error("repair-install put a program on a machine that is not enrolled")
+	}
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	cfg, key, err := h.e.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.e.isRoot = func() bool { return false }
+	if err := h.run("repair-install"); err == nil || !strings.Contains(err.Error(), "as root") {
+		t.Errorf("without root: %v", err)
+	}
+	h.e.isRoot, h.e.hasServices = func() bool { return true }, func() bool { return false }
+	if err := h.run("repair-install"); err == nil || !strings.Contains(err.Error(), "systemd is not running") {
+		t.Errorf("without systemd: %v", err)
+	}
+	h.e.hasServices = func() bool { return true }
+
+	// The program and the unit are gone.
+	if err := os.Remove(h.e.paths.Binary()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(h.e.paths.Units(), host.AgentUnit)); err != nil {
+		t.Fatal(err)
+	}
+	h.calls = nil
+	if err := h.run("repair-install"); err != nil {
+		t.Fatalf("repair-install: %v", err)
+	}
+	if st, err := os.Stat(h.e.paths.Binary()); err != nil || st.Mode().Perm() != 0o755 {
+		t.Errorf("the program is not back: %v", err)
+	}
+	unit, err := os.ReadFile(filepath.Join(h.e.paths.Units(), host.AgentUnit))
+	if err != nil || !strings.Contains(string(unit), "ExecStart="+h.e.paths.Binary()+" run") {
+		t.Errorf("unit = %q, %v", unit, err)
+	}
+	if !strings.Contains(strings.Join(h.calls, ";"), "systemctl enable --now easyrmm-agent.service") {
+		t.Errorf("the service was not registered and started: %v", h.calls)
+	}
+	if !strings.Contains(h.out.String(), "as device "+cfg.DeviceID) {
+		t.Errorf("output = %q", h.out)
+	}
+	after, key2, err := h.e.store.Load()
+	if err != nil || *after != *cfg || !key2.Equal(key) {
+		t.Errorf("the enrollment changed: %v", err)
+	}
+	if beats.Load() != 0 {
+		t.Error("repair-install talked to the server")
+	}
+}
+
+// TestRecoveryCopyGoesFirst: removing the agent deletes the recovery copy
+// before anything else.
+func TestRecoveryCopyGoesFirst(t *testing.T) {
+	linuxOnly(t)
+	var beats atomic.Int32
+	srv := fakeServer(t, &beats)
+	h := newHarness(t)
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(t.TempDir(), "easyrmm-agent")
+	if err := os.WriteFile(exe, []byte("this build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.e.store.KeepRecovery(exe); err != nil {
+		t.Fatal(err)
+	}
+	copyPath := h.e.store.RecoveryCopy(exe)
+	if b, err := os.ReadFile(copyPath); err != nil || string(b) != "this build" {
+		t.Fatalf("recovery copy: %q, %v", b, err)
+	}
+	// The first thing the uninstall runs is a systemctl call; by then the
+	// copy is gone.
+	var seen bool
+	h.e.sd = host.Systemd{Dir: h.e.paths.Units(), Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if !seen {
+			seen = true
+			if _, err := os.Stat(copyPath); err == nil {
+				t.Error("the recovery copy was still there when the service was removed")
+			}
+		}
+		return []byte("active\n"), nil
+	}}
+	if err := h.run("uninstall"); err != nil {
+		t.Fatal(err)
+	}
+	if !seen {
+		t.Error("the uninstall never reached the service manager")
+	}
+}

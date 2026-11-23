@@ -293,7 +293,7 @@ func (s *Service) GetAlert(ctx context.Context, c access.Caller, id uuid.UUID) (
 		if a, err = getAlert(ctx, tx, c, id, false); err != nil {
 			return err
 		}
-		if a.Kind == KindRemoteDown || a.Kind == KindAgentSilent {
+		if a.Kind == KindRemoteDown || a.Kind == KindAgentSilent || a.Kind == KindRepairFailed {
 			a.Repairs, err = alertRepairs(ctx, tx, a)
 		}
 		return err

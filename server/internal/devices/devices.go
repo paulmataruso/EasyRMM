@@ -157,6 +157,12 @@ type Device struct {
 	// CanReconnectRemote: the caller holds device.edit here, the device has
 	// the EasyRMM agent, and this server runs remote access (ADR-0069).
 	CanReconnectRemote bool `json:"canReconnectRemote"`
+	// CanRepairPatching: the caller holds device.edit here, the device has
+	// the EasyRMM agent, and its EasyPatch agent is linked to it (ADR-0069).
+	CanRepairPatching bool `json:"canRepairPatching"`
+	// patched: the device's organization is patched and its EasyPatch agent
+	// is linked.
+	patched bool
 	// CanManageSoftware: the caller holds software.manage here and the
 	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
 	CanManageSoftware bool `json:"canManageSoftware"`
@@ -271,7 +277,9 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	hc.checked_at, coalesce(hs.states, '{}'),
 	CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END,
 	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}'),
-	d.meshagent_state, d.meshagent_state_at, d.remote_changed_at, d.mesh_wrong_group`
+	d.meshagent_state, d.meshagent_state_at, d.remote_changed_at, d.mesh_wrong_group,
+	(EXISTS (SELECT 1 FROM easypatch_devices ep WHERE ep.device_id = d.id AND ep.state = 'linked')
+		AND EXISTS (SELECT 1 FROM easypatch_organizations eo WHERE eo.organization_id = d.organization_id))`
 
 // from joins what the columns read. hs counts the device's hardening
 // modules by state, as {"in_place": 9, "partly": 1}; ds its disks by the
@@ -321,7 +329,7 @@ func scan(row pgx.Row) (*Device, error) {
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
 		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates,
-		&ri.state, &ri.stateAt, &ri.changedAt, &ri.wrongGroup)
+		&ri.state, &ri.stateAt, &ri.changedAt, &ri.wrongGroup, &d.patched)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +385,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanReconnectRemote = s.remote && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanRepairPatching = d.patched && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	d.CanCheckHardening = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermScriptRun, r)
 	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)

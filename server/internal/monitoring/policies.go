@@ -38,6 +38,10 @@ const (
 	// KindAgentSilent: MeshCentral sees MeshAgent connected but the EasyRMM
 	// agent has not checked in for the policy's minutes (ADR-0069).
 	KindAgentSilent = "agent_silent"
+	// KindRepairFailed is the alert of an automatic repair that ended with
+	// its target still broken (ADR-0069). It belongs to no policy and is
+	// opened and resolved by the recovery service.
+	KindRepairFailed = "repair_failed"
 )
 
 // Disk health checks (Policy.CheckName).

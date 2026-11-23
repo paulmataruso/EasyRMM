@@ -147,7 +147,7 @@ func reconcile(ctx context.Context, tx pgx.Tx, now time.Time, policyID uuid.UUID
 			FROM alerts a
 			JOIN devices d ON d.id = a.device_id
 			LEFT JOIN alert_policies p ON p.id = a.policy_id
-			WHERE a.status <> 'resolved' AND ($2::uuid IS NULL OR a.policy_id = $2)
+			WHERE a.status <> 'resolved' AND a.kind <> 'repair_failed' AND ($2::uuid IS NULL OR a.policy_id = $2)
 		)
 		UPDATE alerts a SET status = 'resolved', resolved_at = $1, resolution = stale.reason
 		FROM stale WHERE a.id = stale.id AND stale.reason IS NOT NULL`, now, nullUUID(policyID))

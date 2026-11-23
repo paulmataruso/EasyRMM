@@ -167,6 +167,8 @@ export interface Organization extends OrganizationDetails {
   /** IANA time zone; patching's monthly reports use it. */
   timezone: string;
   notes: string;
+  /** Whether the server starts repairs of the organization's devices by itself (ADR-0069); org.manage changes it. */
+  autoRepair: boolean;
   siteCount: number;
   createdAt: string;
   updatedAt: string;
@@ -183,6 +185,8 @@ export interface OrganizationInput {
   name: string;
   timezone: string;
   notes: string;
+  /** Left out, it is not changed. */
+  autoRepair?: boolean;
 }
 
 /** A site's address and hours (ADR-0066): empty without doc.view. */
@@ -409,6 +413,8 @@ export interface Device {
   canUpdateAgent: boolean;
   /** The caller may repair remote access here: device.edit, the EasyRMM agent, remote access on (ADR-0069). */
   canReconnectRemote: boolean;
+  /** device.edit here, the EasyRMM agent, and a linked EasyPatch agent (ADR-0069). */
+  canRepairPatching: boolean;
   /** Whether remote access is connected and, when not, why; null without the EasyRMM agent (ADR-0069). */
   remote: RemoteStatus | null;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
@@ -1514,8 +1520,9 @@ export interface SoftwareDevice {
 
 /** What a policy watches: no check-in, processor, memory or the fullest disk at a percentage, or each disk's health
  * with one of its checks (ADR-0065). remote_down: the EasyRMM agent checks in but MeshAgent is not connected;
- * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in (ADR-0069). */
-export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health" | "remote_down" | "agent_silent";
+ * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in; repair_failed: an automatic repair
+ * ended with its agent still broken, an alert of no policy (ADR-0069). */
+export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health" | "remote_down" | "agent_silent" | "repair_failed";
 /** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
  * temperature (°C, or the drive's own limit without a threshold). */
 export type DiskCheck = "failing" | "errors" | "pending" | "wear" | "temperature";

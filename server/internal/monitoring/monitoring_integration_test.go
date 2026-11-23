@@ -971,3 +971,31 @@ func TestRun(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// The Repair failed alert belongs to no policy: the sweep that resolves
+// alerts of deleted or changed policies leaves it to the recovery service.
+func TestRepairFailedAlertSurvivesTheSweepAndShowsItsRepairs(t *testing.T) {
+	f := newFixture(t)
+	d := f.device(f.acme, f.hq, "pc", 0)
+	f.exec(`INSERT INTO alerts (policy_id, device_id, name, kind, minutes, severity, subject, subject_label, detail, value, last_value)
+		VALUES (NULL, $1, 'Repair failed', 'repair_failed', 0, 'warning', 'meshagent', 'MeshAgent', 'Repairing MeshAgent did not bring it back.', 0, 0)`, d)
+	f.exec(`INSERT INTO agent_repairs (device_id, target, carried_by, trigger, state, steps, wait_seconds, started_at, ended_at, error)
+		VALUES ($1, 'meshagent', 'easyrmm-agent', 'automatic', 'failed', '[{"id":"a","step":"restart","state":"failed","error":"boom"}]', 1200,
+			now() + interval '1 minute', now() + interval '2 minutes', 'boom')`, d)
+	f.evaluate()
+	a := f.alertOn(d, "Repair failed")
+	if a == nil || a.Kind != KindRepairFailed || a.Severity != "warning" || a.PolicyID != nil || a.Subject != "meshagent" {
+		t.Fatalf("alert = %+v", a)
+	}
+	got, err := f.svc.GetAlert(f.ctx, f.super, a.ID)
+	if err != nil || len(got.Repairs) != 1 || got.Repairs[0].Target != "meshagent" || got.Repairs[0].Trigger != "automatic" {
+		t.Errorf("repairs on the alert: %+v, %v", got, err)
+	}
+	// A person may still acknowledge and resolve it.
+	if _, err := f.svc.Acknowledge(f.ctx, f.super, a.ID); err != nil {
+		t.Errorf("acknowledge: %v", err)
+	}
+	if _, err := f.svc.Resolve(f.ctx, f.super, a.ID); err != nil {
+		t.Errorf("resolve: %v", err)
+	}
+}

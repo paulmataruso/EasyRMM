@@ -477,3 +477,20 @@ func TestMarkerName(t *testing.T) {
 		t.Errorf("marker = %s: rename it in state.layout too", u.markerPath())
 	}
 }
+
+// TestOnProbation: a build is on probation from the update until a heartbeat
+// reaches the server, which is when its recovery copy may be made.
+func TestOnProbation(t *testing.T) {
+	u := &Updater{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Dir: t.TempDir(), Exe: filepath.Join(t.TempDir(), "agent")}
+	if u.OnProbation() {
+		t.Error("a build that was not updated is on probation")
+	}
+	u.probation = &marker{ID: "x"}
+	if !u.OnProbation() {
+		t.Error("a new build is not on probation")
+	}
+	u.Reached()
+	if u.OnProbation() {
+		t.Error("still on probation after reaching the server")
+	}
+}

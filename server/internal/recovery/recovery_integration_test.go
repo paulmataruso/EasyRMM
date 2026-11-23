@@ -173,8 +173,8 @@ func TestRequestNeedsPermissionAndAnEnrolledOnlineDevice(t *testing.T) {
 	if _, err := f.request(f.stranger, d); !errors.Is(err, apperr.ErrNotFound) {
 		t.Errorf("another organization's administrator: %v", err)
 	}
-	if _, err := f.svc.Request(f.ctx, f.tech, d, "easypatch-agent"); code(err) == "" {
-		t.Errorf("a target this slice cannot repair: %v", err)
+	if _, err := f.svc.Request(f.ctx, f.tech, d, "easyrmm-agent"); code(err) == "" {
+		t.Errorf("a target nothing repairs: %v", err)
 	}
 	if f.count(`SELECT count(*) FROM agent_repairs`) != 0 {
 		t.Fatal("a refused request left a repair")

@@ -81,13 +81,16 @@ type Installer struct {
 	Download func(ctx context.Context, url, caPEM string, limit int64, w io.Writer) error
 	// Now is the clock; tests replace it.
 	Now func() time.Time
+	// Services restarts the EasyPatch agent's service for repairs.
+	Services Services
 
-	mu     sync.Mutex
-	busy   string
-	last   *agentproto.EasyPatchInstallReport
-	lastAt time.Time
-	tried  map[string]bool
-	done   chan struct{}
+	mu        sync.Mutex
+	repairing bool
+	busy      string
+	last      *agentproto.EasyPatchInstallReport
+	lastAt    time.Time
+	tried     map[string]bool
+	done      chan struct{}
 }
 
 func (i *Installer) now() time.Time {
@@ -114,7 +117,7 @@ func (i *Installer) Status() *agentproto.EasyPatchInstallStatus {
 func (i *Installer) Busy() bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	return i.busy != ""
+	return i.busy != "" || i.repairing
 }
 
 // Wait waits for a running install to end, for tests and shutdown.
@@ -153,7 +156,7 @@ func (i *Installer) Start(ctx context.Context, s *agentproto.SignedEasyPatchInst
 	if i.tried == nil {
 		i.tried = map[string]bool{}
 	}
-	if i.busy != "" || i.tried[p.ID] {
+	if i.busy != "" || i.repairing || i.tried[p.ID] {
 		i.mu.Unlock()
 		return
 	}

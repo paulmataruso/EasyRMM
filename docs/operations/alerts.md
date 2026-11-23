@@ -90,6 +90,17 @@ organization or site policies of the same kinds.
 * *EasyRMM agent silent* waits as the offline policy does after the server
   starts, since agents cannot check in before it serves them.
 
+### Repair failed
+
+*Repair failed* is a warning that belongs to no policy
+([ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)):
+EasyRMM raises it when an automatic repair of MeshAgent or the EasyPatch
+agent ends with the agent still broken. Its details are the last step's
+diagnostics, and its card lists the repairs tried (see
+[Automatic repairs](remote-access.md#automatic-repairs)). A device has one
+for each agent until the agent is back, when it resolves; acknowledging and
+resolving by hand work as for any alert. A device being removed has none.
+
 ### Disk health policies
 
 The EasyRMM agent reads each disk's health every 30 minutes, and the

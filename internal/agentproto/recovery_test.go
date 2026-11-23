@@ -108,3 +108,60 @@ func TestMeshServerHost(t *testing.T) {
 		}
 	}
 }
+
+// Only the EasyPatch agent's repair step carries a package, and the package
+// is checked as an install's is.
+func TestRepairInstructionOfTheEasyPatchAgent(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Now()
+	offer := func() *RepairEasyPatch {
+		return &RepairEasyPatch{Packages: []EasyPatchPackage{{
+			FileName: "EasyPatchAgent-1.9.0-x64.msi", URL: "https://patch.example.com/downloads/agent/EasyPatchAgent-1.9.0-x64.msi",
+			Format: "msi", Arch: "x64", Version: "1.9.0", Size: 10, SHA256: "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+		}}}
+	}
+	mk := func(target, step string, e *RepairEasyPatch) RepairPayload {
+		return RepairPayload{V: RepairPayloadVersion, ID: "r.1", DeviceID: "dev-1", Target: target, Step: step,
+			IssuedAt: now, ExpiresAt: now.Add(time.Minute), EasyPatch: e}
+	}
+	bad := offer()
+	bad.Packages[0].URL = "http://patch.example.com/x.msi"
+	badCA := offer()
+	badCA.CACert = "not a certificate"
+	cases := map[string]struct {
+		p    RepairPayload
+		want error
+	}{
+		"repair with a package":     {mk(TargetEasyPatchAgent, StepRepair, offer()), nil},
+		"repair without a package":  {mk(TargetEasyPatchAgent, StepRepair, nil), ErrRepairMalformed},
+		"restart with a package":    {mk(TargetEasyPatchAgent, StepRestart, offer()), ErrRepairMalformed},
+		"a package for MeshAgent":   {mk(TargetMeshAgent, StepRepair, offer()), ErrRepairMalformed},
+		"restart without a package": {mk(TargetEasyPatchAgent, StepRestart, nil), nil},
+		"a package over http":       {mk(TargetEasyPatchAgent, StepRepair, bad), ErrRepairMalformed},
+		"an unreadable authority":   {mk(TargetEasyPatchAgent, StepRepair, badCA), ErrRepairMalformed},
+		"no packages in the offer":  {mk(TargetEasyPatchAgent, StepRepair, &RepairEasyPatch{}), ErrRepairMalformed},
+	}
+	for name, c := range cases {
+		s, err := SignRepair(priv, c.p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := VerifyRepair(pub, s, "dev-1", now); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v, want %v", name, err, c.want)
+		}
+	}
+}
+
+func TestSameVersion(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"1.9.0", "1.9", true}, {"1.9.0.0", "1.9.0", true}, {"v1.9.0", "1.9.0", true}, {"1.9.0", "1.9.1", false},
+		{"1.10", "1.1", false}, {"2.0.0", "2", true}, {"", "1.0", false},
+	} {
+		if got := SameVersion(c.a, c.b); got != c.want {
+			t.Errorf("SameVersion(%q, %q) = %v", c.a, c.b, got)
+		}
+	}
+}

@@ -69,6 +69,41 @@ func (linuxSystem) Install(ctx context.Context, _ *agentproto.EasyPatchInstallPa
 	return packageError("apt-get", code, out, err)
 }
 
+// Service is the EasyPatch agent's systemd unit.
+func (linuxSystem) Service() string { return LinuxUnit }
+
+// Reinstall puts the package of the installed version back with apt-get
+// install --reinstall or dnf reinstall. The package manager keeps the
+// agent's configuration files (--force-confold), and its enrollment is in
+// its state directory, which a package leaves alone.
+func (linuxSystem) Reinstall(ctx context.Context, pkg agentproto.EasyPatchPackage, file string) error {
+	if pkg.Format == agentproto.EasyPatchRPM {
+		code, out, err := run(ctx, "", nil, "dnf", "reinstall", "-y", file)
+		return repairError("dnf", code, out, err)
+	}
+	env := []string{"DEBIAN_FRONTEND=noninteractive"}
+	code, out, err := run(ctx, "", env, "apt-get", "install", "--reinstall", "-y", "--no-install-recommends",
+		"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", file)
+	return repairError("apt-get", code, out, err)
+}
+
+func repairError(tool string, code int, out []byte, err error) error {
+	switch {
+	case err != nil:
+		return err
+	case code != 0:
+		msg := fmt.Sprintf("%s could not reinstall the EasyPatch agent (exit code %d)", tool, code)
+		if t := tail(out); t != "" {
+			msg += ": " + t
+		}
+		if rpmDatabaseDamaged(out) {
+			msg += ". The machine's RPM database needs repair: run rpm --rebuilddb as root, then repair again"
+		}
+		return errors.New(msg)
+	}
+	return nil
+}
+
 func packageError(tool string, code int, out []byte, err error) error {
 	switch {
 	case err != nil:

@@ -265,6 +265,10 @@ func (u *Updater) Reached() {
 	}
 }
 
+// OnProbation reports whether the running build is on probation: it has not
+// yet reached the server since it replaced the previous one.
+func (u *Updater) OnProbation() bool { return u.probation != nil }
+
 // Unreached is told that a heartbeat failed. It undoes a new build on
 // probation that has not reached the server for ProbationTimeout, and
 // returns true when the agent must restart into the previous build.

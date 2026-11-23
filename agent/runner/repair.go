@@ -10,9 +10,11 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
-// stepTimeout bounds one repair step: a service stop waits up to 30 seconds
-// and MeshAgent's download is a few megabytes.
-const stepTimeout = 5 * time.Minute
+// stepTimeout bounds one repair step: a service stop waits up to 30 seconds,
+// MeshAgent's download is a few megabytes and the EasyPatch agent's package
+// some tens. The server gives up on a step the agent does not take after 15
+// minutes, so a step ends before that.
+const stepTimeout = 12 * time.Minute
 
 // repairs holds the repair step in hand and the outcome of the last one.
 type repairs struct {
@@ -96,9 +98,16 @@ func (r *Runner) startRepair(ctx context.Context, s *agentproto.SignedRepair) {
 // MeshAgent child process the step starts lives as long as it does. Downloads
 // are bounded by within.
 func (r *Runner) carryOut(ctx, within context.Context, p agentproto.RepairPayload) error {
-	if p.Target != agentproto.TargetMeshAgent {
-		return fmt.Errorf("this agent does not repair the %s", p.Target)
+	switch p.Target {
+	case agentproto.TargetMeshAgent:
+		return r.repairMesh(ctx, within, p)
+	case agentproto.TargetEasyPatchAgent:
+		return r.repairEasyPatch(ctx, within, p)
 	}
+	return fmt.Errorf("this agent does not repair the %s", p.Target)
+}
+
+func (r *Runner) repairMesh(ctx, within context.Context, p agentproto.RepairPayload) error {
 	if r.Mesh == nil {
 		return errors.New("MeshAgent is not supported on this device")
 	}
@@ -111,6 +120,21 @@ func (r *Runner) carryOut(ctx, within context.Context, p agentproto.RepairPayloa
 			return err
 		}
 		return r.Mesh.Repair(ctx, download, settings)
+	}
+	return fmt.Errorf("unknown step %q", p.Step)
+}
+
+func (r *Runner) repairEasyPatch(ctx, within context.Context, p agentproto.RepairPayload) error {
+	if r.Patch == nil {
+		return errors.New("the EasyPatch agent cannot be repaired from this device")
+	}
+	switch p.Step {
+	case agentproto.StepRestart:
+		return r.Patch.Restart(within)
+	case agentproto.StepRepair:
+		// The package manager outlives the agent's own stop, as an install
+		// does: only the step's deadline ends it.
+		return r.Patch.Repair(ctx, within, p.EasyPatch)
 	}
 	return fmt.Errorf("unknown step %q", p.Step)
 }

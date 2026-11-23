@@ -71,7 +71,7 @@ Three facts shape the design:
   to the previous build, and reports why, when it has started three times
   without getting through (it crashes) or has not got through for
   10 minutes. Errors are reported with the next heartbeats, matched to the
-  attempt by its ID.
+  attempt by its ID. *Amended by ADR-0069: once a build has reached the server, and never during probation, the agent keeps a copy of its own program in its state folder's `recovery` folder, for repairs.*
 * **Failures back off, then stop.** A failed attempt is retried after 15
   minutes, then after an hour; after three the device is marked failed
   (audited) until someone asks again or the server ships another build. A

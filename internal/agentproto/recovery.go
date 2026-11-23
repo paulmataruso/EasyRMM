@@ -99,6 +99,36 @@ type RepairPayload struct {
 	Step      string    `json:"step"`
 	IssuedAt  time.Time `json:"issuedAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// EasyPatch is the package that repairs the EasyPatch agent in place:
+	// present for that target's repair step, absent otherwise.
+	EasyPatch *RepairEasyPatch `json:"easyPatch,omitempty"`
+}
+
+// RepairEasyPatch is what repairing the EasyPatch agent in place needs: the
+// packages of the version installed on the device, as the patching engine
+// lists them (size and SHA-256 included, checked as an install checks them),
+// and the certificate authority to download them with. There is no
+// enrollment token: a repair never enrolls.
+type RepairEasyPatch struct {
+	// CACert is the PEM certificate of the patching engine's private
+	// certificate authority, empty when its certificate is publicly trusted.
+	CACert string `json:"caCert,omitempty"`
+	// Packages are those for the device's platform and architecture, all of
+	// the version installed.
+	Packages []EasyPatchPackage `json:"packages"`
+}
+
+// SameVersion reports whether two version strings name one version: case
+// and a leading "v" are ignored, and so are trailing ".0" parts, so that
+// 1.4 and 1.4.0.0 are one.
+func SameVersion(a, b string) bool { return normalVersion(a) == normalVersion(b) }
+
+func normalVersion(v string) string {
+	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
+	for strings.HasSuffix(v, ".0") {
+		v = strings.TrimSuffix(v, ".0")
+	}
+	return v
 }
 
 // SignedRepair is a RepairPayload with the server's signature.
@@ -158,6 +188,11 @@ func VerifyRepair(key ed25519.PublicKey, s SignedRepair, deviceID string, now ti
 	}
 	switch {
 	case p.V != RepairPayloadVersion || p.ID == "" || len(p.ID) > 64 || !ValidTarget(p.Target) || !ValidStep(p.Step) || p.ExpiresAt.IsZero():
+		return p, ErrRepairMalformed
+	case (p.EasyPatch != nil) != (p.Target == TargetEasyPatchAgent && p.Step == StepRepair):
+		// Only the EasyPatch agent's repair step carries a package.
+		return p, ErrRepairMalformed
+	case p.EasyPatch != nil && (!validCA(p.EasyPatch.CACert) || !validPackages(p.EasyPatch.Packages)):
 		return p, ErrRepairMalformed
 	case p.DeviceID != deviceID:
 		return p, ErrRepairDevice

@@ -230,6 +230,35 @@ describe("remote access alerts (ADR-0069)", () => {
   });
 });
 
+describe("the Repair failed alert (ADR-0069)", () => {
+  const FAILED = alertEntry("a7", "Repair failed", {
+    policyId: null,
+    kind: "repair_failed",
+    threshold: null,
+    minutes: 0,
+    severity: "warning",
+    subject: "easypatch-agent",
+    subjectLabel: "EasyPatch agent",
+    detail: "Repairing the EasyPatch agent did not bring it back. The last step failed: apt-get could not reinstall the EasyPatch agent (exit code 100)",
+    repairs: [
+      { target: "easypatch-agent", trigger: "automatic", state: "failed", startedAt: "2026-11-01T10:20:00Z", endedAt: "2026-11-01T11:40:00Z", error: "x", steps: [{ step: "restart", state: "done" }, { step: "repair", state: "failed", error: "apt-get could not reinstall" }] },
+      { target: "meshagent", trigger: "manual", state: "succeeded", startedAt: "2026-11-01T10:30:00Z", endedAt: "2026-11-01T10:35:00Z", error: "", steps: [{ step: "restart", state: "done" }] },
+    ],
+  });
+
+  it("shows the last step's diagnostics and only the repairs of its agent", async () => {
+    installFakeApi(routes([FAILED]));
+    const dialog = await openCard("/alerts?alert=a7", "Repair failed");
+    expect(within(dialog).getAllByText(/The last step failed: apt-get could not reinstall the EasyPatch agent \(exit code 100\)/).length).toBeGreaterThan(0);
+    const repairs = section(dialog, "Repairs tried");
+    expect(within(repairs).getByText(/Automatic · easypatch-agent · it did not come back/)).toBeInTheDocument();
+    expect(within(repairs).queryByText(/meshagent/)).not.toBeInTheDocument();
+    expect(within(repairs).getByText(/Reinstall the EasyPatch agent's package of the same version/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/EasyRMM tried to repair this device's EasyPatch agent by itself/)).toBeInTheDocument();
+    expect(within(dialog).getByText("An automatic repair ended with the agent still broken")).toBeInTheDocument();
+  });
+});
+
 describe("an alert's card, section by section", () => {
   it("summarizes the alert with its device, site and organization linked", async () => {
     installFakeApi(routes([DISK]));
