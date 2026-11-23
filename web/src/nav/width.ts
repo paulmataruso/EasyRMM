@@ -8,7 +8,7 @@
 /** A row of the tree, as far as its width goes. */
 export interface RowSpec {
   text: string;
-  level: 1 | 2 | 3;
+  level: 1 | 2 | 3 | 4;
   /** The count at the end of the row; a pill for alert counts. */
   badge?: { text: string; pill: boolean } | null;
   /** Whether the row has a quick-connect button. */
@@ -20,7 +20,7 @@ export type Measure = (text: string, font: "row" | "badge" | "pill") => number;
 
 // A row's geometry in CSS pixels, from the classes SectionTree gives it.
 const AREA = 16; // the scrolling area's px-2, both sides
-const INDENT = { 1: 4, 2: 16, 3: 28 } as const; // pl-1, pl-4, pl-7
+const INDENT = { 1: 4, 2: 16, 3: 28, 4: 40 } as const; // pl-1, pl-4, pl-7, pl-10
 const LEAD = 16 + 6 + 16 + 6; // the chevron, a gap, the icon (16 on the top rows, 14 in the tree), a gap
 const GAP = 6; // gap-1.5
 const END = 6; // pr-1.5

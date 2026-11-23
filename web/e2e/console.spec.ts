@@ -139,7 +139,7 @@ test("invites a technician to one organization; the link is shown once", async (
   const page = admin;
   // Inside a section the sidebar shows the section's tree; Back returns to the main menu.
   const nav = page.getByRole("navigation", { name: "Main" });
-  await expect(nav.getByRole("tree", { name: "Organizations: organizations, sites" })).toBeVisible();
+  await expect(nav.getByRole("tree", { name: "Organizations: organizations, sites, groups and devices" })).toBeVisible();
   await expect(nav.getByRole("treeitem", { name: /^Contoso Dental Group/ })).toBeVisible();
   await nav.getByRole("button", { name: "Back to the main menu" }).click();
   await nav.getByRole("link", { name: "Settings" }).click();
@@ -782,7 +782,7 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await expect(name).toHaveClass(/\balert-active-pulse\b/);
   await expect(name).toHaveCSS("animation-name", "alert-active-pulse");
   await expect(name).toHaveCSS("animation-duration", "1.8s");
-  const tree = page.getByRole("tree", { name: "Alerts: organizations, sites and devices" });
+  const tree = page.getByRole("tree", { name: "Alerts: organizations, sites, groups and devices" });
   await expect(tree.getByRole("treeitem", { name: /^dt-reception-01, .*1 critical$/ }).getByText("dt-reception-01")).toHaveClass(/\balert-active-pulse\b/);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(name).toHaveCSS("animation-name", "none");
@@ -986,7 +986,7 @@ test("Update all now for a site installs every available update, and restarts th
 
   // The overview, for the clinic: once the device is linked, it is the one device there to patch.
   await page.goto("/patching");
-  await page.getByRole("tree", { name: "Patching: organizations, sites" }).getByRole("treeitem", { name: /^Downtown clinic/ }).click();
+  await page.getByRole("tree", { name: "Patching: organizations, sites, groups and devices" }).getByRole("treeitem", { name: /^Downtown clinic/ }).click();
   const bar = page.getByRole("region", { name: "Every device in Downtown clinic (Contoso Dental Group)" });
   await expect(async () => {
     await page.reload();

@@ -293,6 +293,28 @@ export interface DeviceGroup {
   updatedAt: string;
 }
 
+/** A device group, as the tree shows it. */
+export interface DeviceTreeGroup {
+  id: string;
+  organizationId: string;
+  siteId: string;
+  name: string;
+}
+
+/** The devices directly in a site (groupId null: those in no group) or in one of its groups, and how many are online. */
+export interface DeviceTreeCount {
+  siteId: string;
+  groupId: string | null;
+  total: number;
+  online: number;
+}
+
+/** What the tree needs beyond the organizations and sites (ADR-0069). */
+export interface DeviceTreeData {
+  groups: DeviceTreeGroup[];
+  counts: DeviceTreeCount[];
+}
+
 export interface DeviceGroupInput {
   name: string;
   description: string;
@@ -1568,6 +1590,7 @@ export interface DeviceAlertCount {
   deviceId: string;
   organizationId: string;
   siteId: string;
+  groupId: string | null;
   active: number;
   critical: number;
 }

@@ -89,6 +89,23 @@ export function installFakeApi(routes: Record<string, FakeHandler | FakeReply> =
       if (status === 204 || reply.body === undefined) return new Response(null, { status });
       return new Response(JSON.stringify(reply.body), { status, headers: { "Content-Type": "application/json" } });
     }
+    // The device tree (ADR-0069) follows from the devices a test gives, unless it gives a tree of its own.
+    if (method === "GET" && path === "/device-tree") {
+      const list = table.find((r) => r.method === "GET" && r.pattern.test("/devices"));
+      if (list) {
+        const reply = await list.handler({ method, path: "/devices", params: {}, query: new URLSearchParams(), body: undefined, headers: {} });
+        const items = ((reply.body as { items?: { siteId: string; deviceGroupId: string | null; online: boolean }[] } | undefined)?.items ?? []);
+        const counts = new Map<string, { siteId: string; groupId: string | null; total: number; online: number }>();
+        for (const d of items) {
+          const key = `${d.siteId}/${d.deviceGroupId ?? ""}`;
+          const n = counts.get(key) ?? { siteId: d.siteId, groupId: d.deviceGroupId ?? null, total: 0, online: 0 };
+          n.total += 1;
+          if (d.online) n.online += 1;
+          counts.set(key, n);
+        }
+        return new Response(JSON.stringify({ groups: [], counts: [...counts.values()] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+    }
     unmatched.push(`${method} ${path}${url.search}`);
     throw new Error(`fakeApi: no route for ${method} ${path}${url.search}`);
   });
@@ -165,6 +182,7 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /organizations": ok({ items: [] }),
     "GET /sites": ok({ items: [] }),
     "GET /devices": ok({ items: [] }),
+    "GET /sites/:id/device-groups": ok({ items: [] }),
     "GET /alerts/devices": ok({ items: [] }),
     "GET /scripts": ok({ items: [] }),
     "GET /devices/recent-connections": ok({ items: [] }),
