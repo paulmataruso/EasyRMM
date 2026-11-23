@@ -299,6 +299,18 @@ func shortHost(h string) string {
 	return h
 }
 
+// sameHost reports whether two host names name the same computer: the same
+// first label, ignoring case, or, on Windows, one is the NetBIOS name, which
+// Windows cuts to the DNS host name's first 15 characters. EasyPatch's agent
+// can report that name; EasyRMM's reports the DNS host name.
+func sameHost(a, b string) bool {
+	a, b = shortHost(a), shortHost(b)
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	return a == b || len(a) == 15 && strings.HasPrefix(b, a)
+}
+
 // verify decides whether a device is the endpoint it reports. An error means
 // EasyPatch could not answer.
 func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *candidate, endpointID *uuid.UUID) (string, string, error) {
@@ -350,7 +362,7 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 	if host == "" {
 		host = cd.name
 	}
-	if shortHost(ep.Summary.Hostname) != shortHost(host) {
+	if !sameHost(ep.Summary.Hostname, host) {
 		return LinkUnlinked, cut(fmt.Sprintf("Host names differ: the patching engine has %q, EasyRMM has %q.", ep.Summary.Hostname, host), 500), nil
 	}
 	a, b := strings.TrimSpace(ep.SerialNumber), strings.TrimSpace(cd.serial)

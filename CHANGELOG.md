@@ -766,6 +766,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A Windows computer whose name is longer than 15 characters links to
+  its EasyPatch agent.** EasyPatch's agent can report Windows' NetBIOS
+  name, the first 15 characters of the host name, so EasyRMM refused the
+  link with "Host names differ". A name that is the other's first 15
+  characters, ignoring case, now counts as the same.
+
 - **Remote sessions work from every address the server answers on.**
   MeshCentral accepted a session's control connection only from a page on
   its own name, so it closed every session started from a console reached
