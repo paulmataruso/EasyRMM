@@ -213,6 +213,7 @@ public static partial class LogRedactor
             message = PemBlock().Replace(message, "-----REDACTED KEY-----");
             message = BearerToken().Replace(message, "$1 " + Mask);
             message = PrefixedToken().Replace(message, "$1" + Mask);
+            message = Flag().Replace(message, m => SecretName(m.Groups[2].Value) ? m.Groups[1].Value + m.Groups[2].Value + m.Groups[3].Value + MaskLike(m.Groups[4].Value) : m.Value);
             return Field().Replace(message, m => SecretName(m.Groups[1].Value) ? m.Groups[1].Value + m.Groups[2].Value + MaskLike(m.Groups[3].Value) : m.Value);
         }
         catch (RegexMatchTimeoutException)
@@ -285,6 +286,13 @@ public static partial class LogRedactor
     // The prefixed tokens of EasyRMM (ert_) and EasyPatch (ept_).
     [GeneratedRegex(@"\b(ert_|ept_)[A-Za-z0-9_\-]{6,}", RegexOptions.CultureInvariant, TimeoutMilliseconds)]
     private static partial Regex PrefixedToken();
+
+    // A command-line flag and its value after a space: --password hunter2, -Password hunter2, /password hunter2. The value is
+    // quoted or runs to a space, and does not start with another flag.
+    [GeneratedRegex(
+        @"(?<![A-Za-z0-9_.\-/])(--?|/)([A-Za-z][A-Za-z0-9_.\-]*)([ \t]+)(""[^""]*""|'[^']*'|[^\s\-/""'][^\s]*)",
+        RegexOptions.CultureInvariant, TimeoutMilliseconds)]
+    private static partial Regex Flag();
 
     // name=value, name: value and "name":"value", the value being quoted or running to a delimiter. An authorization value may be
     // a scheme and a credential ("Basic abc", "Bearer abc").

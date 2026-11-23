@@ -27,6 +27,10 @@ var (
 	// field matches name=value, name: value and "name":"value", the value
 	// being quoted or running to a delimiter. An authorization value may
 	// be a scheme and a credential ("Basic abc", "Bearer abc").
+	// flag matches a command-line flag and its value after a space:
+	// --password hunter2, -Password hunter2, /password hunter2. The value is
+	// quoted or runs to a space, and does not start with another flag.
+	flag  = regexp.MustCompile(`(^|[^A-Za-z0-9_./-])(--?|/)([A-Za-z][A-Za-z0-9_.-]*)([ \t]+)("[^"]*"|'[^']*'|[^\s\-/"'][^\s]*)`)
 	field = regexp.MustCompile(`(?i)([A-Za-z0-9_.-]+)(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|(?:basic|bearer|digest|negotiate|token)\s+[^\s,;&}\]]+|[^\s,;&}\]"']+)`)
 )
 
@@ -38,6 +42,13 @@ func Text(s string) string {
 	s = pem.ReplaceAllString(s, "-----REDACTED KEY-----")
 	s = bearer.ReplaceAllString(s, "$1 "+Mask)
 	s = tokens.ReplaceAllString(s, "${1}"+Mask)
+	s = flag.ReplaceAllStringFunc(s, func(m string) string {
+		p := flag.FindStringSubmatch(m)
+		if !SecretName(p[3]) {
+			return m
+		}
+		return p[1] + p[2] + p[3] + p[4] + maskLike(p[5])
+	})
 	return field.ReplaceAllStringFunc(s, func(m string) string {
 		p := field.FindStringSubmatch(m)
 		if !SecretName(p[1]) {

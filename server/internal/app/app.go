@@ -250,6 +250,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
+	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
 	return d, nil
 }
 

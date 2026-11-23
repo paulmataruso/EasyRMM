@@ -155,7 +155,7 @@ public sealed class CompanionRepairService : ICompanionRepair
     // ---------------------------------------------------------------------------------------------------------------------------
 
     private async Task<CompanionOutcome> FailedAsync(string target, string code, string message, string? detail, CancellationToken cancellationToken) =>
-        new(false, Truncate(message), code, await TargetDiagnosticsAsync(target, detail, cancellationToken));
+        new(false, Truncate(LogRedactor.Redact(message)), code, await TargetDiagnosticsAsync(target, detail, cancellationToken));
 
     private async Task<string> TargetDiagnosticsAsync(string target, string? detail, CancellationToken cancellationToken)
     {

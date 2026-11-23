@@ -21,7 +21,7 @@ All notable changes to this project are documented here. The format follows
   256 KiB, redacted by the agent, kept 14 days. The agent refuses the
   repair while an update is in progress, for a copy that is linked, owned or
   writable by anyone but the system, administrators or root, or whose SHA-256
-  is not the one EasyRMM recorded for the device's build; only then does it
+  is not the one EasyRMM recorded for the device's build, which the server sends only when it publishes that build; only then does it
   run the copy's `repair-install`. Migration 00043 and the engine's
   database gain a column for the diagnostics.
 

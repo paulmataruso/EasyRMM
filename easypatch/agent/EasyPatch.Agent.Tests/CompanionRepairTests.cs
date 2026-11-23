@@ -197,6 +197,13 @@ public sealed class CompanionRepairTests : IDisposable
         var failed = await Service(host).RestartAsync(CompanionTargets.MeshAgent, Ct);
         Assert.Equal((false, CompanionErrors.RestartFailed), (failed.Succeeded, failed.ErrorCode));
         Assert.Contains("Access is denied", failed.Message);
+
+        // What the service manager printed may hold a secret: it is redacted in the message too.
+        host.RestartError = "systemctl failed: ExecStart=agent --password hunter2hunter2 token=abc12345";
+        failed = await Service(host).RestartAsync(CompanionTargets.MeshAgent, Ct);
+        Assert.Contains("systemctl failed", failed.Message);
+        Assert.DoesNotContain("hunter2hunter2", failed.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("abc12345", failed.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -283,6 +290,13 @@ public sealed class CompanionRepairTests : IDisposable
     [InlineData("enrolling with ert_0123456789abcdef", "0123456789abcdef")]
     [InlineData("enrolled with ept_0123456789abcdef", "0123456789abcdef")]
     [InlineData("sent Bearer abcdef123456 to the server", "abcdef123456")]
+    [InlineData("run.exe --password hunter2hunter2 --verbose", "hunter2hunter2")]
+    [InlineData("x.ps1 -Password hunter2hunter2 -Name bob", "hunter2hunter2")]
+    [InlineData("setup.exe /password hunter2hunter2 /quiet", "hunter2hunter2")]
+    [InlineData("tool --token abc12345 go", "abc12345")]
+    [InlineData("tool -secret s3cr3tvalue", "s3cr3tvalue")]
+    [InlineData("tool --api-key value987654", "value987654")]
+    [InlineData("tool -key \"two words\"", "two words")]
     [InlineData("-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "MIIEow")]
     [InlineData("-----BEGIN CERTIFICATE-----\nMIIBcut off with no end", "MIIBcut")]
     public void Secrets_are_removed_from_log_text(string text, string secret)
@@ -297,6 +311,9 @@ public sealed class CompanionRepairTests : IDisposable
     [InlineData("2026-11-23T10:00:00.123Z INF Agent: checked in with the server")]
     [InlineData("keyboard layout: us")]
     [InlineData("monkey=banana")]
+    [InlineData("tool --password --verbose")]
+    [InlineData("tool --name hunter2")]
+    [InlineData("open /var/secret hunter")]
     public void Ordinary_log_text_is_kept(string text) => Assert.Equal(text, LogRedactor.Redact(text));
 
     [Theory]
@@ -367,6 +384,9 @@ public sealed class CompanionRepairTests : IDisposable
         Assert.Null(FileTrust.Grantee([Allow(users, append)], FileTrust.ReplaceRights, passedOn: false));
         Assert.Equal(users, FileTrust.Grantee([Allow(users, 0x40)], FileTrust.ReplaceRights, passedOn: false)); // delete what the folder holds
         Assert.True(FileTrust.TrustedWindowsOwner(system) && FileTrust.TrustedWindowsOwner(admins));
+        Assert.True(FileTrust.TrustedDirectoryOwner(system) && FileTrust.TrustedDirectoryOwner(admins));
+        Assert.True(FileTrust.TrustedDirectoryOwner("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"));
+        Assert.False(FileTrust.TrustedDirectoryOwner("S-1-5-21-1-2-3-1001") || FileTrust.TrustedDirectoryOwner(null));
         Assert.False(FileTrust.TrustedWindowsOwner("S-1-5-21-1-2-3-1001"));
     }
 
@@ -484,6 +504,16 @@ public sealed class CompanionRepairTests : IDisposable
         Assert.Contains("may be changed by " + users.Value, await host.CheckTrustAsync(copy, root, Ct));
         dirAcl.RemoveAccessRule(new FileSystemAccessRule(users, FileSystemRights.DeleteSubdirectoriesAndFiles, InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
         dir.SetAccessControl(dirAcl);
+
+        // An owner who is not the system or the administration can rewrite the folder's access list.
+        var me = WindowsIdentity.GetCurrent().User!;
+        var ownedDir = dir.GetAccessControl();
+        ownedDir.SetOwner(me);
+        dir.SetAccessControl(ownedDir);
+        Assert.Contains($"{folder} is owned by {me.Value}", await host.CheckTrustAsync(copy, root, Ct));
+        ownedDir.SetOwner(admins);
+        dir.SetAccessControl(ownedDir);
+        Assert.Null(await host.CheckTrustAsync(copy, root, Ct));
 
         // A link to the copy.
         var link = Path.Combine(root, "link.exe");

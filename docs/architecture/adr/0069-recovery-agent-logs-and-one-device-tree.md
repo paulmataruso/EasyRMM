@@ -320,6 +320,18 @@ settled:
   hard link. Links are found by `stat` without following them; the copy is
   hashed and run from the path checked, which only root or the system could
   have changed. POSIX ACLs are not read.
+* Security review (decided in review): the hash a repair is checked against
+  is never the device's own word (`devices.agent_sha256` is set by its heartbeat).
+  EasyRMM sends it only when it is the SHA-256 of a build this server
+  publishes for the device's platform and architecture: a bundled build, or a
+  row of `signed_agent_builds`. Otherwise the *repair* step is refused with a
+  reason the console shows; *restart* steps stay allowed. So a device running
+  a build the server no longer publishes cannot be repaired from its copy:
+  update or reinstall its agent. On Windows each directory above the copy must
+  also be owned by SYSTEM, Administrators or TrustedInstaller, since an owner
+  can rewrite the access list; and the redaction rules cover command-line
+  forms (`--password x`, `-Password x`, `/password x`) in the agent's and the
+  server's `logredact`, and the job's message, not only its diagnostics.
 * Through patching, a step is carried out by EasyRMM asking the engine for the
   job (the server's repair loop, not a heartbeat), reading its result, and
   cancelling in the engine a job that did not run within 15 minutes so that it

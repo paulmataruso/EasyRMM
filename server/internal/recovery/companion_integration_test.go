@@ -231,6 +231,49 @@ func TestAnEasyRMMAgentRepairStepNobodyCouldCarryOutEndsWithTheReason(t *testing
 			t.Errorf("repair = %+v", got)
 		}
 	})
+	// toRepairStep takes a repair of a silent device through the restart to
+	// the repair step.
+	toRepairStep := func(p *patched, d uuid.UUID) {
+		t.Helper()
+		if _, err := p.requestRMM(d); err != nil {
+			t.Fatal(err)
+		}
+		p.move(0)
+		p.dispatch()
+		p.ep.SetJobResult(p.companionJobs()[0].ID, "Completed", "Restarted.", "", "")
+		p.move(time.Minute)
+		p.dispatch()
+		p.move(time.Minute + ManualWait + time.Second)
+		if err := p.svc.Advance(p.ctx); err != nil {
+			t.Fatal(err)
+		}
+		p.dispatch()
+	}
+	t.Run("a device whose build the server does not publish is restarted but not repaired", func(t *testing.T) {
+		p := newPatched(t)
+		d := p.silent("pc")
+		// The hash is the device's own word: the server publishes another.
+		p.exec(`UPDATE devices SET agent_sha256 = $2 WHERE id = $1`, d, strings.Repeat("ab", 32))
+		toRepairStep(p, d)
+		got := p.latest(d)
+		if got.State != Failed || !strings.Contains(got.Error, "not one this server publishes") || len(p.companionJobs()) != 1 {
+			t.Errorf("repair = %+v", got)
+		}
+	})
+	t.Run("a Windows device running a signed build the server keeps is repaired from its copy", func(t *testing.T) {
+		p := newPatched(t)
+		d := p.silent("pc")
+		signed := strings.Repeat("cd", 32)
+		p.exec(`UPDATE devices SET platform = 'windows', agent_sha256 = $2 WHERE id = $1`, d, signed)
+		p.exec(`INSERT INTO signed_agent_builds (id, arch, version, sha256, release_sha256, content, signer_subject,
+			signer_issuer, thumbprint, not_before, not_after, timestamped) VALUES (gen_random_uuid(), 'amd64', '1.0.0', $1, $2, '\x00',
+			'CN=Test', 'CN=Test', repeat('a', 40), now() - interval '1 day', now() + interval '1 day', true)`, signed, recoveryHash)
+		toRepairStep(p, d)
+		jobs := p.companionJobs()
+		if len(jobs) != 2 || jobs[1].Companion.ExpectedSHA256 != signed {
+			t.Errorf("jobs = %+v", jobs)
+		}
+	})
 	t.Run("a refusal by the agent is the step's failure, with its diagnostics", func(t *testing.T) {
 		p := newPatched(t)
 		d := p.silent("pc")

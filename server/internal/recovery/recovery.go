@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -149,7 +150,10 @@ type Service struct {
 	remote bool
 	link   MeshLink
 	patch  Patching
-	wake   chan struct{}
+	// published lists the SHA-256 of the release's builds for a platform and
+	// architecture (SetBuilds).
+	published func(platform, arch string) []string
+	wake      chan struct{}
 }
 
 // New builds the service. remote says whether this server runs remote
@@ -161,6 +165,12 @@ func New(db *database.DB, auditLog *audit.Logger, remote bool, log *slog.Logger)
 // SetKey sets the job key repair instructions are signed with. Without it
 // no repair is asked for.
 func (s *Service) SetKey(k ed25519.PrivateKey) { s.key = k }
+
+// SetBuilds tells the service which builds the server bundles, by platform
+// and architecture. A recovery copy is only checked against a hash the
+// server itself publishes (ADR-0069); without this no repair step is asked
+// for.
+func (s *Service) SetBuilds(published func(platform, arch string) []string) { s.published = published }
 
 // UsePatching gives the service the patching side; without it the EasyPatch
 // agent is not repaired.
@@ -788,8 +798,10 @@ func (s *Service) Dispatch(ctx context.Context) error {
 			steps      []byte
 			step       int
 			sha        *string
+			platform   string
+			arch       *string
 		}
-		rows, err := tx.Query(ctx, `SELECT r.id, r.device_id, r.target, r.steps, r.step, d.agent_sha256
+		rows, err := tx.Query(ctx, `SELECT r.id, r.device_id, r.target, r.steps, r.step, d.agent_sha256, d.platform, d.agent_arch
 			FROM agent_repairs r JOIN devices d ON d.id = r.device_id
 			WHERE r.state = 'running' AND r.carried_by = 'easypatch-agent' AND NOT `+devices.LeavingSQL+` AND `+patchedSQL+`
 			ORDER BY r.started_at LIMIT 100`)
@@ -799,7 +811,7 @@ func (s *Service) Dispatch(ctx context.Context) error {
 		var list []row
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.id, &r.device, &r.target, &r.steps, &r.step, &r.sha); err != nil {
+			if err := rows.Scan(&r.id, &r.device, &r.target, &r.steps, &r.step, &r.sha, &r.platform, &r.arch); err != nil {
 				rows.Close()
 				return err
 			}
@@ -817,7 +829,7 @@ func (s *Service) Dispatch(ctx context.Context) error {
 			cur := steps[r.step]
 			switch cur.State {
 			case StepPending:
-				if err := s.startStep(ctx, tx, r.id, r.device, r.target, r.sha, steps, r.step); err != nil {
+				if err := s.startStep(ctx, tx, r.id, r.device, r.target, r.sha, r.platform, r.arch, steps, r.step); err != nil {
 					return err
 				}
 			case StepSent:
@@ -833,16 +845,21 @@ func (s *Service) Dispatch(ctx context.Context) error {
 // startStep asks the engine for the job of a step that waits. A refusal
 // ends the step with its reason; an engine that cannot be reached leaves it
 // waiting (Advance fails it after StepValid).
-func (s *Service) startStep(ctx context.Context, tx pgx.Tx, id, device uuid.UUID, target string, sha *string, steps []Step, step int) error {
+func (s *Service) startStep(ctx context.Context, tx pgx.Tx, id, device uuid.UUID, target string, sha *string, platform string, arch *string, steps []Step, step int) error {
 	cur := steps[step]
 	expected := ""
 	why := ""
 	if cur.Step == agentproto.StepRepair {
-		// The recovery copy must be the build EasyRMM recorded for the
-		// device (devices.agent_sha256).
-		if sha == nil || *sha == "" {
+		// The recovery copy must be a build this server publishes for the
+		// device's platform and architecture. The device reports its own
+		// hash, so it is not trusted to name what its copy is checked
+		// against. Restarts need no hash.
+		switch {
+		case sha == nil || *sha == "":
 			why = "EasyRMM has no record of the build this device runs, so there is nothing to check the recovery copy against."
-		} else {
+		case !s.publishes(ctx, tx, platform, arch, strings.ToLower(*sha)):
+			why = "The build this device runs is not one this server publishes, so its recovery copy cannot be trusted to repair it. Update the agent, or reinstall it."
+		default:
 			expected = strings.ToLower(*sha)
 		}
 	}
@@ -866,6 +883,24 @@ func (s *Service) startStep(ctx context.Context, tx pgx.Tx, id, device uuid.UUID
 	}
 	_, err = tx.Exec(ctx, `UPDATE agent_repairs SET steps = $2 WHERE id = $1`, id, b)
 	return err
+}
+
+// publishes says whether the server publishes a build of the platform and
+// architecture with the SHA-256: a bundled one, or a signed Windows build an
+// operator uploaded.
+func (s *Service) publishes(ctx context.Context, tx pgx.Tx, platform string, arch *string, sha string) bool {
+	if arch == nil || *arch == "" {
+		return false
+	}
+	if s.published != nil && slices.Contains(s.published(platform, *arch), sha) {
+		return true
+	}
+	if platform != "windows" {
+		return false
+	}
+	var ok bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM signed_agent_builds WHERE arch = $1 AND sha256 = $2)`, *arch, sha).Scan(&ok)
+	return err == nil && ok
 }
 
 // readStep reads the result of a step whose job was asked for.

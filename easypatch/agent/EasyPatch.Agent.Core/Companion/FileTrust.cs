@@ -61,6 +61,10 @@ internal static class FileTrust
     /// them: Windows makes the Administrators group the default owner of what a process running as the system creates.</summary>
     internal static bool TrustedWindowsOwner(string sid) => sid is "S-1-5-18" or "S-1-5-32-544";
 
+    /// <summary>Whether a directory's owner is the system, the Administrators group or TrustedInstaller. An owner can rewrite the
+    /// directory's access list whatever it says, so it counts as much as a write right.</summary>
+    internal static bool TrustedDirectoryOwner(string? sid) => sid is "S-1-5-18" or "S-1-5-32-544" or "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
     /// <summary>Checks the copy and every directory above it; the reason it cannot be trusted, null when it can.</summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static string? CheckWindows(string path, string? stopAt)
@@ -117,6 +121,11 @@ internal static class FileTrust
             if (acl.Dacl is null)
             {
                 return $"{directory} has no access list, so everyone may change it.";
+            }
+
+            if (!TrustedDirectoryOwner(acl.Owner))
+            {
+                return $"{directory} is owned by {acl.Owner ?? "no one"}, who may change who can write it.";
             }
 
             if (Grantee(acl.Dacl, folder ? WriteRights : ReplaceRights, passedOn: folder) is { } who)

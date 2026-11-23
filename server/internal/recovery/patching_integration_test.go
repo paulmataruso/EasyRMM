@@ -51,6 +51,13 @@ func newPatched(t *testing.T) *patched {
 	}
 	p.patch.SetClock(func() time.Time { return p.at })
 	f.svc.UsePatching(p.patch)
+	// The server bundles the build the devices run.
+	f.svc.SetBuilds(func(platform, arch string) []string {
+		if platform == "linux" && arch == "amd64" {
+			return []string{recoveryHash}
+		}
+		return nil
+	})
 	p.epOrg = p.ep.Org("Acme Patch")
 	f.exec(`INSERT INTO easypatch_organizations (organization_id, easypatch_id, easypatch_name) VALUES ($1, $2, 'Acme Patch')`, f.acme, p.epOrg)
 	return p
