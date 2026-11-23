@@ -371,3 +371,22 @@ func TestNoEasyPatchRepairWhereTheAgentIsNotMeantToBe(t *testing.T) {
 		})
 	}
 }
+
+// Without remote access or patching there is nothing to judge, and what was
+// noted is forgotten.
+func TestEvaluateWithoutRemoteAccessOrPatchingJudgesNothing(t *testing.T) {
+	f := newFixture(t)
+	d := f.meshDevice("pc")
+	f.eval(0)
+	if f.count(`SELECT count(*) FROM agent_conditions`) != 1 {
+		t.Fatal("the condition was not noted")
+	}
+	f.svc.remote = false
+	f.eval(time.Hour)
+	if f.count(`SELECT count(*) FROM agent_conditions`) != 0 || f.autos(d, "meshagent") != 0 {
+		t.Error("judged without remote access")
+	}
+	if _, err := f.svc.Request(f.ctx, f.tech, uuid.New(), agentproto.TargetMeshAgent); err == nil {
+		t.Error("a repair of a device that does not exist")
+	}
+}

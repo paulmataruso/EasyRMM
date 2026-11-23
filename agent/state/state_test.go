@@ -266,11 +266,18 @@ func TestRecoveryCopy(t *testing.T) {
 	if cp != filepath.Join(s.Dir(), "recovery", "easyrmm-agent") {
 		t.Errorf("copy at %s", cp)
 	}
-	if st, err := os.Stat(cp); err != nil || st.Mode().Perm() != 0o700 {
+	st, err := os.Stat(cp)
+	if err != nil {
 		t.Fatalf("copy: %v", err)
 	}
-	if st, err := os.Stat(filepath.Dir(cp)); err != nil || st.Mode().Perm() != 0o700 {
-		t.Errorf("folder: %v", err)
+	if runtime.GOOS != "windows" {
+		// Windows has no modes; its access lists are the host package's.
+		if st.Mode().Perm() != 0o700 {
+			t.Errorf("copy mode %v", st.Mode().Perm())
+		}
+		if d, err := os.Stat(filepath.Dir(cp)); err != nil || d.Mode().Perm() != 0o700 {
+			t.Errorf("folder: %v", err)
+		}
 	}
 	// A new build replaces it, and nothing is left beside it.
 	if err := os.WriteFile(exe, []byte("build two"), 0o755); err != nil {
