@@ -79,6 +79,19 @@ func (p Paths) Units() string { return p.unix("etc/systemd/system") }
 // keeps it.
 func (p Paths) Logs() string { return filepath.Join(p.State(), "logs") }
 
+// EasyPatchLog is the EasyPatch agent's log file, which the EasyRMM agent
+// reads for the server (ADR-0069).
+func (p Paths) EasyPatchLog() string {
+	if p.Windows() {
+		return filepath.Join(p.programData(), "EasyPatch", "logs", "agent.log")
+	}
+	return p.unix("var/lib/easypatch/logs/agent.log")
+}
+
+// MeshAgentLog is the log MeshAgent keeps where it keeps one, in its own
+// directory.
+func (p Paths) MeshAgentLog() string { return filepath.Join(p.MeshAgent(), "meshagent.log") }
+
 // CheckState makes the state folder safe to read, before anything in it is
 // read or written. On Windows, where any user may create folders under
 // ProgramData, it moves aside what the agent cannot trust (see checkState);

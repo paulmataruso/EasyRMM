@@ -126,6 +126,12 @@ floors=(
   # Parses what disks answer (ADR-0065); the transports' system calls run
   # only in the machine tests.
   "agent/hardware                          97"
+  # Agent logs (ADR-0069): the agent's buffer, shipper and tails, the
+  # redaction both sides share, and the server's storage and console routes.
+  "agent/logship                           85"
+  "internal/logredact                      88"
+  "server/internal/agentlogs               85"
+  "server/internal/httpapi/agentlogsapi    80"
 )
 
 if [[ ! -f "$profile" ]]; then

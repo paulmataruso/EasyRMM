@@ -53,6 +53,8 @@ type server struct {
 	// tamper changes the binary after signing it.
 	job    ed25519.PrivateKey
 	tamper bool
+	// logs is its log instructions, JSON.
+	logs string
 	// protocol is the heartbeat answer's level, none when 0 (ADR-0009).
 	protocol int
 }
@@ -100,6 +102,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.uninstall != "" {
 			update += `,"uninstall":` + s.uninstall
+		}
+		if s.logs != "" {
+			update += `,"logs":` + s.logs
 		}
 		if s.protocol != 0 {
 			update += `,"protocol":` + strconv.Itoa(s.protocol)
@@ -434,5 +439,25 @@ func TestUninstallInstruction(t *testing.T) {
 	r.Removal = nil
 	if _, err := r.beat(ctx); err != nil || m.installed {
 		t.Errorf("beat without removal: %v, MeshAgent %v", err, m.installed)
+	}
+}
+
+// TestBeatPassesLogInstructionsOn: each heartbeat answer's log instructions
+// reach OnLogs, and an answer without any reaches it as nil, which ends
+// verbose mode (ADR-0069).
+func TestBeatPassesLogInstructionsOn(t *testing.T) {
+	s := &server{logs: `{"verboseUntil":123,"followUntil":456}`}
+	r := newRunner(t, s, nil)
+	var got []*agentproto.LogInstructions
+	r.OnLogs = func(in *agentproto.LogInstructions) { got = append(got, in) }
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.logs = ""
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] == nil || got[0].VerboseUntil != 123 || got[0].FollowUntil != 456 || got[1] != nil {
+		t.Errorf("OnLogs received %+v", got)
 	}
 }

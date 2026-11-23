@@ -128,6 +128,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
+	case agentproto.PathAgentLogs:
+		var in agentproto.LogBatch
+		if f.old {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.Unmarshal(body, &in); err != nil || len(in.Records) != 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"logs_invalid","message":"no"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"seq":`+strconv.FormatInt(in.Records[0].Seq, 10)+`,"logs":{"followUntil":5}}`)
 	default:
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = io.WriteString(w, "not json")
@@ -567,6 +579,32 @@ func TestHardware(t *testing.T) {
 	f.old = true
 	var e *Error
 	if err := c.Hardware(ctx, report); !errors.As(err, &e) || e.Status != http.StatusNotFound {
+		t.Errorf("an older server: %v", err)
+	}
+}
+
+func TestAgentLogs(t *testing.T) {
+	c, f := newPair(t)
+	ctx := context.Background()
+	batch := agentproto.LogBatch{Records: []agentproto.LogRecord{{Seq: 7, Source: "agent", Level: "info", Message: "x"}}}
+	if _, err := c.AgentLogs(ctx, batch); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+		t.Errorf("before enrolling: %v", err)
+	}
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := c.Enroll(ctx, "ert_good", pub, agentproto.Facts{}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetIdentity("dev-1", key)
+	ack, err := c.AgentLogs(ctx, batch)
+	if err != nil || ack.Seq != 7 || ack.Logs == nil || ack.Logs.FollowUntil != 5 {
+		t.Errorf("ack %+v, %v", ack, err)
+	}
+	if _, err := c.AgentLogs(ctx, agentproto.LogBatch{}); Code(err) != "logs_invalid" {
+		t.Errorf("refused: %v", err)
+	}
+	f.old = true
+	var e *Error
+	if _, err := c.AgentLogs(ctx, batch); !errors.As(err, &e) || e.Status != http.StatusNotFound {
 		t.Errorf("an older server: %v", err)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
@@ -58,6 +59,7 @@ type API struct {
 	jobs    *jobs.Service
 	inv     *inventory.Service
 	hw      *hardware.Service
+	logs    *agentlogs.Service
 	ep      EasyPatchInstalls
 	log     *slog.Logger
 
@@ -65,6 +67,7 @@ type API struct {
 	requests    *auth.KeyedLimiter
 	inventories *auth.KeyedLimiter
 	hardware    *auth.KeyedLimiter
+	logLimit    *auth.KeyedLimiter
 	pollMu      sync.Mutex
 	polls       map[uuid.UUID]int
 }
@@ -82,7 +85,10 @@ const (
 	inventoryBurst = 6
 	hardwareEvery  = 10 * time.Minute
 	hardwareBurst  = 6
-	maxPolls       = 4
+	// An agent sends logs every 30 seconds, every 2 while someone watches.
+	logEvery = time.Second
+	logBurst = 10
+	maxPolls = 4
 	// maxTracked bounds the devices the limits remember; idle ones are
 	// forgotten first.
 	maxTracked = 200_000
@@ -130,6 +136,7 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 		requests:    auth.NewKeyedLimiter(requestEvery, requestBurst, maxTracked),
 		inventories: auth.NewKeyedLimiter(inventoryEvery, inventoryBurst, maxTracked),
 		hardware:    auth.NewKeyedLimiter(hardwareEvery, hardwareBurst, maxTracked),
+		logLimit:    auth.NewKeyedLimiter(logEvery, logBurst, maxTracked),
 		polls:       map[uuid.UUID]int{},
 	}
 	if ca != nil {
@@ -200,6 +207,13 @@ func (a *API) WithHardware(hw *hardware.Service) *API {
 	return a
 }
 
+// WithAgentLogs stores agents' log records in logs and has heartbeats carry
+// how to log (ADR-0069).
+func (a *API) WithAgentLogs(logs *agentlogs.Service) *API {
+	a.logs = logs
+	return a
+}
+
 // WithEasyPatch has heartbeats carry EasyPatch agent installs (ADR-0031).
 func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
 	a.ep = ep
@@ -224,6 +238,9 @@ func (a *API) Handler() http.Handler {
 	}
 	if a.hw != nil {
 		mux.Handle("POST "+agentproto.PathHardware, httpapi.Handle(a.signedWith(agentproto.MaxHardwareBody, a.hardware, a.hardwareReport)))
+	}
+	if a.logs != nil {
+		mux.Handle("POST "+agentproto.PathAgentLogs, httpapi.Handle(a.signedWith(agentproto.MaxLogBody, a.logLimit, a.agentLogs)))
 	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
@@ -269,6 +286,8 @@ var (
 		Message: "The inventory is not valid JSON."}
 	errBadHardware = &httpapi.Error{Status: http.StatusBadRequest, Code: "hardware_invalid",
 		Message: "The hardware report is not valid JSON."}
+	errBadLogs = &httpapi.Error{Status: http.StatusBadRequest, Code: "logs_invalid",
+		Message: "The log batch is not valid."}
 	errTooFrequent = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
 		Message: "This device is sending requests more often than an agent does. Try again shortly."}
 	errTooManyPolls = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
@@ -294,6 +313,7 @@ func mapError(err error) error {
 		agents.ErrBadReport:       errBadReport,
 		inventory.ErrBadInventory: errBadInventory,
 		hardware.ErrBadReport:     errBadHardware,
+		agentlogs.ErrBadBatch:     errBadLogs,
 	} {
 		if errors.Is(err, from) {
 			return to
@@ -523,6 +543,11 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 			out.InventoryHash = "unknown" // never equal to an agent's hash, so it uploads
 		}
 	}
+	if a.logs != nil && out.Uninstall == nil {
+		if out.Logs, err = a.logs.Instructions(r.Context(), d.ID); err != nil {
+			a.log.Warn("agent: reading the log instructions failed", "error", err, "device_id", d.ID)
+		}
+	}
 	if a.ep != nil && out.Uninstall == nil {
 		// Settled to the end even if the agent hangs up, so an attempt is
 		// never left half recorded.
@@ -572,6 +597,21 @@ func (a *API) hardwareReport(w http.ResponseWriter, r *http.Request, d *agents.D
 		return mapError(err)
 	}
 	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// agentLogs stores a batch of a device's log records and answers with what
+// the server took care of and how to log (ADR-0069).
+func (a *API) agentLogs(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in agentproto.LogBatch
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	ack, err := a.logs.Ingest(r.Context(), d.ID, in)
+	if err != nil {
+		return mapError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, ack)
 	return nil
 }
 
