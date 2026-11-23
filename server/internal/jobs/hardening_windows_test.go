@@ -193,7 +193,18 @@ func TestWindowsHardeningCheckAsSystem(t *testing.T) {
 	values := registrySnapshot(t, keys)
 	exports := policyExports(t)
 	r := checkAll(t)
-	if after := registrySnapshot(t, keys); !maps.Equal(values, after) {
+	after := registrySnapshot(t, keys)
+	// Windows itself writes these while the check runs: LSA turns its own
+	// protection on (Windows 11 24H2 and Server 2025 evaluate it after boot),
+	// so a runner's first minutes can see them appear.
+	for _, k := range []string{`SYSTEM\CurrentControlSet\Control\Lsa\RunAsPPL`, `SYSTEM\CurrentControlSet\Control\Lsa\IsPplAutoEnabled`} {
+		if values[k] != after[k] {
+			t.Logf("Windows changed %s: %q, then %q", k, values[k], after[k])
+		}
+		delete(values, k)
+		delete(after, k)
+	}
+	if !maps.Equal(values, after) {
 		for k, v := range after {
 			if values[k] != v {
 				t.Errorf("check changed %s: %q, then %q", k, values[k], v)
