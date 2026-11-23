@@ -473,3 +473,165 @@ func TestARepairThroughPatchingThatFailsRaisesOneWarningAndItGoesWhenTheAgentIsB
 		t.Errorf("alerts open %d, resolved %d", p.alerts(d, "open"), p.alerts(d, "resolved"))
 	}
 }
+
+// An engine that stops answering while a step is out leaves it where it is.
+func TestAStepWhoseJobCannotBeReadIsLeftAloneAndTheEnginesEndingsAreTheStepsReasons(t *testing.T) {
+	for status, want := range map[string]string{
+		"Expired":             "did not pick the job up",
+		eptest.StatusCanceled: "was canceled",
+		"Failed":              "reported that the step failed",
+	} {
+		p := newPatched(t)
+		d := p.silent("pc")
+		if _, err := p.requestRMM(d); err != nil {
+			t.Fatal(err)
+		}
+		p.move(0)
+		p.dispatch()
+		job := p.companionJobs()[0]
+		// The engine does not answer: the step stays out.
+		p.ep.Set(func() { p.ep.Down = true })
+		p.move(time.Minute)
+		p.dispatch()
+		if got := p.latest(d); got.Steps[0].State != StepSent {
+			t.Fatalf("%s: step = %+v", status, got.Steps[0])
+		}
+		p.ep.Set(func() { p.ep.Down = false })
+		p.ep.SetJobStatus(job.ID, status)
+		p.move(2 * time.Minute)
+		p.dispatch()
+		if got := p.latest(d); got.Steps[0].State != StepFailed || !strings.Contains(got.Steps[0].Error, want) {
+			t.Errorf("%s: step = %+v", status, got.Steps[0])
+		}
+	}
+}
+
+func TestDispatchWithoutPatchingDoesNothingAndDiagnosticsAreKeptShortAndRedacted(t *testing.T) {
+	p := newPatched(t)
+	p.svc.UsePatching(nil)
+	if err := p.svc.Dispatch(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("line of the log\n", 40000) + "token=abc12345678 end"
+	got := keepDiagnostics(long)
+	if len(got) > MaxDiagnostics || !strings.HasPrefix(got, "line of the log") || strings.Contains(got, "abc12345678") || !strings.HasSuffix(got, "end") {
+		t.Errorf("kept %d bytes: %.40q ... %.40q", len(got), got, got[len(got)-40:])
+	}
+	if keepDiagnostics("a\xffb") != "ab" {
+		t.Error("an invalid byte was kept")
+	}
+	if keepDiagnostics("") != "" {
+		t.Error("nothing became something")
+	}
+}
+
+func TestDiagnosticsGoWithinFourteenDaysOfTheRepairEnding(t *testing.T) {
+	p := newPatched(t)
+	d := p.silent("pc")
+	r, err := p.requestRMM(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.exec(`UPDATE agent_repairs SET state = 'failed', ended_at = $2, diagnostics = 'some lines' WHERE id = $1`, r.ID, p.start.Add(-13*24*time.Hour))
+	if err := p.svc.purge(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.count(`SELECT count(*) FROM agent_repairs WHERE id = $1 AND diagnostics <> ''`, r.ID) != 1 {
+		t.Error("diagnostics went before 14 days")
+	}
+	p.exec(`UPDATE agent_repairs SET ended_at = $2 WHERE id = $1`, r.ID, p.start.Add(-15*24*time.Hour))
+	if err := p.svc.purge(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.count(`SELECT count(*) FROM agent_repairs WHERE id = $1 AND diagnostics = ''`, r.ID) != 1 {
+		t.Error("diagnostics stayed after 14 days")
+	}
+}
+
+func TestAnEasyRMMAgentRepairEndsQuietlyWhenPatchingIsOffOrAutomaticRepairsAre(t *testing.T) {
+	p := newPatched(t)
+	d := p.silent("pc")
+	if _, err := p.requestRMM(d); err != nil {
+		t.Fatal(err)
+	}
+	p.exec(`DELETE FROM easypatch_organizations WHERE organization_id = $1`, p.acme)
+	p.dispatch() // nothing is asked of the engine for an organization that is not patched
+	if len(p.companionJobs()) != 0 {
+		t.Error("a job for an organization that is not patched")
+	}
+	if err := p.svc.Advance(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.latest(d); got.State != Failed || !strings.Contains(got.Error, "Patching is off") {
+		t.Errorf("repair = %+v", got)
+	}
+	if p.count(`SELECT count(*) FROM alerts WHERE kind = 'repair_failed'`) != 0 {
+		t.Error("an alert for a repair that stopped on purpose")
+	}
+
+	// An automatic one stops when automatic repairs are turned off.
+	q := newPatched(t)
+	e := q.silent("pc")
+	q.evalRMM(e, 20*time.Minute)
+	q.evalRMM(e, 35*time.Minute)
+	if q.autoRMM(e) != 1 {
+		t.Fatal("no automatic repair")
+	}
+	q.exec(`UPDATE organizations SET auto_repair = false WHERE id = $1`, q.acme)
+	if err := q.svc.Advance(q.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := q.latest(e); got.State != Failed || !strings.Contains(got.Error, "turned off") {
+		t.Errorf("repair = %+v", got)
+	}
+}
+
+// A step that went well but did not bring the agent back moves on, and a
+// damaged record is left to Advance.
+func TestAStepThatDidNotBringTheEasyRMMAgentBackMovesOnAndADamagedRecordIsSkipped(t *testing.T) {
+	p := newPatched(t)
+	d := p.silent("pc")
+	r, err := p.requestRMM(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.move(0)
+	p.dispatch()
+	p.ep.SetJobResult(p.companionJobs()[0].ID, "Completed", "Restarted.", "", "")
+	p.move(time.Minute)
+	p.dispatch()
+	p.move(time.Minute + ManualWait + time.Second)
+	if err := p.svc.Advance(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.latest(d); got.Steps[0].State != StepDone || p.count(`SELECT step FROM agent_repairs WHERE id = $1`, r.ID) != 1 {
+		t.Fatalf("repair = %+v", got)
+	}
+	// The last step goes well too, and the agent is still silent when its wait is over.
+	p.dispatch()
+	p.ep.SetJobResult(p.companionJobs()[1].ID, "Completed", "Repaired.", "", "")
+	p.move(2 * time.Minute)
+	p.dispatch()
+	p.move(2*time.Minute + ManualWait + time.Second)
+	if err := p.svc.Advance(p.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.latest(d); got.State != Failed || !strings.Contains(got.Error, "did not check in after the last step") {
+		t.Errorf("repair = %+v", got)
+	}
+
+	q := newPatched(t)
+	e := q.silent("pc")
+	r2, err := q.requestRMM(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.exec(`UPDATE agent_repairs SET step = 5 WHERE id = $1`, r2.ID)
+	q.dispatch() // skipped, not an error
+	if err := q.svc.Advance(q.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := q.latest(e); got.State != Failed || !strings.Contains(got.Error, "damaged") {
+		t.Errorf("repair = %+v", got)
+	}
+}
