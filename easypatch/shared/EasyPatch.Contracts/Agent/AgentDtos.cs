@@ -203,6 +203,67 @@ public sealed record AgentJob
 
     /// <summary>Present for <see cref="JobType.UninstallUpdate"/>.</summary>
     public UninstallUpdatePayload? UninstallUpdate { get; init; }
+
+    /// <summary>Present for <see cref="JobType.RepairCompanion"/>.</summary>
+    public RepairCompanionPayload? RepairCompanion { get; init; }
+}
+
+/// <summary>What a <see cref="JobType.RepairCompanion"/> job does (ADR-0069): a target and a step from fixed lists. The agent maps
+/// them to code it ships with; nothing in the job is run as a command.</summary>
+public sealed partial record RepairCompanionPayload
+{
+    /// <summary>The EasyRMM agent (<c>easyrmm-agent</c>) or MeshAgent (<c>meshagent</c>).</summary>
+    public required string Target { get; init; }
+
+    /// <summary><c>restart</c> or <c>repair</c>.</summary>
+    public required string Step { get; init; }
+
+    /// <summary>The SHA-256 (64 lower-case hex digits) the EasyRMM agent's recovery copy must have, taken by EasyRMM from the build
+    /// the device reported. Required for the EasyRMM agent's <c>repair</c> step and absent otherwise.</summary>
+    public string? ExpectedSha256 { get; init; }
+
+    public static bool IsValid(RepairCompanionPayload? payload) =>
+        payload is not null && payload.Target switch
+        {
+            CompanionTargets.EasyRmmAgent => payload.Step switch
+            {
+                CompanionSteps.Restart => payload.ExpectedSha256 is null,
+                CompanionSteps.Repair => payload.ExpectedSha256 is { } sha && Sha256Hex().IsMatch(sha),
+                _ => false,
+            },
+            // MeshAgent's settings are signed by EasyRMM, so through patching it is restarted and nothing more.
+            CompanionTargets.MeshAgent => payload.Step == CompanionSteps.Restart && payload.ExpectedSha256 is null,
+            _ => false,
+        };
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[0-9a-f]{64}$")]
+    private static partial System.Text.RegularExpressions.Regex Sha256Hex();
+}
+
+public static class CompanionTargets
+{
+    public const string EasyRmmAgent = "easyrmm-agent";
+    public const string MeshAgent = "meshagent";
+}
+
+public static class CompanionSteps
+{
+    public const string Restart = "restart";
+    public const string Repair = "repair";
+}
+
+/// <summary>Limits of the diagnostics a job result carries (ADR-0069).</summary>
+public static class JobDiagnostics
+{
+    /// <summary>The most bytes (UTF-8) of diagnostics a result may carry. The agent cuts what it sends to this, and the engine
+    /// refuses more.</summary>
+    public const int MaxBytes = 256 * 1024;
+
+    /// <summary>How long the engine keeps the diagnostics of a finished job.</summary>
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(14);
+
+    /// <summary>The longest message a result carries apart from its diagnostics.</summary>
+    public const int MaxMessageLength = 2000;
 }
 
 /// <summary>The one installed update a <see cref="JobType.UninstallUpdate"/> job removes.</summary>
@@ -269,6 +330,10 @@ public sealed record JobStatusReport
     public bool RebootRequired { get; init; }
     public IReadOnlyList<JobItemReport> Items { get; init; } = [];
     public JobResultSummary? Result { get; init; }
+
+    /// <summary>Redacted log lines and facts a repair or a log collection returns, at most <see cref="JobDiagnostics.MaxBytes"/>
+    /// bytes. Kept apart from <see cref="Message"/> (ADR-0069); the engine keeps it for <see cref="JobDiagnostics.Retention"/>.</summary>
+    public string? Diagnostics { get; init; }
 }
 
 public sealed record JobItemReport

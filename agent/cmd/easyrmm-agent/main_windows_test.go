@@ -452,3 +452,35 @@ func TestUninstallFollowsNoLink(t *testing.T) {
 		}
 	}
 }
+
+// TestRepairInstallOnWindowsLayout: repair-install on the Windows layout
+// puts the program back and registers the EasyRMMAgent service, and
+// refuses a machine that is not enrolled.
+func TestRepairInstallOnWindowsLayout(t *testing.T) {
+	h, srv, _ := windowsHarness(t)
+	if err := h.run("repair-install"); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+		t.Fatalf("a machine that is not enrolled: %v", err)
+	}
+	h.install(t, srv.URL)
+	cfg, _, err := h.e.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svcs := h.e.sd.(*services)
+	svcs.installed = nil
+	if err := os.Remove(h.e.paths.Binary()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run("repair-install"); err != nil {
+		t.Fatalf("repair-install: %v", err)
+	}
+	if _, err := os.Stat(h.e.paths.Binary()); err != nil {
+		t.Errorf("the program is not back: %v", err)
+	}
+	if len(svcs.installed) != 1 || svcs.installed[0].Name != host.AgentWindowsService {
+		t.Errorf("services registered: %+v", svcs.installed)
+	}
+	if after, _, err := h.e.store.Load(); err != nil || *after != *cfg {
+		t.Errorf("the enrollment changed: %v", err)
+	}
+}

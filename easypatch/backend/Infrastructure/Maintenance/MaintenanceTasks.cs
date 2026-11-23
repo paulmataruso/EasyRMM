@@ -93,6 +93,15 @@ public sealed class JobMaintenanceTask(EasyPatchDbContext db, SettingsService se
             logger.LogInformation("Job maintenance: {Expired} expired, {Leases} lease(s) recovered, {Stuck} timed out, {Parked} reboot waits expired",
                 expiredQueued.Count, staleLeases.Count, stuck.Count, parked.Count);
         }
+
+        // ADR-0069: the diagnostics of a repair or a log collection are kept 14 days after the job finished.
+        var diagnosticsCutoff = now - JobDiagnostics.Retention;
+        var cleared = await db.Jobs.Where(j => j.Diagnostics != null && j.CompletedAt != null && j.CompletedAt < diagnosticsCutoff)
+            .ExecuteUpdateAsync(set => set.SetProperty(j => j.Diagnostics, (string?)null), ct);
+        if (cleared > 0)
+        {
+            logger.LogInformation("Job maintenance: diagnostics of {Count} finished job(s) removed after {Days} days", cleared, JobDiagnostics.Retention.Days);
+        }
     }
 }
 

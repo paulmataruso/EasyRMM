@@ -137,11 +137,14 @@ type Device struct {
 	// Agent is nil for a device known only through MeshCentral.
 	Agent *Agent `json:"agent"`
 	// RemoteAgent and RemoteOnline describe MeshAgent.
-	RemoteAgent  bool       `json:"remoteAgent"`
-	RemoteOnline bool       `json:"remoteOnline"`
-	LastSeenAt   *time.Time `json:"lastSeenAt"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	RemoteAgent  bool `json:"remoteAgent"`
+	RemoteOnline bool `json:"remoteOnline"`
+	// Remote says why remote access is not connected (ADR-0069); nil
+	// without the EasyRMM agent.
+	Remote     *RemoteStatus `json:"remote"`
+	LastSeenAt *time.Time    `json:"lastSeenAt"`
+	CreatedAt  time.Time     `json:"createdAt"`
+	UpdatedAt  time.Time     `json:"updatedAt"`
 	// What the caller may do with it.
 	CanDesktop  bool `json:"canDesktop"`
 	CanTerminal bool `json:"canTerminal"`
@@ -153,6 +156,19 @@ type Device struct {
 	// CanUpdateAgent: the caller holds device.edit here and the device has
 	// the EasyRMM agent (ADR-0027).
 	CanUpdateAgent bool `json:"canUpdateAgent"`
+	// CanReconnectRemote: the caller holds device.edit here, the device has
+	// the EasyRMM agent, and this server runs remote access (ADR-0069).
+	CanReconnectRemote bool `json:"canReconnectRemote"`
+	// CanRepairPatching: the caller holds device.edit here, the device has
+	// the EasyRMM agent, and its EasyPatch agent is linked to it (ADR-0069).
+	CanRepairPatching bool `json:"canRepairPatching"`
+	// CanRepairEasyRMM: the caller holds patch.manage here, the device has
+	// the EasyRMM agent, and its EasyPatch agent is linked to it: the EasyPatch
+	// agent can repair the EasyRMM agent (ADR-0069).
+	CanRepairEasyRMM bool `json:"canRepairEasyRmm"`
+	// patched: the device's organization is patched and its EasyPatch agent
+	// is linked.
+	patched bool
 	// CanManageSoftware: the caller holds software.manage here and the
 	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
 	CanManageSoftware bool `json:"canManageSoftware"`
@@ -270,7 +286,10 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, ''),
 	hc.checked_at, coalesce(hs.states, '{}'),
 	CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END,
-	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}')`
+	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}'),
+	d.meshagent_state, d.meshagent_state_at, d.remote_changed_at, d.mesh_wrong_group,
+	(EXISTS (SELECT 1 FROM easypatch_devices ep WHERE ep.device_id = d.id AND ep.state = 'linked')
+		AND EXISTS (SELECT 1 FROM easypatch_organizations eo WHERE eo.organization_id = d.organization_id))`
 
 // from joins what the columns read. hs counts the device's hardening
 // modules by state, as {"in_place": 9, "partly": 1}; ds its disks by the
@@ -311,6 +330,7 @@ func scan(row pgx.Row) (*Device, error) {
 		states     map[string]int
 		diskLabel  *string
 		diskStates map[string]int
+		ri         remoteInput
 	)
 	err := row.Scan(&d.ID, &d.OrganizationID, &d.OrganizationName, &d.SiteID, &d.SiteName, &d.DeviceGroupID, &d.DeviceGroupName,
 		&d.Name, &d.Hostname, &d.OSDescription, &d.Platform, &d.MeshNodeID, &d.RemoteOnline,
@@ -318,7 +338,8 @@ func scan(row pgx.Row) (*Device, error) {
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
-		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates)
+		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates,
+		&ri.state, &ri.stateAt, &ri.changedAt, &ri.wrongGroup, &d.patched)
 	if err != nil {
 		return nil, err
 	}
@@ -341,6 +362,10 @@ func scan(row pgx.Row) (*Device, error) {
 		d.Agent = &a
 	}
 	d.Online = d.RemoteOnline || a.Online
+	if enrolledAt != nil {
+		ri.remoteOnline, ri.agentOnline, ri.enrolledAt = d.RemoteOnline, a.Online, enrolledAt
+		d.Remote = remoteStatus(ri)
+	}
 	return &d, nil
 }
 
@@ -371,6 +396,9 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanFiles = ok && c.Can(rbac.PermFiles, r)
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanReconnectRemote = s.remote && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanRepairPatching = d.patched && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanRepairEasyRMM = d.patched && d.Agent != nil && c.Can(rbac.PermPatchManage, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	d.CanCheckHardening = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermScriptRun, r)
 	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)

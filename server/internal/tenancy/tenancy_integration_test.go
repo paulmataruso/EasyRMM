@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
@@ -537,5 +538,43 @@ func TestValidTimezone(t *testing.T) {
 		if got := tenancy.ValidTimezone(tz); got != want {
 			t.Errorf("ValidTimezone(%q) = %v, want %v", tz, got, want)
 		}
+	}
+}
+
+// Automatic repairs are on for every organization and org.manage turns them
+// off (ADR-0069); an update that says nothing about them leaves them be.
+func TestAutomaticRepairSetting(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	org, err := e.svc.CreateOrganization(ctx, e.sys, tenancy.OrganizationInput{Name: "Acme"})
+	if err != nil || !org.AutoRepair {
+		t.Fatalf("a new organization: %+v, %v", org, err)
+	}
+	off, on := false, true
+	upd, err := e.svc.UpdateOrganization(ctx, e.sys, org.ID, tenancy.OrganizationInput{Name: "Acme", AutoRepair: &off})
+	if err != nil || upd.AutoRepair {
+		t.Fatalf("turn off: %+v, %v", upd, err)
+	}
+	upd, err = e.svc.UpdateOrganization(ctx, e.sys, org.ID, tenancy.OrganizationInput{Name: "Acme", Notes: "n"})
+	if err != nil || upd.AutoRepair || upd.Notes != "n" {
+		t.Fatalf("an update that leaves it out: %+v, %v", upd, err)
+	}
+	var logged int
+	if err := e.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE action = 'organization.update' AND details->>'autoRepair' = 'false'`).Scan(&logged)
+	}); err != nil || logged != 1 {
+		t.Errorf("the change was audited %d times: %v", logged, err)
+	}
+	// Whoever may manage the organization may change it; others may not.
+	admin := caller(t, rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: org.ID})
+	if upd, err = e.svc.UpdateOrganization(ctx, admin, org.ID, tenancy.OrganizationInput{Name: "Acme", AutoRepair: &on}); err != nil || !upd.AutoRepair {
+		t.Errorf("organization administrator: %+v, %v", upd, err)
+	}
+	tech := caller(t, rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: org.ID})
+	if _, err := e.svc.UpdateOrganization(ctx, tech, org.ID, tenancy.OrganizationInput{Name: "Acme", AutoRepair: &off}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("technician: %v", err)
+	}
+	if got, _ := e.svc.GetOrganization(ctx, e.sys, org.ID); got == nil || !got.AutoRepair {
+		t.Errorf("a refused change was kept: %+v", got)
 	}
 }

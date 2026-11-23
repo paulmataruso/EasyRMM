@@ -181,6 +181,84 @@ describe("an alert's card", () => {
   });
 });
 
+describe("remote access alerts (ADR-0069)", () => {
+  const DOWN = alertEntry("a5", "Remote access down", {
+    policyId: "p5",
+    kind: "remote_down",
+    threshold: null,
+    minutes: 15,
+    value: 15,
+    lastValue: 42,
+    detail: "MeshAgent is installed but not running. Not connected for 42 minutes.",
+    repairs: [
+      {
+        target: "meshagent",
+        trigger: "automatic",
+        state: "failed",
+        startedAt: "2026-11-01T10:20:00Z",
+        endedAt: "2026-11-01T10:40:00Z",
+        error: "MeshAgent did not connect to MeshCentral after the last step.",
+        steps: [
+          { step: "restart", state: "done" },
+          { step: "repair", state: "failed", error: "download failed" },
+        ],
+      },
+    ],
+  });
+  const SILENT = alertEntry("a6", "EasyRMM agent silent", { policyId: "p6", kind: "agent_silent", threshold: null, minutes: 15, value: 16, lastValue: 90, repairs: [] });
+
+  it("shows the watchdog's reason, the condition and the repairs tried since it opened", async () => {
+    installFakeApi(routes([DOWN]));
+    const dialog = await openCard("/alerts?alert=a5", "Remote access down");
+    expect(within(dialog).getByText("MeshAgent is installed but not running. Not connected for 42 minutes.")).toBeInTheDocument();
+    expect(within(dialog).getByText("MeshAgent not connected to MeshCentral for 15 minutes, while the EasyRMM agent checks in")).toBeInTheDocument();
+    expect(within(dialog).getByText("Not connected 42 min")).toBeInTheDocument();
+    const repairs = section(dialog, "Repairs tried");
+    expect(within(repairs).getByText(/Automatic · meshagent · it did not come back/)).toBeInTheDocument();
+    expect(within(repairs).getByText("download failed", { selector: "span.block" })).toBeInTheDocument();
+    expect(within(repairs).getByText("MeshAgent did not connect to MeshCentral after the last step.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/its Reconnect remote access button/)).toBeInTheDocument();
+  });
+
+  it("says when no repair was tried, and explains a silent agent", async () => {
+    installFakeApi(routes([SILENT]));
+    const dialog = await openCard("/alerts?alert=a6", "EasyRMM agent silent");
+    expect(within(section(dialog, "Repairs tried")).getByText("None since the alert opened.")).toBeInTheDocument();
+    expect(within(dialog).getByText("No EasyRMM check-in for 15 minutes, while MeshAgent is connected")).toBeInTheDocument();
+    expect(within(dialog).getByText(/MeshCentral sees MeshAgent connected on this device/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Silent 1 h 30 min")).toBeInTheDocument();
+  });
+});
+
+describe("the Repair failed alert (ADR-0069)", () => {
+  const FAILED = alertEntry("a7", "Repair failed", {
+    policyId: null,
+    kind: "repair_failed",
+    threshold: null,
+    minutes: 0,
+    severity: "warning",
+    subject: "easypatch-agent",
+    subjectLabel: "EasyPatch agent",
+    detail: "Repairing the EasyPatch agent did not bring it back. The last step failed: apt-get could not reinstall the EasyPatch agent (exit code 100)",
+    repairs: [
+      { target: "easypatch-agent", trigger: "automatic", state: "failed", startedAt: "2026-11-01T10:20:00Z", endedAt: "2026-11-01T11:40:00Z", error: "x", steps: [{ step: "restart", state: "done" }, { step: "repair", state: "failed", error: "apt-get could not reinstall" }] },
+      { target: "meshagent", trigger: "manual", state: "succeeded", startedAt: "2026-11-01T10:30:00Z", endedAt: "2026-11-01T10:35:00Z", error: "", steps: [{ step: "restart", state: "done" }] },
+    ],
+  });
+
+  it("shows the last step's diagnostics and only the repairs of its agent", async () => {
+    installFakeApi(routes([FAILED]));
+    const dialog = await openCard("/alerts?alert=a7", "Repair failed");
+    expect(within(dialog).getAllByText(/The last step failed: apt-get could not reinstall the EasyPatch agent \(exit code 100\)/).length).toBeGreaterThan(0);
+    const repairs = section(dialog, "Repairs tried");
+    expect(within(repairs).getByText(/Automatic · easypatch-agent · it did not come back/)).toBeInTheDocument();
+    expect(within(repairs).queryByText(/meshagent/)).not.toBeInTheDocument();
+    expect(within(repairs).getByText(/Reinstall the EasyPatch agent's package of the same version/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/EasyRMM tried to repair this device's EasyPatch agent by itself/)).toBeInTheDocument();
+    expect(within(dialog).getByText("An automatic repair ended with the agent still broken")).toBeInTheDocument();
+  });
+});
+
 describe("an alert's card, section by section", () => {
   it("summarizes the alert with its device, site and organization linked", async () => {
     installFakeApi(routes([DISK]));

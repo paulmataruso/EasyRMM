@@ -152,7 +152,7 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
     if (open)
       setForm(
         organization
-          ? { name: organization.name, timezone: organization.timezone, notes: organization.notes }
+          ? { name: organization.name, timezone: organization.timezone, notes: organization.notes, autoRepair: organization.autoRepair }
           : { name: "", timezone: browserTimeZone(), notes: "" },
       );
   }, [open, organization]);
@@ -175,7 +175,7 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    save.mutate({ name: form.name.trim(), timezone: form.timezone.trim(), notes: form.notes.trim() });
+    save.mutate({ name: form.name.trim(), timezone: form.timezone.trim(), notes: form.notes.trim(), autoRepair: organization ? form.autoRepair : undefined });
   }
   // Organization names are unique on the server; only Super Administrators
   // rename, so an organization's own administrators cannot probe for others.
@@ -210,6 +210,23 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
           maxLength={4000}
           autoFocus={nameLocked}
         />
+        {organization && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.autoRepair ?? true}
+              onChange={(e) => setForm((f) => ({ ...f, autoRepair: e.target.checked }))}
+            />
+            <span>
+              Repair agents automatically
+              <span className="block text-muted">
+                When MeshAgent or the EasyPatch agent stops working on a device, EasyRMM restarts it and, if that does not help, repairs it: at most once
+                every 6 hours and 3 times a day for each. Repairs by hand stay available.
+              </span>
+            </span>
+          </label>
+        )}
         <InlineError error={save.error} fields={["name", "timezone", "notes"]} />
         <div className="flex justify-end gap-2 pt-1">
           <Button onClick={onClose}>Cancel</Button>

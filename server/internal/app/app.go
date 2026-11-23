@@ -49,6 +49,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/repairsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
@@ -60,6 +61,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/recovery"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
@@ -107,6 +109,8 @@ type Deps struct {
 	AgentLogs *agentlogs.Service
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
+	// Recovery repairs agents that stopped working (ADR-0069).
+	Recovery *recovery.Service
 	// Reports reads devices, software and alerts into tables (ADR-0029).
 	Reports  *reports.Service
 	AuditFwd *auditfwd.Service
@@ -211,6 +215,13 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
+	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
+	if d.Mesh != nil {
+		// Nothing about remote access is judged while EasyRMM cannot see
+		// MeshCentral, or for a while after it can (ADR-0069).
+		d.Monitoring.FollowMesh(d.Mesh.Session)
+		d.Recovery.FollowMesh(d.Mesh.Session)
+	}
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
@@ -227,6 +238,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, fmt.Errorf("authentik: %w", err)
 	}
 	d.EasyPatch.SetSigner(jobKey)
+	d.Recovery.SetKey(jobKey)
+	// The EasyPatch agent is repaired with packages from the engine, and
+	// judged by what the engine reports of it (ADR-0069).
+	d.Recovery.UsePatching(d.EasyPatch)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -244,6 +259,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
+	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
 	return d, nil
 }
 
@@ -494,6 +510,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	removalapi.New(d.Agents, d.Devices).Register(mux)
+	repairsapi.New(d.Recovery).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 		return nil
@@ -522,7 +539,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -645,8 +662,10 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
+	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
+	wg.Go(func() { deps.EasyPatch.RunAgentPoll(ctx) })
 	// The mail server in force: checked at start, after changes and daily,
 	// signing in without sending; its answer is logged and in the console.
 	wg.Go(func() { deps.Mail.Run(ctx) })

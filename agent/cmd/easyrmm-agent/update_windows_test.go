@@ -366,3 +366,88 @@ func TestUpdateFromBeforeTheStateCheck(t *testing.T) {
 	}
 	t.Logf("the log since the update:\n%s", since)
 }
+
+// TestRepairInstallOnWindows: an installed, enrolled agent loses its
+// program and its service. Its recovery copy, run as the EasyPatch agent
+// runs it, puts the program back, registers the EasyRMMAgent service and
+// starts it, and the agent heartbeats as the same device with the same key
+// and enrollment.
+//
+// EASYRMM_TEST_AGENT_AFTER names the build; CI builds it.
+func TestRepairInstallOnWindows(t *testing.T) {
+	p := machineTest(t)
+	exe := os.Getenv("EASYRMM_TEST_AGENT_AFTER")
+	if exe == "" {
+		t.Fatal("set EASYRMM_TEST_AGENT_AFTER to the build")
+	}
+	if st := (host.WindowsServices{}).State(t.Context(), host.AgentWindowsService); st != "not installed" {
+		t.Fatalf("the %s service is %s: the test needs a computer without the agent", host.AgentWindowsService, st)
+	}
+	version := buildVersion(t, exe)
+	build, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFleet(t, build, version)
+	t.Cleanup(func() {
+		if out, err := exec.Command(p.Binary(), "uninstall").CombinedOutput(); err != nil {
+			t.Logf("uninstall: %v\n%s", err, out)
+			_ = (host.WindowsServices{}).Remove(context.Background(), host.AgentWindowsService)
+		}
+	})
+	cmd := exec.Command(exe, "install", "--server", f.URL)
+	cmd.Env = append(os.Environ(), "EASYRMM_TOKEN=ert_good")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	eventually(t, 3*time.Minute, "the agent heartbeats", func() bool { return f.heartbeats("dev-1", version) > 0 })
+	cfg, err := os.ReadFile(filepath.Join(p.State(), "agent.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(filepath.Join(p.State(), "device.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The recovery copy, as the agent keeps it.
+	recovery := filepath.Join(p.State(), "recovery")
+	if err := host.Protect(recovery); err != nil {
+		t.Fatal(err)
+	}
+	copyExe := filepath.Join(recovery, "easyrmm-agent.exe")
+	if err := os.WriteFile(copyExe, build, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The agent is broken: no service, no program.
+	if err := (host.WindowsServices{}).Remove(t.Context(), host.AgentWindowsService); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(p.Binary()); err != nil {
+		t.Fatal(err)
+	}
+	seen := f.heartbeats("dev-1", version)
+
+	if out, err := exec.Command(copyExe, "repair-install").CombinedOutput(); err != nil {
+		t.Fatalf("repair-install: %v\n%s", err, out)
+	}
+	if installed, err := os.ReadFile(p.Binary()); err != nil || !bytes.Equal(installed, build) {
+		t.Errorf("the program is not back: %v", err)
+	}
+	if st := (host.WindowsServices{}).State(t.Context(), host.AgentWindowsService); st != "running" {
+		t.Errorf("the service is %s", st)
+	}
+	eventually(t, 3*time.Minute, "the repaired agent heartbeats", func() bool { return f.heartbeats("dev-1", version) > seen })
+	if now, err := os.ReadFile(filepath.Join(p.State(), "agent.json")); err != nil || !bytes.Equal(now, cfg) {
+		t.Errorf("the enrollment changed: %v", err)
+	}
+	if now, err := os.ReadFile(filepath.Join(p.State(), "device.key")); err != nil || !bytes.Equal(now, key) {
+		t.Errorf("the key changed: %v", err)
+	}
+	f.mu.Lock()
+	devices := len(f.keys)
+	f.mu.Unlock()
+	if devices != 1 {
+		t.Errorf("%d devices enrolled, want 1", devices)
+	}
+}

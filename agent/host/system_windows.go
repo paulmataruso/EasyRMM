@@ -1012,6 +1012,24 @@ func (WindowsServices) Restart(ctx context.Context, name string) error {
 	return nil
 }
 
+// Stop stops a service and waits for it.
+func (WindowsServices) Stop(ctx context.Context, name string) error {
+	m, err := connect()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = m.Disconnect() }()
+	s, err := m.OpenService(name)
+	if err != nil {
+		return fmt.Errorf("opening the %s service: %w", name, err)
+	}
+	defer func() { _ = s.Close() }()
+	if err := stopService(ctx, s); err != nil {
+		return fmt.Errorf("stopping the %s service: %w", name, err)
+	}
+	return nil
+}
+
 // Remove stops and deletes a service.
 func (WindowsServices) Remove(ctx context.Context, name string) error {
 	m, err := connect()

@@ -240,6 +240,34 @@ describe("alert policies", () => {
     expect(server.callsTo("POST /alert-policies")).toHaveLength(0);
   });
 
+  it("adds a remote access policy with minutes and no threshold (ADR-0069)", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
+    renderApp("/alerts?tab=policies");
+    await user.click(await screen.findByRole("button", { name: "New policy" }));
+    const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
+    await user.type(within(dialog).getByLabelText(/Name/), "Remote access, head office");
+    for (const [kind, label] of [
+      ["remote_down", "Not connected for"],
+      ["agent_silent", "Silent for"],
+    ] as const) {
+      await user.selectOptions(within(dialog).getByLabelText("Watch for"), kind);
+      expect(within(dialog).queryByLabelText("At or above")).not.toBeInTheDocument();
+      const minutes = within(dialog).getByLabelText(label);
+      await user.clear(minutes);
+      await user.type(minutes, "2");
+      await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+      expect(within(dialog).getByText("Use 3 to 1,440 minutes.")).toBeInTheDocument();
+    }
+    expect(server.callsTo("POST /alert-policies")).toHaveLength(0);
+    const minutes = within(dialog).getByLabelText("Silent for");
+    await user.clear(minutes);
+    await user.type(minutes, "20");
+    await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+    await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(1));
+    expect(server.call("POST /alert-policies").body).toMatchObject({ kind: "agent_silent", threshold: null, minutes: 20 });
+  });
+
   it("shows the server's complaint about a field", async () => {
     const user = userEvent.setup();
     installFakeApi({

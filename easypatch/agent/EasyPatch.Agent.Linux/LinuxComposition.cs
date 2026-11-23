@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using EasyPatch.Agent.Core;
 using EasyPatch.Agent.Core.Abstractions;
+using EasyPatch.Agent.Core.Companion;
 using EasyPatch.Agent.Core.Runtime;
 using EasyPatch.Agent.Core.Security;
 using EasyPatch.Contracts.Agent;
@@ -71,6 +72,8 @@ internal static class LinuxComposition
             AgentInstaller = new LinuxAgentInstaller(units, family),
             AgentUninstaller = new LinuxAgentUninstaller(units, family),
             SessionCounter = new LinuxUserSessions(commands),
+            CompanionRepair = new CompanionRepairService(CompanionLayout.ForLinux(), new SystemCompanionHost(new ProcessProgramRunner(), windows: false),
+                loggerFactory.CreateLogger<CompanionRepairService>()),
         };
     }
 

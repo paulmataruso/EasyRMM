@@ -32,6 +32,16 @@ const (
 	// KindDiskHealth watches each disk's health with one of the checks
 	// below (ADR-0065).
 	KindDiskHealth = "disk_health"
+	// KindRemoteDown: the EasyRMM agent checks in but MeshAgent has not been
+	// connected to MeshCentral for the policy's minutes (ADR-0069).
+	KindRemoteDown = "remote_down"
+	// KindAgentSilent: MeshCentral sees MeshAgent connected but the EasyRMM
+	// agent has not checked in for the policy's minutes (ADR-0069).
+	KindAgentSilent = "agent_silent"
+	// KindRepairFailed is the alert of an automatic repair that ended with
+	// its target still broken (ADR-0069). It belongs to no policy and is
+	// opened and resolved by the recovery service.
+	KindRepairFailed = "repair_failed"
 )
 
 // Disk health checks (Policy.CheckName).
@@ -285,7 +295,8 @@ type condition struct {
 }
 
 func validKind(k string) bool {
-	return k == KindOffline || k == KindCPU || k == KindMemory || k == KindDisk || k == KindDiskHealth
+	return k == KindOffline || k == KindCPU || k == KindMemory || k == KindDisk || k == KindDiskHealth ||
+		k == KindRemoteDown || k == KindAgentSilent
 }
 
 func (cd *condition) validate() error {
@@ -296,10 +307,10 @@ func (cd *condition) validate() error {
 	f.Check(cd.severity == SeverityWarning || cd.severity == SeverityCritical, "severity", "Choose warning or critical.")
 	switch {
 	case !validKind(cd.kind):
-		f.Add("kind", "Choose offline, processor, memory, disk or disk health.")
+		f.Add("kind", "Choose offline, processor, memory, disk, disk health, remote access down or EasyRMM agent silent.")
 	case cd.kind == KindDiskHealth:
 		cd.validateDisk(f)
-	case cd.kind == KindOffline:
+	case cd.kind == KindOffline || cd.kind == KindRemoteDown || cd.kind == KindAgentSilent:
 		cd.checkName = nil
 		cd.threshold = nil
 		f.Check(cd.minutes >= MinOfflineMinutes && cd.minutes <= MaxMinutes, "minutes", "Use 3 to 1,440 minutes.")

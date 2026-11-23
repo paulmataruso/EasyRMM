@@ -183,9 +183,24 @@ public sealed class RollingFileLoggerProvider : ILoggerProvider
     }
 }
 
-/// <summary>Last line of defense against secrets reaching log files. The code never logs secrets intentionally.</summary>
+/// <summary>
+/// Last line of defense against secrets reaching log files, and the redaction the repair and log-collection jobs apply before
+/// anything leaves the computer (ADR-0069, Part L). The rules are those of the EasyRMM agent and the server (<c>logredact</c>):
+/// the value of a field named like a secret (token, password, secret, key, authorization, cookie), anything shaped like an
+/// EasyRMM enrollment token (<c>ert_</c>), an EasyPatch token (<c>ept_</c>), a bearer token, or a PEM block. The code never logs
+/// secrets intentionally.
+/// </summary>
 public static partial class LogRedactor
 {
+    private const string Mask = "***";
+    private const int TimeoutMilliseconds = 2000;
+
+    /// <summary>What a line becomes when redacting it took too long: it is withheld, never sent as it was.</summary>
+    public const string Withheld = "[line withheld: redaction did not finish]";
+
+    private static readonly string[] SecretWords =
+        ["token", "password", "passwd", "secret", "authorization", "cookie", "credential", "passphrase", "signature"];
+
     public static string Redact(string? message)
     {
         if (string.IsNullOrEmpty(message))
@@ -193,18 +208,96 @@ public static partial class LogRedactor
             return message ?? string.Empty;
         }
 
-        message = SecretAssignment().Replace(message, "$1=***");
-        message = PemBlock().Replace(message, "-----REDACTED KEY-----");
-        message = EnrollmentToken().Replace(message, "$1***");
-        return message;
+        try
+        {
+            message = PemBlock().Replace(message, "-----REDACTED KEY-----");
+            message = BearerToken().Replace(message, "$1 " + Mask);
+            message = PrefixedToken().Replace(message, "$1" + Mask);
+            message = Flag().Replace(message, m => SecretName(m.Groups[2].Value) ? m.Groups[1].Value + m.Groups[2].Value + m.Groups[3].Value + MaskLike(m.Groups[4].Value) : m.Value);
+            return Field().Replace(message, m => SecretName(m.Groups[1].Value) ? m.Groups[1].Value + m.Groups[2].Value + MaskLike(m.Groups[3].Value) : m.Value);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return Withheld;
+        }
     }
 
-    [GeneratedRegex(@"(?i)\b(token|enrollmenttoken|password|secret|signature|privatekey)\s*[=:]\s*[^\s,;""']+")]
-    private static partial Regex SecretAssignment();
+    /// <summary>Whether a field called <paramref name="name"/> holds a secret: it contains one of the words, or has "key" as a word of
+    /// its own (<c>api_key</c>, <c>privateKey</c>, <c>key</c>) or ends with it (<c>apikey</c>).</summary>
+    public static bool SecretName(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        var lower = name.ToLowerInvariant();
+        if (SecretWords.Any(w => lower.Contains(w, StringComparison.Ordinal)) ||
+            lower.EndsWith("apikey", StringComparison.Ordinal) || lower.EndsWith("privatekey", StringComparison.Ordinal) ||
+            lower.EndsWith("secretkey", StringComparison.Ordinal))
+        {
+            return true;
+        }
 
-    [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")]
+        return Words(name).Any(w => w == "key");
+    }
+
+    private static string MaskLike(string value) =>
+        value.Length >= 2 && (value[0] == '"' || value[0] == '\'') && value[^1] == value[0] ? value[0] + Mask + value[0] : Mask;
+
+    /// <summary>Splits a name at punctuation and at camelCase boundaries, in lower case.</summary>
+    private static List<string> Words(string name)
+    {
+        var words = new List<string>();
+        var current = new StringBuilder();
+        void Flush()
+        {
+            if (current.Length > 0)
+            {
+                words.Add(current.ToString().ToLowerInvariant());
+                current.Clear();
+            }
+        }
+
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (!char.IsLetterOrDigit(c))
+            {
+                Flush();
+                continue;
+            }
+
+            if (char.IsUpper(c) && i > 0 && (char.IsLower(name[i - 1]) || char.IsDigit(name[i - 1])))
+            {
+                Flush();
+            }
+
+            current.Append(c);
+        }
+
+        Flush();
+        return words;
+    }
+
+    // A whole PEM block, or the start of one whose end was cut off (a line or size limit), through the end of the text.
+    [GeneratedRegex(@"-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|\z)", RegexOptions.CultureInvariant, TimeoutMilliseconds)]
     private static partial Regex PemBlock();
 
-    [GeneratedRegex(@"\b(ept_)[A-Za-z0-9_\-]{8,}")]
-    private static partial Regex EnrollmentToken();
+    [GeneratedRegex(@"\b(bearer)\s+[A-Za-z0-9._~+/=\-]{6,}", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, TimeoutMilliseconds)]
+    private static partial Regex BearerToken();
+
+    // The prefixed tokens of EasyRMM (ert_) and EasyPatch (ept_).
+    [GeneratedRegex(@"\b(ert_|ept_)[A-Za-z0-9_\-]{6,}", RegexOptions.CultureInvariant, TimeoutMilliseconds)]
+    private static partial Regex PrefixedToken();
+
+    // A command-line flag and its value after a space: --password hunter2, -Password hunter2, /password hunter2. The value is
+    // quoted or runs to a space, and does not start with another flag.
+    [GeneratedRegex(
+        @"(?<![A-Za-z0-9_.\-/])(--?|/)([A-Za-z][A-Za-z0-9_.\-]*)([ \t]+)(""[^""]*""|'[^']*'|[^\s\-/""'][^\s]*)",
+        RegexOptions.CultureInvariant, TimeoutMilliseconds)]
+    private static partial Regex Flag();
+
+    // name=value, name: value and "name":"value", the value being quoted or running to a delimiter. An authorization value may be
+    // a scheme and a credential ("Basic abc", "Bearer abc").
+    [GeneratedRegex(
+        @"(?<![A-Za-z0-9_.\-])([A-Za-z0-9_.\-]+)([""']?\s*[:=]\s*)(""(?:[^""\\]|\\.)*""|'[^']*'|(?:basic|bearer|digest|negotiate|token)\s+[^\s,;&}\]]+|[^\s,;&}\]""']+)",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, TimeoutMilliseconds)]
+    private static partial Regex Field();
 }

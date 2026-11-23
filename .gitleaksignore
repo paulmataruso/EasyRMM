@@ -21,3 +21,9 @@ ce67feb1650acbb4e827f6f71e38426f0a73a48a:web/src/pages/devices/addDevices.test.t
 ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:22
 ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:23
 ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.tsx:generic-api-key:24
+
+# Fake secrets in the tests of log redaction (ADR-0069, slice R3): values the
+# redaction must remove, none of them real.
+78e7d2b253cf29cc16bf57779762ca4046282aa3:server/internal/recovery/companion_integration_test.go:generic-api-key:146
+78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:generic-api-key:278
+78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:private-key:221

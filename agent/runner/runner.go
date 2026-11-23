@@ -31,6 +31,13 @@ type MeshAgent interface {
 	Install(ctx context.Context, download func(io.Writer) error, settings []byte) error
 	Start(ctx context.Context) error
 	NodeID(ctx context.Context) (string, error)
+	// State is reported with each heartbeat (ADR-0069).
+	State(ctx context.Context) agentproto.MeshAgentState
+	// Restart restarts MeshAgent; an error means it needs Repair.
+	Restart(ctx context.Context) error
+	// Repair puts MeshAgent's program, settings and service back in place,
+	// keeping its identity.
+	Repair(ctx context.Context, download func(io.Writer) error, settings []byte) error
 	// AppliedSettings is the hash of the settings last applied from the
 	// server; Reconfigure applies new ones and restarts MeshAgent.
 	AppliedSettings() string
@@ -60,6 +67,16 @@ type EasyPatch interface {
 	Start(ctx context.Context, s *agentproto.SignedEasyPatchInstall)
 }
 
+// PatchRepairs carries out repairs of the EasyPatch agent (package
+// easypatch, ADR-0069).
+type PatchRepairs interface {
+	// Restart restarts the EasyPatch agent's service.
+	Restart(ctx context.Context) error
+	// Repair reinstalls the package of the version installed, keeping the
+	// agent's enrollment. within bounds it.
+	Repair(ctx, within context.Context, r *agentproto.RepairEasyPatch) error
+}
+
 // Removal uninstalls the agent when the server says so (package removal,
 // ADR-0050).
 type Removal interface {
@@ -79,7 +96,9 @@ var ErrRemoved = errors.New("runner: the agent must uninstall itself")
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
-	Store  state.Store
+	// DeviceID is this device's id: repair instructions are for it alone.
+	DeviceID string
+	Store    state.Store
 	// Mesh is nil where MeshAgent is not supported.
 	Mesh  MeshAgent
 	Facts func() agentproto.Facts
@@ -101,6 +120,12 @@ type Runner struct {
 	EasyPatch EasyPatch
 	// Removal uninstalls the agent (ADR-0050); nil never does.
 	Removal Removal
+	// Patch repairs the EasyPatch agent (ADR-0069); nil never does.
+	Patch PatchRepairs
+	// Settled is called after a heartbeat got through and the build is not
+	// on probation, until it returns true: the agent keeps its recovery
+	// copy then (ADR-0069). nil does nothing.
+	Settled func() bool
 	// OnLogs receives how the server wants the agent to log from each
 	// heartbeat answer (ADR-0069); nil ignores it.
 	OnLogs func(*agentproto.LogInstructions)
@@ -132,6 +157,11 @@ type Runner struct {
 	invAt       time.Time
 	invFailed   time.Time
 	invStale    atomic.Bool
+	// meshErr is the last failure of installing MeshAgent, for its state.
+	meshErr string
+	repair  repairs
+	// settled: Settled has returned true.
+	settled bool
 }
 
 // RefreshInventory has the inventory collected again at the next heartbeat,
@@ -174,6 +204,7 @@ func (r *Runner) defaults() {
 // itself.
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
+	defer r.repair.wait()
 	if r.Hardware != nil {
 		hctx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
@@ -229,6 +260,17 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	if r.EasyPatch != nil {
 		req.EasyPatch = r.EasyPatch.Status()
 	}
+	if r.Client.Level() >= 2 {
+		// Fields added after protocol level 2 (ADR-0009).
+		if r.Mesh != nil {
+			st := r.Mesh.State(ctx)
+			if st.Error == "" {
+				st.Error = r.meshErr
+			}
+			req.MeshAgent = &st
+		}
+		req.Repair = r.repair.report(time.Now())
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -242,6 +284,11 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	r.failures = 0
 	if r.Update != nil {
 		r.Update.Reached()
+		if r.Settled != nil && !r.settled {
+			// A build that has reached the server is settled: the moment for
+			// its recovery copy (ADR-0069), never during probation.
+			r.settled = r.Settled()
+		}
 	}
 	if r.OnJobKey != nil && resp.JobKey != "" {
 		r.OnJobKey(resp.JobKey)
@@ -282,8 +329,10 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			if err := r.installMesh(ctx); err != nil {
 				r.Log.Error("installing MeshAgent failed", "error", err)
 				r.status.MeshAgent = "install failed: " + err.Error()
+				r.meshErr = "install failed: " + err.Error()
 			} else {
 				r.Log.Info("installed MeshAgent")
+				r.meshErr = ""
 				r.status.MeshAgent = "installed"
 				next = r.AfterSetup // report the node id soon
 			}
@@ -291,6 +340,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	if r.EasyPatch != nil {
 		r.EasyPatch.Start(ctx, resp.EasyPatchInstall)
+	}
+	if resp.Repair != nil {
+		r.startRepair(ctx, resp.Repair)
 	}
 	if r.Update != nil && r.Update.Apply(ctx, resp.Update) {
 		r.save()
@@ -359,18 +411,28 @@ func (r *Runner) failed(err error) time.Duration {
 // and settings are used only if the server signed them with the pinned job
 // key (agentproto.SignDownload).
 func (r *Runner) installMesh(ctx context.Context) error {
-	key := r.Key()
-	if key == nil {
-		return errors.New("no server key is pinned yet to check MeshAgent with")
-	}
-	settings, signed, err := r.Client.MeshSettings(ctx)
+	download, settings, err := r.meshPackage(ctx)
 	if err != nil {
 		return err
 	}
-	if err := signed.Verify(key); err != nil {
-		return fmt.Errorf("MeshAgent's settings: %w", err)
+	return r.Mesh.Install(ctx, download, settings)
+}
+
+// meshPackage fetches MeshAgent's settings and returns them with a function
+// that downloads its binary, each checked against the server's signature.
+func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte, error) {
+	key := r.Key()
+	if key == nil {
+		return nil, nil, errors.New("no server key is pinned yet to check MeshAgent with")
 	}
-	return r.Mesh.Install(ctx, func(w io.Writer) error {
+	settings, signed, err := r.Client.MeshSettings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := signed.Verify(key); err != nil {
+		return nil, nil, fmt.Errorf("MeshAgent's settings: %w", err)
+	}
+	return func(w io.Writer) error {
 		signed, err := r.Client.MeshAgent(ctx, runtime.GOOS, runtime.GOARCH, w)
 		if err != nil {
 			return err
@@ -379,7 +441,7 @@ func (r *Runner) installMesh(ctx context.Context) error {
 			return fmt.Errorf("MeshAgent: %w", err)
 		}
 		return nil
-	}, settings)
+	}, settings, nil
 }
 
 // applyMeshSettings replaces MeshAgent's settings after the device moved to

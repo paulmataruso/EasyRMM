@@ -70,6 +70,10 @@ commands:
             unit on Linux, the EasyRMMAgent service on Windows
   enroll --server URL [--token TOKEN] [--ca-file FILE]
             enroll only; start the agent with "easyrmm-agent run"
+  repair-install
+            put this agent back in place on an enrolled machine: program,
+            service and start; the enrollment is kept (run from the
+            recovery copy by the EasyPatch agent)
   run       run the agent in the foreground (what the service does)
   status    show the enrollment and the last heartbeat
   uninstall stop and remove the agent and MeshAgent from this machine
@@ -160,6 +164,8 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.enroll(ctx, rest, true)
 	case "enroll":
 		return e.enroll(ctx, rest, false)
+	case "repair-install":
+		return e.repairInstall(ctx)
 	case "run":
 		return e.run(ctx)
 	case "status":
@@ -255,6 +261,25 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	if !service {
 		return nil
 	}
+	if err := e.putService(ctx); err != nil {
+		return err
+	}
+	svc := e.paths.AgentService()
+	if e.paths.Windows() {
+		_, _ = fmt.Fprintf(e.stdout, "The agent is running as the %s service.\n", svc.Name)
+	} else {
+		_, _ = fmt.Fprintf(e.stdout, "The agent is running as %s.\n", svc.Name)
+	}
+	if waiting != nil {
+		_, _ = fmt.Fprintln(e.stdout, "It finishes enrolling on its own once the device is approved.")
+	}
+	return nil
+}
+
+// putService puts this executable in the program directory, registers the
+// agent's service as the installer does and starts it; a service that runs
+// an older build is restarted into this one.
+func (e *env) putService(ctx context.Context) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -278,14 +303,35 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 			return err
 		}
 	}
-	if e.paths.Windows() {
-		_, _ = fmt.Fprintf(e.stdout, "The agent is running as the %s service.\n", svc.Name)
-	} else {
-		_, _ = fmt.Fprintf(e.stdout, "The agent is running as %s.\n", svc.Name)
+	return nil
+}
+
+// repairInstall puts this agent back in place on an enrolled machine: its
+// program in the program directory, its service registered as the installer
+// registers it, and started. The enrollment is not touched and none is made
+// (ADR-0069); the EasyPatch agent runs it from the recovery copy.
+func (e *env) repairInstall(ctx context.Context) error {
+	if !supported() {
+		return fmt.Errorf("installing as a service is not supported on %s", runtime.GOOS)
 	}
-	if waiting != nil {
-		_, _ = fmt.Fprintln(e.stdout, "It finishes enrolling on its own once the device is approved.")
+	if !e.isRoot() {
+		return e.needAdmin("repair")
 	}
+	if !e.hasServices() {
+		return errors.New("systemd is not running on this machine, so there is no service to put back")
+	}
+	if err := e.openStore(); err != nil {
+		return err
+	}
+	cfg, _, err := e.store.Load()
+	if err != nil {
+		return fmt.Errorf("this machine is not enrolled, and a repair makes no enrollment: %w", err)
+	}
+	if err := e.putService(ctx); err != nil {
+		return err
+	}
+	svc := e.paths.AgentService()
+	_, _ = fmt.Fprintf(e.stdout, "Put the agent back in place as %s, enrolled with %s as device %s.\n", svc.Name, cfg.Server, cfg.DeviceID)
 	return nil
 }
 
@@ -368,10 +414,11 @@ func (e *env) run(ctx context.Context) error {
 	}
 	c.SetIdentity(cfg.DeviceID, key)
 	r := &runner.Runner{
-		Client: c,
-		Store:  e.store,
-		Facts:  func() agentproto.Facts { return host.Facts(Version) },
-		Log:    e.log,
+		Client:   c,
+		DeviceID: cfg.DeviceID,
+		Store:    e.store,
+		Facts:    func() agentproto.Facts { return host.Facts(Version) },
+		Log:      e.log,
 		// MeshAgent's files are checked with the key pinned for jobs.
 		Key: pinnedKey(cfg),
 	}
@@ -431,8 +478,13 @@ func (e *env) run(ctx context.Context) error {
 	}
 	// The EasyPatch agent's install (ADR-0031) trusts the same key.
 	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
-		Present: inventory.Collector{}.EasyPatch, Finished: r.RefreshInventory}
+		Present: inventory.Collector{}.EasyPatch, Finished: r.RefreshInventory, Services: e.sd}
 	r.EasyPatch = ep
+	// Repairs of the EasyPatch agent (ADR-0069).
+	r.Patch = ep
+	if up != nil {
+		r.Settled = func() bool { return e.keepRecovery(up) }
+	}
 	if up != nil {
 		// An update waits for scripts and for the EasyPatch install.
 		up.Jobs = busyJobs{w, ep}
@@ -467,6 +519,20 @@ func (e *env) run(ctx context.Context) error {
 		return e.restart(up.Exe)
 	}
 	return err
+}
+
+// keepRecovery writes the recovery copy of the running build once it has
+// reached the server (ADR-0069). It returns true when there is nothing more
+// to try in this run: the copy is made, or making it failed and was logged.
+// A build on probation has none made, and tries again at its next heartbeat.
+func (e *env) keepRecovery(up *update.Updater) bool {
+	if up.OnProbation() {
+		return false
+	}
+	if err := e.store.KeepRecovery(up.Exe); err != nil {
+		e.log.Warn("keeping the recovery copy failed; the EasyPatch agent cannot restore this agent until the next start", "error", err)
+	}
+	return true
 }
 
 // updater returns the agent's self-update (ADR-0027), or nil when the agent
@@ -593,6 +659,11 @@ func (e *env) uninstall(ctx context.Context, args []string) error {
 	}
 	if *removal != "" {
 		return e.removeOnRequest(ctx, *removal)
+	}
+	// The recovery copy goes first: nothing may bring back an agent that is
+	// being removed (ADR-0069).
+	if err := e.store.RemoveRecovery(); err != nil {
+		return fmt.Errorf("removing the recovery copy: %w", err)
 	}
 	cfg, _, err := e.store.Load()
 	if err != nil && !errors.Is(err, state.ErrNotEnrolled) {

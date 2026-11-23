@@ -424,7 +424,7 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			return fmt.Errorf("settling moved devices: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE devices d SET mesh_node_id = NULL, mesh_agent_type = NULL, remote_online = false
+			UPDATE devices d SET mesh_node_id = NULL, mesh_agent_type = NULL, remote_online = false, mesh_wrong_group = true
 			FROM unnest($1::text[], $2::uuid[]) AS n(node, site)
 			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL AND d.site_id <> n.site
 			  AND d.mesh_from_site_id IS DISTINCT FROM n.site`,
@@ -453,11 +453,11 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE devices d SET mesh_agent_type = n.type, remote_online = n.online,
+			UPDATE devices d SET mesh_agent_type = n.type, remote_online = n.online, mesh_wrong_group = false,
 			    last_seen_at = CASE WHEN n.online OR d.remote_online THEN now() ELSE d.last_seen_at END
 			FROM unnest($1::text[], $2::int[], $3::bool[]) AS n(node, type, online)
 			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL
-			  AND (d.mesh_agent_type, d.remote_online) IS DISTINCT FROM (n.type, n.online)`,
+			  AND ((d.mesh_agent_type, d.remote_online) IS DISTINCT FROM (n.type, n.online) OR d.mesh_wrong_group)`,
 			present, types, online); err != nil {
 			return fmt.Errorf("updating enrolled devices: %w", err)
 		}

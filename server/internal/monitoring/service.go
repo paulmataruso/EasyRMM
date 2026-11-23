@@ -48,7 +48,26 @@ type Service struct {
 	log         *slog.Logger
 	now         func() time.Time
 	serving     Serving
+	// mesh says whether EasyRMM's control session to MeshCentral is open and
+	// since when; nil without remote access (ADR-0069).
+	mesh MeshLink
 }
+
+// MeshLink tells whether EasyRMM's connection to MeshCentral is up, and
+// when the current one opened.
+type MeshLink func() (connected bool, since time.Time)
+
+// RemoteSettle is how long after EasyRMM's connection to MeshCentral
+// returns that the remote access policies still judge nothing: devices'
+// MeshAgents reconnect meanwhile, and an outage opens no alerts
+// (ADR-0069).
+const RemoteSettle = 15 * time.Minute
+
+// FollowMesh makes the remote access policies (remote_down and
+// agent_silent) judge nothing while the connection to MeshCentral is down
+// or within RemoteSettle after it returns. Without it, there is no remote
+// access, and their alerts are resolved. Call it before Run.
+func (s *Service) FollowMesh(l MeshLink) { s.mesh = l }
 
 // New builds the service. retention is how long resolved alerts are kept,
 // metricsKept how long devices' measurements are. Until FollowServing says

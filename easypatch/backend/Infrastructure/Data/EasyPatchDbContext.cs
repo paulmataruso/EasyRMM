@@ -525,6 +525,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.Property(x => x.RequestedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
             e.Property(x => x.Payload).HasColumnType("jsonb");
             e.Property(x => x.Result).HasColumnType("jsonb");
+            e.Property(x => x.Diagnostics).HasColumnType("text");
             e.Property(x => x.Phase).HasMaxLength(64);
             e.Property(x => x.ProgressMessage).HasMaxLength(1000);
             e.Property(x => x.ErrorCode).HasMaxLength(64);

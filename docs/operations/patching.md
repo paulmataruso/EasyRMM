@@ -541,6 +541,12 @@ release key cannot update itself, and the engine refuses to update it;
 reinstall it once
 ([Updating the agent](../deployment/patching-agent.md#updating-the-agent)).
 
+An agent that stopped working is repaired from the device's page (**Repair
+patching agent**) or by EasyRMM itself, in place and keeping its enrollment
+([Remote access](remote-access.md#repair-patching-agent)). The EasyPatch agent
+in turn repairs the EasyRMM agent when that one is silent
+([Remote access](remote-access.md#repair-the-easyrmm-agent-through-patching)).
+
 ### Restarts
 
 **Restart…** is on a device's Patches tab when a restart is pending or the

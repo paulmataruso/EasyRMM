@@ -209,6 +209,17 @@ their own rights, and EasyRMM narrows what reaches them.
 * A compromised patching engine can choose which signed, newer EasyPatch
   agent release an agent updates to, and when, but nothing unsigned or
   older.
+* The EasyRMM agent's recovery copy is a program SYSTEM or root runs when
+  it is put back
+  ([ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+  It sits in the agent's state folder with the enrollment and key, under
+  the same checks, so whoever can change it can already change the agent's
+  own files. The EasyPatch agent restores it only after it has checked that no
+  update is in progress, that the copy and every folder above it are not links
+  and cannot be changed by anyone but the system, administrators or root,
+  and that its SHA-256 is the one the server recorded for the device's build;
+  a job names a fixed target and step, never a command, and the agent's
+  diagnostics are redacted before they leave the computer.
 * The engine's nonce cache is in memory, so a deployment runs one engine
   API instance.
 * The engine's encryption keys, like the database, are unencrypted on the

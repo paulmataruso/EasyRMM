@@ -99,6 +99,21 @@ func (s *Service) BuildLookup(platform, arch string) (devices.ServedBuild, bool)
 	return devices.ServedBuild{SHA256: b.SHA256, Version: b.Version, WaitingFor: waiting}, true
 }
 
+// ReleaseHashes are the SHA-256 of the bundled builds for a platform and
+// architecture, whatever is served in their place.
+func (s *Service) ReleaseHashes(platform, arch string) []string {
+	if s.builds == nil {
+		return nil
+	}
+	var out []string
+	for _, b := range s.builds.Release() {
+		if b.OS == platform && b.Arch == arch {
+			out = append(out, b.SHA256)
+		}
+	}
+	return out
+}
+
 // Validate checks a policy.
 func (p UpdatePolicy) Validate() error {
 	f := apperr.Fields{}

@@ -338,6 +338,8 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"device_hardening": follows, "device_hardening_checks": follows, "device_inventory": follows, "device_metric_samples": follows,
 		"device_metrics": follows, "device_removals": follows, "device_software": follows, "enrollment_requests": follows,
 		"retired_agent_nonces": follows,
+		// recovery (R1-R3): the machine's own state and repair history
+		"agent_conditions": follows, "agent_repairs": ends,
 		// ends
 		"remote_grants": ends, "alerts": ends,
 		"agent_log_records": ends, "agent_log_days": ends, "agent_log_follow": ends,

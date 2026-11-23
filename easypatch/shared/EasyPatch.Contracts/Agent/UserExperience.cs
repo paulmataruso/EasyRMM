@@ -23,8 +23,14 @@ public static class AgentCapabilities
     /// <summary>The agent can download Windows updates without installing them (Windows agent 1.8.0 and later).</summary>
     public const string DownloadUpdates = "download-updates";
 
+    /// <summary>The agent can restart or repair the EasyRMM agent and MeshAgent (Windows and Linux agents, ADR-0069).</summary>
+    public const string RepairCompanion = "repair-companion";
+
+    /// <summary>The agent can return the newest lines of the three agents' logs (Windows and Linux agents, ADR-0069).</summary>
+    public const string CollectLogs = "collect-logs";
+
     public static IReadOnlyList<string> All { get; } =
-        [Restart, NotifyUser, WindowsUpdatePolicy, Tray, SelfUpdate, ApplicationUpdates, Uninstall, UninstallUpdates, DownloadUpdates];
+        [Restart, NotifyUser, WindowsUpdatePolicy, Tray, SelfUpdate, ApplicationUpdates, Uninstall, UninstallUpdates, DownloadUpdates, RepairCompanion, CollectLogs];
 
     /// <summary>The capability a job type needs, or null when every agent supports it.</summary>
     public static string? RequiredFor(JobType type) => type switch
@@ -35,6 +41,8 @@ public static class AgentCapabilities
         JobType.UninstallAgent => Uninstall,
         JobType.UninstallUpdate => UninstallUpdates,
         JobType.DownloadUpdates => DownloadUpdates,
+        JobType.RepairCompanion => RepairCompanion,
+        JobType.CollectLogs => CollectLogs,
         _ => null,
     };
 }

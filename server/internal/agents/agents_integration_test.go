@@ -43,6 +43,10 @@ type fakeMesh struct {
 	length  int64
 	huge    bool
 	fetches int
+	// host, when set, is the MeshServer host in the settings; settings counts
+	// the settings fetched.
+	host     string
+	settings int
 }
 
 func (f *fakeMesh) Group(_ context.Context, site uuid.UUID) (string, error) {
@@ -70,7 +74,12 @@ func (zeros) Read(p []byte) (int, error) {
 }
 
 func (f *fakeMesh) Settings(_ context.Context, mesh string) ([]byte, error) {
-	return []byte("MeshID=" + mesh), f.setErr
+	f.settings++
+	out := "MeshID=" + mesh
+	if f.host != "" {
+		out += "\nMeshServer=wss://" + f.host + "/agent.ashx\n"
+	}
+	return []byte(out), f.setErr
 }
 
 func (f *fakeMesh) Linked() { f.linked++ }

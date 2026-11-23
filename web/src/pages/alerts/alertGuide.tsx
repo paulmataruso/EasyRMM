@@ -33,7 +33,7 @@ const STATUS = (
   </>
 );
 
-type Kind = Pick<AlertEntry, "kind" | "checkName" | "threshold" | "minutes">;
+type Kind = Pick<AlertEntry, "kind" | "checkName" | "threshold" | "minutes"> & { subjectLabel?: string };
 
 export function alertGuide(a: Kind): AlertGuide {
   const span = formatMinutes(a.minutes);
@@ -74,6 +74,36 @@ export function alertGuide(a: Kind): AlertGuide {
       };
     case "disk_health":
       return diskGuide(a);
+    case "remote_down":
+      return {
+        means: `The EasyRMM agent checks in from this device, but MeshAgent has not been connected to MeshCentral for ${span} or more, so no remote session can start. The alert's details say why: MeshAgent is not installed, not running, has settings for another server, or its node is in another site's MeshCentral group.`,
+        next: [
+          "The device page says the same, and its Reconnect remote access button has the EasyRMM agent restart MeshAgent and, if that does not help, put its program and settings back, keeping its identity.",
+          "EasyRMM does this by itself where the organization allows it; the repairs tried since the alert opened are listed below.",
+          "It resolves as soon as MeshCentral sees MeshAgent connected.",
+        ],
+        tabs: [OVERVIEW],
+      };
+    case "agent_silent":
+      return {
+        means: `MeshCentral sees MeshAgent connected on this device, but its EasyRMM agent has not checked in for ${span} or more. The device is on; the agent that reports, runs scripts and installs updates is not working.`,
+        next: [
+          "Open a remote terminal on the device and run the status command below.",
+          STATUS,
+          "It resolves as soon as the EasyRMM agent checks in.",
+        ],
+        tabs: [OVERVIEW],
+      };
+    case "repair_failed":
+      return {
+        means: `EasyRMM tried to repair this device's ${a.subjectLabel || "agent"} by itself and it is still not working. The alert's details are the last step's diagnostics.`,
+        next: [
+          "The repairs tried since the alert opened are listed below, each with its steps.",
+          "The device page's repair buttons try again by hand; automatic repairs wait 6 hours between attempts and make at most 3 a day.",
+          "It resolves on its own once the agent is back. An organization administrator can turn automatic repairs off in the organization's settings.",
+        ],
+        tabs: [OVERVIEW],
+      };
     default:
       return { means: `A ${String(a.kind)} alert, a kind this console does not know.`, next: [ACKNOWLEDGE], tabs: [OVERVIEW] };
   }

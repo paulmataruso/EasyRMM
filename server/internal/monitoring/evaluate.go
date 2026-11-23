@@ -106,6 +106,12 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 		opened, resolved, err := evaluateDisks(ctx, tx, now)
 		r.Opened += opened
 		r.Resolved += resolved
+		if err != nil {
+			return err
+		}
+		opened, resolved, err = s.evaluateRemote(ctx, tx, now, floor)
+		r.Opened += opened
+		r.Resolved += resolved
 		return err
 	})
 	return r, err
@@ -141,7 +147,7 @@ func reconcile(ctx context.Context, tx pgx.Tx, now time.Time, policyID uuid.UUID
 			FROM alerts a
 			JOIN devices d ON d.id = a.device_id
 			LEFT JOIN alert_policies p ON p.id = a.policy_id
-			WHERE a.status <> 'resolved' AND ($2::uuid IS NULL OR a.policy_id = $2)
+			WHERE a.status <> 'resolved' AND a.kind <> 'repair_failed' AND ($2::uuid IS NULL OR a.policy_id = $2)
 		)
 		UPDATE alerts a SET status = 'resolved', resolved_at = $1, resolution = stale.reason
 		FROM stale WHERE a.id = stale.id AND stale.reason IS NOT NULL`, now, nullUUID(policyID))
@@ -203,7 +209,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 					  AND ms.at > $1::timestamptz - make_interval(mins => p.minutes) AND ms.at <= $1
 				) x
 			) s ON true
-			WHERE p.enabled AND p.kind <> 'disk_health'
+			WHERE p.enabled AND p.kind IN ('offline', 'cpu', 'memory', 'disk')
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)

@@ -107,7 +107,7 @@ public static class JobEndpoints
                     j.Trigger, j.RequestedBy, j.CreatedAt, j.StartedAt, j.CompletedAt, j.ExpiresAt, j.ProgressPercent, j.Phase, j.ProgressMessage,
                     j.ErrorCode, j.ErrorMessage, j.RebootRequired, j.TimedOut, j.CancelRequestedAt != null, j.Updates.Count,
                     j.Updates.Count(u => u.Status == JobItemStatus.Succeeded), j.Updates.Count(u => u.Status == JobItemStatus.Failed)),
-                j.Payload, j.NotBefore, j.DeliveredAt, j.AcknowledgedAt, j.LastProgressAt, j.DeliveryCount, j.RetryOfJobId, j.CancelRequestedAt,
+                j.Payload, j.NotBefore, j.DeliveredAt, j.AcknowledgedAt, j.LastProgressAt, j.DeliveryCount, j.RetryOfJobId, j.CancelRequestedAt, j.Diagnostics,
             }).FirstOrDefaultAsync(ct) ?? throw AppException.NotFound("Job");
         tenant.EnsureAccess(job.Summary.OrganizationId);
         var items = await db.Set<JobUpdate>().AsNoTracking().Where(u => u.JobId == id).OrderBy(u => u.StartedAt == null).ThenBy(u => u.StartedAt)
@@ -120,7 +120,7 @@ public static class JobEndpoints
         }
 
         return new JobDetailDto(job.Summary, mode, job.NotBefore, job.DeliveredAt, job.AcknowledgedAt, job.LastProgressAt, job.DeliveryCount,
-            job.RetryOfJobId, job.CancelRequestedAt, items, events);
+            job.RetryOfJobId, job.CancelRequestedAt, items, events, job.Diagnostics);
     }
 }
 

@@ -1,7 +1,7 @@
 # ADR-0069: Recovering agents from either side, live agent logs, and one device tree
 
-* Status: Accepted (2026-11-23, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-23, after an independent review). Slice R1
+  implemented; the rest not implemented.
 * Revised after an independent review (2026-11-23): logs go over signed
   HTTPS, since the agent channel carries nothing from the agent; the
   EasyPatch agent is repaired in place, keeping its enrollment; the
@@ -211,6 +211,152 @@ shows the watchdog's reason and the repairs tried since the alert opened.
 As for every shared policy, an operator can change the 15 minutes or turn
 it off, and add organization or site policies instead.
 
+**Amended 2026-11-23 (decided in review), slice R1.** What the code
+settled:
+
+* A repair step reaches the agent as a signed instruction in a heartbeat
+  answer (target and step from fixed lists, bound to the device, valid 15
+  minutes, the job key signing it), and its outcome comes back in the next
+  heartbeats. It is carried out in the background, so a slow download does
+  not hold the heartbeats.
+* `devices.remote_changed_at` is set by a database trigger on changes of
+  `remote_online`, which covers the device sync and a heartbeat's link
+  alike; it starts at the migration for devices that exist, so an upgrade
+  opens no alert for a state that is not new. A device with none yet counts
+  from its enrollment.
+* "Settings for another server" is judged by the server: the agent reports
+  the host its settings name, and the server compares it with the host of
+  the settings it would hand the device's site (remembered for 10
+  minutes). "Its node is in another site's group" is a flag the device sync
+  sets when it unlinks such a node (`devices.mesh_wrong_group`) and clears
+  when a sync finds the node in the device's own site.
+* The step wait of a repair someone asks for is 2 minutes; a step the
+  carrying agent does not take in 15 minutes, or a repair of an hour, ends
+  it as failed. A failed step goes straight to the next. Automatic
+  repairs keep the waits in the table above (slice R2).
+* The two alert conditions are `remote_down` and `agent_silent`. Their
+  alerts are judged only while EasyRMM's control session to MeshCentral is
+  open and has been for 15 minutes, which also covers a restart of the
+  server. Without remote access their alerts resolve. The "never for a
+  device that is leaving" rule covers all three tables in this slice, for
+  alerts and for repairs by hand.
+
+**Amended 2026-11-23 (decided in review), slice R2.** What the code
+settled:
+
+* `devices.agent_sha256` already existed (ADR-0027: the SHA-256 the agent
+  reports for its build, and the server's published builds carry theirs);
+  R2 adds nothing there. The recovery copy is the running program, so its
+  hash is the device's.
+* The repair instruction carries the EasyPatch package for the
+  `easypatch-agent` `repair` step, and only for it (`RepairPayload.EasyPatch`:
+  the engine's CA and the packages of the version installed, size and
+  SHA-256 included, checked as an install checks them; no enrollment
+  token). The version is the one the device reported, or, where the agent's
+  program is gone and it reports none, the engine's last record of it; where
+  the engine no longer lists it, the repair ends with that reason, since an
+  update is not a repair. The agent refuses an agent that is not enrolled
+  and a package of another version than the one it finds installed.
+* An EasyPatch repair's step wait by hand is 7 minutes, not 2: the engine's
+  view of a check-in reaches EasyRMM every 5 minutes. Automatic repairs
+  wait 20 minutes (MeshAgent) and 30 minutes (EasyPatch agent) after each
+  step, so an automatic repair may run 2 hours (a repair by hand, 1).
+* "Silent past twice its check-in interval" is 10 minutes: twice the
+  engine's default interval of a minute is below what a 5-minute poll can
+  tell, and the engine's per-endpoint interval is not read. An organization
+  that sets it longer is waited on for the condition's 30 minutes.
+* The time since a condition holds is kept in `agent_conditions`, written by
+  the evaluator and forgotten for a target whenever its condition cannot be
+  judged, so after an outage the clocks start over.
+* MeshAgent is repaired automatically only where the EasyRMM agent
+  supervises it (it reported MeshAgent's state) and the site has a
+  MeshCentral group; the EasyPatch agent only where it is linked.
+* *Repair failed* is alert kind `repair_failed`, with no policy (the
+  subject is the target). The sweep that resolves alerts of changed or
+  deleted policies leaves it alone; the recovery service resolves it when
+  the target is back or the device starts to leave.
+* The row of the table where the EasyPatch agent repairs the EasyRMM agent
+  (and the EasyPatch agent's own `RepairCompanion` job) is slice R3. In R2
+  `repair-install`, the recovery copy and its removal exist and are tested
+  on Windows and Linux; nothing runs the copy yet but a person.
+* The recovery copy is made only by an agent that can read its own
+  executable (it has an updater), after its first heartbeat past probation,
+  and is tried again at each start; a failure is logged.
+* Removal: the recovery copy goes before the service in an uninstall by hand
+  and in a removal the server asked for.
+
+**Amended 2026-11-23 (decided in review), slice R3.** What the code
+settled:
+
+* The engine's `RepairCompanion` job carries `target`, `step` and
+  `expectedSha256`; the engine refuses anything off the fixed lists (the EasyRMM
+  agent: `restart`, or `repair` with a lower-case SHA-256; MeshAgent: `restart`
+  and no hash), and sends the jobs only to an agent that declares the
+  `repair-companion` and `collect-logs` capabilities (Windows and Linux agents
+  from this version; the engine knows no more of an agent's version than
+  what it declares). The jobs expire in 30 minutes and go before other queued
+  work, though the agent still takes one job at a time: a repair behind a
+  running install waits for it.
+* `Diagnostics` is a new field of a job's result and of the engine's job
+  detail, kept apart from the message: 256 KiB of UTF-8 at most (the engine
+  refuses more), kept 14 days after the job ended (the engine's job
+  maintenance empties it; the job stays). The agent redacts with the rules of
+  `logredact` (the EasyPatch agent's `LogRedactor` now has them all: names
+  like secrets, `ert_`, `ept_`, bearer tokens, PEM blocks, and a line it
+  cannot redact in time is withheld, never sent).
+* The four checks are made in this order and each refuses with a code the job
+  reports: the update marker, then links and owner and access list, then the
+  hash, then `repair-install` of the copy. Two readings of "the system": on
+  Windows the copy may be owned by LocalSystem **or the Administrators group**,
+  because Windows makes that group the owner of what a process running as
+  SYSTEM creates (the EasyRMM agent's own state check accepts both); and for
+  the directories *above* the copy's own folder only the rights that let
+  someone replace what lies below count (delete what the folder holds, delete
+  it, change its access list or owner, full control), since ProgramData and a
+  drive's root let every user add a folder and a strict reading would refuse
+  every Windows computer (the same rule as ADR-0064's folders above a
+  PowerShell install). On Linux every directory above, and the copy, must be
+  owned by root, not writable by group or others, and the copy must have one
+  hard link. Links are found by `stat` without following them; the copy is
+  hashed and run from the path checked, which only root or the system could
+  have changed. POSIX ACLs are not read.
+* Security review (decided in review): the hash a repair is checked against
+  is never the device's own word (`devices.agent_sha256` is set by its heartbeat).
+  EasyRMM sends it only when it is the SHA-256 of a build this server
+  publishes for the device's platform and architecture: a bundled build, or a
+  row of `signed_agent_builds`. Otherwise the *repair* step is refused with a
+  reason the console shows; *restart* steps stay allowed. So a device running
+  a build the server no longer publishes cannot be repaired from its copy:
+  update or reinstall its agent. On Windows each directory above the copy must
+  also be owned by SYSTEM, Administrators or TrustedInstaller, since an owner
+  can rewrite the access list; and the redaction rules cover command-line
+  forms (`--password x`, `-Password x`, `/password x`) in the agent's and the
+  server's `logredact`, and the job's message, not only its diagnostics.
+* Through patching, a step is carried out by EasyRMM asking the engine for the
+  job (the server's repair loop, not a heartbeat), reading its result, and
+  cancelling in the engine a job that did not run within 15 minutes so that it
+  cannot run after the repair moved on. The step's diagnostics are kept on the
+  repair (`agent_repairs.diagnostics`, redacted again by the server, 256 KiB,
+  14 days) because the agent log table (slice L1) was not on this branch's
+  base. Amended 2026-11-23 (decided in review): L1 has landed, but moving them
+  into `agent_log_records` is not a few lines (free text must be split into
+  records, `recovery` would depend on `agentlogs`, and the column and its
+  retention go), so they stay on the repair until a slice of their own does it,
+  with a source per agent. A `CollectLogs` job is built and tested through
+  the connector (`easypatch.Service.CollectLogs`, `CompanionResult`) for L1's
+  Logs tab to ask for when the EasyRMM agent is down; nothing in R3 asks
+  for it.
+* *EasyRMM agent silent while the EasyPatch agent checks in*: the EasyRMM agent
+  has not checked in for 3 minutes but did before, the device is patched and
+  its EasyPatch agent is linked and heard from by the engine within 10 minutes;
+  15 minutes of that, then `restart`, and `repair` after 30 more minutes, with
+  R2's limits, exclusions and settling. A repair by hand waits 2 minutes after
+  a step, because the answer is the EasyRMM agent's own heartbeat, and is
+  refused while the agent checks in or while the EasyPatch agent has been
+  silent for 10 minutes. When the EasyRMM agent comes back and MeshAgent is
+  still not connected, the first row's clock starts over by itself: the
+  condition could not hold while the agent was silent.
+
 **By hand**: the device page offers *Reconnect remote access* and *Repair
 patching agent* (with `device.edit`) and *Repair EasyRMM agent through
 patching* (with `patch.manage`), each showing its steps and outcome.
@@ -413,6 +559,8 @@ The owner confirmed (2026-11-23):
   organization deletes the device's agent log records and their counters. A
   device's verbose-logging setting ends with any move to another site, since
   someone with rights on the old site set it and its row names that site.
+  Repair history goes with a move to another organization too: it names who
+  asked and keeps the steps' output.
 * **Amended 2026-11-23 (decided in review): patching tabs stay per site.** The
   patching engine has no device groups, so Patching's Updates, Jobs and
   Alerts tabs show the site of a chosen group or device and say so; the

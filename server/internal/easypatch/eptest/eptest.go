@@ -132,6 +132,10 @@ type Endpoint struct {
 	// CannotUninstall is an agent older than 1.6.0, which cannot remove
 	// itself.
 	CannotUninstall bool
+	// CannotRepairCompanion is an agent that does not declare the
+	// repair-companion and collect-logs capabilities (ADR-0069): the
+	// engine sends no such job to it.
+	CannotRepairCompanion bool
 	// RebootPending, IsServer and CannotRestart describe a pending restart
 	// as the engine's restart-pending list shows it.
 	RebootPending  bool
@@ -142,6 +146,9 @@ type Endpoint struct {
 	// Windows makes the endpoint a Windows one, whose agent shows messages
 	// and removes updates; the others are Linux endpoints, which cannot.
 	Windows bool
+	// LastCheckIn is when the endpoint's agent last checked in, as the
+	// lists show it; nil is a fixed time in November 2026.
+	LastCheckIn *time.Time
 }
 
 // Job is an EasyPatch job.
@@ -170,6 +177,11 @@ type Job struct {
 	// Force is a restart asked for with force, which the duplicate guard
 	// lets through.
 	Force bool
+	// Companion is the target, step and hash of a RepairCompanion job.
+	Companion CompanionRequest
+	// Message, ErrorCode, ErrorMessage and Diagnostics are what the
+	// agent's result said (SetJobResult).
+	Message, ErrorCode, ErrorMessage, Diagnostics string
 }
 
 // Request is a call the server received.
@@ -541,6 +553,13 @@ func update(title, category, state string) map[string]any {
 	return u
 }
 
+func (e *Endpoint) lastCheckIn() any {
+	if e.LastCheckIn != nil {
+		return e.LastCheckIn.UTC().Format(time.RFC3339Nano)
+	}
+	return "2026-11-16T14:34:13.737582+00:00"
+}
+
 func (e *Endpoint) summary() map[string]any {
 	platform, os, version, build, support := "Linux", "Debian GNU/Linux 13 (trixie)", "13", any(nil), "Unknown"
 	if e.Windows {
@@ -550,7 +569,7 @@ func (e *Endpoint) summary() map[string]any {
 		"id": e.ID, "hostname": e.Hostname, "organizationId": e.Org, "organizationName": e.OrgName,
 		"siteId": e.Site, "siteName": nullable(e.SiteName), "status": e.Status, "operatingSystem": os,
 		"osVersion": version, "osBuild": build, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
-		"lastCheckInAt": "2026-11-16T14:34:13.737582+00:00", "lastScanAt": "2026-11-16T14:40:00+00:00",
+		"lastCheckInAt": e.lastCheckIn(), "lastScanAt": "2026-11-16T14:40:00+00:00",
 		"complianceStatus": e.Compliance, "missingRequiredCount": 1, "missingTotalCount": e.Missing, "failedCount": 1,
 		"rebootPending": e.RebootPending, "osSupportStatus": support, "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
 		"platform": platform, "missingDeferredCount": 0, "tags": []any{}, "knownExploitedMissingCount": 0,
@@ -570,6 +589,9 @@ func (e *Endpoint) detail() map[string]any {
 	capabilities := []string{"restart", "self-update", "uninstall"}
 	if e.CannotRestart {
 		capabilities = capabilities[1:]
+	}
+	if !e.CannotRepairCompanion {
+		capabilities = append(capabilities, "repair-companion", "collect-logs")
 	}
 	format, users, product := "deb", any(nil), any(nil)
 	switch {
@@ -616,12 +638,23 @@ func (j *Job) summary() map[string]any {
 		"id": j.ID, "endpointId": j.Endpoint, "hostname": j.Hostname, "organizationId": j.Org, "organizationName": "Acme Patch",
 		"type": j.Type, "status": j.Status, "trigger": cmp.Or(j.Trigger, "Manual"), "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
 		"startedAt": nil, "completedAt": completed, "expiresAt": j.CreatedAt.Add(7 * 24 * time.Hour), "progressPercent": nil,
-		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": j.TimedOut,
+		"phase": nil, "progressMessage": nullable(j.Message), "errorCode": nullable(j.ErrorCode), "errorMessage": nullable(j.ErrorMessage),
+		"rebootRequired": j.RebootRequired, "timedOut": j.TimedOut,
 		"cancelRequested": j.Status == StatusCanceled, "itemCount": 0, "succeededCount": 0, "failedCount": 0,
 	}
 }
 
 func (j *Job) detail() map[string]any {
+	d := j.detailBase()
+	// Sent only when there is something, so that the shape check against
+	// the last release's engine, which has no such field, still holds.
+	if j.Diagnostics != "" {
+		d["diagnostics"] = j.Diagnostics
+	}
+	return d
+}
+
+func (j *Job) detailBase() map[string]any {
 	items := j.Items
 	if items == nil {
 		items = []map[string]any{jobItem(map[string]any{"updateGuid": uuid.New(), "title": "openssl", "category": "Security"})}
@@ -1023,6 +1056,10 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 		guid, _ := uuid.Parse(strings.TrimPrefix(sub, "exclusions/"))
 		e.exclude(guid, false)
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && sub == "companion/repair":
+		s.repairCompanion(w, e, body)
+	case r.Method == http.MethodPost && sub == "collect-logs":
+		s.collectLogs(w, e)
 	case r.Method == http.MethodPost && strings.HasPrefix(sub, "updates/") && strings.HasSuffix(sub, "/uninstall"):
 		if !e.Windows {
 			problem(w, 409, "not_supported_on_linux", e.Hostname+" is a Linux endpoint. Removing updates is only available on Windows.")

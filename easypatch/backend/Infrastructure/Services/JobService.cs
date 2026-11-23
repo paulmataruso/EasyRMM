@@ -27,7 +27,8 @@ public sealed record CreateJobRequest(
     RestartPayload? Restart = null,
     NotifyUserPayload? Notify = null,
     DateTimeOffset? NotBefore = null,
-    string? AgentVersion = null);
+    string? AgentVersion = null,
+    RepairCompanionPayload? Companion = null);
 
 /// <summary>Durable PostgreSQL-backed job queue: creation, leasing to agents, acknowledgement, progress and cancellation.</summary>
 public sealed class JobService(
@@ -91,6 +92,17 @@ public sealed class JobService(
                         _ => $"{endpoint.Hostname} is a macOS endpoint. Downloading updates ahead of the maintenance window is only available on Windows.",
                     },
                     "not_supported_on_macos");
+            }
+
+            if (request.Type is JobType.RepairCompanion or JobType.CollectLogs)
+            {
+                // ADR-0069: only agents that declare the capability are sent these jobs.
+                var what = request.Type == JobType.RepairCompanion ? "repair or restart the EasyRMM agent and MeshAgent" : "collect logs";
+                throw endpoint.Platform == AgentPlatforms.Windows || endpoint.Platform == AgentPlatforms.Linux
+                    ? AppException.Conflict(
+                        $"The EasyPatch agent on {endpoint.Hostname} (version {endpoint.AgentVersion ?? "unknown"}) cannot {what}. Update it first.",
+                        "agent_upgrade_required")
+                    : AppException.Conflict($"{endpoint.Hostname} is not a Windows or Linux endpoint, so its agent cannot {what}.", "not_supported_on_platform");
             }
 
             if (request.Type is JobType.UninstallUpdate or JobType.DownloadUpdates)
@@ -279,6 +291,22 @@ public sealed class JobService(
                 break;
             }
 
+            case JobType.RepairCompanion:
+                if (!RepairCompanionPayload.IsValid(request.Companion))
+                {
+                    throw AppException.BadRequest("Choose the EasyRMM agent or MeshAgent, a step it supports and, for the EasyRMM agent's repair, the SHA-256 of its recovery copy.",
+                        "validation_failed");
+                }
+
+                payloadJson = JsonSerializer.Serialize(request.Companion, ContractJson.Options);
+                dedupeKey = $"repair-companion:{request.Companion!.Target}:{request.Companion.Step}";
+                break;
+
+            case JobType.CollectLogs:
+                // No payload: the agent returns the newest lines of the logs it knows.
+                dedupeKey = "collect-logs";
+                break;
+
             default:
                 throw AppException.BadRequest("Unsupported job type.");
         }
@@ -324,6 +352,8 @@ public sealed class JobService(
             Priority = request.Type switch
             {
                 JobType.UninstallAgent => 20,
+                JobType.RepairCompanion => 30,
+                JobType.CollectLogs => 25,
                 JobType.UninstallUpdate => 5,
                 JobType.InstallUpdates => 0,
                 JobType.DownloadUpdates => -5,
@@ -339,6 +369,8 @@ public sealed class JobService(
             {
                 JobType.Restart => Later(now, request.NotBefore).AddHours(2),
                 JobType.NotifyUser => Later(now, request.NotBefore).AddHours(1),
+                // A repair that waits hours is no longer the repair that was asked for (EasyRMM gives up on a step after 15 minutes).
+                JobType.RepairCompanion or JobType.CollectLogs => Later(now, request.NotBefore).AddMinutes(30),
                 // A job scheduled for later has the usual time to run from then.
                 _ => Later(now, request.NotBefore).AddHours(settings.JobDefaultExpiryHours),
             },
@@ -360,6 +392,7 @@ public sealed class JobService(
                 {
                     job.Type, mode = request.InstallMode, updates = request.UpdateGuids?.Count, request.Force, restart = request.Restart,
                     message = request.Notify?.Preset, request.NotBefore, agentVersion = agentUpdateVersion,
+                    companionTarget = request.Companion?.Target, companionStep = request.Companion?.Step,
                 });
         }
 
@@ -439,6 +472,7 @@ public sealed class JobService(
                 new CreateJobRequest(original.EndpointId, original.Type, install.Mode, install.SelectedUpdateGuids),
             JobType.UninstallUpdate when Payload<UninstallUpdatePayload>(original) is { } removal =>
                 new CreateJobRequest(original.EndpointId, original.Type, UpdateGuids: [removal.UpdateGuid]),
+            JobType.RepairCompanion => new CreateJobRequest(original.EndpointId, original.Type, Companion: Payload<RepairCompanionPayload>(original)),
             JobType.DownloadUpdates => throw AppException.Conflict(
                 "Downloads ahead of a maintenance window are not retried: the installation in the window downloads what is missing, " +
                 "and the next window gets a new download.", "not_retryable"),
@@ -759,6 +793,7 @@ public sealed class JobService(
             Notify = job.Type == JobType.NotifyUser ? Payload<NotifyUserPayload>(job) : null,
             AgentUpdate = job.Type == JobType.AgentUpdate ? Payload<AgentUpdatePayload>(job) : null,
             UninstallUpdate = job.Type == JobType.UninstallUpdate ? Payload<UninstallUpdatePayload>(job) : null,
+            RepairCompanion = job.Type == JobType.RepairCompanion ? Payload<RepairCompanionPayload>(job) : null,
         };
     }
 
@@ -801,6 +836,11 @@ public sealed class JobService(
         if (report.Items.Count > 1000)
         {
             throw AppException.BadRequest("Too many items in one report.", AgentErrorCodes.ValidationFailed);
+        }
+
+        if (report.Diagnostics is { } diagnostics && Encoding.UTF8.GetByteCount(diagnostics) > JobDiagnostics.MaxBytes)
+        {
+            throw AppException.BadRequest($"The diagnostics are more than {JobDiagnostics.MaxBytes / 1024} KiB.", AgentErrorCodes.ValidationFailed);
         }
 
         var now = clock.GetUtcNow();
@@ -849,6 +889,7 @@ public sealed class JobService(
             job.ErrorCode = ScanIngestionService.Truncate(report.ErrorCode, 64);
             job.ErrorMessage = ScanIngestionService.Truncate(report.ErrorMessage, 4000);
             job.Result = report.Result is null ? job.Result : JsonSerializer.Serialize(report.Result, ContractJson.Options);
+            job.Diagnostics = job.Type is JobType.RepairCompanion or JobType.CollectLogs && report.Diagnostics is { Length: > 0 } ? report.Diagnostics : job.Diagnostics;
             job.CompletedAt = now;
             job.ProgressPercent = report.Status == JobStatus.Completed ? 100 : job.ProgressPercent;
             if (previousStatus == JobStatus.Failed && job.TimedOut)
@@ -872,7 +913,7 @@ public sealed class JobService(
                     $"{Describe(job.Type)} completed: {summary.Succeeded} downloaded" + (summary.Failed > 0 ? $", {summary.Failed} failed." : "."),
                 JobStatus.Completed when summary is { Failed: > 0 } => $"{Describe(job.Type)} completed with errors: {summary.Succeeded} succeeded, {summary.Failed} failed.",
                 JobStatus.Completed when summary is not null && job.Type == JobType.InstallUpdates => $"{Describe(job.Type)} completed: {summary.Succeeded} installed, {summary.Skipped} skipped.",
-                JobStatus.Completed when job.Type == JobType.UninstallUpdate && !string.IsNullOrWhiteSpace(report.Message) =>
+                JobStatus.Completed when job.Type is JobType.UninstallUpdate or JobType.RepairCompanion && !string.IsNullOrWhiteSpace(report.Message) =>
                     $"{Describe(job.Type)} completed: {ScanIngestionService.Truncate(report.Message, 500)}",
                 JobStatus.Completed => $"{Describe(job.Type)} completed.",
                 JobStatus.Cancelled => $"{Describe(job.Type)} cancelled.",
@@ -1048,6 +1089,8 @@ public sealed class JobService(
         JobType.UninstallAgent => "Agent uninstall",
         JobType.UninstallUpdate => "Update removal",
         JobType.DownloadUpdates => "Download before the maintenance window",
+        JobType.RepairCompanion => "Repair of the EasyRMM agent or MeshAgent",
+        JobType.CollectLogs => "Log collection",
         _ => type.ToString(),
     };
 }

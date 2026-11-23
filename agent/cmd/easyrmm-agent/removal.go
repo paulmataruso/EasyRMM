@@ -81,6 +81,10 @@ func (e *env) removeOnRequest(ctx context.Context, file string) error {
 	c.SetIdentity(cfg.DeviceID, key)
 	rep := agentproto.RemovedReport{ID: p.ID}
 	name := e.paths.AgentService().Name
+	// The recovery copy goes first (ADR-0069).
+	if err := e.store.RemoveRecovery(); err != nil {
+		e.log.Error("removing the recovery copy failed", "error", err)
+	}
 	if e.serviceInstalled(ctx) {
 		if err := e.sd.Remove(ctx, name); err != nil {
 			rep.Error = "Removing the agent's service failed: " + err.Error()

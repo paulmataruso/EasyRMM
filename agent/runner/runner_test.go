@@ -50,6 +50,8 @@ type server struct {
 	easyPatch string
 	// uninstall is its uninstall instruction, JSON.
 	uninstall string
+	// repair is its repair instruction, JSON.
+	repair string
 	// job signs MeshAgent's downloads, as the server's job key does;
 	// tamper changes the binary after signing it.
 	job    ed25519.PrivateKey
@@ -106,6 +108,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.uninstall != "" {
 			update += `,"uninstall":` + s.uninstall
 		}
+		if s.repair != "" {
+			update += `,"repair":` + s.repair
+		}
 		if s.logs != "" {
 			update += `,"logs":` + s.logs
 		}
@@ -142,9 +147,14 @@ type mesh struct {
 	nodeErr    error
 	settings   string
 	binary     string
-	applied    string
-	reconf     int
-	reconfErr  error
+	// What State reports, and what Restart and Repair do.
+	running               bool
+	stateErr              string
+	restarts, repairs     int
+	restartErr, repairErr error
+	applied               string
+	reconf                int
+	reconfErr             error
 }
 
 func (m *mesh) Installed() bool { return m.installed }
@@ -177,6 +187,28 @@ func (m *mesh) Reconfigure(_ context.Context, settings []byte) error {
 
 func (m *mesh) NodeID(context.Context) (string, error) { return m.node, m.nodeErr }
 
+func (m *mesh) State(context.Context) agentproto.MeshAgentState {
+	return agentproto.MeshAgentState{Installed: m.installed, Running: m.running, Host: "mesh.example.test:443", Error: m.stateErr}
+}
+
+func (m *mesh) Restart(context.Context) error {
+	m.restarts++
+	return m.restartErr
+}
+
+func (m *mesh) Repair(_ context.Context, download func(io.Writer) error, settings []byte) error {
+	m.repairs++
+	if m.repairErr != nil {
+		return m.repairErr
+	}
+	var b strings.Builder
+	if err := download(&b); err != nil {
+		return err
+	}
+	m.binary, m.settings, m.installed = b.String(), string(settings), true
+	return nil
+}
+
 func newRunner(t *testing.T, s *server, m *mesh) *Runner {
 	t.Helper()
 	srv := httptest.NewServer(s)
@@ -198,9 +230,10 @@ func newRunner(t *testing.T, s *server, m *mesh) *Runner {
 	}
 	r := &Runner{
 		Client: c, Store: store,
-		Facts: func() agentproto.Facts { return agentproto.Facts{Hostname: "h"} },
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Key:   func() ed25519.PublicKey { return jobPub },
+		Facts:    func() agentproto.Facts { return agentproto.Facts{Hostname: "h"} },
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Key:      func() ed25519.PublicKey { return jobPub },
+		DeviceID: "dev-1",
 	}
 	if m != nil {
 		r.Mesh = m

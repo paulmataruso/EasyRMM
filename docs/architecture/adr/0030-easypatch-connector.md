@@ -314,6 +314,9 @@ What follows was decided in review.
   left out, as the job's own times say the same). Long lists show their
   first entries (25 updates, 20 timeline entries, 5 CVEs an update) and the
   rest on request.
+* *Amended by ADR-0069: the connector also asks the engine for
+  `RepairCompanion` and `CollectLogs` jobs and reads a job's `Diagnostics`,
+  kept apart from its message, 256 KiB at most, 14 days in the engine.*
 * **Reads** (decided in review): the job refreshes every 4 seconds while
   it runs, reading only the job; what the engine knows of its updates
   comes from two lists of the device's updates, so it is read apart

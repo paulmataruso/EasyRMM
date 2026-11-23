@@ -1401,6 +1401,10 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("delivery_count");
 
+                    b.Property<string>("Diagnostics")
+                        .HasColumnType("text")
+                        .HasColumnName("diagnostics");
+
                     b.Property<Guid>("EndpointId")
                         .HasColumnType("uuid")
                         .HasColumnName("endpoint_id");

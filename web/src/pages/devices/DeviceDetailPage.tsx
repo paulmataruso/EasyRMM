@@ -25,6 +25,7 @@ import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
+import { EasyRmmRepairCard, PatchingRepairCard, ReconnectRemoteButton, RemoteRepairCard, RepairEasyRmmButton, RepairPatchingButton } from "./remoteRepair";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
@@ -43,6 +44,21 @@ export function remoteAccessState(
     };
   }
   return { label: "Not installed" };
+}
+
+/** What is known about a MeshAgent that is not connected while its device checks in (ADR-0069). */
+function NotConnected({ device: d }: { device: Device }) {
+  const r = d.remote;
+  return (
+    <>
+      The device is checking in, but its MeshAgent is not connected to MeshCentral
+      {r?.reason === "not_connected" && r.since ? <> (since <span title={formatDateTime(r.since)}>{formatRelative(r.since)}</span>)</> : ""}. Remote sessions can
+      start once it reconnects; this page checks every 30 seconds.
+      {r?.host && r.reason === "other_server" && <span className="mt-1 block text-muted">Its settings name {r.host}.</span>}
+      {r?.error && <span className="mt-1 block break-words text-muted">Last error on the device: {r.error}</span>}
+      {d.canReconnectRemote && <span className="mt-1 block text-muted">Reconnect remote access restarts MeshAgent and, if that does not help, puts it back in place.</span>}
+    </>
+  );
 }
 
 export function DeviceDetailPage() {
@@ -117,6 +133,9 @@ export function DeviceDetailPage() {
                 Run script
               </Button>
             )}
+            <ReconnectRemoteButton device={d} />
+            <RepairPatchingButton device={d} />
+            <RepairEasyRmmButton device={d} />
             {can("device.edit") && (
               <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(true)}>
                 Move to…
@@ -132,11 +151,13 @@ export function DeviceDetailPage() {
 
       {kinds.length > 0 && reason && (
         <Alert tone="info" className="mb-5" title={reason}>
-          {d.online
-            ? "The device is checking in, but its MeshAgent is not connected to MeshCentral. Remote sessions can start once it reconnects; this page checks every 30 seconds."
-            : `Last seen ${formatRelative(d.lastSeenAt)}. Remote sessions can start again once the device reconnects; this page checks every 30 seconds.`}
+          {d.online ? <NotConnected device={d} /> : `Last seen ${formatRelative(d.lastSeenAt)}. Remote sessions can start again once the device reconnects; this page checks every 30 seconds.`}
         </Alert>
       )}
+
+      <RemoteRepairCard device={d} />
+      <PatchingRepairCard device={d} />
+      <EasyRmmRepairCard device={d} />
 
       {hasAgent && <Tabs tabs={tabs} active={tab} onChange={showTab} />}
 

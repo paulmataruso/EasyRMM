@@ -64,7 +64,10 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   `easyrmm-meshagent.service`. `easyrmm-agent enroll` followed by `run` (for
   containers and other machines without systemd) starts MeshAgent as a child
   process and restarts it when it exits. MeshAgent runs without arguments, as
-  a persistent agent; its database lives next to the binary.
+  a persistent agent; its database lives next to the binary. *Amended by
+  ADR-0069: the agent reports MeshAgent's state with each heartbeat, and
+  restarts it or puts its program and settings back when the server's signed
+  instruction says so, keeping its database.*
 * **Correlation.** After installing MeshAgent the agent reads its node
   identifier (`meshagent -nodeid`) and reports it in its heartbeat. The
   server links the MeshCentral node to the enrolled device, but only within

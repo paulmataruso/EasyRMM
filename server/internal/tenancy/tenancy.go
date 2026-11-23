@@ -38,11 +38,15 @@ type Organization struct {
 	Name string    `json:"name"`
 	// Timezone is the IANA time zone patching reports for the
 	// organization use.
-	Timezone  string    `json:"timezone"`
-	Notes     string    `json:"notes"`
-	SiteCount int       `json:"siteCount"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Timezone string `json:"timezone"`
+	Notes    string `json:"notes"`
+	// AutoRepair says whether the server starts repairs of the
+	// organization's devices by itself (ADR-0069); repairs by hand are
+	// always available.
+	AutoRepair bool      `json:"autoRepair"`
+	SiteCount  int       `json:"siteCount"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 	// CanManage tells the client whether the caller may edit it.
 	CanManage bool `json:"canManage"`
 	// CanRename tells the client whether the caller may change its name:
@@ -139,6 +143,9 @@ type OrganizationInput struct {
 	// unchanged for an existing one.
 	Timezone string `json:"timezone"`
 	Notes    string `json:"notes"`
+	// AutoRepair turns the server's automatic repairs on or off for the
+	// organization (org.manage, as the rest of the update); nil leaves it.
+	AutoRepair *bool `json:"autoRepair"`
 }
 
 // SiteInput is the part of a site site.manage edits; its address and
@@ -223,14 +230,14 @@ func ValidTimezone(tz string) bool { return docs.ValidZone(tz) }
 // Organizations
 // ---------------------------------------------------------------------------
 
-const orgColumns = `o.id, o.name, o.timezone, o.notes, o.created_at, o.updated_at,
+const orgColumns = `o.id, o.name, o.timezone, o.notes, o.auto_repair, o.created_at, o.updated_at,
 	(SELECT count(*) FROM sites s WHERE s.organization_id = o.id),
 	o.main_phone, o.main_email, o.website, o.business_hours, o.after_hours_note`
 
 func scanOrg(row pgx.Row) (Organization, error) {
 	var o Organization
 	var hours []byte
-	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount,
+	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.AutoRepair, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount,
 		&o.MainPhone, &o.MainEmail, &o.Website, &hours, &o.AfterHoursNote)
 	if err == nil {
 		o.BusinessHours, err = docs.ParseHours(hours)
@@ -357,14 +364,16 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 	}
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		var oldName string
-		if err := tx.QueryRow(ctx, `SELECT name FROM organizations WHERE id = $1 FOR UPDATE`, id).Scan(&oldName); err != nil {
+		var wasAuto bool
+		if err := tx.QueryRow(ctx, `SELECT name, auto_repair FROM organizations WHERE id = $1 FOR UPDATE`, id).Scan(&oldName, &wasAuto); err != nil {
 			return err
 		}
 		if oldName != in.Name && !c.CanGlobal(rbac.PermOrgManage) {
 			return apperr.Invalid("name", "Only a Super Administrator can rename an organization.")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE organizations SET name = $2, timezone = coalesce(nullif($3, ''), timezone), notes = $4 WHERE id = $1`,
-			id, in.Name, in.Timezone, in.Notes); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE organizations SET name = $2, timezone = coalesce(nullif($3, ''), timezone), notes = $4,
+				auto_repair = coalesce($5, auto_repair) WHERE id = $1`,
+			id, in.Name, in.Timezone, in.Notes, in.AutoRepair); err != nil {
 			return err
 		}
 		details := map[string]any{"name": in.Name}
@@ -373,6 +382,9 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 		}
 		if in.Timezone != "" {
 			details["timezone"] = in.Timezone
+		}
+		if in.AutoRepair != nil && *in.AutoRepair != wasAuto {
+			details["autoRepair"] = *in.AutoRepair
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "organization.update", Outcome: audit.Success,
 			OrganizationID: id, TargetType: "organization", TargetID: id.String(), Details: details})

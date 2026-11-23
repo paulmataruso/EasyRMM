@@ -334,6 +334,10 @@ public sealed record AgentPlatform(
     /// <summary>Removes installed updates for administrators' uninstall-update jobs (Windows).</summary>
     public Removal.IUpdateRemover? UpdateRemover { get; init; }
 
+    /// <summary>Restarts and repairs the EasyRMM agent and MeshAgent and collects the agents' logs for EasyRMM's repair jobs
+    /// (ADR-0069); Windows and Linux.</summary>
+    public Companion.ICompanionRepair? CompanionRepair { get; init; }
+
     public IUserInteraction Users => UserInteraction ?? (SessionCounter is { } counter ? new SessionsOnlyInteraction(counter) : NoUserInteraction.Instance);
 
     /// <summary>The update service downloads updates one by one without installing them (Windows Update keeps the downloads for
@@ -379,6 +383,12 @@ public sealed record AgentPlatform(
             if (SupportsDownloadOnly)
             {
                 list.Add(AgentCapabilities.DownloadUpdates);
+            }
+
+            if (CompanionRepair is not null)
+            {
+                list.Add(AgentCapabilities.RepairCompanion);
+                list.Add(AgentCapabilities.CollectLogs);
             }
 
             return list;

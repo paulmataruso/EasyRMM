@@ -447,6 +447,8 @@ The report includes whether MDM update policies are present.
 | `NotifyUser` | Shows a preset message to signed-in users (Windows) |
 | `AgentUpdate` | Installs a newer, release-signed agent package |
 | `UninstallAgent` | Removes the agent's own package |
+| `RepairCompanion` | Restarts the EasyRMM agent's or MeshAgent's service, or repairs the EasyRMM agent from its recovery copy ([ADR-0069](adr/0069-recovery-agent-logs-and-one-device-tree.md)); a fixed target and step, never a command (Windows and Linux) |
+| `CollectLogs` | Returns the newest 500 lines of the EasyRMM agent's, MeshAgent's and its own log, redacted (Windows and Linux) |
 
 ![A patch job's lifecycle: queued, leased to the EasyPatch agent at its next check-in, acknowledged and run; it may wait for a restart and run again, goes back to the queue when a lease expires (at most five deliveries by default), and ends completed, failed, cancelled or expired](../images/diagrams/patch-job-lifecycle.svg)
 
@@ -462,11 +464,13 @@ The report includes whether MDM update policies are present.
   delivered, acknowledged or running. `NotifyUser` jobs are the exception
   (up to five per check-in). While an install waits in `WaitingForReboot`,
   scans and inventory still run but further installs wait. Queued jobs go
-  in this order: scans, update removals, installs, downloads, restarts,
-  agent updates.
+  in this order: repairs and log collections (they expire in 30 minutes
+  and wait for a running job), scans, update removals, installs, downloads,
+  restarts, agent updates.
 * **Capabilities.** Agents report what they support (`restart`,
   `notify-user`, `tray`, `windows-update-policy`, `self-update`,
-  `app-updates`, `uninstall`, `uninstall-updates`, `download-updates`). Jobs
+  `app-updates`, `uninstall`, `uninstall-updates`, `download-updates`,
+  `repair-companion`, `collect-logs`). Jobs
   that need one are created and delivered only for agents that report it;
   otherwise the API answers `409 agent_upgrade_required`.
 * **Limits.** Installs are delivered only while the global and per-site

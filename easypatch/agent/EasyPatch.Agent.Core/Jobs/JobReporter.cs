@@ -30,7 +30,8 @@ public sealed class JobReporter
         string? errorCode = null,
         string? errorMessage = null,
         bool rebootRequired = false,
-        JobResultSummary? result = null)
+        JobResultSummary? result = null,
+        string? diagnostics = null)
     {
         var itemList = items?.ToList();
         var sequence = _state.Update(s =>
@@ -59,6 +60,7 @@ public sealed class JobReporter
             RebootRequired = rebootRequired,
             Items = itemList ?? [],
             Result = result,
+            Diagnostics = diagnostics,
         };
         _outbox.EnqueueJobStatus(jobId, report);
         return report;

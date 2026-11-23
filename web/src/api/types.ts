@@ -168,6 +168,8 @@ export interface Organization extends OrganizationDetails {
   /** IANA time zone; patching's monthly reports use it. */
   timezone: string;
   notes: string;
+  /** Whether the server starts repairs of the organization's devices by itself (ADR-0069); org.manage changes it. */
+  autoRepair: boolean;
   siteCount: number;
   createdAt: string;
   updatedAt: string;
@@ -184,6 +186,8 @@ export interface OrganizationInput {
   name: string;
   timezone: string;
   notes: string;
+  /** Left out, it is not changed. */
+  autoRepair?: boolean;
 }
 
 /** A site's address and hours (ADR-0066): empty without doc.view. */
@@ -431,6 +435,14 @@ export interface Device {
   canRunScripts: boolean;
   /** The caller may update the device's agent (device.edit) and it has one (ADR-0027). */
   canUpdateAgent: boolean;
+  /** The caller may repair remote access here: device.edit, the EasyRMM agent, remote access on (ADR-0069). */
+  canReconnectRemote: boolean;
+  /** device.edit here, the EasyRMM agent, and a linked EasyPatch agent (ADR-0069). */
+  canRepairPatching: boolean;
+  /** patch.manage here, the EasyRMM agent, and a linked EasyPatch agent: the EasyPatch agent can repair the EasyRMM agent (ADR-0069). */
+  canRepairEasyRmm: boolean;
+  /** Whether remote access is connected and, when not, why; null without the EasyRMM agent (ADR-0069). */
+  remote: RemoteStatus | null;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
   canManageSoftware: boolean;
   /** The caller may check the device's hardening (script.run), on Linux with the agent (ADR-0051). */
@@ -445,6 +457,51 @@ export interface Device {
   hardening: HardeningSummary | null;
   /** Its disks' health, summed up; null while its agent has reported none (ADR-0065). */
   diskHealth: DiskHealthSummary | null;
+}
+
+/** Why a device's remote access is not connected (ADR-0069, "MeshAgent watchdog"). */
+export type RemoteReason =
+  | "connected"
+  | "device_offline"
+  | "unknown"
+  | "not_installed"
+  | "not_running"
+  | "other_server"
+  | "other_group"
+  | "not_connected";
+
+export interface RemoteStatus {
+  reason: RemoteReason;
+  /** The reason in a sentence, without a time. */
+  message: string;
+  /** When MeshCentral's view of the device last changed; set for not_connected. */
+  since: string | null;
+  /** The MeshCentral host MeshAgent's settings name, when its agent reported it. */
+  host?: string;
+  /** The last error MeshAgent had on the device, when reported. */
+  error?: string;
+  /** When the EasyRMM agent last reported MeshAgent's state. */
+  reportedAt: string | null;
+}
+
+/** A repair of one of a device's agents (ADR-0069, Part R). */
+export type RepairTarget = "easyrmm-agent" | "meshagent" | "easypatch-agent";
+export type RepairStepName = "restart" | "repair";
+export type RepairStepState = "pending" | "sent" | "done" | "failed";
+export type RepairState = "running" | "succeeded" | "failed";
+export type RepairTrigger = "manual" | "automatic";
+
+export interface Repair {
+  id: string;
+  target: RepairTarget;
+  carriedBy: RepairTarget;
+  trigger: RepairTrigger;
+  state: RepairState;
+  steps: { id: string; step: RepairStepName; state: RepairStepState; sentAt?: string; doneAt?: string; error?: string; note?: string }[];
+  startedAt: string;
+  endedAt: string | null;
+  /** Why a failed repair failed. */
+  error: string;
 }
 
 /**
@@ -1488,8 +1545,10 @@ export interface SoftwareDevice {
 // Monitoring and alerts (ADR-0019) ----------------------------------------------------------------
 
 /** What a policy watches: no check-in, processor, memory or the fullest disk at a percentage, or each disk's health
- * with one of its checks (ADR-0065). */
-export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health";
+ * with one of its checks (ADR-0065). remote_down: the EasyRMM agent checks in but MeshAgent is not connected;
+ * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in; repair_failed: an automatic repair
+ * ended with its agent still broken, an alert of no policy (ADR-0069). */
+export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health" | "remote_down" | "agent_silent" | "repair_failed";
 /** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
  * temperature (°C, or the drive's own limit without a threshold). */
 export type DiskCheck = "failing" | "errors" | "pending" | "wear" | "temperature";
@@ -1572,6 +1631,20 @@ export interface AlertEntry {
   resolvedBy?: string;
   resolution?: AlertResolution;
   canManage: boolean;
+  /** The repairs tried on the device since the alert opened; set when one alert is read, for remote access alerts
+   * (ADR-0069). */
+  repairs?: AlertRepair[];
+}
+
+/** A repair tried on a device while an alert was open. */
+export interface AlertRepair {
+  target: RepairTarget;
+  trigger: RepairTrigger;
+  state: RepairState;
+  startedAt: string;
+  endedAt: string | null;
+  error: string;
+  steps: { step: RepairStepName; state: RepairStepState; error?: string }[];
 }
 
 /** The measurement a processor, memory or disk use alert watches, around its window (GET /alerts/{id}/metrics): from

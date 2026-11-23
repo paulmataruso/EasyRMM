@@ -25,6 +25,10 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	if err != nil {
 		return nil, apperr.Invalid("facts", err.Error())
 	}
+	var meshState []byte
+	if req.MeshAgent != nil {
+		meshState = s.meshState(ctx, d.SiteID, *req.MeshAgent)
+	}
 	linked := false
 	var (
 		update    *agentproto.SignedUpdate
@@ -35,9 +39,11 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
 				hostname = $2, os_description = $3, platform = $4, agent_version = $5, agent_arch = $6,
-				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now()
+				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now(),
+				meshagent_state = coalesce($8::jsonb, meshagent_state),
+				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
-			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256)
+			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState)
 		if err != nil {
 			return err
 		}

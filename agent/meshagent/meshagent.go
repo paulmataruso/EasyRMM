@@ -63,8 +63,13 @@ type Manager struct {
 
 	mu    sync.Mutex
 	child *exec.Cmd
+	// alive: the child process runs (set under mu).
+	alive bool
 	// supervised ends when the child supervisor has stopped MeshAgent.
 	supervised sync.WaitGroup
+
+	errMu   sync.Mutex
+	lastErr string
 }
 
 // NewManager returns a manager for this machine's MeshAgent.
@@ -165,6 +170,21 @@ func (m *Manager) Installed() bool {
 // Install writes MeshAgent and its settings and starts it. download writes
 // the binary.
 func (m *Manager) Install(ctx context.Context, download func(io.Writer) error, settings []byte) error {
+	return m.note(m.write(ctx, download, settings, false))
+}
+
+// Repair puts MeshAgent's program, settings and service back in place: it
+// downloads the program first, so that a download that fails leaves what is
+// there alone, then stops MeshAgent, writes both again and starts it. Its
+// identity, meshagent.db, is not touched: the node id and keys stay
+// (ADR-0069).
+func (m *Manager) Repair(ctx context.Context, download func(io.Writer) error, settings []byte) error {
+	return m.note(m.write(ctx, download, settings, true))
+}
+
+// write is Install and Repair. replace stops a running MeshAgent once the
+// program is downloaded and starts the new one.
+func (m *Manager) write(ctx context.Context, download func(io.Writer) error, settings []byte, replace bool) error {
 	if m.Windows {
 		// MeshAgent keeps its identity in meshagent.db beside it; Program
 		// Files lets every user read.
@@ -190,17 +210,105 @@ func (m *Manager) Install(ctx context.Context, download func(io.Writer) error, s
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if replace && m.asService() && m.Services != nil {
+		// A stopped or missing service is what a repair is for: the stop's
+		// failure is not the repair's. A program that stays locked fails
+		// the rename below.
+		if err := m.Services.Stop(ctx, m.service().Name); err != nil {
+			m.Log.Warn("stopping MeshAgent before its repair failed", "error", err)
+		}
+	}
 	if err := m.writeSettings(settings); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), m.binary()); err != nil {
 		return err
 	}
+	if replace && !m.asService() {
+		m.killChild()
+	}
 	return m.Start(ctx)
 }
 
+// Restart restarts MeshAgent: its service, or its child process, which the
+// supervisor then starts again. A MeshAgent that is not installed, or whose
+// service is gone, is an error: it needs Repair.
+func (m *Manager) Restart(ctx context.Context) error {
+	if !m.Installed() {
+		return m.note(errors.New("MeshAgent is not installed"))
+	}
+	switch {
+	case m.asService():
+		return m.note(m.Services.Restart(ctx, m.service().Name))
+	case m.Windows:
+		return m.note(errors.New("MeshAgent runs as a Windows service only"))
+	}
+	m.mu.Lock()
+	running := m.child != nil
+	m.mu.Unlock()
+	if !running {
+		return m.note(m.Start(ctx))
+	}
+	m.killChild()
+	return m.note(nil)
+}
+
+// killChild kills the child MeshAgent; its supervisor starts it again.
+func (m *Manager) killChild() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.child != nil && m.child.Process != nil {
+		_ = m.child.Process.Kill()
+	}
+}
+
+// State reports what the heartbeat tells the server about MeshAgent
+// (ADR-0069).
+func (m *Manager) State(ctx context.Context) agentproto.MeshAgentState {
+	st := agentproto.MeshAgentState{Installed: m.Installed()}
+	if b, err := os.ReadFile(m.settings()); err == nil {
+		if h := agentproto.MeshServerHost(b); len(h) <= agentproto.MaxMeshHost {
+			st.Host = h
+		}
+	}
+	switch {
+	case !st.Installed:
+	case m.asService():
+		switch m.Services.State(ctx, m.service().Name) {
+		case "active", "running":
+			st.Running = true
+		}
+	default:
+		m.mu.Lock()
+		st.Running = m.alive
+		m.mu.Unlock()
+	}
+	m.errMu.Lock()
+	st.Error = m.lastErr
+	m.errMu.Unlock()
+	return st
+}
+
+// note records err as the last error MeshAgent had, or forgets it for nil,
+// and returns err.
+func (m *Manager) note(err error) error {
+	m.errMu.Lock()
+	defer m.errMu.Unlock()
+	if err == nil {
+		m.lastErr = ""
+		return nil
+	}
+	m.lastErr = err.Error()
+	if r := []rune(m.lastErr); len(r) > agentproto.MaxMeshAgentError {
+		m.lastErr = string(r[:agentproto.MaxMeshAgentError])
+	}
+	return err
+}
+
 // Start runs an installed MeshAgent.
-func (m *Manager) Start(ctx context.Context) error {
+func (m *Manager) Start(ctx context.Context) error { return m.note(m.start(ctx)) }
+
+func (m *Manager) start(ctx context.Context) error {
 	if !m.Installed() {
 		return errors.New("MeshAgent is not installed")
 	}
@@ -227,7 +335,7 @@ func (m *Manager) startChild(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	m.child = cmd
+	m.child, m.alive = cmd, true
 	m.supervised.Go(func() { m.supervise(ctx, cmd) })
 	return nil
 }
@@ -251,6 +359,9 @@ func (m *Manager) spawn(ctx context.Context) (*exec.Cmd, error) {
 func (m *Manager) supervise(ctx context.Context, cmd *exec.Cmd) {
 	for {
 		err := cmd.Wait()
+		m.mu.Lock()
+		m.alive = false
+		m.mu.Unlock()
 		if ctx.Err() != nil {
 			return
 		}
@@ -266,7 +377,7 @@ func (m *Manager) supervise(ctx context.Context, cmd *exec.Cmd) {
 			continue
 		}
 		m.mu.Lock()
-		m.child, cmd = next, next
+		m.child, cmd, m.alive = next, next, true
 		m.mu.Unlock()
 	}
 }

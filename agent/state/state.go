@@ -3,6 +3,7 @@
 package state
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -70,6 +71,8 @@ var layout = [][]string{
 	{filepath.Join("jobs", "journal", "*")},
 	{"easypatch"},
 	{filepath.Join("easypatch", "*")},
+	{RecoveryDir},
+	{filepath.Join(RecoveryDir, "*")},
 }
 
 // Open returns the store of the agent's state folder, p.State(), once the
@@ -82,6 +85,48 @@ func Open(p host.Paths) (s Store, checked host.StateCheck, err error) {
 		return Store{}, checked, fmt.Errorf("checking the agent's state folder %s: %w", p.State(), err)
 	}
 	return Store{dir: p.State()}, checked, nil
+}
+
+// RecoveryDir is the folder of the agent's recovery copy in its state
+// folder (ADR-0069).
+const RecoveryDir = "recovery"
+
+// RecoveryCopy is the path of the recovery copy of an executable kept under
+// the name of exe's own extension.
+func (s Store) RecoveryCopy(exe string) string {
+	return filepath.Join(s.dir, RecoveryDir, "easyrmm-agent"+filepath.Ext(exe))
+}
+
+// KeepRecovery makes the recovery copy: the program at exe, which is the
+// build that is running, in the recovery folder, protected like the rest of
+// the state folder. It is written beside the copy and renamed over it, and
+// not at all when the copy is the same program already.
+func (s Store) KeepRecovery(exe string) error {
+	if s.dir == "" {
+		return errNotOpened
+	}
+	dir := filepath.Join(s.dir, RecoveryDir)
+	if err := host.Protect(dir); err != nil {
+		return fmt.Errorf("protecting %s: %w", dir, err)
+	}
+	dst := s.RecoveryCopy(exe)
+	src, err := os.ReadFile(exe) //nolint:gosec // the agent's own, running executable
+	if err != nil {
+		return err
+	}
+	if cur, err := os.ReadFile(dst); err == nil && bytes.Equal(cur, src) { //nolint:gosec // the recovery copy
+		return nil
+	}
+	return writeFile(dst, src, 0o700)
+}
+
+// RemoveRecovery deletes the recovery copy, which goes first when the agent
+// is removed. A folder that is not there is not an error.
+func (s Store) RemoveRecovery() error {
+	if s.dir == "" {
+		return errNotOpened
+	}
+	return os.RemoveAll(filepath.Join(s.dir, RecoveryDir))
 }
 
 // errNotOpened stops a store that Open did not make.

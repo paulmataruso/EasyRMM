@@ -5,7 +5,6 @@ package app_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,7 +54,9 @@ func TestPowerShell7API(t *testing.T) {
 		defer cancel()
 		if resp, err := pc.ac.Poll(short, accepts); err == nil && len(resp.Jobs) > 0 {
 			t.Fatalf("a poll got %+v", resp)
-		} else if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		} else if err != nil && short.Err() == nil {
+			// Once the second is up, cutting the poll off can surface as
+			// the deadline or as the connection's EOF; either is expected.
 			t.Fatal(err)
 		}
 	}

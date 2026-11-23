@@ -623,6 +623,10 @@ type JobDetail struct {
 	CancelRequestedAt *time.Time `json:"cancelRequestedAt"`
 	Items             []JobItem  `json:"items"`
 	Events            []JobEvent `json:"events"`
+	// Diagnostics are the redacted log lines and facts a repair or a log
+	// collection returned, apart from its message: at most 256 KiB, kept by
+	// the engine for 14 days after the job ended (ADR-0069).
+	Diagnostics string `json:"diagnostics"`
 }
 
 // EndpointJobs lists one page of an endpoint's jobs, newest first.
@@ -641,7 +645,7 @@ const statusCanceled = "Cancelled" //nolint:misspell // EasyPatch's enum value
 var (
 	JobStatuses = []string{"Queued", "Delivered", "Acknowledged", "Running", "Completed", "Failed", statusCanceled, "Expired", "WaitingForReboot"}
 	JobTypes    = []string{"UpdateScan", "InstallUpdates", "InventoryRefresh", "Restart", "NotifyUser", "AgentUpdate", "UninstallAgent",
-		"UninstallUpdate", "DownloadUpdates"}
+		"UninstallUpdate", "DownloadUpdates", "RepairCompanion", "CollectLogs"}
 	JobTriggers = []string{"Manual", "Scheduled", "System"}
 )
 

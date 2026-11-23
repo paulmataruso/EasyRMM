@@ -16,7 +16,22 @@ const SEVERITIES: { value: AlertSeverity; label: string }[] = [
   { value: "critical", label: "Critical" },
 ];
 
-const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90, disk_health: 0 };
+const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90, disk_health: 0, remote_down: 0, agent_silent: 0, repair_failed: 0 };
+
+const MINUTES_LABEL: Partial<Record<AlertKind, string>> = {
+  offline: "Without a check-in for",
+  remote_down: "Not connected for",
+  agent_silent: "Silent for",
+};
+
+const MINUTES_HELP: Partial<Record<AlertKind, string>> = {
+  offline: "A device is checked in while its EasyRMM agent or MeshAgent is connected.",
+  remote_down: "Opens when the EasyRMM agent checks in but MeshAgent is not connected to MeshCentral for this long, and resolves when MeshCentral sees it connected.",
+  agent_silent: "Opens when MeshCentral sees MeshAgent connected but the EasyRMM agent has not checked in for this long, and resolves when it checks in.",
+};
+
+/** The kinds that take minutes and no threshold: no check-in, remote access down, EasyRMM agent silent (ADR-0069). */
+const MINUTES_ONLY: AlertKind[] = ["offline", "remote_down", "agent_silent"];
 
 /** Each disk health check's threshold when chosen: the shared policies' defaults (ADR-0065, "Alerts"); 60 °C when a
  * temperature check is given one instead of each drive's own limit. */
@@ -160,7 +175,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     });
   const err = (field: string) => missing[field] ?? fieldError(save.error, field);
 
-  const offline = kind === "offline";
+  const offline = MINUTES_ONLY.includes(kind);
   const diskHealth = kind === "disk_health";
   const temperature = diskHealth && checkName === "temperature";
   // Offline and the failing check take no threshold; a temperature check none when it uses each drive's own limit.
@@ -235,7 +250,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     </Field>
   );
   const minutesField = (
-    <Field label={offline ? "Without a check-in for" : "For"} htmlFor={minutesId} error={err("minutes")}>
+    <Field label={MINUTES_LABEL[kind] ?? "For"} htmlFor={minutesId} error={err("minutes")}>
       <div className="flex items-center gap-1.5">
         <Input
           id={minutesId}
@@ -366,7 +381,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
                 setKind(k);
                 if (k === "disk_health") {
                   if (kind !== "disk_health") chooseCheck(checkName);
-                } else if (kind === "offline" || kind === "disk_health") {
+                } else if (MINUTES_ONLY.includes(kind) || kind === "disk_health") {
                   setThreshold(String(DEFAULT_THRESHOLD[k]));
                 }
                 edited("threshold");
@@ -416,7 +431,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
           )}
           <p className="-mt-1.5 text-xs text-muted">
             {offline
-              ? "A device is checked in while its EasyRMM agent or MeshAgent is connected. 3 to 1,440 minutes."
+              ? `${MINUTES_HELP[kind] ?? ""} 3 to 1,440 minutes.`
               : diskHealth
                 ? checkHelp(checkName, driveLimit)
                 : `Every measurement in that time must reach the percentage${kind === "disk" ? " on the fullest filesystem" : ""}, and the alert resolves after 5 quiet minutes. 1 to 1,440 minutes.`}

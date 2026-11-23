@@ -34,6 +34,9 @@ type Service struct {
 	// patching is not set up.
 	engine *engine
 
+	// poll is what the polls of the agents' check-ins remember.
+	poll agentPoll
+
 	// kick starts a reconcile pass (Kick); sync is what passes remember.
 	kick chan struct{}
 	sync syncState

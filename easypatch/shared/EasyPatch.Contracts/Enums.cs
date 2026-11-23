@@ -46,6 +46,14 @@ public enum JobType
     /// installation inside the window starts with the downloads done. Uses the install payload; <c>NotAfter</c> is the start of
     /// the window.</summary>
     DownloadUpdates,
+
+    /// <summary>Restart the EasyRMM agent's or MeshAgent's service, or repair the EasyRMM agent from its recovery copy (ADR-0069).
+    /// A fixed action chosen by <see cref="EasyPatch.Contracts.Agent.RepairCompanionPayload"/>, never a command line.</summary>
+    RepairCompanion,
+
+    /// <summary>Return the newest lines of the EasyRMM agent's, MeshAgent's and this agent's logs, redacted, in the job's
+    /// diagnostics (ADR-0069).</summary>
+    CollectLogs,
 }
 
 /// <summary>How a <see cref="JobType.Restart"/> job treats signed-in users. With nobody signed in, every mode restarts at once.</summary>
