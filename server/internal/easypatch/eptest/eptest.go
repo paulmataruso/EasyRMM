@@ -645,6 +645,16 @@ func (j *Job) summary() map[string]any {
 }
 
 func (j *Job) detail() map[string]any {
+	d := j.detailBase()
+	// Sent only when there is something, so that the shape check against
+	// the last release's engine, which has no such field, still holds.
+	if j.Diagnostics != "" {
+		d["diagnostics"] = j.Diagnostics
+	}
+	return d
+}
+
+func (j *Job) detailBase() map[string]any {
 	items := j.Items
 	if items == nil {
 		items = []map[string]any{jobItem(map[string]any{"updateGuid": uuid.New(), "title": "openssl", "category": "Security"})}
@@ -652,7 +662,7 @@ func (j *Job) detail() map[string]any {
 	return map[string]any{
 		"summary": j.summary(), "installMode": nil, "notBefore": j.NotBefore, "deliveredAt": nil, "acknowledgedAt": nil,
 		"lastProgressAt": j.LastProgressAt, "deliveryCount": 0, "retryOfJobId": nil, "cancelRequestedAt": nil,
-		"items": items, "diagnostics": nullable(j.Diagnostics),
+		"items": items,
 		"events": []map[string]any{{"id": 1, "endpointId": j.Endpoint, "hostname": j.Hostname, "type": "JobCreated",
 			"severity": "Info", "message": "Job queued.", "jobId": j.ID, "createdAt": j.CreatedAt}},
 	}
