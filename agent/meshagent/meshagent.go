@@ -213,21 +213,152 @@ func (m *Manager) write(ctx context.Context, download func(io.Writer) error, set
 	if replace && m.asService() && m.Services != nil {
 		// A stopped or missing service is what a repair is for: the stop's
 		// failure is not the repair's. A program that stays locked fails
-		// the rename below.
-		if err := m.Services.Stop(ctx, m.service().Name); err != nil {
+		// the replacement below.
+		if err := m.stop(ctx); err != nil {
 			m.Log.Warn("stopping MeshAgent before its repair failed", "error", err)
 		}
 	}
 	if err := m.writeSettings(settings); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), m.binary()); err != nil {
+	if replace && m.Windows {
+		// Windows refuses to replace a running program, and MeshAgent's
+		// session helpers run from the same one.
+		m.endImage()
+		m.sweep(tmp.Name())
+	}
+	if err := m.replaceBinary(tmp.Name()); err != nil {
 		return err
 	}
 	if replace && !m.asService() {
 		m.killChild()
 	}
-	return m.Start(ctx)
+	if err := m.Start(ctx); err != nil {
+		return err
+	}
+	if replace && m.Windows && m.asService() {
+		return m.waitRunning(ctx)
+	}
+	return nil
+}
+
+// forceStopper is a service manager that can end a service that ignores its
+// stop request: Windows'.
+type forceStopper interface {
+	ForceStop(ctx context.Context, name, image string) ([]string, error)
+}
+
+// stop stops MeshAgent's service. On Windows, a service that has not stopped
+// within 30 seconds is ended by force: its process and every process that
+// runs MeshAgent's program from exactly this folder, never another
+// MeshAgent by name (ADR-0069).
+func (m *Manager) stop(ctx context.Context) error {
+	name := m.service().Name
+	err := m.Services.Stop(ctx, name)
+	if err == nil || !m.Windows {
+		return err
+	}
+	fs, ok := m.Services.(forceStopper)
+	if !ok {
+		return err
+	}
+	done, ferr := fs.ForceStop(ctx, name, m.binary())
+	if ferr != nil {
+		return fmt.Errorf("%w; ending it by force failed: %w (terminated: %s)", err, ferr, listOrNone(done))
+	}
+	m.Log.Warn("MeshAgent did not stop; its processes were terminated", "service", name, "terminated", done)
+	return nil
+}
+
+func listOrNone(l []string) string {
+	if len(l) == 0 {
+		return "none"
+	}
+	return strings.Join(l, ", ")
+}
+
+// endImage terminates what still runs MeshAgent's program.
+func (m *Manager) endImage() {
+	done, err := host.StopImage(m.binary())
+	if len(done) > 0 {
+		m.Log.Warn("terminated MeshAgent processes that still ran", "terminated", done)
+	}
+	if err != nil {
+		m.Log.Warn("terminating MeshAgent processes failed", "error", err)
+	}
+}
+
+// sweep deletes what earlier failed repairs left in MeshAgent's folder,
+// except keep.
+func (m *Manager) sweep(keep string) {
+	left, _ := filepath.Glob(filepath.Join(m.Dir, ".meshagent-*"))
+	for _, p := range left {
+		if p != keep {
+			_ = os.Remove(p)
+		}
+	}
+}
+
+// Delays of the replacement of a program; tests shorten them.
+var (
+	renameTries   = 5
+	renameBackoff = 200 * time.Millisecond
+	runningWait   = 30 * time.Second
+)
+
+// replaceBinary moves the new program over MeshAgent's. On Windows,
+// antivirus can hold a new file for a moment, so a denied rename is tried
+// again; if it stays denied, the old program is moved aside to a dot-name in
+// the same folder, the new one moved in and the old deleted, at the next
+// restart when it is still locked.
+func (m *Manager) replaceBinary(src string) error {
+	dst := m.binary()
+	err := os.Rename(src, dst)
+	if err == nil || !m.Windows {
+		return err
+	}
+	for i := 1; i < renameTries && err != nil; i++ {
+		time.Sleep(time.Duration(i) * renameBackoff)
+		err = os.Rename(src, dst)
+	}
+	if err == nil {
+		return nil
+	}
+	aside := filepath.Join(m.Dir, fmt.Sprintf(".meshagent-old-%d", time.Now().UnixNano()))
+	if aerr := os.Rename(dst, aside); aerr != nil {
+		return fmt.Errorf("%w; moving the old program aside failed too: %w", err, aerr)
+	}
+	if rerr := os.Rename(src, dst); rerr != nil {
+		_ = os.Rename(aside, dst)
+		return rerr
+	}
+	later, derr := host.RemoveExecutable(aside)
+	switch {
+	case derr != nil:
+		m.Log.Warn("the old MeshAgent program stays in place until it is cleaned up", "file", aside, "error", derr)
+	case later:
+		m.Log.Warn("the old MeshAgent program is deleted at the next restart", "file", aside)
+	}
+	return nil
+}
+
+// waitRunning waits for MeshAgent's service to report running.
+func (m *Manager) waitRunning(ctx context.Context) error {
+	deadline := time.Now().Add(runningWait)
+	for {
+		st := m.Services.State(ctx, m.service().Name)
+		if st == "running" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the %s service is %s, not running, after it was started", m.service().Name, st)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // Restart restarts MeshAgent: its service, or its child process, which the
@@ -239,6 +370,16 @@ func (m *Manager) Restart(ctx context.Context) error {
 	}
 	switch {
 	case m.asService():
+		if m.Windows {
+			// Stopped by force when it ignores the request, then started.
+			if err := m.stop(ctx); err != nil {
+				return m.note(err)
+			}
+			if err := m.Services.Restart(ctx, m.service().Name); err != nil {
+				return m.note(err)
+			}
+			return m.note(m.waitRunning(ctx))
+		}
 		return m.note(m.Services.Restart(ctx, m.service().Name))
 	case m.Windows:
 		return m.note(errors.New("MeshAgent runs as a Windows service only"))

@@ -63,6 +63,20 @@ All notable changes to this project are documented here. The format follows
   server, and the new `easyrmm-agent repair-install` puts an enrolled agent
   back in place (program, service, start). Migration 00042.
 
+### Fixed
+
+- **Reconnect remote access on a MeshAgent that will not stop**
+  ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+  On Windows, a MeshAgent service that ignored its stop request failed the
+  restart ("did not stop within 30 seconds") and the repair ("Access is
+  denied" replacing `meshagent.exe`, which its session helpers still ran).
+  After 30 seconds the agent now ends the service's process and every
+  process that runs exactly `meshagent.exe` from EasyRMM's MeshAgent folder
+  (never another vendor's MeshAgent), waits for them and confirms the
+  service reports stopped. The repair retries a denied rename, then moves the
+  old program aside and deletes it (at the next restart if it stays locked),
+  clears leftovers of earlier attempts and confirms the service runs.
+
 ### Security
 
 - **Read-Only users no longer see what scripts printed or the arguments

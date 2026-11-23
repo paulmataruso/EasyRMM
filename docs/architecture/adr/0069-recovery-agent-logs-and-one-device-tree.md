@@ -572,6 +572,20 @@ The owner confirmed (2026-11-23):
   heartbeat reply carries the hash of the new site's MeshAgent settings, not
   the settings; the agent fetches them from the signed settings download,
   checks the hash and reports the hash it applied, which ends the instruction.
+* **Amended 2026-11-23 (decided in review): a MeshAgent that will not stop is
+  stopped by force, by exact path.** On Windows the restart and the repair
+  asked the service to stop and gave up after 30 seconds, and a repair then
+  failed to replace `meshagent.exe` while MeshAgent's session helpers still
+  ran it. After 30 seconds the agent now terminates the service's process
+  (from `QueryServiceStatusEx`) and every process whose image path is exactly
+  `meshagent.exe` in EasyRMM's MeshAgent folder, matched on the full path
+  case-insensitively and never by name, since the client may run another
+  vendor's MeshAgent. It waits for each to exit and confirms the service is
+  stopped, and logs what it ended. The repair retries a denied rename with a
+  short backoff, then moves the old program aside to a dot-name in the same
+  folder, moves the new one in and deletes the old one (at the next restart if
+  locked), removes leftover `.meshagent-*` files, and confirms the service
+  runs. Linux is unchanged.
 
 ## References
 
