@@ -108,9 +108,13 @@ that the admin can see at anytime in the GUI." From that:
    folder ordinary users can write.
 3. **The agent locks a folder down, then excludes it.** It never excludes a
    folder it cannot lock down, and reports that.
-4. **Unchanged:** no process exclusions; AMSI still scans scripts;
-   uninstall removes exactly what the agent added; the device page shows
-   whether the exclusions work and why not.
+4. **"I dont want defender scaning our stuff at all."** Exclude everything
+   Defender lets us exclude: path exclusions, process exclusions for the
+   three executables, Attack Surface Reduction exclusions and Controlled
+   Folder Access allowed applications (section 3). This **reverses** the
+   first draft's "no process exclusions". Never disable AMSI or real-time
+   protection machine-wide. Uninstall removes exactly what the agent
+   added; the device page shows whether each kind works and why not.
 5. **A current hash list of everything installed**, in the console, and
    each Windows agent reports the hashes of what is installed on it,
    compared with the expected ones.
@@ -134,7 +138,7 @@ agents' code.
 ### 1. Every working folder, and what moves
 
 The excluded set is every folder an agent writes to or runs from, whole
-folders (all `ExclusionPath`, no files, no extensions, no processes):
+folders (`ExclusionPath`; the other kinds are in section 3):
 
 | Managed by | Folder | Holds |
 |---|---|---|
@@ -219,32 +223,65 @@ reconcile (below) repeats the check, and if a folder has since become
 writable by someone else the agent removes its own exclusion for it and
 reports it.
 
-### 3. No process exclusions; AMSI still scans (unchanged)
+### 3. Everything Defender lets us exclude (owner decision)
 
-The agents add no `ExclusionProcess` and no `ExclusionExtension`: a
-process exclusion makes Defender skip everything that process opens,
-including the scripts it runs and the updates it downloads. Path
-exclusions do not switch off AMSI: script content handed to the
-antimalware provider by PowerShell or Windows Script Host is scanned
-whatever the exclusions say, and behaviour detections still apply. The
-exclusions only stop files in the folders above being scanned at rest.
-(*To confirm on the CI runner with a harmless AMSI test string run from a
-script stored in an excluded folder.*)
+Four kinds, each added only after the folder (or executable's folder) is
+locked down and verified (section 2), each from a fixed list in the code:
+
+| Kind | Cmdlet parameter | What is added |
+|---|---|---|
+| Path | `ExclusionPath` | every working folder in section 1 |
+| Process | `ExclusionProcess` | the **full path** of `easyrmm-agent.exe`, `meshagent.exe` (EasyRMM agent) and `EasyPatch.Agent.exe` (EasyPatch agent); never a bare name, never `powershell.exe`, `msiexec.exe` or any other program |
+| Attack Surface Reduction | `AttackSurfaceReductionOnlyExclusions` | the same folders, so ASR rules (for example "block process creations from PSExec and WMI commands" or "block executable files unless they meet prevalence, age or trusted list criteria") do not act on our files |
+| Controlled Folder Access | `ControlledFolderAccessAllowedApplications` | the full paths of the same three executables, so ransomware protection lets them write to protected folders |
+
+The agent never adds `ExclusionExtension`, and never turns off real-time
+protection, Controlled Folder Access, ASR rules or any Defender feature,
+on the machine or for a user.
+
+**The cost of the process exclusions, stated plainly.** Defender does not
+scan what an excluded process opens or writes, **anywhere**, not only in
+our folders, at that moment: file transfers the agent receives or sends,
+scripts it writes and runs, updates it downloads, and files MeshAgent
+moves during a remote session. Such a file is scanned when a *different*
+process opens it. A process exclusion is also only as safe as the
+executable: the executables sit in folders only administrators can write
+(section 2), and each agent still verifies its updates (the server's
+signed instructions, the release signature on the EasyPatch agent) before
+using them. The owner chose this knowing the cost.
+
+**AMSI.** What the Microsoft documentation says: Defender's exclusion
+lists (path, process, extension) apply to its file scanning; AMSI is a
+separate interface that script hosts such as PowerShell call with the
+script text, and I found no documented exclusion list for it. Not
+documented, so it is **to confirm on the Windows CI runner**: whether a
+script run by PowerShell from an excluded folder, or by an excluded process,
+is still passed to AMSI and blocked. The build must include a test (the
+Testing section) that runs an EICAR-style AMSI test string from the
+agents' script folder and **records the result**; this ADR assumes
+scripts are still scanned until it shows otherwise. If the result is that
+they are, the answer to "can scripts be excluded" is no, and nothing
+here tries to disable AMSI or the provider. The text of `install.ps1`
+itself is likewise checked by AMSI when it runs.
 
 ### 4. Each agent manages its own folders; a record keeps it honest
 
 * The EasyRMM agent adds, reconciles and removes the first three folders,
   the EasyPatch agent the last two.
-* Each keeps a **record** of exactly the exclusions it added:
+* Each keeps a **record** of exactly the exclusions it added, of all four
+  kinds (the kind is stored with each entry):
   `defender-exclusions.json` in the EasyRMM agent's protected state folder,
   and `state\defender-exclusions.json` in the EasyPatch data folder: the
   normalized path, the time and the agent version.
-* A path already in `ExclusionPath` before the agent adds anything is not
-  ours: it is not recorded, not added again and never removed (comparison
+* An entry already in the list for its kind (`ExclusionPath`,
+  `ExclusionProcess`, `AttackSurfaceReductionOnlyExclusions`,
+  `ControlledFolderAccessAllowedApplications`) before the agent adds
+  anything is not ours: it is not recorded, not added again and never removed (comparison
   is case-insensitive on the normalized absolute path). An administrator's
   exclusion, even for the same folder, survives uninstall.
-* Uninstall removes **exactly the recorded paths**, one
-  `Remove-MpPreference -ExclusionPath` each, then deletes the record. If
+* Uninstall removes **exactly the recorded entries**, one
+  `Remove-MpPreference` each with the parameter of its kind, then deletes
+  the record. If
   the record cannot be read the agent removes nothing and logs it. No
   wildcard, no "everything under EasyRMM".
 
@@ -280,19 +317,22 @@ A local exclusion is not always honoured. The agent reports, in its facts,
 * `reason`: one short sentence, set whenever `state` is not `effective`;
 * per folder: the path, `listed` (true when the exact path is in
   `ExclusionPath`), `ours` (it is in the record) and the reason if the folder was not
-  locked down.
+  locked down; and per kind (path, process, ASR, Controlled Folder
+  Access) the same state and reason, so the page shows each of the four
+  working or not.
 
 The agent decides from these documented fields (to be confirmed against
 real hosts on the CI runner):
 
 | Source | Field | What it tells |
 |---|---|---|
-| `Get-MpPreference` | `ExclusionPath` | whether each path is listed |
+| `Get-MpPreference` | `ExclusionPath`, `ExclusionProcess`, `AttackSurfaceReductionOnlyExclusions`, `ControlledFolderAccessAllowedApplications` | whether each entry is listed, per kind |
+| `Get-MpPreference` | `EnableControlledFolderAccess`, `AttackSurfaceReductionRules_Ids` and `_Actions` | whether Controlled Folder Access and ASR are on at all (if off, those two kinds are `not_needed`, not a failure) |
 | `Get-MpPreference` | `DisableLocalAdminMerge` | `True` means local exclusions are ignored in favour of the policy's (Intune, GPO, Configuration Manager): reason `local exclusions are ignored (DisableLocalAdminMerge)` |
 | `Get-MpComputerStatus` | `AMRunningMode` | `Passive`, `SxS Passive Mode` or `EDR Block Mode` instead of `Normal`: Defender is not the active antivirus; passive is the sign of a third-party AV |
 | `Get-MpComputerStatus` | `AntivirusEnabled`, `AMServiceEnabled`, `RealTimeProtectionEnabled` | Defender is off or its real-time scanner is, so exclusions are moot |
 | `Get-MpComputerStatus` | `IsTamperProtected` | Tamper Protection is on: an add made by the agent may be refused or reverted; reported next to the result of the add, not alone |
-| the add itself | the cmdlet's error, and a read-back of `ExclusionPath` | `refused` with Defender's own message when the add fails or the path is not listed afterwards |
+| the add itself | the cmdlet's error, and a read-back of the list of its kind | `refused` with Defender's own message when the add fails or the path is not listed afterwards |
 
 `effective` needs: Defender's `AMRunningMode` is `Normal`, antivirus and
 real-time protection are enabled, `DisableLocalAdminMerge` is not true, and
@@ -434,7 +474,7 @@ can be revisited.
 * **A real Windows runner in CI** (Windows Server 2022 or 2025 with
   Defender running, not mocked):
   1. add: after `install`, every working folder is locked down and listed
-     in `Get-MpPreference`'s `ExclusionPath`, and `%TEMP%` is not;
+     in `Get-MpPreference`'s `ExclusionPath` and `AttackSurfaceReductionOnlyExclusions`, the three executables in `ExclusionProcess` and `ControlledFolderAccessAllowedApplications`, and `%TEMP%` and `powershell.exe` are not;
   2. check: `Get-MpComputerStatus` reports `Normal`; the facts say
      `effective`; with `DisableLocalAdminMerge` set they say so;
   3. remove: after `uninstall`, exactly those paths are gone and a path
@@ -446,7 +486,11 @@ can be revisited.
   5. moved work: a script run, a winget call and an agent update leave
      nothing in `%TEMP%` or `C:\Windows\Temp`, and run from the
      protected folders;
-  6. AMSI still fires on a test string run from an excluded folder;
+  6. **AMSI:** an EICAR-style AMSI test string, run by PowerShell from the
+     agents' script folder (with everything excluded) and again run by an
+     excluded process, with the result **recorded** (blocked or not) in
+     the job log and the ADR's amendment; the build fails if real-time
+     protection or AMSI was disabled to get a result;
   7. hashes: the reported installed hashes equal the list's; replacing a
      byte of an installed file shows a mismatch on the device page.
 * Not reachable by CI, stated as untested until run on real devices:
@@ -457,12 +501,14 @@ can be revisited.
 
 * Fewer quarantines of the agents' own files where Defender honours local
   exclusions; no change where it does not, and the console says why.
-* Whole-folder exclusions remove at-rest scanning for everything in those
-  folders. That is acceptable only because the agent makes them
-  administrators-only first and refuses to exclude any it cannot lock
-  down; AMSI, behaviour detection and the scan of the install script's own text
-  still apply. Anyone who can write there already has administrator
-  rights.
+* Whole-folder and process exclusions remove Defender's scanning of
+  everything in those folders and of what the three processes open
+  anywhere, at that moment (section 3). The path exclusions are acceptable
+  because the agent makes the folders administrators-only first and
+  refuses to exclude any it cannot lock down. The process exclusions are
+  a wider trade the owner accepted: a file moved by the agent or
+  MeshAgent is scanned only when another process opens it. Whether AMSI
+  still scans scripts is to be confirmed on the runner.
 * Locking the two Program Files folders and moving the three pieces of
   work are real changes to how the agents run, and are the riskiest part
   of the build.
