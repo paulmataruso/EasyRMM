@@ -115,8 +115,8 @@ func TestRepairStepRewritesMeshAgent(t *testing.T) {
 		if _, err := r.beat(ctx); err != nil {
 			t.Fatal(err)
 		}
+		r.repair.wait() // the step runs beside the next beat, which reads what it writes
 	}
-	r.repair.wait()
 	if m.repairs != 1 || m.binary != "ELF" || m.settings != "MeshID=0x1" {
 		t.Errorf("repairs %d, binary %q, settings %q", m.repairs, m.binary, m.settings)
 	}
