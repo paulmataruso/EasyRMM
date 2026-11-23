@@ -395,7 +395,7 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   await device.getByRole("link", { name: "dt-reception-01" }).click();
   await expect(page.getByRole("heading", { name: "dt-reception-01" })).toBeVisible();
   await expect(page.getByText("0.6.0-e2e")).toBeVisible();
-  await expect(page.getByText("Reception", { exact: true })).toBeVisible();
+  await expect(page.getByRole("tabpanel", { name: "Overview" }).getByText("Reception", { exact: true })).toBeVisible();
   // MeshCentral is not running here, so remote access has not been set up on the device.
   await expect(page.getByText("Not set up yet")).toBeVisible();
 });
