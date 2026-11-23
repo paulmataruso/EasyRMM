@@ -44,6 +44,7 @@ const META: Record<SectionId, { title: string; icon: ReactNode }> = {
   alerts: { title: "Alerts", icon: <Bell className="size-4" aria-hidden /> },
   scripts: { title: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> },
   jobs: { title: "Jobs", icon: <ListChecks className="size-4" aria-hidden /> },
+  patching: { title: "Patching", icon: <ShieldCheck className="size-4" aria-hidden /> },
   settings: { title: "Settings", icon: <Settings className="size-4" aria-hidden /> },
 };
 
@@ -53,6 +54,7 @@ const ALL_LABEL: Record<Exclude<SectionId, "settings">, string> = {
   alerts: "All alerts",
   scripts: "All scripts",
   jobs: "All jobs",
+  patching: "All organizations",
 };
 
 /**
@@ -186,7 +188,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const canWriteScripts = useCanWriteScripts();
   const filterId = useId();
 
-  const wantsDevices = can("device.view") && section !== "scripts";
+  const wantsDevices = can("device.view") && section !== "scripts" && section !== "patching";
   const orgs = useOrganizations();
   const sites = useSites();
   const devices = useList<Device>(wantsDevices ? "/devices" : null, undefined, { refetchInterval: 30_000 });
@@ -274,6 +276,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
       case "scripts":
         return badges.get(key) ?? null;
       case "jobs":
+      case "patching":
         return null;
     }
   }

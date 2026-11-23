@@ -5,7 +5,7 @@ import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
 import type { PatchAlert, PatchAlertList } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { OrganizationSelect, SearchInput } from "../../components/Filters";
+import { SearchInput } from "../../components/Filters";
 import { useToast } from "../../components/Toast";
 import { Button, Card, cx, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
@@ -92,7 +92,6 @@ export function PatchAlerts() {
   return (
     <>
       <Toolbar>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} />
         <FilterSelect label="Show" value={show} onChange={(v) => url.set({ show: v || null })} options={SHOW} className="w-44" />
         <FilterSelect
           label="Severity"

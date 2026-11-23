@@ -13,6 +13,7 @@ describe("sections", () => {
     expect(sectionFor("/alerts")).toBe("alerts");
     expect(sectionFor("/scripts/new")).toBe("scripts");
     expect(sectionFor("/jobs/j1")).toBe("jobs");
+    expect(sectionFor("/patching")).toBe("patching");
     expect(sectionFor("/settings")).toBe("settings");
     expect(sectionFor("/users/u1")).toBe("settings");
   });
@@ -42,6 +43,10 @@ describe("sections", () => {
 
     expect(selectedKey("jobs", "/jobs", "?siteId=s2")).toBe("s:s2");
     expect(selectedKey("jobs", "/jobs/j1", "")).toBeNull();
+    expect(selectedKey("patching", "/patching", "")).toBe("all");
+    expect(selectedKey("patching", "/patching", "?tab=devices&organizationId=o1")).toBe("o:o1");
+    expect(selectedKey("patching", "/patching", "?organizationId=o1&siteId=s1")).toBe("s:s1");
+    expect(selectedKey("patching", "/patching/updates/g1", "")).toBeNull();
     expect(selectedKey("settings", "/settings", "")).toBeNull();
   });
 

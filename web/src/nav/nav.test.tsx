@@ -241,6 +241,15 @@ describe("section navigation", () => {
     expect(await screen.findByText("No jobs match these filters.")).toBeInTheDocument();
   });
 
+  it("narrows patching to an organization or site, keeping the tab and restarting the paging", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...routes({ ...ADMIN, permissions: [...ADMIN.permissions, "patch.view"] }), "GET /patching": ok({ configured: false }) });
+    renderApp("/patching?tab=updates&page=3&q=kb");
+    const tree = await screen.findByRole("tree", { name: "Patching: organizations, sites" });
+    await user.click(within(tree).getByRole("treeitem", { name: "Warehouse" }));
+    await waitFor(() => expect(location()).toBe("/patching?tab=updates&q=kb&organizationId=o1&siteId=s2"));
+  });
+
   it("leads organizations and sites to their pages", async () => {
     const user = userEvent.setup();
     installFakeApi({

@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router";
 import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
-import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
+import { SearchInput } from "../../components/Filters";
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -45,7 +45,6 @@ type PatchingTab = (typeof TABS)[number]["id"];
 
 const CLEARED = {
   q: null,
-  siteId: null,
   groupId: null,
   compliance: null,
   category: null,
@@ -91,7 +90,7 @@ export function PatchingPage() {
         <>
           <Tabs
             active={tab}
-            // Each tab has its own filters; the organization carries over.
+            // Each tab has its own filters; the organization and site chosen in the sidebar carry over.
             onChange={(t) => url.set({ tab: t === "overview" ? null : t, ...CLEARED })}
             tabs={[...TABS]}
           />
@@ -175,8 +174,6 @@ function Fleet({ status }: { status: PatchStatus }) {
     <>
       <Toolbar>
         <SearchInput value={q} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null })} className="max-w-64" />
         <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />
       </Toolbar>

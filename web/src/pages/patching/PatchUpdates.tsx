@@ -3,7 +3,7 @@ import { PackageCheck, PauseCircle } from "lucide-react";
 import { fieldError } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { PatchFleetUpdate, PatchPage, PatchUpdateState } from "../../api/types";
-import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
+import { SearchInput } from "../../components/Filters";
 import { Badge, Card, cx, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDate, formatSize } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -69,8 +69,6 @@ export function PatchUpdates() {
     <>
       <Toolbar>
         <SearchInput value={q} onChange={(v) => url.set({ q: v, page: null })} placeholder="Title, KB or package" className="max-w-xs" />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, page: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, page: null })} className="max-w-64" />
         <FilterSelect
           label="Category"
           value={category}

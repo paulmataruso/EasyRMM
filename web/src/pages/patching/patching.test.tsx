@@ -734,6 +734,8 @@ describe("patching page", () => {
     installFakeApi(patchingRoutes());
     renderApp("/patching?tab=devices");
     await screen.findByRole("main");
+    // On its own page the sidebar is patching's tree; Back leads to the main menu, where it is listed.
+    await userEvent.click(await screen.findByRole("button", { name: "Back to the main menu" }));
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Patching" })).toBeInTheDocument();
   });

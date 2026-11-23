@@ -640,6 +640,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Patching uses the sidebar tree.** Its organization and site pickers are
+  replaced by the same organization and site tree as Devices, which narrows
+  every Patching tab and keeps the tab and filters.
 - **A site's address moves to its details.** The free-text address is
   edited under **Address and hours** on the site's page, with
   `doc.manage`, instead of in the site's **Edit**: `PUT /api/v1/sites/{id}`
