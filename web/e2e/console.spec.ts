@@ -495,6 +495,21 @@ test("a hardening check runs through the device's agent; its findings show on th
 const MARKER = `e2e-secret-${Date.now().toString(36)}`;
 
 /** Clicks a download link and returns the file the browser saved. */
+// A box that scrolls by a pixel or two is a layout slip, not content: it shows a scrollbar a few pixels long.
+async function expectNoStrayScrollbars(page: Page) {
+  const stray = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter((el) => {
+        const s = getComputedStyle(el);
+        const y = /auto|scroll/.test(s.overflowY) && el.scrollHeight - el.clientHeight > 0 && el.scrollHeight - el.clientHeight <= 4;
+        const x = /auto|scroll/.test(s.overflowX) && el.scrollWidth - el.clientWidth > 0 && el.scrollWidth - el.clientWidth <= 4;
+        return x || y;
+      })
+      .map((el) => `${el.tagName.toLowerCase()}${el.getAttribute("role") ? `[role=${el.getAttribute("role")}]` : ""}.${[...el.classList].slice(0, 4).join(".")}`),
+  );
+  expect(stray, `boxes that scroll by a few pixels on ${page.url()}`).toEqual([]);
+}
+
 async function download(page: Page, link: Locator): Promise<{ name: string; body: Buffer }> {
   const [file] = await Promise.all([page.waitForEvent("download"), link.click()]);
   return { name: file.suggestedFilename(), body: await readFile(await file.path()) };
@@ -647,6 +662,7 @@ test("a script's output and arguments reach only those who may see them, and eve
   const viewed = page.getByRole("row", { name: /Viewed job output/ });
   await expect(viewed.filter({ hasText: TECH.email })).toHaveCount(1);
   await expect(viewed.filter({ hasText: READER.email })).toContainText("Denied");
+  await expectNoStrayScrollbars(page);
   await expect(viewed.first()).toContainText("Print the token on dt-reception-01");
   // Each download is a read of its own: the archive's and the run's.
   await expect(page.getByRole("row", { name: /Downloaded job output/ }).filter({ hasText: TECH.email })).toHaveCount(2);
@@ -756,6 +772,7 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   const alert = page.getByRole("row", { name: /Disk failing/ });
   await expect(alert).toBeVisible({ timeout: 100_000 });
   await expect(alert).toContainText("nvme0n1 · Samsung SSD 990 PRO 2TB");
+  await expectNoStrayScrollbars(page);
   await expect(alert).toContainText("NVMe critical warning: media read-only");
   await expect(alert).toContainText("A disk's own verdict is failing");
   await expect(alert).toContainText("dt-reception-01");
@@ -805,6 +822,7 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await page.goto(`/devices/${agent.deviceId}`);
   const card = page.getByRole("heading", { name: /^Alerts \d+ active$/ }).locator("xpath=ancestor::section[1]");
   await expect(card.getByRole("listitem").filter({ hasText: "Disk failing" })).toHaveClass(/\balert-active-pulse\b/);
+  await expectNoStrayScrollbars(page);
 
   // A Read-Only user of the organization sees the disk's health, its facts and its alert.
   const readerContext = await browser.newContext();
