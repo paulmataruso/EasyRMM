@@ -104,7 +104,7 @@ func (s *Service) startJob(ctx context.Context, deviceID uuid.UUID, start func(*
 func (s *Service) CompanionResult(ctx context.Context, jobID string) (done, ok bool, msg, diagnostics string, err error) {
 	id, perr := uuid.Parse(jobID)
 	if perr != nil {
-		return true, false, "The job's identity is not valid.", "", nil
+		return true, false, "The job's identity is not valid.", "", nil //nolint:nilerr // a job that cannot be read ends its step
 	}
 	_, cl, err := s.operable(ctx)
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *Service) CompanionResult(ctx context.Context, jobID string) (done, ok b
 		}
 		return true, false, text, d.Diagnostics, nil
 	case statusCanceled:
-		return true, false, "The job was cancelled.", d.Diagnostics, nil
+		return true, false, "The job was canceled.", d.Diagnostics, nil
 	case "Expired":
 		return true, false, "The EasyPatch agent did not pick the job up in time.", d.Diagnostics, nil
 	}

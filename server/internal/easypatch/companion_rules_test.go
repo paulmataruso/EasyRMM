@@ -93,7 +93,7 @@ func checkCompanionRules(t *testing.T, ctx, reader context.Context, engine *Clie
 	}
 	for _, j := range created {
 		if _, err := engine.CancelJob(ctx, j.ID, ""); err != nil {
-			t.Errorf("cancelling %s: %v", j.ID, err)
+			t.Errorf("canceling %s: %v", j.ID, err)
 		}
 	}
 }

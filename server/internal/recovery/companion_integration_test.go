@@ -253,7 +253,7 @@ func TestAnEasyRMMAgentRepairStepNobodyCouldCarryOutEndsWithTheReason(t *testing
 	})
 }
 
-// A step the EasyPatch agent does not take in 15 minutes is cancelled in the
+// A step the EasyPatch agent does not take in 15 minutes is canceled in the
 // engine so that it cannot run after the repair moved on, and fails.
 func TestAnEasyRMMAgentStepThatIsNotTakenIsCancelledInTheEngine(t *testing.T) {
 	p := newPatched(t)
@@ -267,7 +267,7 @@ func TestAnEasyRMMAgentStepThatIsNotTakenIsCancelledInTheEngine(t *testing.T) {
 	p.move(StepValid + time.Second)
 	p.dispatch()
 	if now := p.companionJobs()[0]; now.Status != eptest.StatusCanceled {
-		t.Errorf("the job %s is %s, not cancelled", job.ID, now.Status)
+		t.Errorf("the job %s is %s, not canceled", job.ID, now.Status)
 	}
 	got := p.latest(d)
 	if got.Steps[0].State != StepFailed || !strings.Contains(got.Steps[0].Error, "within 15 minutes") {

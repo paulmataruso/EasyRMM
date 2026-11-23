@@ -770,7 +770,7 @@ const lockDispatch = 7302265818154
 // Dispatch carries the steps the EasyPatch agent is to take, through the
 // patching engine (ADR-0069): it asks the engine for the RepairCompanion job
 // of a step that waits, and reads the result of one that was asked for. A
-// step the agent does not take within StepValid is cancelled in the engine,
+// step the agent does not take within StepValid is canceled in the engine,
 // so that it cannot run after the repair moved on, and fails. A repair of a
 // device that is leaving is left to Advance, which ends it.
 func (s *Service) Dispatch(ctx context.Context) error {
