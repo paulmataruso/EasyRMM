@@ -149,12 +149,22 @@ write*) **moves**:
 
 * the Windows install script's download (`install.ps1.tmpl:61`, `:75`,
   today in the administrator's `%TEMP%`) goes to
-  `%ProgramData%\EasyRMM\Agent\install\`, which the script creates with
-  the administrators-only list before downloading (the same list as
-  `protectedDACL`, `agent/host/system_windows.go:100`) and the agent
-  deletes after `install`. **A gap that stays:** this first download
-  happens before any exclusion exists, so Defender can still scan and block
-  it; only signing or an allow list fixes that (section 9);
+  `%ProgramData%\EasyRMM\Agent\install\`, and the script, which already
+  runs elevated, does these in order **before it downloads anything**:
+  (1) creates the agent's folders (`%ProgramData%\EasyRMM\Agent` with
+  `install\`, and `%ProgramFiles%\EasyRMM\Agent` and `\MeshAgent`);
+  (2) locks them down with the administrators-only list
+  (`protectedDACL`, `agent/host/system_windows.go:100`); (3) verifies them
+  with the check in section 2; (4) adds the Defender exclusions; (5) only
+  then downloads the agent into the excluded `install\` folder. If any of
+  steps 1 to 4 fails, the script stops and says why, rather than
+  downloading into an unprotected folder. `easyrmm-agent install` takes
+  over the script's record of what it excluded (the script writes
+  `defender-exclusions.json` in the state folder, in the agent's format),
+  so uninstall still removes exactly what was added. The agent deletes
+  `install\` after `install`. The only thing nothing can exclude is the
+  text of `install.ps1` itself, which AMSI still checks when it runs
+  (section 3);
 * the EasyPatch agent's winget working directory
   (`WingetProcessRunner.cs:38`, `Path.GetTempPath()`) becomes
   `%ProgramData%\EasyPatch\work\`;
@@ -171,6 +181,11 @@ store (Microsoft's, installed by others), `%TEMP%`, `%TMP%`, any user's
 profile, a drive root, `%ProgramData%` and `%ProgramFiles%` themselves. If
 a future build adds a working folder it goes under one of the five or gets
 no exclusion.
+
+**The EasyPatch MSI** gets the same order when the EasyRMM agent installs
+it: the exclusion for `%ProgramData%\EasyRMM\Agent\easypatch\` (inside the
+state folder, already locked and excluded) is in place first, then the MSI
+is downloaded into it (`agent/easypatch/easypatch.go:237`), then run.
 
 ### 2. The agent locks the folder down, then excludes it (replaces "refuse")
 
@@ -360,8 +375,7 @@ trust Defender and SmartScreen give follow a publisher's certificate, not
 a folder. Public-certificate signing is on hold (`CODE_SIGNING.md:56-62`);
 ADR-0049 lets an operator sign the EasyRMM agent with their own
 certificate. Exclusions are a stopgap for the folders above; they do
-nothing for the first download of the agent (scanned before any exclusion
-exists, section 1), and they must not be read as a reason to leave signing
+nothing for the text of `install.ps1` (checked by AMSI, section 3), and they must not be read as a reason to leave signing
 undone. When signing lands, this ADR stays: the exclusions still avoid
 scans of files the agents rewrite constantly, but the setting's default
 can be revisited.
@@ -446,7 +460,7 @@ can be revisited.
 * Whole-folder exclusions remove at-rest scanning for everything in those
   folders. That is acceptable only because the agent makes them
   administrators-only first and refuses to exclude any it cannot lock
-  down; AMSI, behaviour detection and the scan of the first download
+  down; AMSI, behaviour detection and the scan of the install script's own text
   still apply. Anyone who can write there already has administrator
   rights.
 * Locking the two Program Files folders and moving the three pieces of
