@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using EasyPatch.Agent.Core;
 using EasyPatch.Agent.Core.Abstractions;
 using EasyPatch.Agent.Core.Applications;
+using EasyPatch.Agent.Core.Companion;
 using EasyPatch.Agent.Core.Removal;
 using EasyPatch.Agent.Core.Runtime;
 using EasyPatch.Agent.Platform;
@@ -69,6 +70,8 @@ internal static class AgentComposition
             UpdateRemover = new WindowsUpdateRemover(windowsUpdate,
                 new WindowsDismRunner(Path.Combine(LogDirectory, "update-removal.log"), loggerFactory.CreateLogger<WindowsDismRunner>()),
                 loggerFactory.CreateLogger<WindowsUpdateRemover>()),
+            CompanionRepair = new CompanionRepairService(CompanionLayout.ForWindows(), new SystemCompanionHost(new ProcessProgramRunner(), windows: true),
+                loggerFactory.CreateLogger<CompanionRepairService>()),
         };
     }
 

@@ -29,16 +29,24 @@ export const STEP_NAMES: Record<RepairTarget, Record<RepairStepName, string>> = 
   },
 };
 
-const STEP_STATE: Record<RepairStepState, string> = {
-  pending: "Waiting for the EasyRMM agent to check in",
-  sent: "Sent to the EasyRMM agent",
-  done: "Done",
-  failed: "Failed",
-};
+/** What a step's state says, by the agent that carries it out. */
+function stepState(carrier: RepairTarget, state: RepairStepState): string {
+  const agent = carrier === "easypatch-agent" ? "EasyPatch agent" : "EasyRMM agent";
+  switch (state) {
+    case "pending":
+      return carrier === "easypatch-agent" ? "Waiting for the patching engine" : `Waiting for the ${agent} to check in`;
+    case "sent":
+      return `Sent to the ${agent}`;
+    case "done":
+      return "Done";
+    default:
+      return "Failed";
+  }
+}
 
 /** The device's latest repairs, refreshed every 5 seconds while one runs; read by those who may ask for one. */
 export function useRepairs(d: Device) {
-  return useApi<List<Repair>>(d.canReconnectRemote || d.canRepairPatching ? `/devices/${d.id}/repairs` : null, undefined, {
+  return useApi<List<Repair>>(d.canReconnectRemote || d.canRepairPatching || d.canRepairEasyRmm ? `/devices/${d.id}/repairs` : null, undefined, {
     refetchInterval: (data) => (data?.items[0]?.state === "running" ? 5_000 : false),
   });
 }
@@ -105,6 +113,30 @@ export function RepairPatchingButton({ device: d }: { device: Device }) {
   );
 }
 
+/** The device page's button that repairs the EasyRMM agent through the EasyPatch agent. */
+export function RepairEasyRmmButton({ device: d }: { device: Device }) {
+  const toast = useToast();
+  const repairs = useRepairs(d);
+  const ask = useApiMutation(() => api.post<Repair>(`/devices/${d.id}/repairs`, { target: "easyrmm-agent" }), {
+    invalidate: [`/devices/${d.id}/repairs`],
+    onSuccess: () => toast.success(`The EasyPatch agent on ${d.name} restarts the EasyRMM agent through the patching engine.`),
+  });
+  if (!d.canRepairEasyRmm) return null;
+  const running = latestOf(repairs.data?.items, "easyrmm-agent")?.state === "running";
+  const why = d.online ? "The EasyRMM agent is checking in, so there is nothing to repair through patching." : undefined;
+  return (
+    <Button
+      icon={<Wrench className="size-4" aria-hidden />}
+      onClick={() => ask.mutate(undefined)}
+      loading={ask.isPending}
+      disabled={running || d.online}
+      title={running ? "A repair is running." : why}
+    >
+      Repair EasyRMM agent through patching
+    </Button>
+  );
+}
+
 function StepIcon({ state }: { state: RepairStepState }) {
   switch (state) {
     case "done":
@@ -129,10 +161,11 @@ export function RepairSteps({ repair: r }: { repair: Repair }) {
             <span className="font-medium">{STEP_NAMES[r.target]?.[s.step] ?? s.step}</span>
             <span className="text-muted">
               {" "}
-              · {STEP_STATE[s.state]}
+              · {stepState(r.carriedBy, s.state)}
               {s.doneAt && <>, <span title={formatDateTime(s.doneAt)}>{formatRelative(s.doneAt)}</span></>}
             </span>
             {s.error && <span className="block break-words text-danger">{s.error}</span>}
+            {s.note && !s.error && <span className="block break-words text-muted">{s.note}</span>}
           </span>
         </li>
       ))}
@@ -140,7 +173,12 @@ export function RepairSteps({ repair: r }: { repair: Repair }) {
   );
 }
 
-const CARD_TITLES: Record<"meshagent" | "easypatch-agent", Record<"running" | "succeeded" | "failed", string>> = {
+const CARD_TITLES: Record<"meshagent" | "easypatch-agent" | "easyrmm-agent", Record<"running" | "succeeded" | "failed", string>> = {
+  "easyrmm-agent": {
+    running: "Repairing the EasyRMM agent through patching",
+    succeeded: "The EasyRMM agent is checking in again",
+    failed: "The EasyRMM agent did not come back",
+  },
   meshagent: {
     running: "Reconnecting remote access",
     succeeded: "Remote access is connected again",
@@ -154,7 +192,7 @@ const CARD_TITLES: Record<"meshagent" | "easypatch-agent", Record<"running" | "s
 };
 
 /** The latest repair of an agent, with its steps and how it ended; nothing while there is none to show. */
-function RepairCard({ device: d, target }: { device: Device; target: "meshagent" | "easypatch-agent" }) {
+function RepairCard({ device: d, target }: { device: Device; target: "meshagent" | "easypatch-agent" | "easyrmm-agent" }) {
   const repairs = useRepairs(d);
   const r = shownRepair(repairs.data?.items, Date.now(), target);
   if (!r) return repairs.isError && target === "meshagent" ? <InlineError error={repairs.error} /> : null;
@@ -179,4 +217,9 @@ export function RemoteRepairCard({ device: d }: { device: Device }) {
 /** The latest repair of the patching agent. */
 export function PatchingRepairCard({ device: d }: { device: Device }) {
   return <RepairCard device={d} target="easypatch-agent" />;
+}
+
+/** The latest repair of the EasyRMM agent, through patching. */
+export function EasyRmmRepairCard({ device: d }: { device: Device }) {
+  return <RepairCard device={d} target="easyrmm-agent" />;
 }

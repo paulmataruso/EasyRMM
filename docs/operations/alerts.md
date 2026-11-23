@@ -94,8 +94,8 @@ organization or site policies of the same kinds.
 
 *Repair failed* is a warning that belongs to no policy
 ([ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)):
-EasyRMM raises it when an automatic repair of MeshAgent or the EasyPatch
-agent ends with the agent still broken. Its details are the last step's
+EasyRMM raises it when an automatic repair of MeshAgent, the EasyPatch
+agent or the EasyRMM agent (through patching) ends with the agent still broken. Its details are the last step's
 diagnostics, and its card lists the repairs tried (see
 [Automatic repairs](remote-access.md#automatic-repairs)). A device has one
 for each agent until the agent is back, when it resolves; acknowledging and

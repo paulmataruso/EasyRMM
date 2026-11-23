@@ -43,7 +43,9 @@ needs systemd.
   server. *Amended by ADR-0069: an agent that stopped working is repaired in
   place, by a restart or by reinstalling the package of the version it has
   (`msiexec /fa`, `apt-get install --reinstall`, `dnf reinstall`), which
-  never runs this install path and keeps the enrollment.*
+  never runs this install path and keeps the enrollment. The EasyPatch agent
+  in turn restarts the EasyRMM agent and repairs it from its recovery copy
+  (the engine's `RepairCompanion` job), and returns the agents' logs.*
 * **The instruction travels in the heartbeat, signed.** Like an agent
   update (ADR-0027), the install is an instruction in the heartbeat answer.
   It is signed with the server's job key over a context string of its own,

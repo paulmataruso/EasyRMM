@@ -108,6 +108,37 @@ func (c *Client) RemoveUpdate(ctx context.Context, endpointID, updateGUID uuid.U
 	return j, err
 }
 
+// RepairCompanion has an endpoint's EasyPatch agent restart the EasyRMM
+// agent or MeshAgent, or repair the EasyRMM agent from its recovery copy
+// (ADR-0069). target is "easyrmm-agent" or "meshagent", step "restart" or
+// "repair" (the EasyRMM agent only); expectedSHA256 is the hash the recovery
+// copy must have, for that repair and no other step. The engine sends the
+// job only to an agent that declares the capability (409,
+// agent_upgrade_required) and refuses a target or step it does not know
+// (400).
+func (c *Client) RepairCompanion(ctx context.Context, endpointID uuid.UUID, target, step, expectedSHA256, onBehalfOf string) (Job, error) {
+	body := struct {
+		Target         string  `json:"target"`
+		Step           string  `json:"step"`
+		ExpectedSHA256 *string `json:"expectedSha256"`
+	}{Target: target, Step: step}
+	if expectedSHA256 != "" {
+		body.ExpectedSHA256 = &expectedSHA256
+	}
+	var j Job
+	err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/"+endpointID.String()+"/companion/repair", nil, body, onBehalfOf, &j)
+	return j, err
+}
+
+// CollectLogs has an endpoint's EasyPatch agent return the newest lines of
+// the EasyRMM agent's, MeshAgent's and its own logs, redacted, in the job's
+// diagnostics (ADR-0069).
+func (c *Client) CollectLogs(ctx context.Context, endpointID uuid.UUID, onBehalfOf string) (Job, error) {
+	var j Job
+	err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/"+endpointID.String()+"/collect-logs", nil, nil, onBehalfOf, &j)
+	return j, err
+}
+
 // MessagePreset is a message EasyPatch can show to users. There is no free
 // text: only these.
 type MessagePreset struct {

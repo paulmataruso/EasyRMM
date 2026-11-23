@@ -236,6 +236,29 @@ public static class EndpointEndpoints
             return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
         }).RequireAuthorization(Policies.Operator);
 
+        // ADR-0069: EasyRMM repairs its own agent and MeshAgent through this one when they are down. A fixed target and step, never a command.
+        g.MapPost("/{id:guid}/companion/repair", async (Guid id, RepairCompanionRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs,
+            CancellationToken ct) =>
+        {
+            await EnsureEndpointAccessAsync(db, tenant, id, ct);
+            var payload = new RepairCompanionPayload { Target = request.Target ?? "", Step = request.Step ?? "", ExpectedSha256 = Validator.Clean(request.ExpectedSha256) };
+            if (!RepairCompanionPayload.IsValid(payload))
+            {
+                throw AppException.BadRequest("Choose the EasyRMM agent or MeshAgent, a step it supports and, for the EasyRMM agent's repair, the SHA-256 of its recovery copy.",
+                    "validation_failed");
+            }
+
+            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.RepairCompanion, Companion: payload), ct);
+            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
+        }).RequireAuthorization(Policies.Operator);
+
+        g.MapPost("/{id:guid}/collect-logs", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
+        {
+            await EnsureEndpointAccessAsync(db, tenant, id, ct);
+            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.CollectLogs), ct);
+            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
+        }).RequireAuthorization(Policies.Operator);
+
         g.MapPost("/{id:guid}/exclusions", async (Guid id, ExclusionRequest request, EasyPatchDbContext db, ITenantContext tenant, AuditService audit,
             ComplianceService compliance, IActorContext actor, TimeProvider clock, CancellationToken ct) =>
         {

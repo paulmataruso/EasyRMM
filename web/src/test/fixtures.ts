@@ -133,6 +133,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canUpdateAgent: false,
     canReconnectRemote: false,
     canRepairPatching: false,
+    canRepairEasyRmm: false,
     remote: null,
     canManageSoftware: false,
     canCheckHardening: false,

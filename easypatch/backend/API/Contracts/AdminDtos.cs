@@ -391,6 +391,12 @@ public sealed record ExclusionRequest(Guid UpdateGuid, string? Reason);
 /// <param name="Block">Also exclude the update on the endpoint so EasyPatch does not install it again.</param>
 public sealed record UninstallUpdateRequest(bool Block = true, string? Reason = null);
 
+/// <summary>ADR-0069: restart or repair the EasyRMM agent or MeshAgent through the EasyPatch agent.</summary>
+/// <param name="Target"><c>easyrmm-agent</c> or <c>meshagent</c>.</param>
+/// <param name="Step"><c>restart</c> or <c>repair</c> (the EasyRMM agent only).</param>
+/// <param name="ExpectedSha256">The SHA-256 of the EasyRMM agent's recovery copy, for its <c>repair</c> step.</param>
+public sealed record RepairCompanionRequest(string Target, string Step, string? ExpectedSha256 = null);
+
 public sealed record BulkEndpointsRequest(IReadOnlyList<Guid> EndpointIds, bool Force);
 
 /// <param name="ScheduledAt">When to start, up to 31 days ahead; now when null.</param>
@@ -555,7 +561,8 @@ public sealed record JobDetailDto(
     Guid? RetryOfJobId,
     DateTimeOffset? CancelRequestedAt,
     IReadOnlyList<JobItemDto> Items,
-    IReadOnlyList<EndpointEventDto> Events);
+    IReadOnlyList<EndpointEventDto> Events,
+    string? Diagnostics = null);
 
 // ---------------------------------------------------------------------------------------------
 // Agent management

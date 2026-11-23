@@ -633,6 +633,19 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	// ADR-0069: the jobs EasyRMM uses to repair its own agent and MeshAgent
+	// through patching, and to collect logs. The same questions are asked of
+	// eptest (TestEptestKeepsTheEnginesCompanionRules).
+	run("repair and log jobs", func(t *testing.T) {
+		checkCompanionRules(t, ctx, reader, engine, a.endpoint, func(capable bool) {
+			a.capabilities = []string{"restart"}
+			if capable {
+				a.capabilities = []string{"restart", "repair-companion", "collect-logs"}
+			}
+			a.checkIn()
+		})
+	})
+
 	run("restart only where a restart is pending", func(t *testing.T) {
 		a.capabilities = []string{"restart"}
 		a.checkIn()

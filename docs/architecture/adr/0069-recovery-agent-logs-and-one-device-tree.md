@@ -285,6 +285,63 @@ settled:
 * Removal: the recovery copy goes before the service in an uninstall by hand
   and in a removal the server asked for.
 
+**Amended 2026-11-23 (decided in review), slice R3.** What the code
+settled:
+
+* The engine's `RepairCompanion` job carries `target`, `step` and
+  `expectedSha256`; the engine refuses anything off the fixed lists (the EasyRMM
+  agent: `restart`, or `repair` with a lower-case SHA-256; MeshAgent: `restart`
+  and no hash), and sends the jobs only to an agent that declares the
+  `repair-companion` and `collect-logs` capabilities (Windows and Linux agents
+  from this version; the engine knows no more of an agent's version than
+  what it declares). The jobs expire in 30 minutes and go before other queued
+  work, though the agent still takes one job at a time: a repair behind a
+  running install waits for it.
+* `Diagnostics` is a new field of a job's result and of the engine's job
+  detail, kept apart from the message: 256 KiB of UTF-8 at most (the engine
+  refuses more), kept 14 days after the job ended (the engine's job
+  maintenance empties it; the job stays). The agent redacts with the rules of
+  `logredact` (the EasyPatch agent's `LogRedactor` now has them all: names
+  like secrets, `ert_`, `ept_`, bearer tokens, PEM blocks, and a line it
+  cannot redact in time is withheld, never sent).
+* The four checks are made in this order and each refuses with a code the job
+  reports: the update marker, then links and owner and access list, then the
+  hash, then `repair-install` of the copy. Two readings of "the system": on
+  Windows the copy may be owned by LocalSystem **or the Administrators group**,
+  because Windows makes that group the owner of what a process running as
+  SYSTEM creates (the EasyRMM agent's own state check accepts both); and for
+  the directories *above* the copy's own folder only the rights that let
+  someone replace what lies below count (delete what the folder holds, delete
+  it, change its access list or owner, full control), since ProgramData and a
+  drive's root let every user add a folder and a strict reading would refuse
+  every Windows computer (the same rule as ADR-0064's folders above a
+  PowerShell install). On Linux every directory above, and the copy, must be
+  owned by root, not writable by group or others, and the copy must have one
+  hard link. Links are found by `stat` without following them; the copy is
+  hashed and run from the path checked, which only root or the system could
+  have changed. POSIX ACLs are not read.
+* Through patching, a step is carried out by EasyRMM asking the engine for the
+  job (the server's repair loop, not a heartbeat), reading its result, and
+  cancelling in the engine a job that did not run within 15 minutes so that it
+  cannot run after the repair moved on. The step's diagnostics are kept on the
+  repair (`agent_repairs.diagnostics`, redacted again by the server, 256 KiB,
+  14 days) because the agent log table (slice L1) is not on this branch's
+  base; when L1 lands, the server writes them to `agent_log_records` with
+  a source per agent instead. A `CollectLogs` job is built and tested through
+  the connector (`easypatch.Service.CollectLogs`, `CompanionResult`) for L1's
+  Logs tab to ask for when the EasyRMM agent is down; nothing in R3 asks
+  for it.
+* *EasyRMM agent silent while the EasyPatch agent checks in*: the EasyRMM agent
+  has not checked in for 3 minutes but did before, the device is patched and
+  its EasyPatch agent is linked and heard from by the engine within 10 minutes;
+  15 minutes of that, then `restart`, and `repair` after 30 more minutes, with
+  R2's limits, exclusions and settling. A repair by hand waits 2 minutes after
+  a step, because the answer is the EasyRMM agent's own heartbeat, and is
+  refused while the agent checks in or while the EasyPatch agent has been
+  silent for 10 minutes. When the EasyRMM agent comes back and MeshAgent is
+  still not connected, the first row's clock starts over by itself: the
+  condition could not hold while the agent was silent.
+
 **By hand**: the device page offers *Reconnect remote access* and *Repair
 patching agent* (with `device.edit`) and *Repair EasyRMM agent through
 patching* (with `patch.manage`), each showing its steps and outcome.

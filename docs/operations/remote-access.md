@@ -107,8 +107,8 @@ seen it:
   sets it longer than 5 minutes is still waited on for 30 minutes before
   an attempt.
 
-The EasyPatch agent repairing the EasyRMM agent, and repairs through
-patching, are the next slice of the same ADR.
+The EasyPatch agent repairing the EasyRMM agent is described below
+([Repair the EasyRMM agent through patching](#repair-the-easyrmm-agent-through-patching)).
 
 ## The recovery copy
 
@@ -126,3 +126,46 @@ agent back in place on a machine that is enrolled: its program in the
 program directory, its service registered as the installer registers it,
 and started. The enrollment is not touched. Run from the recovery copy, it
 needs no download.
+
+## Repair the EasyRMM agent through patching
+
+When the EasyRMM agent stops checking in but the EasyPatch agent still does,
+the EasyPatch agent can put it back
+([ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+It needs the device's organization to be patched and its EasyPatch agent
+linked, and an EasyPatch agent of a version that declares the
+`repair-companion` capability (the engine sends it nothing otherwise and
+says so).
+
+* **By hand**: **Repair EasyRMM agent through patching** on the device page
+  (with `patch.manage`), while the EasyRMM agent is not checking in and the
+  EasyPatch agent was heard from in the last 10 minutes. The page shows the
+  steps: *Restart the EasyRMM agent*, then, if it is still silent 2
+  minutes after, *Put the EasyRMM agent back from its recovery copy*.
+* **Automatically**: when the EasyRMM agent has been silent while the
+  EasyPatch agent checked in, for 15 minutes, EasyRMM restarts the agent
+  through patching and, 30 minutes later if it is still silent, repairs it.
+  The limits, the exclusions (a device being removed, patching off, an
+  organization that turned automatic repairs off, an outage of the engine)
+  and the **Repair failed** warning are those of
+  [Automatic repairs](#automatic-repairs). When the agent is back and MeshAgent
+  is still not connected, the rule for MeshAgent starts over.
+
+The EasyPatch agent refuses to repair, and says why in the step, when:
+
+1. the update marker (`update.json`) is in the agent's state folder: an update
+   is in progress or on probation;
+2. the recovery copy, or a folder above it, is a link or a reparse point, the
+   copy is not owned by the system (or root), or anyone but SYSTEM,
+   Administrators or root can change the copy or the folder it is in (above
+   that, whoever can replace what lies below);
+3. the copy's SHA-256 is not the one EasyRMM recorded for the build the device
+   runs (the EasyRMM agent reports it with each heartbeat); or
+4. the copy's own `repair-install` fails.
+
+Only then is the copy's `easyrmm-agent repair-install` run; the EasyPatch agent
+defines no service itself. MeshAgent is restarted through patching only
+(its settings are signed by EasyRMM, so the EasyRMM agent is repaired first and
+then repairs MeshAgent). Each step returns the newest 500 lines of the log of
+the agent it acted on, redacted, which EasyRMM keeps with the repair for 14
+days.

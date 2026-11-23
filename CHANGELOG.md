@@ -8,6 +8,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Repair the EasyRMM agent through patching**
+  ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),
+  slice R3). When the EasyRMM agent is silent while the EasyPatch agent
+  checks in, EasyRMM has the EasyPatch agent restart it and, if it stays
+  silent, repair it from its recovery copy: after 15 minutes of silence,
+  then 30 more, under the limits of the other automatic repairs. **Repair
+  EasyRMM agent through patching** (with `patch.manage`) does the same by
+  hand. The patching engine has two new job types, `RepairCompanion`
+  (a fixed target and step, never a command) and `CollectLogs`, sent only to
+  agents that declare them, and results gain a `Diagnostics` field of up to
+  256 KiB, redacted by the agent, kept 14 days. The agent refuses the
+  repair while an update is in progress, for a copy that is linked, owned or
+  writable by anyone but the system, administrators or root, or whose SHA-256
+  is not the one EasyRMM recorded for the device's build; only then does it
+  run the copy's `repair-install`. Migration 00043 and the engine's
+  database gain a column for the diagnostics.
+
 - **Reconnect remote access, with the reason a device's remote access is
   down, and two default alerts**
   ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),

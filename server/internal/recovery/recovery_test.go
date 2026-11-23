@@ -34,7 +34,7 @@ func TestWhoCarriesWhat(t *testing.T) {
 	for target, want := range map[string]string{
 		agentproto.TargetMeshAgent:      agentproto.TargetEasyRMMAgent,
 		agentproto.TargetEasyPatchAgent: agentproto.TargetEasyRMMAgent,
-		agentproto.TargetEasyRMMAgent:   "", // slice R3
+		agentproto.TargetEasyRMMAgent:   agentproto.TargetEasyPatchAgent, // through the patching engine (slice R3)
 		"anything else":                 "",
 	} {
 		if got := carriedBy(target); got != want {
@@ -69,6 +69,11 @@ func TestWhenATargetIsBack(t *testing.T) {
 		"EasyPatch agent checked in before the step":   {agentproto.TargetEasyPatchAgent, targetFacts{patchSeen: ago(30 * time.Minute)}, false, false},
 		"EasyPatch agent recent when the wait ends":    {agentproto.TargetEasyPatchAgent, targetFacts{patchSeen: ago(SilentAfter - time.Minute)}, true, true},
 		"EasyPatch agent silent when the wait ends":    {agentproto.TargetEasyPatchAgent, targetFacts{patchSeen: ago(SilentAfter + time.Minute)}, true, false},
+		"EasyRMM agent never seen":                     {agentproto.TargetEasyRMMAgent, targetFacts{}, true, false},
+		"EasyRMM agent checked in since the step":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(2 * time.Minute)}, false, true},
+		"EasyRMM agent checked in before the step":     {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(30 * time.Minute)}, false, false},
+		"EasyRMM agent recent when the wait ends":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(AgentFresh - time.Minute)}, true, true},
+		"EasyRMM agent silent when the wait ends":      {agentproto.TargetEasyRMMAgent, targetFacts{agentSeen: ago(AgentFresh + time.Minute)}, true, false},
 	} {
 		if got := c.f.back(c.target, now, done, c.waitOver); got != c.want {
 			t.Errorf("%s: %v, want %v", name, got, c.want)

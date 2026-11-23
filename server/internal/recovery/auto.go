@@ -26,6 +26,7 @@ const (
 	// held, as the server has seen it, before an attempt starts.
 	SeenForMesh     = 10 * time.Minute
 	SeenForPatching = 30 * time.Minute
+	SeenForRMM      = 15 * time.Minute
 	// AutoWaitMesh and AutoWaitPatching are how long the target gets to
 	// come back after a step, before the next step is tried (and after the
 	// last).
@@ -71,6 +72,19 @@ var conditionSQL = map[string]string{
 		WHERE d.agent_public_key IS NOT NULL AND d.agent_last_seen_at > $1::timestamptz - interval '3 minutes'
 		  AND e.agent_seen_at IS NOT NULL AND e.agent_seen_at < $1::timestamptz - make_interval(secs => $2::int)
 		  AND NOT ` + devices.LeavingSQL,
+	// The EasyRMM agent has not checked in for 3 minutes, though it did
+	// before (it is enrolled and has been seen), while the device is
+	// patched and its EasyPatch agent is linked and checking in: the engine
+	// heard from it within the last SilentAfter. $2 is SilentAfter in
+	// seconds. A computer that is off is silent in both, and is not in the
+	// condition.
+	agentproto.TargetEasyRMMAgent: `SELECT d.id FROM devices d
+		JOIN easypatch_organizations lo ON lo.organization_id = d.organization_id
+		JOIN easypatch_devices e ON e.device_id = d.id AND e.state = 'linked'
+		WHERE d.agent_public_key IS NOT NULL AND d.agent_last_seen_at IS NOT NULL
+		  AND d.agent_last_seen_at <= $1::timestamptz - interval '3 minutes'
+		  AND e.agent_seen_at IS NOT NULL AND e.agent_seen_at > $1::timestamptz - make_interval(secs => $2::int)
+		  AND NOT ` + devices.LeavingSQL,
 }
 
 // Evaluate notes the conditions that call for a repair and starts the
@@ -106,6 +120,8 @@ func (s *Service) Evaluate(ctx context.Context) error {
 		}{
 			{agentproto.TargetMeshAgent, meshOK, SeenForMesh},
 			{agentproto.TargetEasyPatchAgent, patchOK, SeenForPatching},
+			// Whether the EasyPatch agent checks in is what the engine says.
+			{agentproto.TargetEasyRMMAgent, patchOK, SeenForRMM},
 		} {
 			if err := s.evaluateTarget(ctx, tx, now, t.target, t.judged, t.seenFor); err != nil {
 				return err

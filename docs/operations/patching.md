@@ -543,7 +543,9 @@ reinstall it once
 
 An agent that stopped working is repaired from the device's page (**Repair
 patching agent**) or by EasyRMM itself, in place and keeping its enrollment
-([Remote access](remote-access.md#repair-patching-agent)).
+([Remote access](remote-access.md#repair-patching-agent)). The EasyPatch agent
+in turn repairs the EasyRMM agent when that one is silent
+([Remote access](remote-access.md#repair-the-easyrmm-agent-through-patching)).
 
 ### Restarts
 

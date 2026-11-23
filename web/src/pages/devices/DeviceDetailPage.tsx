@@ -23,7 +23,7 @@ import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
-import { PatchingRepairCard, ReconnectRemoteButton, RemoteRepairCard, RepairPatchingButton } from "./remoteRepair";
+import { EasyRmmRepairCard, PatchingRepairCard, ReconnectRemoteButton, RemoteRepairCard, RepairEasyRmmButton, RepairPatchingButton } from "./remoteRepair";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
@@ -130,6 +130,7 @@ export function DeviceDetailPage() {
             )}
             <ReconnectRemoteButton device={d} />
             <RepairPatchingButton device={d} />
+            <RepairEasyRmmButton device={d} />
             <RemoveDeviceButton device={d} />
           </>
         }
@@ -145,6 +146,7 @@ export function DeviceDetailPage() {
 
       <RemoteRepairCard device={d} />
       <PatchingRepairCard device={d} />
+      <EasyRmmRepairCard device={d} />
 
       {hasAgent && <Tabs tabs={tabs} active={tab} onChange={showTab} />}
 

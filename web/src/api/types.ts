@@ -415,6 +415,8 @@ export interface Device {
   canReconnectRemote: boolean;
   /** device.edit here, the EasyRMM agent, and a linked EasyPatch agent (ADR-0069). */
   canRepairPatching: boolean;
+  /** patch.manage here, the EasyRMM agent, and a linked EasyPatch agent: the EasyPatch agent can repair the EasyRMM agent (ADR-0069). */
+  canRepairEasyRmm: boolean;
   /** Whether remote access is connected and, when not, why; null without the EasyRMM agent (ADR-0069). */
   remote: RemoteStatus | null;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
@@ -471,7 +473,7 @@ export interface Repair {
   carriedBy: RepairTarget;
   trigger: RepairTrigger;
   state: RepairState;
-  steps: { id: string; step: RepairStepName; state: RepairStepState; sentAt?: string; doneAt?: string; error?: string }[];
+  steps: { id: string; step: RepairStepName; state: RepairStepState; sentAt?: string; doneAt?: string; error?: string; note?: string }[];
   startedAt: string;
   endedAt: string | null;
   /** Why a failed repair failed. */

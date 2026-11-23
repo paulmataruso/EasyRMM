@@ -216,6 +216,10 @@ public sealed class Job
 
     /// <summary>JSON <see cref="EasyPatch.Contracts.Agent.JobResultSummary"/>.</summary>
     public string? Result { get; set; }
+
+    /// <summary>Redacted log lines and facts a repair or a log collection returned (at most 256 KiB), kept 14 days after the job
+    /// finished (ADR-0069).</summary>
+    public string? Diagnostics { get; set; }
     public int? ProgressPercent { get; set; }
     public string? Phase { get; set; }
     public string? ProgressMessage { get; set; }

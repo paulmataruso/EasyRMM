@@ -132,6 +132,10 @@ type Endpoint struct {
 	// CannotUninstall is an agent older than 1.6.0, which cannot remove
 	// itself.
 	CannotUninstall bool
+	// CannotRepairCompanion is an agent that does not declare the
+	// repair-companion and collect-logs capabilities (ADR-0069): the
+	// engine sends no such job to it.
+	CannotRepairCompanion bool
 	// RebootPending, IsServer and CannotRestart describe a pending restart
 	// as the engine's restart-pending list shows it.
 	RebootPending  bool
@@ -173,6 +177,11 @@ type Job struct {
 	// Force is a restart asked for with force, which the duplicate guard
 	// lets through.
 	Force bool
+	// Companion is the target, step and hash of a RepairCompanion job.
+	Companion CompanionRequest
+	// Message, ErrorCode, ErrorMessage and Diagnostics are what the
+	// agent's result said (SetJobResult).
+	Message, ErrorCode, ErrorMessage, Diagnostics string
 }
 
 // Request is a call the server received.
@@ -581,6 +590,9 @@ func (e *Endpoint) detail() map[string]any {
 	if e.CannotRestart {
 		capabilities = capabilities[1:]
 	}
+	if !e.CannotRepairCompanion {
+		capabilities = append(capabilities, "repair-companion", "collect-logs")
+	}
 	format, users, product := "deb", any(nil), any(nil)
 	switch {
 	case e.IsServer:
@@ -626,7 +638,8 @@ func (j *Job) summary() map[string]any {
 		"id": j.ID, "endpointId": j.Endpoint, "hostname": j.Hostname, "organizationId": j.Org, "organizationName": "Acme Patch",
 		"type": j.Type, "status": j.Status, "trigger": cmp.Or(j.Trigger, "Manual"), "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
 		"startedAt": nil, "completedAt": completed, "expiresAt": j.CreatedAt.Add(7 * 24 * time.Hour), "progressPercent": nil,
-		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": j.TimedOut,
+		"phase": nil, "progressMessage": nullable(j.Message), "errorCode": nullable(j.ErrorCode), "errorMessage": nullable(j.ErrorMessage),
+		"rebootRequired": j.RebootRequired, "timedOut": j.TimedOut,
 		"cancelRequested": j.Status == StatusCanceled, "itemCount": 0, "succeededCount": 0, "failedCount": 0,
 	}
 }
@@ -639,7 +652,7 @@ func (j *Job) detail() map[string]any {
 	return map[string]any{
 		"summary": j.summary(), "installMode": nil, "notBefore": j.NotBefore, "deliveredAt": nil, "acknowledgedAt": nil,
 		"lastProgressAt": j.LastProgressAt, "deliveryCount": 0, "retryOfJobId": nil, "cancelRequestedAt": nil,
-		"items": items,
+		"items": items, "diagnostics": nullable(j.Diagnostics),
 		"events": []map[string]any{{"id": 1, "endpointId": j.Endpoint, "hostname": j.Hostname, "type": "JobCreated",
 			"severity": "Info", "message": "Job queued.", "jobId": j.ID, "createdAt": j.CreatedAt}},
 	}
@@ -1033,6 +1046,10 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 		guid, _ := uuid.Parse(strings.TrimPrefix(sub, "exclusions/"))
 		e.exclude(guid, false)
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && sub == "companion/repair":
+		s.repairCompanion(w, e, body)
+	case r.Method == http.MethodPost && sub == "collect-logs":
+		s.collectLogs(w, e)
 	case r.Method == http.MethodPost && strings.HasPrefix(sub, "updates/") && strings.HasSuffix(sub, "/uninstall"):
 		if !e.Windows {
 			problem(w, 409, "not_supported_on_linux", e.Hostname+" is a Linux endpoint. Removing updates is only available on Windows.")

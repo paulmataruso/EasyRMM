@@ -160,6 +160,10 @@ type Device struct {
 	// CanRepairPatching: the caller holds device.edit here, the device has
 	// the EasyRMM agent, and its EasyPatch agent is linked to it (ADR-0069).
 	CanRepairPatching bool `json:"canRepairPatching"`
+	// CanRepairEasyRMM: the caller holds patch.manage here, the device has
+	// the EasyRMM agent, and its EasyPatch agent is linked to it: the EasyPatch
+	// agent can repair the EasyRMM agent (ADR-0069).
+	CanRepairEasyRMM bool `json:"canRepairEasyRmm"`
 	// patched: the device's organization is patched and its EasyPatch agent
 	// is linked.
 	patched bool
@@ -386,6 +390,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanReconnectRemote = s.remote && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanRepairPatching = d.patched && d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanRepairEasyRMM = d.patched && d.Agent != nil && c.Can(rbac.PermPatchManage, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	d.CanCheckHardening = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermScriptRun, r)
 	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)

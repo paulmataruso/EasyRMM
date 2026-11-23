@@ -194,6 +194,46 @@ describe("repairing the patching agent", () => {
   });
 });
 
+describe("repairing the EasyRMM agent through patching", () => {
+  const rmm = (extra: Partial<Repair> = {}) => repair({ id: "r3", target: "easyrmm-agent", carriedBy: "easypatch-agent", ...extra });
+
+  it("asks for the repair while the EasyRMM agent is silent and shows the EasyPatch agent's steps", async () => {
+    const user = userEvent.setup();
+    const d = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canRepairEasyRmm: true });
+    const state: { list: Repair[] } = { list: [] };
+    const server = installFakeApi({
+      ...page(d, () => state.list),
+      "POST /devices/:id/repairs": () => {
+        state.list = [rmm()];
+        return ok(state.list[0]);
+      },
+    });
+    renderApp("/devices/d1");
+    await user.click(await screen.findByRole("button", { name: "Repair EasyRMM agent through patching" }));
+    expect(await screen.findByText("Repairing the EasyRMM agent through patching")).toBeInTheDocument();
+    expect(server.callsTo("POST /devices/:id/repairs")[0]?.body).toEqual({ target: "easyrmm-agent" });
+    expect(screen.getByText(/Restart the EasyRMM agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Put the EasyRMM agent back from its recovery copy/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Waiting for the patching engine/).length).toBeGreaterThan(0);
+  });
+
+  it("is not offered without patch.manage and a linked agent, and not while the EasyRMM agent checks in", async () => {
+    const without = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canRepairEasyRmm: false });
+    installFakeApi(page(without, () => []));
+    const { unmount } = renderApp("/devices/d1");
+    await screen.findByText("SRV-01");
+    expect(screen.queryByRole("button", { name: "Repair EasyRMM agent through patching" })).not.toBeInTheDocument();
+    unmount();
+
+    const alive = device("d2", "SRV-02", { platform: "linux", online: true, agent: AGENT, canRepairEasyRmm: true });
+    installFakeApi(page(alive, () => []));
+    renderApp("/devices/d2");
+    const button = await screen.findByRole("button", { name: "Repair EasyRMM agent through patching" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "The EasyRMM agent is checking in, so there is nothing to repair through patching.");
+  });
+});
+
 describe("which repair is shown", () => {
   const now = Date.now();
   it("shows the latest while it runs, and for an hour after it ended", () => {
