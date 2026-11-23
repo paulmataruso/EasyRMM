@@ -637,8 +637,9 @@ func TestContract(t *testing.T) {
 	// through patching, and to collect logs. The same questions are asked of
 	// eptest (TestEptestKeepsTheEnginesCompanionRules).
 	run("repair and log jobs", func(t *testing.T) {
-		if c.version != eptest.EngineVersion {
-			t.Skip("the last release's engine has no repair or log jobs yet")
+		// The last release's engine (edge builds run it) has no such route yet.
+		if _, err := engine.CollectLogs(ctx, a.endpoint, ""); IsStatus(err, http.StatusNotFound) {
+			t.Skip("this engine has no repair or log jobs yet")
 		}
 		checkCompanionRules(t, ctx, reader, engine, a.endpoint, func(capable bool) {
 			a.capabilities = []string{"restart"}
