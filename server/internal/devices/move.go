@@ -202,6 +202,13 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 		WHERE id = $1`, m.id, tgtOrg, in.SiteID, in.GroupID); err != nil {
 		return err
 	}
+	// Verbose logging was turned on by someone with rights on the old site,
+	// and its row names that site, so it ends with a move to another one.
+	if m.otherSite {
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_log_verbose WHERE device_id = $1`, m.id); err != nil {
+			return err
+		}
+	}
 	details := map[string]any{
 		"device": m.name, "fromOrganization": m.orgName, "fromSite": m.siteName, "fromGroup": m.groupName,
 		"toSite": tgtSite, "toGroup": tgtGroup, "toOrganizationId": tgtOrg.String(), "toSiteId": in.SiteID.String(),
@@ -273,6 +280,13 @@ func (s *Service) leaveOrganization(ctx context.Context, tx pgx.Tx, c access.Cal
 	// the new one.
 	if _, err := tx.Exec(ctx, `DELETE FROM alerts WHERE device_id = $1`, m.id); err != nil {
 		return 0, err
+	}
+	// Agent logs record what the old organization's people ran and set on
+	// the device, so they go too (ADR-0069).
+	for _, table := range []string{"agent_log_records", "agent_log_days", "agent_log_follow"} {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE device_id = $1`, m.id); err != nil {
+			return 0, err
+		}
 	}
 	return len(done), nil
 }

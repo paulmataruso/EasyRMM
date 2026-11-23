@@ -340,6 +340,10 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"retired_agent_nonces": follows,
 		// ends
 		"remote_grants": ends, "alerts": ends,
+		"agent_log_records": ends, "agent_log_days": ends, "agent_log_follow": ends,
+		// a device's verbose setting ends with any move to another site; a
+		// group's is owned by the group.
+		"agent_log_verbose": ends,
 		// stays
 		"job_runs": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays,
 		// owned

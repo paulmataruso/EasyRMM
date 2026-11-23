@@ -55,7 +55,11 @@ Before a move to another organization the server:
 * ends the device's open remote sessions;
 * removes the device's alerts, open and resolved, because alerts belong to
   their device and have no organization of their own, and the new
-  organization must not see the old one's.
+  organization must not see the old one's;
+* removes the device's agent logs, for the same reason.
+
+A move to another site, in the same organization or not, also ends verbose
+logging turned on for the device.
 
 Job runs, patch history and audit records keep their organization and site,
 so the old organization keeps its history and the new one does not see it.
@@ -66,7 +70,8 @@ so the old organization keeps its history and the new one does not see it.
 |---|---|
 | `devices` | moves (organization, site, group) |
 | `agent_nonces`, `agent_updates`, `device_disk_health`, `device_disk_health_samples`, `device_hardening`, `device_hardening_checks`, `device_inventory`, `device_metric_samples`, `device_metrics`, `device_removals`, `device_software`, `enrollment_requests`, `retired_agent_nonces` | keyed by the device alone: the machine's own data, follows it |
-| `remote_grants`, `alerts` | removed with a move to another organization |
+| `remote_grants`, `alerts`, `agent_log_records`, `agent_log_days`, `agent_log_follow` | removed with a move to another organization |
+| `agent_log_verbose` | a device's row is removed with a move to another site; a group's belongs to the group |
 | `job_runs`, `audit_log`, `retired_devices`, `mail_sends` | keep the organization and site they were written with |
 | `alert_policies`, `contacts`, `device_groups`, `enrollment_tokens`, `mesh_sites`, `role_assignments`, `scripts`, `site_places`, `sites`, `easypatch_organizations`, `easypatch_sites` | owned by an organization or site, not by a device: untouched |
 | `easypatch_devices`, `easypatch_install_restarts`, `easypatch_installs`, `easypatch_opt_outs`, `easypatch_removals` | the patching engine's links: follow through its reconcile |
