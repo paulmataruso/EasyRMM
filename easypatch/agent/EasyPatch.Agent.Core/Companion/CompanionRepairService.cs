@@ -17,6 +17,7 @@ public sealed class CompanionRepairService : ICompanionRepair
     public const int LogLines = 500;
 
     private const long MaxBytesPerLog = 1024 * 1024;
+    private const int MaxLineLength = 4000;
     private static readonly TimeSpan RepairTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RunningWait = TimeSpan.FromSeconds(30);
 
@@ -197,6 +198,8 @@ public sealed class CompanionRepairService : ICompanionRepair
             }
         }
 
+        // A line of an agent's log is short; one that is not is cut, so that redacting it is bounded.
+        lines = lines.Select(l => l.Length > MaxLineLength ? l[..MaxLineLength] + " [line cut]" : l).ToList();
         return lines.Count == 0 ? "(no log lines found)" : LogRedactor.Redact(string.Join('\n', lines));
     }
 

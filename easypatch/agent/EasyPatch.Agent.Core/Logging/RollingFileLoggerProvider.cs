@@ -289,7 +289,7 @@ public static partial class LogRedactor
     // name=value, name: value and "name":"value", the value being quoted or running to a delimiter. An authorization value may be
     // a scheme and a credential ("Basic abc", "Bearer abc").
     [GeneratedRegex(
-        @"([A-Za-z0-9_.\-]+)([""']?\s*[:=]\s*)(""(?:[^""\\]|\\.)*""|'[^']*'|(?:basic|bearer|digest|negotiate|token)\s+[^\s,;&}\]]+|[^\s,;&}\]""']+)",
+        @"(?<![A-Za-z0-9_.\-])([A-Za-z0-9_.\-]+)([""']?\s*[:=]\s*)(""(?:[^""\\]|\\.)*""|'[^']*'|(?:basic|bearer|digest|negotiate|token)\s+[^\s,;&}\]]+|[^\s,;&}\]""']+)",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase, TimeoutMilliseconds)]
     private static partial Regex Field();
 }
