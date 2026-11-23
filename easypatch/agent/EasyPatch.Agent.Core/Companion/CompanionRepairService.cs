@@ -85,11 +85,11 @@ public sealed class CompanionRepairService : ICompanionRepair
 
         // 2. No links or reparse points; the system owns the copy; only the system, administrators or root may change it or the
         // directories above it.
-        var untrusted = await _host.CheckTrustAsync(copy, _layout.TrustStopAt, cancellationToken);
-        if (untrusted is not null)
+        var refusal = await _host.CheckTrustAsync(copy, _layout.TrustStopAt, cancellationToken);
+        if (refusal is not null)
         {
-            _logger.LogError("Refused to repair the EasyRMM agent from {Copy}: {Reason}", copy, untrusted);
-            return await FailedAsync(target, CompanionErrors.CopyNotTrusted, "The recovery copy was refused: " + untrusted, null, cancellationToken);
+            _logger.LogError("Refused to repair the EasyRMM agent from {Copy}: {Reason}", copy, refusal);
+            return await FailedAsync(target, CompanionErrors.CopyNotTrusted, "The recovery copy was refused: " + refusal, null, cancellationToken);
         }
 
         // 3. Its SHA-256 is the one EasyRMM recorded for the build the device runs.
