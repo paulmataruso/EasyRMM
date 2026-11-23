@@ -46,8 +46,10 @@ type Service struct {
 	db    *database.DB
 	audit *audit.Logger
 	mesh  MeshAgents
-	log   *slog.Logger
-	now   func() time.Time
+	// meshHosts: each site's MeshCentral host, as the settings it gets name it.
+	meshHosts meshHosts
+	log       *slog.Logger
+	now       func() time.Time
 	// enroll limits new devices per address, lookups every enrollment
 	// request per address, polls a waiting device's requests per key.
 	enroll, lookups, polls *auth.KeyedLimiter

@@ -13,6 +13,7 @@ import { Badge, Button, ErrorState, KeyValueList, Spinner } from "../../componen
 import { formatDate, formatDateTime, formatDuration, plural } from "../../lib/format";
 import { DiskFacts, DiskState } from "../devices/DeviceDisks";
 import { AlertActions, useAlertAction } from "./AlertActions";
+import { RepairSteps } from "../devices/remoteRepair";
 import { alertGuide } from "./alertGuide";
 import { linkClass, muted, RawDetails, Section, When } from "./cardParts";
 import { ALERT_PARAM, AlertLink, useCloseAlertCard } from "./alertLink";
@@ -64,6 +65,35 @@ export function AlertCard() {
   );
 }
 
+/** The repairs tried on the device since a remote access alert opened (ADR-0069). */
+function RepairsSection({ alert: a }: { alert: AlertEntry }) {
+  const repairs = a.repairs ?? [];
+  return (
+    <Section title="Repairs tried">
+      {repairs.length === 0 ? (
+        <p className="text-sm text-muted">None since the alert opened.</p>
+      ) : (
+        <ul className="space-y-3 text-sm">
+          {repairs.map((r) => (
+            <li key={r.startedAt}>
+              <span className="font-medium">
+                {r.trigger === "automatic" ? "Automatic" : "By hand"} · {r.target} ·{" "}
+                {r.state === "running" ? "running" : r.state === "succeeded" ? "it came back" : "it did not come back"}
+              </span>
+              <span className="text-muted">
+                {" "}
+                · <When at={r.startedAt} />
+              </span>
+              <RepairSteps repair={{ ...r, id: r.startedAt, carriedBy: r.target, steps: r.steps.map((s, i) => ({ ...s, id: `${i}` })) }} />
+              {r.state === "failed" && r.error && <span className="mt-1 block break-words text-danger">{r.error}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 const MEASURED = new Set<AlertEntry["kind"]>(["cpu", "memory", "disk"]);
 
 /** Every section of an alert's card. */
@@ -75,6 +105,7 @@ function AlertDetail({ alert: a }: { alert: AlertEntry }) {
       <WhyItOpened alert={a} device={device.data} />
       {MEASURED.has(a.kind) && <Measurements alert={a} />}
       {a.kind === "disk_health" && <DiskSection alert={a} />}
+      {(a.kind === "remote_down" || a.kind === "agent_silent") && <RepairsSection alert={a} />}
       <Times alert={a} />
       <Guide alert={a} />
       <History alert={a} />

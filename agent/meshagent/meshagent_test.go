@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 const nodeHex = "284B953F153B329D15BCB32D4FF0D8A8E588030A9D00AE38EA0BDBD50855E59F4CE162723EAA1EBC8878B08ADC51D6C7"
@@ -169,19 +170,35 @@ func TestSystemdMode(t *testing.T) {
 type fakeServices struct {
 	installed []host.Service
 	removed   []string
-	fail      error
+	restarted []string
+	stopped   []string
+	// state is State's answer, "running" when empty.
+	state string
+	fail  error
 }
 
 func (f *fakeServices) Install(_ context.Context, s host.Service) error {
 	f.installed = append(f.installed, s)
 	return f.fail
 }
-func (f *fakeServices) Restart(context.Context, string) error { return f.fail }
+func (f *fakeServices) Restart(_ context.Context, name string) error {
+	f.restarted = append(f.restarted, name)
+	return f.fail
+}
+func (f *fakeServices) Stop(_ context.Context, name string) error {
+	f.stopped = append(f.stopped, name)
+	return f.fail
+}
 func (f *fakeServices) Remove(_ context.Context, name string) error {
 	f.removed = append(f.removed, name)
 	return f.fail
 }
-func (f *fakeServices) State(context.Context, string) string { return "running" }
+func (f *fakeServices) State(context.Context, string) string {
+	if f.state != "" {
+		return f.state
+	}
+	return "running"
+}
 
 func TestWindowsService(t *testing.T) {
 	svcs := &fakeServices{}
@@ -217,5 +234,165 @@ func TestWindowsService(t *testing.T) {
 	child.Windows = true
 	if err := child.Install(ctx, download("MZ"), []byte("x")); err == nil || !strings.Contains(err.Error(), "Windows service only") {
 		t.Errorf("child mode on Windows: %v", err)
+	}
+}
+
+func TestStateOfAServiceMeshAgent(t *testing.T) {
+	svcs := &fakeServices{state: "inactive"}
+	m := newManager(t, ModeService, nil)
+	m.Services = svcs
+	ctx := context.Background()
+	if st := m.State(ctx); st.Installed || st.Running || st.Host != "" || st.Error != "" {
+		t.Errorf("before installing: %+v", st)
+	}
+	settings := []byte("MeshID=0x1\nMeshServer=wss://Mesh.Example.test:443/agent.ashx\n")
+	if err := m.Install(ctx, download("ELF"), settings); err != nil {
+		t.Fatal(err)
+	}
+	if st := m.State(ctx); !st.Installed || st.Running || st.Host != "mesh.example.test:443" {
+		t.Errorf("stopped: %+v", st)
+	}
+	for _, active := range []string{"active", "running"} {
+		svcs.state = active
+		if st := m.State(ctx); !st.Running {
+			t.Errorf("%s service not running: %+v", active, st)
+		}
+	}
+	svcs.state = "activating" // being restarted by the manager, not up
+	if st := m.State(ctx); st.Running {
+		t.Errorf("activating service running: %+v", st)
+	}
+}
+
+func TestRestartOfAServiceMeshAgent(t *testing.T) {
+	svcs := &fakeServices{}
+	m := newManager(t, ModeService, nil)
+	m.Services = svcs
+	ctx := context.Background()
+	if err := m.Restart(ctx); err == nil || !strings.Contains(m.State(ctx).Error, "not installed") {
+		t.Fatalf("restart before installing: %v, state %+v", err, m.State(ctx))
+	}
+	if err := m.Install(ctx, download("ELF"), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Restart(ctx); err != nil || len(svcs.restarted) != 1 || svcs.restarted[0] != Unit {
+		t.Fatalf("restart: %v, %v", err, svcs.restarted)
+	}
+	if m.State(ctx).Error != "" {
+		t.Errorf("error kept after success: %q", m.State(ctx).Error)
+	}
+	svcs.fail = errors.New("unit not found")
+	if err := m.Restart(ctx); err == nil || m.State(ctx).Error != "unit not found" {
+		t.Errorf("failed restart: %v, state %+v", err, m.State(ctx))
+	}
+	svcs.fail = errors.New(strings.Repeat("é", 900))
+	_ = m.Restart(ctx)
+	if n := len([]rune(m.State(ctx).Error)); n != agentproto.MaxMeshAgentError {
+		t.Errorf("error cut to %d characters", n)
+	}
+}
+
+// A repair writes the program and the settings again and starts MeshAgent,
+// and leaves its identity alone.
+func TestRepairPutsMeshAgentBack(t *testing.T) {
+	svcs := &fakeServices{}
+	m := newManager(t, ModeService, nil)
+	m.Services = svcs
+	ctx := context.Background()
+	if err := m.Install(ctx, download("old"), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(m.Dir, "meshagent.db")
+	if err := os.WriteFile(identity, []byte("keys"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A program that was deleted, a service that is gone.
+	if err := os.Remove(filepath.Join(m.Dir, "meshagent")); err != nil {
+		t.Fatal(err)
+	}
+	svcs.installed, svcs.stopped = nil, nil
+	if err := m.Repair(ctx, download("new"), []byte("MeshID=0x2\n")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(m.Dir, "meshagent")); string(b) != "new" {
+		t.Errorf("program = %q", b)
+	}
+	if b, _ := os.ReadFile(m.settings()); string(b) != "MeshID=0x2\n" {
+		t.Errorf("settings = %q", b)
+	}
+	if b, _ := os.ReadFile(identity); string(b) != "keys" {
+		t.Errorf("identity = %q", b)
+	}
+	if len(svcs.stopped) != 1 || len(svcs.installed) != 1 {
+		t.Errorf("stopped %v, installed %d", svcs.stopped, len(svcs.installed))
+	}
+	if st, _ := os.Stat(m.binary()); st.Mode().Perm() != 0o755 {
+		t.Errorf("program mode %v", st.Mode().Perm())
+	}
+}
+
+// A download that fails leaves MeshAgent as it was, running.
+func TestRepairWithABrokenDownloadChangesNothing(t *testing.T) {
+	svcs := &fakeServices{}
+	m := newManager(t, ModeService, nil)
+	m.Services = svcs
+	ctx := context.Background()
+	if err := m.Install(ctx, download("old"), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	svcs.stopped = nil
+	err := m.Repair(ctx, func(io.Writer) error { return errors.New("server unreachable") }, []byte("MeshID=0x2\n"))
+	if err == nil || len(svcs.stopped) != 0 {
+		t.Errorf("repair: %v, stopped %v", err, svcs.stopped)
+	}
+	if b, _ := os.ReadFile(m.binary()); string(b) != "old" {
+		t.Errorf("program = %q", b)
+	}
+	if b, _ := os.ReadFile(m.settings()); string(b) != "MeshID=0x1\n" {
+		t.Errorf("settings = %q", b)
+	}
+	if m.State(ctx).Error != "server unreachable" {
+		t.Errorf("state = %+v", m.State(ctx))
+	}
+}
+
+// A child MeshAgent is killed by a restart and started again by its
+// supervisor, and State follows it.
+func TestRestartOfAChildMeshAgent(t *testing.T) {
+	m := newManager(t, ModeChild, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.RestartDelay = 20 * time.Millisecond
+	// Stays up until killed.
+	long := "#!/bin/sh\nif [ \"$1\" = -nodeid ]; then echo " + nodeHex + "; exit 0; fi\necho run >> runs.log\nexec sleep 60\n"
+	if err := m.Install(ctx, download(long), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() int {
+		b, _ := os.ReadFile(filepath.Join(m.Dir, "runs.log"))
+		return strings.Count(string(b), "run")
+	}
+	waitFor(t, "running", func() bool { return runs() >= 1 && m.State(ctx).Running })
+	if err := m.Restart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "started again", func() bool { return runs() >= 2 && m.State(ctx).Running })
+	// A repair replaces the program under it and restarts it.
+	if err := m.Repair(ctx, download(long+"# v2\n"), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "started after the repair", func() bool { return runs() >= 3 && m.State(ctx).Running })
+	cancel()
+	m.Wait()
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting until %s", what)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

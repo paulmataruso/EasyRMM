@@ -95,6 +95,10 @@ floors=(
   # Removing devices: it deletes a device and has its agents uninstall
   # themselves (ADR-0050).
   "server/internal/httpapi/removalapi      90"
+  # Repairing agents (ADR-0069): the server hands instructions to agents
+  # that run as SYSTEM or root.
+  "server/internal/recovery                85"
+  "server/internal/httpapi/repairsapi      90"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"

@@ -29,6 +29,13 @@ type MeshAgent interface {
 	Install(ctx context.Context, download func(io.Writer) error, settings []byte) error
 	Start(ctx context.Context) error
 	NodeID(ctx context.Context) (string, error)
+	// State is reported with each heartbeat (ADR-0069).
+	State(ctx context.Context) agentproto.MeshAgentState
+	// Restart restarts MeshAgent; an error means it needs Repair.
+	Restart(ctx context.Context) error
+	// Repair puts MeshAgent's program, settings and service back in place,
+	// keeping its identity.
+	Repair(ctx context.Context, download func(io.Writer) error, settings []byte) error
 }
 
 // Updater is the agent's self-update (package update, ADR-0027).
@@ -73,7 +80,9 @@ var ErrRemoved = errors.New("runner: the agent must uninstall itself")
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
-	Store  state.Store
+	// DeviceID is this device's id: repair instructions are for it alone.
+	DeviceID string
+	Store    state.Store
 	// Mesh is nil where MeshAgent is not supported.
 	Mesh  MeshAgent
 	Facts func() agentproto.Facts
@@ -123,6 +132,9 @@ type Runner struct {
 	invAt       time.Time
 	invFailed   time.Time
 	invStale    atomic.Bool
+	// meshErr is the last failure of installing MeshAgent, for its state.
+	meshErr string
+	repair  repairs
 }
 
 // RefreshInventory has the inventory collected again at the next heartbeat,
@@ -165,6 +177,7 @@ func (r *Runner) defaults() {
 // itself.
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
+	defer r.repair.wait()
 	if r.Hardware != nil {
 		hctx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
@@ -219,6 +232,17 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	if r.EasyPatch != nil {
 		req.EasyPatch = r.EasyPatch.Status()
 	}
+	if r.Client.Level() >= 2 {
+		// Fields added after protocol level 2 (ADR-0009).
+		if r.Mesh != nil {
+			st := r.Mesh.State(ctx)
+			if st.Error == "" {
+				st.Error = r.meshErr
+			}
+			req.MeshAgent = &st
+		}
+		req.Repair = r.repair.report(time.Now())
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -261,8 +285,10 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			if err := r.installMesh(ctx); err != nil {
 				r.Log.Error("installing MeshAgent failed", "error", err)
 				r.status.MeshAgent = "install failed: " + err.Error()
+				r.meshErr = "install failed: " + err.Error()
 			} else {
 				r.Log.Info("installed MeshAgent")
+				r.meshErr = ""
 				r.status.MeshAgent = "installed"
 				next = r.AfterSetup // report the node id soon
 			}
@@ -270,6 +296,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	if r.EasyPatch != nil {
 		r.EasyPatch.Start(ctx, resp.EasyPatchInstall)
+	}
+	if resp.Repair != nil {
+		r.startRepair(ctx, resp.Repair)
 	}
 	if r.Update != nil && r.Update.Apply(ctx, resp.Update) {
 		r.save()
@@ -338,18 +367,28 @@ func (r *Runner) failed(err error) time.Duration {
 // and settings are used only if the server signed them with the pinned job
 // key (agentproto.SignDownload).
 func (r *Runner) installMesh(ctx context.Context) error {
-	key := r.Key()
-	if key == nil {
-		return errors.New("no server key is pinned yet to check MeshAgent with")
-	}
-	settings, signed, err := r.Client.MeshSettings(ctx)
+	download, settings, err := r.meshPackage(ctx)
 	if err != nil {
 		return err
 	}
-	if err := signed.Verify(key); err != nil {
-		return fmt.Errorf("MeshAgent's settings: %w", err)
+	return r.Mesh.Install(ctx, download, settings)
+}
+
+// meshPackage fetches MeshAgent's settings and returns them with a function
+// that downloads its binary, each checked against the server's signature.
+func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte, error) {
+	key := r.Key()
+	if key == nil {
+		return nil, nil, errors.New("no server key is pinned yet to check MeshAgent with")
 	}
-	return r.Mesh.Install(ctx, func(w io.Writer) error {
+	settings, signed, err := r.Client.MeshSettings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := signed.Verify(key); err != nil {
+		return nil, nil, fmt.Errorf("MeshAgent's settings: %w", err)
+	}
+	return func(w io.Writer) error {
 		signed, err := r.Client.MeshAgent(ctx, runtime.GOOS, runtime.GOARCH, w)
 		if err != nil {
 			return err
@@ -358,7 +397,7 @@ func (r *Runner) installMesh(ctx context.Context) error {
 			return fmt.Errorf("MeshAgent: %w", err)
 		}
 		return nil
-	}, settings)
+	}, settings, nil
 }
 
 // heartbeatInterval is the server's heartbeat interval, kept within

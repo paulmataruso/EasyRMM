@@ -25,9 +25,15 @@ export function allowedKinds(d: Pick<Device, "canDesktop" | "canTerminal" | "can
   return (["desktop", "rdp", "terminal", "files"] as const).filter((k) => allowed[k]);
 }
 
+/** The watchdog's reason when the EasyRMM agent says why MeshAgent is not connected (ADR-0069), else null. */
+function watchdogReason(d: Pick<Device, "remote">): string | null {
+  const r = d.remote?.reason;
+  return r && r !== "connected" && r !== "device_offline" && r !== "unknown" ? d.remote!.message : null;
+}
+
 /** Why sessions cannot start on a device right now, or null when they can. */
-export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline" | "online">): string | null {
-  if (!d.remoteAgent) return "Remote access is not set up on this device.";
-  if (!d.remoteOnline) return d.online ? "Remote access is not connected." : "The device is offline.";
+export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline" | "online" | "remote">): string | null {
+  if (!d.remoteAgent) return watchdogReason(d) ?? "Remote access is not set up on this device.";
+  if (!d.remoteOnline) return d.online ? (watchdogReason(d) ?? "Remote access is not connected.") : "The device is offline.";
   return null;
 }

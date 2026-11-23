@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Reconnect remote access, with the reason a device's remote access is
+  down, and two default alerts**
+  ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),
+  slice R1). The EasyRMM agent reports MeshAgent's state with each
+  heartbeat: installed, running, the MeshCentral host its settings name
+  and the last error it read. The device page replaces "its MeshAgent is
+  not connected" with the reason: not installed, installed but not
+  running, settings for another server, its node in another site's
+  MeshCentral group, or running but not connected since a time. **Reconnect
+  remote access** (with `device.edit`) has the EasyRMM agent restart
+  MeshAgent and, if MeshCentral still does not see it, put its program and
+  settings back from the server's signed copies, keeping its node identity;
+  the page shows each step and how it ended. Two shared alert policies,
+  both on, open after 15 minutes: **Remote access down** (the agent checks
+  in, MeshAgent is not connected) and **EasyRMM agent silent** (MeshAgent
+  is connected, the agent does not check in). They open nothing for a
+  device being removed, and judge nothing while EasyRMM cannot see
+  MeshCentral or for 15 minutes after it can. Migration 00040.
+
 ### Security
 
 - **Read-Only users no longer see what scripts printed or the arguments

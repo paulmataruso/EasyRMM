@@ -184,12 +184,13 @@ func TestSeededPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"Device offline", "Disk almost full", "Disk errors", "Disk failing", "Disk sectors pending", "Disk too hot",
-		"Disk wearing out", "High memory use", "High processor use"}
+		"Disk wearing out", "EasyRMM agent silent", "High memory use", "High processor use", "Remote access down"}
 	if got := names(list); !slices.Equal(got, want) {
 		t.Fatalf("seeded = %v", got)
 	}
 	for _, p := range list {
-		// Of the disk health policies only Disk failing is on (ADR-0065).
+		// Of the disk health policies only Disk failing is on (ADR-0065); the
+		// two remote access policies are on (ADR-0069).
 		on := p.Kind != KindDiskHealth || p.Name == "Disk failing"
 		if p.Level != LevelShared || p.Enabled != on || !p.CanEdit {
 			t.Errorf("%s: level %s enabled %v canEdit %v", p.Name, p.Level, p.Enabled, p.CanEdit)

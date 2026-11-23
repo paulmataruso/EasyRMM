@@ -3,11 +3,14 @@ package agents
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
@@ -19,6 +22,96 @@ import (
 // sending it, and a fleet installing at once then costs MeshCentral one
 // download per platform.
 const MeshAgentCacheFor = 10 * time.Minute
+
+// MeshHostCacheFor is how long the server remembers the MeshCentral host of
+// the settings it hands out for a site, and MeshHostRetry how long it
+// remembers that it could not read it.
+const (
+	MeshHostCacheFor = 10 * time.Minute
+	MeshHostRetry    = time.Minute
+)
+
+type meshHost struct {
+	host     string // "" when unknown
+	at       time.Time
+	ok       bool // MeshCentral answered
+	fetching bool
+}
+
+// meshHosts remembers each site's expected MeshCentral host.
+type meshHosts struct {
+	mu    sync.Mutex
+	sites map[uuid.UUID]meshHost
+}
+
+// MeshState is what the server stores of an agent's report about MeshAgent
+// (ADR-0069): the report, and whether the MeshCentral host in its settings
+// is the one the server hands out, nil when the server could not tell.
+type MeshState struct {
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Host      string `json:"host,omitempty"`
+	Error     string `json:"error,omitempty"`
+	HostOK    *bool  `json:"hostOk"`
+}
+
+// meshState cleans an agent's report about MeshAgent and judges its host.
+func (s *Service) meshState(ctx context.Context, site uuid.UUID, in agentproto.MeshAgentState) []byte {
+	st := MeshState{Installed: in.Installed, Running: in.Running, Host: clean(in.Host, agentproto.MaxMeshHost),
+		Error: clean(in.Error, agentproto.MaxMeshAgentError)}
+	if st.Host != "" {
+		if want := s.expectedMeshHost(ctx, site); want != "" {
+			ok := want == st.Host
+			st.HostOK = &ok
+		}
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		return nil // strings and booleans: it encodes
+	}
+	return b
+}
+
+// expectedMeshHost is the host of the settings the server hands a site's
+// devices, "" when it is not known: MeshCentral is not there to ask, or
+// another heartbeat is asking now (a fleet's heartbeats are never held up
+// for it, and the answer is cached).
+func (s *Service) expectedMeshHost(ctx context.Context, site uuid.UUID) string {
+	if s.mesh == nil {
+		return ""
+	}
+	h := &s.meshHosts
+	h.mu.Lock()
+	e := h.sites[site]
+	ttl := MeshHostRetry
+	if e.ok {
+		ttl = MeshHostCacheFor
+	}
+	if e.fetching || (!e.at.IsZero() && s.now().Sub(e.at) < ttl) {
+		h.mu.Unlock()
+		return e.host
+	}
+	if h.sites == nil {
+		h.sites = map[uuid.UUID]meshHost{}
+	}
+	e.fetching = true
+	h.sites[site] = e
+	h.mu.Unlock()
+
+	group, err := s.mesh.Group(ctx, site)
+	var b []byte
+	if err == nil && group != "" {
+		b, err = s.mesh.Settings(ctx, group)
+	}
+	e = meshHost{at: s.now(), ok: err == nil && group != ""}
+	if e.ok {
+		e.host = agentproto.MeshServerHost(b)
+	}
+	h.mu.Lock()
+	h.sites[site] = e
+	h.mu.Unlock()
+	return e.host
+}
 
 // meshCache keeps MeshAgent binaries by MeshCentral architecture number.
 type meshCache struct {

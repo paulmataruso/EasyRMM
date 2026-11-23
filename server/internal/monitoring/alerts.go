@@ -63,6 +63,9 @@ type Alert struct {
 	// missing from the device's hardware reports for 14 days).
 	Resolution string `json:"resolution,omitempty"`
 	CanManage  bool   `json:"canManage"`
+	// Repairs are the repairs started on the device since the alert opened,
+	// set when one alert is read, for the remote access kinds (ADR-0069).
+	Repairs []AlertRepair `json:"repairs,omitempty"`
 
 	seq int64
 }
@@ -263,15 +266,65 @@ func (s *Service) ActiveByDevice(ctx context.Context, c access.Caller) ([]Device
 	return out, err
 }
 
+// AlertRepair is a repair tried on the device since an alert opened.
+type AlertRepair struct {
+	Target    string     `json:"target"`
+	Trigger   string     `json:"trigger"`
+	State     string     `json:"state"`
+	StartedAt time.Time  `json:"startedAt"`
+	EndedAt   *time.Time `json:"endedAt"`
+	Error     string     `json:"error"`
+	// Steps are the step names tried, in order, with their outcomes.
+	Steps []AlertRepairStep `json:"steps"`
+}
+
+// AlertRepairStep is one step of an AlertRepair.
+type AlertRepairStep struct {
+	Step  string `json:"step"`
+	State string `json:"state"`
+	Error string `json:"error,omitempty"`
+}
+
 // GetAlert returns one alert.
 func (s *Service) GetAlert(ctx context.Context, c access.Caller, id uuid.UUID) (*Alert, error) {
 	var a *Alert
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		var err error
-		a, err = getAlert(ctx, tx, c, id, false)
+		if a, err = getAlert(ctx, tx, c, id, false); err != nil {
+			return err
+		}
+		if a.Kind == KindRemoteDown || a.Kind == KindAgentSilent {
+			a.Repairs, err = alertRepairs(ctx, tx, a)
+		}
 		return err
 	})
 	return a, err
+}
+
+// alertRepairs reads the repairs started on an alert's device while it was
+// open, oldest first.
+func alertRepairs(ctx context.Context, tx pgx.Tx, a *Alert) ([]AlertRepair, error) {
+	rows, err := tx.Query(ctx, `SELECT target, trigger, state, started_at, ended_at, error, steps
+		FROM agent_repairs
+		WHERE device_id = $1 AND started_at >= $2 AND ($3::timestamptz IS NULL OR started_at <= $3)
+		ORDER BY started_at LIMIT 20`, a.DeviceID, a.OpenedAt, a.ResolvedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AlertRepair
+	for rows.Next() {
+		var (
+			r     AlertRepair
+			steps []AlertRepairStep
+		)
+		if err := rows.Scan(&r.Target, &r.Trigger, &r.State, &r.StartedAt, &r.EndedAt, &r.Error, &steps); err != nil {
+			return nil, err
+		}
+		r.Steps = steps
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func getAlert(ctx context.Context, tx pgx.Tx, c access.Caller, id uuid.UUID, lock bool) (*Alert, error) {

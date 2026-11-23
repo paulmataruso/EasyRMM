@@ -38,6 +38,9 @@ type Services interface {
 	Install(ctx context.Context, s Service) error
 	// Restart restarts a service, or starts it when it is stopped.
 	Restart(ctx context.Context, name string) error
+	// Stop stops a service and waits until it has stopped. A service that
+	// does not exist is an error.
+	Stop(ctx context.Context, name string) error
 	// Remove stops and deletes a service. A missing service is not an error.
 	Remove(ctx context.Context, name string) error
 	// State describes a service in the manager's words: active or failed
@@ -98,6 +101,12 @@ func (s Systemd) Install(ctx context.Context, svc Service) error {
 // Restart restarts a unit.
 func (s Systemd) Restart(ctx context.Context, name string) error {
 	_, err := s.Run(ctx, "systemctl", "restart", name)
+	return err
+}
+
+// Stop stops a unit.
+func (s Systemd) Stop(ctx context.Context, name string) error {
+	_, err := s.Run(ctx, "systemctl", "stop", name)
 	return err
 }
 

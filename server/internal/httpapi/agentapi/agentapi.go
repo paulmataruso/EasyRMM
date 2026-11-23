@@ -59,6 +59,7 @@ type API struct {
 	inv     *inventory.Service
 	hw      *hardware.Service
 	ep      EasyPatchInstalls
+	repairs Repairs
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
@@ -97,6 +98,12 @@ var bodyTimeout = 2 * time.Minute
 // (ADR-0031).
 type EasyPatchInstalls interface {
 	AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, st *agentproto.EasyPatchInstallStatus) *agentproto.SignedEasyPatchInstall
+}
+
+// Repairs hands out and settles repair steps with each heartbeat
+// (ADR-0069).
+type Repairs interface {
+	AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, rep *agentproto.RepairReport) *agentproto.SignedRepair
 }
 
 // easyPatchWait bounds the EasyPatch side of a heartbeat, which may call
@@ -203,6 +210,12 @@ func (a *API) WithHardware(hw *hardware.Service) *API {
 // WithEasyPatch has heartbeats carry EasyPatch agent installs (ADR-0031).
 func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
 	a.ep = ep
+	return a
+}
+
+// WithRepairs has heartbeats carry repair steps (ADR-0069).
+func (a *API) WithRepairs(r Repairs) *API {
+	a.repairs = r
 	return a
 }
 
@@ -529,6 +542,9 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), easyPatchWait)
 		out.EasyPatchInstall = a.ep.AgentHeartbeat(ctx, d.ID, in.EasyPatch)
 		cancel()
+	}
+	if a.repairs != nil && out.Uninstall == nil {
+		out.Repair = a.repairs.AgentHeartbeat(r.Context(), d.ID, in.Repair)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

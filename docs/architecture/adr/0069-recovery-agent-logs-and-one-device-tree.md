@@ -1,7 +1,7 @@
 # ADR-0069: Recovering agents from either side, live agent logs, and one device tree
 
-* Status: Accepted (2026-11-23, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-23, after an independent review). Slice R1
+  implemented; the rest not implemented.
 * Revised after an independent review (2026-11-23): logs go over signed
   HTTPS, since the agent channel carries nothing from the agent; the
   EasyPatch agent is repaired in place, keeping its enrollment; the
@@ -210,6 +210,36 @@ being removed, nothing while EasyRMM cannot reach MeshCentral. Each card
 shows the watchdog's reason and the repairs tried since the alert opened.
 As for every shared policy, an operator can change the 15 minutes or turn
 it off, and add organization or site policies instead.
+
+**Amended 2026-11-23 (decided in review), slice R1.** What the code
+settled:
+
+* A repair step reaches the agent as a signed instruction in a heartbeat
+  answer (target and step from fixed lists, bound to the device, valid 15
+  minutes, the job key signing it), and its outcome comes back in the next
+  heartbeats. It is carried out in the background, so a slow download does
+  not hold the heartbeats.
+* `devices.remote_changed_at` is set by a database trigger on changes of
+  `remote_online`, which covers the device sync and a heartbeat's link
+  alike; it starts at the migration for devices that exist, so an upgrade
+  opens no alert for a state that is not new. A device with none yet counts
+  from its enrollment.
+* "Settings for another server" is judged by the server: the agent reports
+  the host its settings name, and the server compares it with the host of
+  the settings it would hand the device's site (remembered for 10
+  minutes). "Its node is in another site's group" is a flag the device sync
+  sets when it unlinks such a node (`devices.mesh_wrong_group`) and clears
+  when a sync finds the node in the device's own site.
+* The step wait of a repair someone asks for is 2 minutes; a step the
+  carrying agent does not take in 15 minutes, or a repair of an hour, ends
+  it as failed. A failed step goes straight to the next. Automatic
+  repairs keep the waits in the table above (slice R2).
+* The two alert conditions are `remote_down` and `agent_silent`. Their
+  alerts are judged only while EasyRMM's control session to MeshCentral is
+  open and has been for 15 minutes, which also covers a restart of the
+  server. Without remote access their alerts resolve. The "never for a
+  device that is leaving" rule covers all three tables in this slice, for
+  alerts and for repairs by hand.
 
 **By hand**: the device page offers *Reconnect remote access* and *Repair
 patching agent* (with `device.edit`) and *Repair EasyRMM agent through

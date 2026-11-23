@@ -62,6 +62,7 @@ type Client struct {
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
+	since   time.Time     // when the control session last opened
 	ready   chan struct{} // closed while connected
 	pending map[string]chan reply
 	info    ServerInfo
@@ -128,6 +129,14 @@ func (c *Client) Connected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn != nil
+}
+
+// Session reports whether a control session is open and when the last one
+// opened (the zero time before any did).
+func (c *Client) Session() (connected bool, since time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn != nil, c.since
 }
 
 // Info returns what MeshCentral reported on the current connection.
@@ -203,7 +212,7 @@ func (c *Client) session(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	c.conn = conn
+	c.conn, c.since = conn, c.now()
 	close(c.ready)
 	c.mu.Unlock()
 	c.log.Info("connected to MeshCentral", "endpoint", c.endpoint)

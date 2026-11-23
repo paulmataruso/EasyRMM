@@ -20,6 +20,8 @@ A policy watches one condition on the devices it covers:
 | **Memory use** | The same, for memory in use | The same |
 | **Disk use** | The same, for the fullest filesystem | The same |
 | **Disk health** | One of five checks holds on a disk: see [Disk health policies](#disk-health-policies) | Two readings in a row clear it |
+| **Remote access down** | The EasyRMM agent checks in, but MeshAgent has not been connected to MeshCentral for N minutes (3 to 1,440) | MeshCentral sees MeshAgent connected |
+| **EasyRMM agent silent** | MeshCentral sees MeshAgent connected, but the EasyRMM agent has not checked in for N minutes (3 to 1,440) | The EasyRMM agent checks in |
 
 * A device **checks in** while its EasyRMM agent or MeshAgent is connected,
   so the offline condition works on every device.
@@ -37,7 +39,7 @@ A policy covers **every device** (shared), **one organization's devices**
 or **one site's devices**. Several policies can cover a device; each raises
 its own alert.
 
-New installations start with nine shared policies:
+New installations start with eleven shared policies:
 
 | Policy | Condition | Severity | On |
 |---|---|---|---|
@@ -50,6 +52,8 @@ New installations start with nine shared policies:
 | Disk sectors pending | 1 sector pending or offline-uncorrectable or more | Warning | No |
 | Disk wearing out | 90% of rated endurance used or more | Warning | No |
 | Disk too hot | Every reading of an hour at or above the drive's own limit | Warning | No |
+| Remote access down | MeshAgent not connected for 15 minutes, the agent checking in | Critical | Yes |
+| EasyRMM agent silent | No EasyRMM check-in for 15 minutes, MeshAgent connected | Critical | Yes |
 
 Change or delete them like any other policy. An upgrade adds the five
 disk health policies the same way, only **Disk failing** turned on: a
@@ -61,6 +65,30 @@ aside. Where a shared policy already has one of these names (*Disk
 failing*, say), the upgrade adds the new one as *Disk failing (disk
 health)*; where both names are taken, it adds no policy for that check,
 and you add one yourself if you want it.
+
+### Remote access policies
+
+*Remote access down* and *EasyRMM agent silent* are about a device whose
+two agents disagree
+([ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+An operator can change their minutes or turn them off, and add
+organization or site policies of the same kinds.
+
+* Neither opens for a device that is being removed (its removal asked for,
+  or its EasyPatch agent being removed or opted out); an alert open when
+  the device starts to leave resolves as *Device left the policy's scope*.
+* Nothing is judged while EasyRMM's own connection to MeshCentral is down,
+  or within 15 minutes after it returns, so an outage of MeshCentral, or a
+  restart of the server, opens no alert on every device. Open alerts stay
+  as they are meanwhile. Without remote access on the server, their alerts
+  resolve.
+* *Remote access down* needs the site to have a MeshCentral device group,
+  and the EasyRMM agent to be checking in. Its alert says why MeshAgent is
+  not connected, in the watchdog's words (see
+  [Remote access](remote-access.md#why-remote-access-is-not-connected)),
+  and its card lists the repairs tried since it opened.
+* *EasyRMM agent silent* waits as the offline policy does after the server
+  starts, since agents cannot check in before it serves them.
 
 ### Disk health policies
 

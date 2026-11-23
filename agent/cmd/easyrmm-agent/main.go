@@ -367,10 +367,11 @@ func (e *env) run(ctx context.Context) error {
 	}
 	c.SetIdentity(cfg.DeviceID, key)
 	r := &runner.Runner{
-		Client: c,
-		Store:  e.store,
-		Facts:  func() agentproto.Facts { return host.Facts(Version) },
-		Log:    e.log,
+		Client:   c,
+		DeviceID: cfg.DeviceID,
+		Store:    e.store,
+		Facts:    func() agentproto.Facts { return host.Facts(Version) },
+		Log:      e.log,
 		// MeshAgent's files are checked with the key pinned for jobs.
 		Key: pinnedKey(cfg),
 	}

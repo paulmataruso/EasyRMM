@@ -106,6 +106,12 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 		opened, resolved, err := evaluateDisks(ctx, tx, now)
 		r.Opened += opened
 		r.Resolved += resolved
+		if err != nil {
+			return err
+		}
+		opened, resolved, err = s.evaluateRemote(ctx, tx, now, floor)
+		r.Opened += opened
+		r.Resolved += resolved
 		return err
 	})
 	return r, err
@@ -203,7 +209,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 					  AND ms.at > $1::timestamptz - make_interval(mins => p.minutes) AND ms.at <= $1
 				) x
 			) s ON true
-			WHERE p.enabled AND p.kind <> 'disk_health'
+			WHERE p.enabled AND p.kind IN ('offline', 'cpu', 'memory', 'disk')
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)

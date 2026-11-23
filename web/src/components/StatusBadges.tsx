@@ -112,6 +112,8 @@ const ACTIONS: Record<string, string> = {
   "device.package_recovery": "Package database recovery",
   "device.agent_update": "Updated agent",
   "device.agent_update_request": "Asked for an agent update",
+  "device.repair_request": "Asked to reconnect remote access",
+  "device.repair_end": "Repair ended",
   "device.removal_request": "Asked to remove device",
   "device.removal_cancel": "Cancelled device removal",
   "device.removal_failed": "Agent could not remove itself",

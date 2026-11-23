@@ -266,6 +266,7 @@ func (s *services) Install(_ context.Context, svc host.Service) error {
 	return nil
 }
 func (s *services) Restart(context.Context, string) error { return nil }
+func (s *services) Stop(context.Context, string) error    { return nil }
 func (s *services) Remove(_ context.Context, name string) error {
 	s.removed = append(s.removed, name)
 	return nil

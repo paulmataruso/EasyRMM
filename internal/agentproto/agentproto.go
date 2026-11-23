@@ -133,6 +133,12 @@ type HeartbeatRequest struct {
 	// EasyPatch says the agent can install the EasyPatch agent, and how its
 	// last install went (ADR-0031). Older agents send none.
 	EasyPatch *EasyPatchInstallStatus `json:"easyPatch,omitempty"`
+	// MeshAgent is MeshAgent's state on the device (ADR-0069); older agents
+	// send none, and the server ignores the field at protocol level 2.
+	MeshAgent *MeshAgentState `json:"meshAgent,omitempty"`
+	// Repair is the outcome of the last repair step the agent carried out
+	// (ADR-0069), sent until RepairReported after it ended.
+	Repair *RepairReport `json:"repair,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -172,6 +178,8 @@ type HeartbeatResponse struct {
 	// Uninstall tells the agent to uninstall itself (ADR-0050). An answer
 	// that carries it carries no other instruction.
 	Uninstall *SignedUninstall `json:"uninstall,omitempty"`
+	// Repair tells the agent to carry out a repair step (ADR-0069).
+	Repair *SignedRepair `json:"repair,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.
