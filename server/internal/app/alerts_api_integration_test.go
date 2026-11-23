@@ -56,8 +56,13 @@ func TestAlertsAPI(t *testing.T) {
 	}
 	var policies struct{ Items []policyView }
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies", nil, &policies)
-	// Four for devices, and five for disk health (ADR-0065).
-	if len(policies.Items) != 9 || policies.Items[1].Name != "Disk almost full" || !policies.Items[1].CanEdit {
+	// Four for devices, five for disk health (ADR-0065), and remote access
+	// down and EasyRMM agent silent (ADR-0069).
+	seeded := map[string]policyView{}
+	for _, p := range policies.Items {
+		seeded[p.Name] = p
+	}
+	if len(policies.Items) != 11 || !seeded["Disk almost full"].CanEdit || !seeded["Remote access down"].Enabled || !seeded["EasyRMM agent silent"].Enabled {
 		t.Fatalf("seeded policies %+v", policies.Items)
 	}
 
@@ -78,7 +83,7 @@ func TestAlertsAPI(t *testing.T) {
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies/"+p.ID, nil, &p)
 	admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies?organizationId="+acme, nil, &policies)
-	if len(policies.Items) != 10 {
+	if len(policies.Items) != 12 {
 		t.Fatalf("Acme's policies %+v", policies.Items)
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/alert-policies?organizationId=nope", nil), http.StatusUnprocessableEntity, "validation_failed")
