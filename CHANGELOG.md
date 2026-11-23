@@ -766,6 +766,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A Windows computer whose name is longer than 15 characters links to
+  its EasyPatch agent.** EasyPatch's agent can report Windows' NetBIOS
+  name, the first 15 characters of the host name, so EasyRMM refused the
+  link with "Host names differ". A name that is the other's first 15
+  characters, ignoring case, now counts as the same.
+
 - **No stray scrollbar under a page's tabs.** Every tab strip (the Alerts
   page's, a device's, Settings' and others) scrolled by a pixel, showing a
   tiny scrollbar under the tabs. The end-to-end tests now fail on any box

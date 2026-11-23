@@ -299,6 +299,22 @@ func TestHelpers(t *testing.T) {
 	if shortHost(" Web-01.corp.example.com ") != "web-01" || shortHost("web-01") != "web-01" {
 		t.Error("shortHost")
 	}
+	for _, c := range []struct {
+		a, b string
+		same bool
+	}{
+		{"SERVICE-LOWERBA", "Service-LowerBay", true},
+		{"Service-LowerBay.corp.example.com", "SERVICE-LOWERBA", true},
+		{"web-01", "WEB-01.corp.example.com", true},
+		{"SERVICE-LOWERB", "Service-LowerBay", false},
+		{"SERVICE-LOWERBX", "Service-LowerBay", false},
+		{"app-02", "app-01", false},
+		{"", "web-01", false},
+	} {
+		if sameHost(c.a, c.b) != c.same || sameHost(c.b, c.a) != c.same {
+			t.Errorf("sameHost(%q, %q) is not %v", c.a, c.b, c.same)
+		}
+	}
 	if likePattern("") != "" || likePattern(" a%b_c\\ ") != `%a\%b\_c\\%` {
 		t.Errorf("likePattern = %q", likePattern(" a%b_c\\ "))
 	}
