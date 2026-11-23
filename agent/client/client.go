@@ -389,6 +389,19 @@ func (c *Client) Hardware(ctx context.Context, body []byte) error {
 	return resp.Body.Close()
 }
 
+// AgentLogs sends a batch of log records (ADR-0069) and returns the
+// server's answer. A server without the endpoint answers 404, which the
+// caller finds with errors.As and an *Error.
+func (c *Client) AgentLogs(ctx context.Context, b agentproto.LogBatch) (agentproto.LogAck, error) {
+	body, err := json.Marshal(b)
+	if err != nil {
+		return agentproto.LogAck{}, err
+	}
+	var out agentproto.LogAck
+	err = c.call(ctx, http.MethodPost, agentproto.PathAgentLogs, body, true, &out)
+	return out, err
+}
+
 // Removed reports how uninstalling the agent on the server's instruction
 // went (ADR-0050).
 func (c *Client) Removed(ctx context.Context, r agentproto.RemovedReport) error {

@@ -102,6 +102,21 @@ func TestDocumentationPermissions(t *testing.T) {
 	}
 }
 
+// TestLogViewPermission: Technicians and above read agent logs, Read-Only
+// does not (ADR-0069); log.view is not a view permission.
+func TestLogViewPermission(t *testing.T) {
+	for role, want := range map[Role]bool{
+		RoleReadOnly: false, RoleTechnician: true, RoleSiteAdmin: true, RoleOrgAdmin: true, RoleSuperAdmin: true,
+	} {
+		if got := slices.Contains(Roles[role].Permissions, PermLogView); got != want {
+			t.Errorf("%s: log.view %v, want %v", role, got, want)
+		}
+	}
+	if slices.Contains(viewPerms, PermLogView) {
+		t.Error("log.view must not be a view permission")
+	}
+}
+
 func TestAssignmentValidation(t *testing.T) {
 	cases := []struct {
 		a     Assignment

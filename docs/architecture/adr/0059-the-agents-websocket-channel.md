@@ -909,3 +909,11 @@ its own:
   heartbeat, not a signed challenge; the signed poll and heartbeat stay
   the primary channel. Full delivery over the connection, and heartbeats
   over it, are not built.
+
+* Amended by ADR-0069 (slice L1, 2026-11-23): log records travel from the
+  agent over signed HTTPS (`POST /api/agent/v1/agent-logs`), never on the
+  channel, which carries nothing from the agent. The channel is not built,
+  so what ADR-0069 calls the channel message `logs.follow {until}` travels
+  today in the answers the agent already receives, the heartbeat's and the
+  log batch's (`logs.followUntil`, `logs.verboseUntil`); a channel would
+  carry the same message and the agent would act on it the same way.

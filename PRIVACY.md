@@ -32,6 +32,7 @@ server.
 | Part | What it collects | Why |
 |---|---|---|
 | **EasyRMM agent** (on managed computers) | Host name, operating system and version, architecture, time zone; hardware: manufacturer, model, serial numbers, BIOS, processor, memory, disks; network interfaces with their MAC and IP addresses, gateways and DNS servers; installed software and its versions. Every minute: processor, memory and swap use, load, uptime, the number of processes and filesystem use. The output of scripts that technicians run on the computer | Inventory, monitoring and alerts, scripts and software deployment |
+| **Agent logs** (the EasyRMM agent, sending its own log and lines it reads from the EasyPatch agent's log and MeshAgent's) | What the agents write about what they do: times, levels, messages and details such as **host names, user names, file paths, service names and error text**. Values of fields named like secrets (token, password, secret, key, authorization, cookie), enrollment tokens, bearer tokens and PEM blocks are removed on the computer before a record leaves it, and again on the server before it is stored. Logs are kept for **14 days** by default (the deployment's `EASYRMM_AGENT_LOG_RETENTION_DAYS`, 1 to 90) and at most 200,000 records per device per day. Only people with the `log.view` permission, Technicians and above, can read them; downloading them is recorded in the audit log. Verbose mode (Debug level) logs more, for 1 to 24 hours at a time, and turning it on is recorded too | Finding out why an agent does not do what it should, without signing in to the computer |
 | **MeshAgent** (installed beside the agent) | What MeshCentral needs to open remote desktop, terminal and file sessions that technicians start; MeshCentral's own device information | Remote access, through the MeshCentral server in the same deployment |
 | **EasyPatch agent** (patching) | Operating system and hardware details, Windows Update settings, available, installed and failed updates, installed applications (for application updates on Windows), whether a restart is pending, and the **number** of signed-in users (not their names), to decide when to restart | Patching and patch reports |
 | **Server and console** | Accounts of the people who use the console: name, email address, a password hash, second-factor secrets (encrypted) and security keys' public keys; their sign-in sessions with IP address and browser; an audit log of who did what, from where, including remote sessions | Signing in, permissions and accountability |
@@ -79,7 +80,8 @@ was searched for ([The customer record](docs/operations/customer-record.md)).
 the audit log are kept for the periods set in the deployment's `.env`
 (`EASYRMM_METRICS_RETENTION`, `EASYRMM_ALERT_RETENTION`,
 `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default, `EASYRMM_JOB_RETENTION`,
-`EASYRMM_AUDIT_RETENTION`), and devices and accounts until someone removes
+`EASYRMM_AUDIT_RETENTION`), agent logs for 14 days by default
+(`EASYRMM_AGENT_LOG_RETENTION_DAYS`, 1 to 90), and devices and accounts until someone removes
 them. A run's output can also be removed at once from its page.
 A device moved to another organization leaves the old organization's
 history behind: its job runs and audit records keep the organization they

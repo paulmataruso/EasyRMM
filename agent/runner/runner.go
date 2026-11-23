@@ -101,6 +101,9 @@ type Runner struct {
 	EasyPatch EasyPatch
 	// Removal uninstalls the agent (ADR-0050); nil never does.
 	Removal Removal
+	// OnLogs receives how the server wants the agent to log from each
+	// heartbeat answer (ADR-0069); nil ignores it.
+	OnLogs func(*agentproto.LogInstructions)
 	// Hardware reads the device's hardware health (ADR-0065); nil never
 	// does. It runs on a goroutine of its own, so that a slow disk never
 	// delays a heartbeat.
@@ -253,6 +256,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			return 0, ErrRemoved
 		}
 		return next, nil
+	}
+	if r.OnLogs != nil {
+		r.OnLogs(resp.Logs)
 	}
 	if r.Inventory != nil {
 		r.syncInventory(ctx, resp.InventoryHash)

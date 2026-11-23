@@ -65,6 +65,10 @@ const (
 	// PermDocManage creates, changes and deletes it. Checked at the row's
 	// organization, or its site for a site's rows.
 	PermDocManage Permission = "doc.manage"
+	// PermLogView reads a device's agent logs (ADR-0069). It is not a view
+	// permission: logs can hold user names, paths and host names, so
+	// Technicians and above hold it, Read-Only does not.
+	PermLogView Permission = "log.view"
 )
 
 // AllPermissions lists every permission.
@@ -75,7 +79,7 @@ var AllPermissions = []Permission{
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
-	PermDocView, PermDocManage,
+	PermDocView, PermDocManage, PermLogView,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -153,7 +157,7 @@ func union(sets ...[]Permission) []Permission {
 var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
-	PermDocManage,
+	PermDocManage, PermLogView,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{

@@ -138,6 +138,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Agent logs: read what the agents are doing from the device's page, in
+  a new Logs tab** ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),
+  Part L; [guide](docs/operations/agent-logs.md)). The EasyRMM agent now
+  has a log level, Info, or Debug while the device is in verbose mode. It
+  keeps its records, and the new lines it reads from the EasyPatch agent's
+  log and MeshAgent's, in a file of at most 20 MB in its state folder
+  (oldest dropped first, the count of drops reported) and sends them in
+  signed batches every 30 seconds, every 2 seconds while someone has the
+  Logs tab open. Secrets are removed on the computer and again on the
+  server (`ert_` and `ept_` tokens, bearer tokens, PEM blocks, and values
+  of fields named like secrets). The server keeps records for 14 days
+  (`EASYRMM_AGENT_LOG_RETENTION_DAYS`, 1 to 90), deletes them in batches,
+  and stores at most 200,000 a device a day. The tab has a live tail,
+  filters by source, level, time and text, *Verbose for…* (1 to 24 hours,
+  2 by default, on a device or its group, audited, ends by itself) and a
+  download as text or JSON lines (audited). New permission `log.view`,
+  held by Technicians and above; verbose mode needs `device.edit`. The
+  EasyPatch agent's own level is not changed by verbose mode yet, and the
+  collection of logs through patching when the EasyRMM agent is down is
+  the next slice. Migration 00040.
 - **Move devices between groups, sites and organizations.** Drag a device
   (or the devices chosen in the Devices list) onto a group, site or
   organization in the tree, or use *Move to…* in a tree row's menu, the

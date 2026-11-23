@@ -175,6 +175,9 @@ type HeartbeatResponse struct {
 	// Uninstall tells the agent to uninstall itself (ADR-0050). An answer
 	// that carries it carries no other instruction.
 	Uninstall *SignedUninstall `json:"uninstall,omitempty"`
+	// Logs says how the agent logs: verbose, and whether someone watches
+	// (ADR-0069).
+	Logs *LogInstructions `json:"logs,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

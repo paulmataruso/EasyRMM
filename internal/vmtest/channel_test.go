@@ -372,7 +372,9 @@ func TestVMRunAndWriteFile(t *testing.T) {
 	if err != nil || string(stdout) != "hi\n" || string(stderr) != "there\n" || exit != 4 {
 		t.Errorf("Run: %q %q %d %v", stdout, stderr, exit, err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	// A deadline that does not expire leaves Run alone; it is generous so
+	// that a slow CI runner does not reach it.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	if _, _, exit, err := vm.Run(ctx, "sleep 1; echo slept"); err != nil || exit != 0 {
 		t.Errorf("Run within a deadline: exit %d, %v", exit, err)
