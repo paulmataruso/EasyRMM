@@ -50,6 +50,10 @@ func (a *API) listAlerts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	group, err := httpapi.QueryID(r, "groupId")
+	if err != nil {
+		return err
+	}
 	policy, err := httpapi.QueryID(r, "policyId")
 	if err != nil {
 		return err
@@ -64,7 +68,7 @@ func (a *API) listAlerts(w http.ResponseWriter, r *http.Request) error {
 	}
 	q := r.URL.Query()
 	items, next, err := a.svc.ListAlerts(r.Context(), httpapi.Caller(r), monitoring.AlertQuery{
-		Status: q.Get("status"), DeviceID: device, OrganizationID: org, SiteID: site, Severity: q.Get("severity"),
+		Status: q.Get("status"), DeviceID: device, OrganizationID: org, SiteID: site, GroupID: group, Severity: q.Get("severity"),
 		PolicyID: policy, Subject: q.Get("subject"), Before: before, Limit: limit,
 	})
 	if err != nil {

@@ -237,6 +237,8 @@ func notLinked(d deviceRow) error {
 // FleetQuery narrows the patching list.
 type FleetQuery struct {
 	OrganizationID, SiteID, GroupID uuid.UUID
+	// DeviceID lists one device.
+	DeviceID uuid.UUID
 	// Compliance is an EasyPatch compliance status, or "unlinked" for
 	// devices that are not linked.
 	Compliance string
@@ -326,8 +328,9 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 			  AND ($1::uuid IS NULL OR d.organization_id = $1) AND ($2::uuid IS NULL OR d.site_id = $2)
 			  AND ($3::uuid IS NULL OR d.device_group_id = $3)
 			  AND ($4 = '' OR d.name ILIKE $4 OR d.hostname ILIKE $4)
+			  AND ($5::uuid IS NULL OR d.id = $5)
 			ORDER BY o.name, s.name, d.name, d.id`,
-			nullID(q.OrganizationID), nullID(q.SiteID), nullID(q.GroupID), likePattern(q.Search))
+			nullID(q.OrganizationID), nullID(q.SiteID), nullID(q.GroupID), likePattern(q.Search), nullID(q.DeviceID))
 		if err != nil {
 			return err
 		}
@@ -383,7 +386,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 		}
 		out.Devices = append(out.Devices, f)
 	}
-	if q.SiteID != uuid.Nil || q.GroupID != uuid.Nil || q.Compliance != "" || q.Search != "" {
+	if q.SiteID != uuid.Nil || q.GroupID != uuid.Nil || q.DeviceID != uuid.Nil || q.Compliance != "" || q.Search != "" {
 		return out, nil
 	}
 	return out, s.unmatched(ctx, c, cl, q.OrganizationID, fetched, &out)

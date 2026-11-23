@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Monitor, Plus } from "lucide-react";
 import { useApi, useList, usePrefetch } from "../../api/hooks";
 import type { Device, RemoteAccessStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
+import { GroupSelect, OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { DeviceStatusBadge } from "../../components/StatusBadges";
 import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
@@ -28,16 +28,18 @@ export function DevicesPage() {
   const search = url.get("q");
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
   const status = url.get("status");
   const hardening = url.get("hardening");
   const diskHealth = url.get("diskHealth");
   const sort = parseSort(url.get("sort"));
-  const filtered = Boolean(search || organizationId || siteId || status || hardening || diskHealth);
+  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth);
 
   const params = {
     q: search || undefined,
     organizationId: organizationId || undefined,
     siteId: siteId || undefined,
+    groupId: groupId || undefined,
     status: status || undefined,
     hardening: hardening || undefined,
     diskHealth: diskHealth || undefined,
@@ -70,8 +72,9 @@ export function DevicesPage() {
       <RemoteAccessWarning />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null })} />
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
         <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />

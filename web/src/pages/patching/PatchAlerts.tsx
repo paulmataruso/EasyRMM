@@ -15,7 +15,7 @@ import { PatchAlertState, PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVER
 import { FilterSelect } from "./patchText";
 
 /** The URL parameters the Alerts tab filters on, cleared together. */
-export const ALERT_FILTERS = { show: null, severity: null, ruleType: null, search: null, deviceId: null } as const;
+export const ALERT_FILTERS = { show: null, severity: null, ruleType: null, search: null } as const;
 
 const SHOW = [
   { value: "", label: "Needs attention" },
@@ -126,7 +126,7 @@ export function PatchAlerts() {
           {filtered ? (
             <EmptyState title="No alerts match" icon={<BellOff className="size-8" aria-hidden />} compact>
               <p>Try other filters.</p>
-              <Button className="mt-3" onClick={() => url.set({ ...ALERT_FILTERS })}>
+              <Button className="mt-3" onClick={() => url.set({ ...ALERT_FILTERS, deviceId: null })}>
                 Clear filters
               </Button>
             </EmptyState>

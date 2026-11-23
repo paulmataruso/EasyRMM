@@ -627,7 +627,7 @@ describe("Settings → Patching", () => {
   });
 });
 
-describe("tags on organizations, sites and devices", () => {
+describe("tags on organizations, sites, groups and devices", () => {
   it("assigns tags to an organization", async () => {
     const user = userEvent.setup();
     let assigned = [{ id: "t2", name: "Servers", color: "teal" }];

@@ -138,6 +138,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **One device tree on every view, with device groups.** The sidebar's tree
+  now has four levels, organization, site, device group and device, and
+  the same tree shows on Organizations, Devices, Alerts, Scripts, Jobs and
+  Patching (ADR-0069).
+  Choosing a node narrows whatever the view lists: a group or a device
+  sets `groupId` or `deviceId` in the address, and the lists on every view
+  follow. The tree loads a node's devices when it is opened (the fleet is
+  no longer fetched whole), searches names on the server, and draws only
+  the rows on screen. New in the API: `groupId` on `GET /devices`,
+  `/alerts`, `/jobs`, `/job-runs`, `/scripts`, `/software` and
+  `/software/devices`; `ungrouped=true` on `GET /devices`; `deviceId` on
+  `GET /patching/devices`; `groupId` on each device's entry in
+  `GET /alerts/devices`; and `GET /device-tree` for the groups and the
+  device counts the tree shows before a node is opened. The patching
+  engine counts updates, jobs and alerts for a whole site, so those tabs
+  show the site of a chosen group or device and say so.
+
 - **Hardening checks for Windows computers and servers, through the API**
   ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
   W1; [guide](docs/operations/hardening.md#windows-computers-and-servers)).

@@ -1,3 +1,4 @@
+import { useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
@@ -8,9 +9,11 @@ import {
   ChevronRight,
   ChevronsDownUp,
   FileCode2,
+  FolderTree,
   Hourglass,
   Library,
   ListChecks,
+  LoaderCircle,
   LogIn,
   Mail,
   MapPin,
@@ -26,8 +29,9 @@ import {
   SlidersHorizontal,
   UsersRound,
 } from "lucide-react";
-import { useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
-import type { Device, DeviceAlertCount, Permission, Script } from "../api/types";
+import { api } from "../api/client";
+import { useApi, useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
+import type { Device, DeviceAlertCount, DeviceTreeData, List, Permission, Script } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cx, Dot, ErrorState, Spinner } from "../components/ui";
 import { plural } from "../lib/format";
@@ -36,6 +40,7 @@ import { useCanWriteScripts } from "../pages/scripts/ScriptsPage";
 import { canQuickConnect, QuickConnectPanel } from "./QuickConnect";
 import { selectedKey, targetHref, type SectionId, type Target } from "./sections";
 import { ancestors, buildTree, filterTree, indexTree, initialExpanded, visibleRows, type TreeNode } from "./tree";
+import { useDebounced } from "./useDebounced";
 import { scrollbarWidth, textMeasure, treeWidth, type RowSpec } from "./width";
 
 const META: Record<SectionId, { title: string; icon: ReactNode }> = {
@@ -120,7 +125,14 @@ function rowClasses(selected: boolean): string {
   );
 }
 
-const indent = { 1: "pl-1", 2: "pl-4", 3: "pl-7" } as const;
+const indent = { 1: "pl-1", 2: "pl-4", 3: "pl-7", 4: "pl-10" } as const;
+
+/** A row's height in pixels (h-7); the windowing below depends on it. */
+const ROW_HEIGHT = 28;
+/** A tree with fewer rows than this renders them all; a longer one only those on screen and a few beyond. */
+const WINDOW_AFTER = 120;
+const OVERSCAN = 8;
+
 
 interface Badge {
   text: string;
@@ -188,10 +200,10 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const canWriteScripts = useCanWriteScripts();
   const filterId = useId();
 
-  const wantsDevices = can("device.view") && section !== "scripts" && section !== "patching";
+  const wantsDevices = can("device.view");
   const orgs = useOrganizations();
   const sites = useSites();
-  const devices = useList<Device>(wantsDevices ? "/devices" : null, undefined, { refetchInterval: 30_000 });
+  const tree = useApi<DeviceTreeData>(wantsDevices ? "/device-tree" : null, undefined, { refetchInterval: 30_000 });
   const alertCounts = useDeviceAlertCounts(section === "alerts");
   const scripts = useList<Script>(section === "scripts" ? "/scripts" : null);
 
@@ -204,28 +216,80 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const [connect, setConnect] = useState<{ device: Device; anchor: HTMLElement } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const scrollArea = useRef<HTMLDivElement>(null);
+  const treeEl = useRef<HTMLDivElement>(null);
 
   const selected = selectedKey(section, location.pathname, location.search);
   const byDevice = useMemo(() => new Map(alertCounts.items.map((c) => [c.deviceId, c])), [alertCounts.items]);
-  const leaf = useMemo<(d: Device) => boolean>(() => {
-    switch (section) {
-      case "devices":
-      case "jobs":
-        return () => true;
-      // The devices that need attention, and the one the list is narrowed to.
-      case "alerts":
-        return (d) => byDevice.has(d.id) || selected === `d:${d.id}`;
-      default:
-        return () => false;
-    }
-  }, [section, byDevice, selected]);
 
-  const loading = orgs.isPending || sites.isPending || (wantsDevices && devices.isPending) || (section === "alerts" && alertCounts.isPending);
-  const failed = orgs.isError || sites.isError || devices.isError || alertCounts.isError || scripts.isError;
-  const roots = useMemo(() => buildTree(orgs.items, sites.items, devices.items, leaf), [orgs.items, sites.items, devices.items, leaf]);
+  const loading = orgs.isPending || sites.isPending || (wantsDevices && tree.isPending) || (section === "alerts" && alertCounts.isPending);
+  const failed = orgs.isError || sites.isError || tree.isError || alertCounts.isError || scripts.isError;
+
+  // The structure: everything but devices, which load as their node opens.
+  const skeleton = useMemo(
+    () => buildTree(orgs.items, sites.items, [], { groups: tree.data?.groups ?? [], counts: tree.data?.counts ?? [] }),
+    [orgs.items, sites.items, tree.data],
+  );
+  const skeletonIndex = useMemo(() => indexTree(skeleton), [skeleton]);
+
+  const text = query.trim();
+  const searchText = useDebounced(text, 250);
+  const filtering = text !== "";
+  const changes = filterChanges.query === query ? filterChanges.open : null;
+
+  // A node's devices load once it is open (ADR-0069), and stay for the filter to search; the filter's own matches come
+  // from the server, which finds devices in nodes that are closed.
+  const wanted = useMemo(() => {
+    const out: TreeNode[] = [];
+    for (const n of skeletonIndex.values()) {
+      if ((n.kind !== "site" && n.kind !== "group") || n.own === 0) continue;
+      if ((expanded?.has(n.key) ?? false) || (filtering && changes?.get(n.key) === true)) out.push(n);
+    }
+    return out;
+  }, [skeletonIndex, filtering, changes, expanded]);
+  const nodeLists = useQueries({
+    queries: wanted.map((n) => {
+      const params = n.kind === "group" ? { groupId: n.id } : { siteId: n.id, ungrouped: "true" };
+      return {
+        queryKey: ["tree-devices", n.key],
+        queryFn: ({ signal }: { signal: AbortSignal }) => api.get<List<Device>>("/devices", params, signal),
+        refetchInterval: 30_000,
+        staleTime: 10_000,
+      };
+    }),
+  });
+  const found = useList<Device>(wantsDevices && searchText !== "" ? "/devices" : null, { q: searchText }, { keepPrevious: true });
+  // The device the page is about, wherever its node is, so the tree can show and open the way to it.
+  const selectedId = selected?.startsWith("d:") ? selected.slice(2) : null;
+  const selectedDevice = useApi<Device>(wantsDevices && selectedId ? `/devices/${selectedId}` : null, undefined, { staleTime: 30_000 });
+  const nodeKeys = wanted.map((n) => n.key).join(",");
+
+  const devices = useMemo(() => {
+    const byId = new Map<string, Device>();
+    const add = (d: Device) => {
+      // A reply can include devices from elsewhere (a stale list after a move); keep those whose node asked.
+      if (!byId.has(d.id)) byId.set(d.id, d);
+    };
+    nodeLists.forEach((q, i) => {
+      const n = wanted[i];
+      if (!n) return;
+      for (const d of q.data?.items ?? []) {
+        if (n.kind === "group" ? d.deviceGroupId === n.id : d.siteId === n.id && !d.deviceGroupId) add(d);
+      }
+    });
+    if (filtering) for (const d of found.items) add(d);
+    if (selectedDevice.data) add(selectedDevice.data);
+    return [...byId.values()];
+    // nodeLists changes identity every render; its contents change with the data and the nodes asked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeLists.map((q) => q.dataUpdatedAt).join(","), nodeKeys, filtering, found.items, selectedDevice.data]);
+  const loadingKeys = useMemo(() => new Set(wanted.filter((_, i) => nodeLists[i]?.isPending).map((n) => n.key)), [wanted, nodeLists]);
+
+  const roots = useMemo(
+    () => buildTree(orgs.items, sites.items, devices, { groups: tree.data?.groups ?? [], counts: tree.data?.counts ?? [] }),
+    [orgs.items, sites.items, devices, tree.data],
+  );
   const index = useMemo(() => indexTree(roots), [roots]);
   const filtered = useMemo(() => filterTree(roots, query), [roots, query]);
-  const filtering = query.trim() !== "";
 
   // Section counts for organizations and sites.
   const badges = useMemo(() => {
@@ -239,6 +303,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
       for (const c of alertCounts.items) {
         add(`o:${c.organizationId}`, c);
         add(`s:${c.siteId}`, c);
+        if (c.groupId) add(`g:${c.groupId}`, c);
         add(`d:${c.deviceId}`, c);
         add("all", c);
       }
@@ -268,7 +333,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         if (typeof node === "object" && node.kind === "device") return null;
         return typeof node === "object" ? onlineBadge(node.online, node.total) : onlineBadge(online, total);
       case "organizations": {
-        if (!wantsDevices || devices.isPending) return null;
+        if (!wantsDevices || tree.isPending || (typeof node === "object" && node.kind === "device")) return null;
         const n = typeof node === "object" ? node.total : total;
         return { text: n.toLocaleString(), label: plural(n, "device") };
       }
@@ -301,7 +366,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     walk(roots);
     onWidth(treeWidth(specs, textMeasure(getComputedStyle(scrollArea.current).fontFamily), scrollbarWidth()));
     // badgeFor and extras follow from the dependencies listed.
-  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, devices.isPending, waiting, selected]);
+  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, tree.isPending, waiting, selected]);
 
   // Open the way to whatever the page is showing, so the tree always says where you are. Only when the page changes:
   // closing a branch afterwards is the reader's choice.
@@ -313,16 +378,62 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     if (chain.some((k) => !expanded.has(k))) setExpanded(new Set([...expanded, ...chain]));
   }, [selected, index, expanded]);
 
-  const changes = filterChanges.query === query ? filterChanges.open : null;
   const isOpen = useCallback(
     (key: string) => (filtering ? (changes?.get(key) ?? filtered.expand.has(key)) : (expanded?.has(key) ?? false)),
     [filtering, changes, filtered.expand, expanded],
   );
   const rows = useMemo(() => visibleRows(filtered.roots, isOpen), [filtered.roots, isOpen]);
 
+  // Only the rows on screen, and a few beyond, are rendered once the tree is long (ADR-0069).
+  const [view, setView] = useState({ first: 0, count: 40 });
+  const windowed = rows.length > WINDOW_AFTER;
+  const start = windowed ? Math.max(0, view.first - OVERSCAN) : 0;
+  const end = windowed ? Math.min(rows.length, view.first + view.count + OVERSCAN) : rows.length;
+  const measureView = useCallback(() => {
+    const el = scrollArea.current;
+    if (!el) return;
+    const first = Math.floor(Math.max(0, el.scrollTop - (treeEl.current?.offsetTop ?? 0)) / ROW_HEIGHT);
+    const count = Math.ceil((el.clientHeight || 600) / ROW_HEIGHT) + 1;
+    setView((v) => (v.first === first && v.count === count ? v : { first, count }));
+  }, []);
   useEffect(() => {
-    if (selected) rowRefs.current.get(selected)?.scrollIntoView?.({ block: "nearest" });
-  }, [selected, rows.length]);
+    measureView();
+    const el = scrollArea.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measureView);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureView, rows.length, loading]);
+  /** Scrolls the tree so that a row is on screen, rendered or not. */
+  const scrollToRow = useCallback(
+    (i: number, centre: boolean) => {
+      const el = scrollArea.current;
+      if (!el || i < 0) return;
+      const top = (treeEl.current?.offsetTop ?? 0) + i * ROW_HEIGHT;
+      const height = el.clientHeight || 600;
+      if (centre) el.scrollTop = Math.max(0, top - height / 2);
+      else if (top < el.scrollTop) el.scrollTop = top;
+      else if (top + ROW_HEIGHT > el.scrollTop + height) el.scrollTop = top + ROW_HEIGHT - height;
+      measureView();
+    },
+    [measureView],
+  );
+  const pendingFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const key = pendingFocus.current;
+    const el = key ? rowRefs.current.get(key) : undefined;
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    }
+  });
+
+  useEffect(() => {
+    if (!selected) return;
+    const el = rowRefs.current.get(selected);
+    if (el) el.scrollIntoView?.({ block: "nearest" });
+    else scrollToRow(rows.findIndex((r) => r.node.key === selected), false);
+  }, [selected, rows.length, scrollToRow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setOpen = useCallback(
     (key: string, value: boolean) => {
@@ -355,17 +466,28 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   function activate(node: TreeNode) {
     if (node.kind === "device") {
       const d = node.device!;
-      go({ kind: "device", id: d.id, organizationId: d.organizationId, siteId: d.siteId });
-    } else if (node.kind === "site") go({ kind: "site", id: node.id, organizationId: node.organizationId });
+      go({ kind: "device", id: d.id, organizationId: d.organizationId, siteId: d.siteId, groupId: d.deviceGroupId });
+    } else if (node.kind === "group") go({ kind: "group", id: node.id, organizationId: node.organizationId, siteId: node.siteId! });
+    else if (node.kind === "site") go({ kind: "site", id: node.id, organizationId: node.organizationId });
     else go({ kind: "org", id: node.id });
   }
 
   const tabbable = rows.some((r) => r.node.key === focusKey) ? focusKey : rows.some((r) => r.node.key === selected) ? selected : (rows[0]?.node.key ?? null);
+  // The tab stop is on screen: the first rendered row when the usual one is not.
+  const shown = rows.slice(start, end);
+  const tabStop = shown.some((r) => r.node.key === tabbable) ? tabbable : (shown[0]?.node.key ?? null);
 
   function focusRow(key: string | null | undefined) {
     if (!key) return;
     setFocusKey(key);
-    rowRefs.current.get(key)?.focus();
+    const el = rowRefs.current.get(key);
+    if (el) return el.focus();
+    // Not rendered: scroll to it, and the effect above focuses it once it is.
+    pendingFocus.current = key;
+    scrollToRow(
+      rows.findIndex((r) => r.node.key === key),
+      true,
+    );
   }
 
   function openConnect(node: TreeNode) {
@@ -378,7 +500,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     const row = rows[i];
     if (!row) return;
     const node = row.node;
-    const hasChildren = node.children.length > 0;
+    const hasChildren = node.expandable;
     if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       e.preventDefault();
       return openConnect(node);
@@ -400,7 +522,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         e.preventDefault();
         if (!hasChildren) return;
         if (!isOpen(node.key)) return setOpen(node.key, true);
-        return focusRow(rows[i + 1]?.node.key);
+        return node.children.length > 0 ? focusRow(rows[i + 1]?.node.key) : undefined;
       case "ArrowLeft":
         e.preventDefault();
         if (hasChildren && isOpen(node.key)) return setOpen(node.key, false);
@@ -428,7 +550,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
               "site",
             )}`;
 
-  const placeholder = section === "organizations" || section === "scripts" ? "Filter by name" : "Filter by name or hostname";
+  const placeholder = "Filter by name or hostname";
   const extras: { key: "shared" | "approvals"; label: string; icon: ReactNode; target: Target }[] = [];
   if (section === "scripts") extras.push({ key: "shared", label: "Shared library", icon: <Library className="size-3.5 shrink-0" aria-hidden />, target: { kind: "shared" } });
   // Devices waiting for approval belong to no organization yet, so they sit beside the tree, not in it; the row shows
@@ -482,21 +604,20 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
         </div>
         <p className="mt-1.5 truncate text-xs text-sidebar-fg/70 tabular-nums" aria-live="polite">
           {!loading && !failed ? readout : " "}
-          {!loading && devices.items.length >= 5000 && <span className="text-warn"> (the first 5,000 devices)</span>}
         </p>
       </div>
-      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={scrollArea} onScroll={windowed ? measureView : undefined} className="relative min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {loading ? (
           <Spinner />
         ) : failed ? (
           <div className="rounded-md bg-surface">
             <ErrorState
               compact
-              error={orgs.error ?? sites.error ?? devices.error ?? alertCounts.error ?? scripts.error}
+              error={orgs.error ?? sites.error ?? tree.error ?? alertCounts.error ?? scripts.error}
               onRetry={() => {
                 void orgs.refetch();
                 void sites.refetch();
-                if (wantsDevices) void devices.refetch();
+                if (wantsDevices) void tree.refetch();
                 if (section === "alerts") void alertCounts.refetch();
                 if (section === "scripts") void scripts.refetch();
               }}
@@ -540,9 +661,15 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
             ) : rows.length === 0 ? (
               <p className="px-2 py-6 text-center text-sm text-sidebar-fg/70">Nothing matches &ldquo;{query.trim()}&rdquo;.</p>
             ) : (
-              <div role="tree" aria-label={`${META[section].title}: organizations, sites${section === "devices" || section === "jobs" || section === "alerts" ? " and devices" : ""}`} onKeyDown={onKeyDown}>
-                {rows.map(({ node, position, siblings }) => {
-                  const hasChildren = node.children.length > 0;
+              <div
+                ref={treeEl}
+                role="tree"
+                aria-label={`${META[section].title}: organizations, sites, groups and devices`}
+                onKeyDown={onKeyDown}
+                style={windowed ? { paddingTop: start * ROW_HEIGHT, paddingBottom: (rows.length - end) * ROW_HEIGHT } : undefined}
+              >
+                {shown.map(({ node, position, siblings }) => {
+                  const hasChildren = node.expandable;
                   const expandedRow = hasChildren && isOpen(node.key);
                   const isSelected = node.key === selected;
                   const d = node.device;
@@ -566,7 +693,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                       aria-selected={isSelected}
                       aria-keyshortcuts={quick ? "Shift+F10" : undefined}
                       aria-haspopup={quick ? "dialog" : undefined}
-                      tabIndex={node.key === tabbable ? 0 : -1}
+                      tabIndex={node.key === tabStop ? 0 : -1}
                       title={d ? deviceTitle(d) : node.name}
                       onClick={() => {
                         setFocusKey(node.key);
@@ -598,7 +725,11 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                           }}
                           className="inline-flex size-4 shrink-0 items-center justify-center rounded text-sidebar-fg/60 hover:bg-white/10 hover:text-white"
                         >
-                          <ChevronRight className={cx("size-3.5 transition-transform", expandedRow && "rotate-90")} />
+                          {expandedRow && loadingKeys.has(node.key) ? (
+                            <LoaderCircle className="size-3.5 animate-spin" />
+                          ) : (
+                            <ChevronRight className={cx("size-3.5 transition-transform", expandedRow && "rotate-90")} />
+                          )}
                         </span>
                       ) : (
                         <span className="size-4 shrink-0" aria-hidden />
@@ -607,6 +738,8 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                         <Building2 className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
                       ) : node.kind === "site" ? (
                         <MapPin className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
+                      ) : node.kind === "group" ? (
+                        <FolderTree className="size-3.5 shrink-0 text-sidebar-fg/60" aria-hidden />
                       ) : (
                         <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
                           <Dot tone={node.online ? "ok" : "neutral"} />

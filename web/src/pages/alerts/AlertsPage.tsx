@@ -4,7 +4,7 @@ import { BellRing, CheckCircle2, OctagonAlert, Plus } from "lucide-react";
 import { useDeviceAlertCounts, useList } from "../../api/hooks";
 import type { AlertEntry, AlertPolicy } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { DeviceScope, OrganizationSelect, SiteSelect } from "../../components/Filters";
+import { DeviceScope, GroupSelect, OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { Badge, Button, cx, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -69,6 +69,7 @@ function AlertList() {
   const show: Show = url.get("status") === "resolved" ? "resolved" : url.get("status") === "all" ? "all" : "active";
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
   const severity = url.get("severity");
   const deviceId = url.get("deviceId");
   const before = url.get("before");
@@ -78,6 +79,7 @@ function AlertList() {
       status: show,
       organizationId: organizationId || undefined,
       siteId: siteId || undefined,
+      groupId: groupId || undefined,
       severity: severity || undefined,
       deviceId: deviceId || undefined,
       before: before || undefined,
@@ -90,7 +92,7 @@ function AlertList() {
   // with the menu's alerts tree.
   const counts = useDeviceAlertCounts(true);
   const critical = useMemo(() => new Set(counts.items.filter((c) => c.critical > 0).map((c) => c.deviceId)), [counts.items]);
-  const filtered = Boolean(organizationId || siteId || severity || deviceId);
+  const filtered = Boolean(organizationId || siteId || groupId || severity || deviceId);
   const anyActions = list.items.some((a) => a.canManage && a.status !== "resolved");
 
   return (
@@ -103,8 +105,9 @@ function AlertList() {
             <option value="all">All alerts</option>
           </Select>
         </Field>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, deviceId: null, before: null })} />
-        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, deviceId: null, before: null })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null, deviceId: null, before: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, groupId: null, deviceId: null, before: null })} />
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v, deviceId: null, before: null })} />
         <Field label="Severity" htmlFor={severityId} className="min-w-36">
           <Select id={severityId} value={severity} onChange={(e) => url.set({ severity: e.target.value, before: null })}>
             <option value="">All severities</option>
@@ -123,7 +126,7 @@ function AlertList() {
         filtered ? (
           <EmptyState
             title="No alerts match these filters"
-            action={<Button onClick={() => url.set({ organizationId: null, siteId: null, severity: null, deviceId: null, before: null })}>Clear filters</Button>}
+            action={<Button onClick={() => url.set({ organizationId: null, siteId: null, groupId: null, severity: null, deviceId: null, before: null })}>Clear filters</Button>}
           />
         ) : show === "active" ? (
           <EmptyState

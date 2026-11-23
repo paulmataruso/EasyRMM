@@ -240,7 +240,11 @@ type Removal struct {
 type Query struct {
 	OrganizationID uuid.UUID
 	SiteID         uuid.UUID
-	Search         string
+	// GroupID lists one device group's devices.
+	GroupID uuid.UUID
+	// Ungrouped lists only the devices in no group.
+	Ungrouped bool
+	Search    string
 	// Status is "", "online" or "offline".
 	Status string
 	// Hardening is "" or one of the Hardening* filters.
@@ -423,6 +427,8 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 		rows, err := tx.Query(ctx, `SELECT `+columns+from+`
 			WHERE ($1::uuid IS NULL OR d.organization_id = $1)
 			  AND ($2::uuid IS NULL OR d.site_id = $2)
+			  AND ($9::uuid IS NULL OR d.device_group_id = $9)
+			  AND (NOT $10 OR d.device_group_id IS NULL)
 			  AND ($3 = '' OR strpos(lower(d.name), lower($3)) > 0 OR strpos(lower(d.hostname), lower($3)) > 0)
 			  AND ($4 = '' OR (d.remote_online OR `+agentOnline+`) = ($4 = 'online'))
 			  AND CASE $6
@@ -438,7 +444,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				ELSE ds.label IS NOT DISTINCT FROM $8 END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
 			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates,
-			q.DiskHealth)
+			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped)
 		if err != nil {
 			return err
 		}
