@@ -872,11 +872,11 @@ else:
 		c.sh(t, `rpm -e --nodeps tzdata >/dev/null 2>&1 & p=$!; i=0
 			until grep -qs '/var/lib/rpm/__db\.' /proc/$p/maps; do i=$((i + 1)); [ $i -lt 20000 ] || break; done
 			kill -9 $p; wait $p; true`)
-		out, errOut, code := c.run(t, "rpm", "-q", "rpm")
+		out, errOut, code := c.run(t, "timeout", "30", "rpm", "-q", "rpm")
 		if code != 0 && strings.Contains(out+errOut, "DB_RUNRECOVERY") {
 			break
 		}
-		if _, _, still := c.run(t, "rpm", "-q", "tzdata"); code != 0 || still != 0 || try == 10 {
+		if _, _, still := c.run(t, "timeout", "30", "rpm", "-q", "tzdata"); code != 0 || still != 0 || try == 10 {
 			t.Fatalf("rpm -q after rpm was killed (try %d): exit %d\n%s%s", try, code, out, errOut)
 		}
 	}
@@ -921,6 +921,14 @@ func scriptDanglingUnitLink(t *testing.T, c *scriptContainer) {
 	c.sh(t, "! test -L "+wants+"easyrmm-test.service && test -L "+wants+"easyrmm-test-kept.service && rm -rf "+stateDir+" "+wants+"easyrmm-test-kept.service")
 }
 
+// containerBudget bounds one image's whole subtest; execTimeout bounds one
+// command in a container. The package's go test budget is ten minutes, shared
+// by every image running in parallel.
+const (
+	containerBudget = 7 * time.Minute
+	execTimeout     = 2 * time.Minute
+)
+
 type scriptContainer struct {
 	name, image, scriptFile string
 	cache                   map[string]bool
@@ -940,6 +948,16 @@ func startScriptContainer(t *testing.T, image, script string, extra ...string) *
 		t.Fatal(err)
 	}
 	c := &scriptContainer{name: "easyrmm-testhardening-" + hex.EncodeToString(b), image: image, scriptFile: script, cache: map[string]bool{}}
+	// One image never takes the package's whole go test budget: past
+	// containerBudget the container's processes and last output are logged
+	// and the container is removed, so the step in flight fails at once.
+	watchdog := time.AfterFunc(containerBudget, func() {
+		top, _, _ := dockerRun(20*time.Second, "top", c.name, "-eo", "pid,stat,etime,args")
+		logs, _, _ := dockerRun(20*time.Second, "logs", "--tail", "50", c.name)
+		t.Logf("%s used its %s budget; processes:\n%s\nlast output:\n%s", image, containerBudget, top, logs)
+		_, _, _ = dockerRun(time.Minute, "rm", "-f", c.name)
+	})
+	t.Cleanup(func() { watchdog.Stop() })
 	args := append([]string{"run", "-d", "--rm", "--network", "none", "--name", c.name, "-v", script + ":" + scriptPath + ":ro"}, extra...)
 	docker(t, append(args, image, "sleep", "infinity")...)
 	t.Cleanup(func() { _, _, _ = dockerRun(time.Minute, "rm", "-f", c.name) })
@@ -955,7 +973,11 @@ func (c *scriptContainer) run(t *testing.T, args ...string) (string, string, int
 
 func (c *scriptContainer) runAs(t *testing.T, user string, args ...string) (string, string, int) {
 	t.Helper()
-	out, errOut, err := dockerRun(5*time.Minute, append([]string{"exec", "--user", user, c.name}, args...)...)
+	out, errOut, err := dockerRun(execTimeout, append([]string{"exec", "--user", user, c.name}, args...)...)
+	if errors.Is(err, context.DeadlineExceeded) {
+		top, _, _ := dockerRun(20*time.Second, "top", c.name, "-eo", "pid,stat,etime,args")
+		t.Fatalf("docker exec %q did not finish in %s; processes:\n%s\nstdout:\n%s\nstderr:\n%s", args, execTimeout, top, out, errOut)
+	}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
@@ -1091,6 +1113,11 @@ func dockerRun(timeout time.Duration, args ...string) (string, string, error) {
 	var out, errOut bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
+	// A killed docker whose children keep its pipes open must not hold Wait.
+	cmd.WaitDelay = 10 * time.Second
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		err = errors.Join(ctx.Err(), err)
+	}
 	return out.String(), errOut.String(), err
 }
