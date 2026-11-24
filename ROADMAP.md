@@ -40,69 +40,95 @@ follows when these have been run there, or fixed:
   with a Windows agent. The import is tested only from 1.10.0 with a Linux
   agent; 1.4 to 1.9 are accepted but untested.
 
+## Done
+
+Built and merged, ahead of 1.0.0. How each was verified is in
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+
+* **Hardening a Linux computer in one click**: apply and undo (H2, PR #91)
+  ([ADR-0051](docs/architecture/adr/0051-hardening-linux-computers.md)).
+* **Hardening Windows computers**: the checks (W1, PR #92)
+  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md)).
+* **The self-updater**, 4a (PR #70)
+  ([ADR-0052](docs/architecture/adr/0052-the-host-updater.md)).
+* **PowerShell 7** (PR #104)
+  ([ADR-0064](docs/architecture/adr/0064-remote-powershell-management.md)).
+* **The mailer and Microsoft 365 mail** (PR #82, PR #97)
+  ([ADR-0053](docs/architecture/adr/0053-one-notification-sender.md)).
+* **Disk health** (PR #86)
+  ([ADR-0065](docs/architecture/adr/0065-hardware-health.md)).
+* **The customer documentation record** (PR #95)
+  ([ADR-0066](docs/architecture/adr/0066-customer-documentation-and-assets.md)).
+* **Patching improvements** (PR #100, PR #102, PR #103, PR #112).
+* **One device tree, device moves, agent logs, and cross-path recovery of
+  MeshAgent and both agents** (PR #114, PR #115, PR #116, PR #117, PR #118,
+  PR #119, PR #120)
+  ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+
+## In progress
+
+* PR #122: reconnect remote access on a MeshAgent that will not stop.
+* PR #121: Defender exclusions at install and an always-current hash list
+  (ADR-0070). Every agent folder and process is excluded before anything
+  else installs. Hashes are refreshed on every rebuild, change and
+  self-update, including when MeshCentral updates MeshAgent.
+
 ## After 1.0.0
 
-How the next nine features work and the order they are built in is in
-[the feature plan](docs/architecture/feature-plan.md); each gets its ADR
-before its code. Twelve more, asked for on 2026-11-21, are planned in
-[the MSP feature plan](docs/architecture/feature-plan-msp.md), with a
-keystore for BitLocker and LUKS recovery keys: hardware warranty and
-lifecycle, security posture, automation, customer documentation and
-assets, a software catalog, remote PowerShell, a registry editor,
-BitLocker management, an event viewer, hardware health, scheduled tasks
-and Active Directory health. None of them is built.
+Planned, in this order. Each feature gets its ADR before its code; the
+plans are [the feature plan](docs/architecture/feature-plan.md) and
+[the MSP feature plan](docs/architecture/feature-plan-msp.md).
 
-* **Hardening a Linux computer in one click**
-  ([ADR-0051](docs/architecture/adr/0051-hardening-linux-computers.md)):
-  check, apply and undo 14 hardening modules (SSH, firewall, fail2ban,
-  kernel parameters, audit rules and more), some or all of them, as a job,
-  with what each changes shown first. EasyRMM's own implementation, after
-  studying [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening);
-  safe for computers nobody is logged in to.
-* **Hardening Windows computers and servers** the same way
-  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
-  accepted 2026-11-22; its W1, the check, is PR #92, built but for the MDM reader's proof, which waits for an Intune tenant): check, apply and undo modules such as the firewall, account
-  lockout, Microsoft Defender and attack surface reduction, SMBv1, NTLM,
-  LSA protection, Remote Desktop and UAC, with values from Microsoft's
-  security baselines and each setting cited by its DISA STIG rule. Each
-  module shows the NIST SP 800-53, SP 800-171 and ISO/IEC 27001:2022
-  controls it relates to, from published mappings, without claiming
-  compliance. Settings that Group Policy, Intune, OSConfig or other tools
-  manage are reported and left alone; Remote Desktop, WinRM and EasyRMM's
-  agents are never cut off, and restarts are left to the operator.
-* **Upgrading EasyRMM from the console.** Today an upgrade is
-  [run on the server](docs/operations/upgrading.md). A small updater on
-  the host (not the server, which never gets the Docker socket) checks a
-  release's signatures, backs up, upgrades, and rolls back if the new
-  release fails its checks; then the console offers new releases and
-  shows the upgrade.
-* **Email and webhook notifications for device alerts**, through one
-  sender that patching alerts move to as well: rules per organization,
-  site and tag, maintenance windows, and one notice for a site that goes
-  offline instead of one per device.
-* **Let's Encrypt certificates set up from the console, in one step.**
-  Today the server gets and renews certificates by itself for the names
-  given at install. The console would check each name before asking Let's
-  Encrypt, saying what to fix; get the certificates without a restart;
-  show their expiry and renewals; alert when a renewal fails; and take
-  new names, including moving an IP-only install to a name, with DNS-01
-  for servers that the internet cannot reach.
-* **Packages for the EasyRMM agent**: DEB and RPM packages for Linux and an
-  MSI for Windows (for Group Policy and Intune). Today computers install
-  with the PowerShell or shell command.
-* **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)):
-  a live connection, so jobs and changes reach a computer at once, chosen
-  per device, site or organization: *Automatic* (recommended), *Live
-  connection* or *Regular check-ins*.
-* **Collecting logs** from Windows and Linux computers: the security log,
-  Microsoft Defender's and other antivirus logs, the system log, PowerShell,
-  auth and audit logs. EasyRMM keeps them and forwards them (to a SIEM, for
-  example). The agent sets up the logging they need (audit policy, log
-  sizes, PowerShell script-block logging, auditd rules), so nobody does it
-  by hand.
-* **Authenticode signing** of the Windows agents with a certificate of
-  EasyRMM's own, so Windows names a publisher without the operator signing
-  them ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
+1. **Our MeshAgent fully isolated from any other MeshAgent install on the
+   same machine.** EasyRMM only ever touches its own.
+2. **A single Repair button** that works out what is down and uses
+   whichever agent is still running to fix MeshAgent or the other agent.
+3. **The agent's live channel** (WebSockets)
+   ([ADR-0059](docs/architecture/adr/0059-the-agents-websocket-channel.md),
+   [ADR-0009](docs/architecture/adr/0009-agent-protocol.md)): jobs and
+   changes reach a computer at once, chosen per device, site or
+   organization: *Automatic* (recommended), *Live connection* or *Regular
+   check-ins*.
+4. **A Windows Defender module**: management from the console (settings,
+   scans, signatures, threats and quarantine, exclusions, attack surface
+   reduction, Controlled Folder Access). Defender events can be used as
+   alert rules, with default rules. Tamper Protection is shown, not
+   changed.
+5. **Active Directory**: detect domain controllers, manage users and
+   groups, reset passwords, disable accounts. Extends AD health (feature 12
+   of the MSP feature plan).
+6. **Server role modules**, each one can be switched off: AD Certificate
+   Services, DNS, DHCP, file sharing, print server.
+7. **Windows Backup management.** Full on servers (Windows Server Backup).
+   On desktops, only what Windows exposes: File History and the system
+   image.
+8. **The rest of the MSP feature plan's order:**
+   * Windows hardening W2 (apply and undo) and W3 (the console)
+   * the updater's console (4b): today an upgrade is
+     [run on the server](docs/operations/upgrading.md)
+   * Let's Encrypt from the console, in one step
+     ([ADR-0055](docs/architecture/adr/0055-lets-encrypt-in-one-step.md))
+   * packages for the agent: DEB and RPM, and an MSI for Group Policy and
+     Intune ([ADR-0056](docs/architecture/adr/0056-packages-for-the-agent.md))
+   * the registry editor ([ADR-0067](docs/architecture/adr/0067-remote-registry-editor.md))
+   * the event viewer ([ADR-0068](docs/architecture/adr/0068-remote-event-viewer.md))
+   * BitLocker and LUKS management, and the keystore
+   * security posture
+   * the asset record and warranty
+   * scheduled tasks
+   * the software catalog
+   * automation
+   * [ADR-0057](docs/architecture/adr/0057-rotating-the-job-key.md) (the job
+     key) and [ADR-0058](docs/architecture/adr/0058-signed-settings-that-reach-the-agent.md)
+     (signed settings)
+   * log collection ([ADR-0060](docs/architecture/adr/0060-collecting-logs.md))
+   * the new name ([ADR-0061](docs/architecture/adr/0061-moving-to-a-new-name.md))
+   * Linux one-click hardening, last
+9. **Authenticode signing** of the Windows agents with a certificate of
+   EasyRMM's own ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
+
+Also after 1.0.0:
+
 * **Patching**: giving or taking a tag from many devices at once, forcing a
   restart outside the policy, and removing and holding an update in one
   step.
@@ -115,3 +141,11 @@ and Active Directory health. None of them is built.
   * on Apple silicon, macOS updates can be installed only by a volume owner or
     an MDM, so the agent fails them with `macos_owner_required`; this will
     probably stay a documented limit.
+
+## Known issues
+
+* The Logs tab orders entries from different agents out of time order.
+* MeshAgent writes no log, so its side is not visible.
+* Recovery diagnostics are not yet in the Logs tab.
+* Two CI tests are flaky: the AIDE baseline in the Linux VM tests, and the
+  Rocky Linux 8 container check-in.
