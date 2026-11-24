@@ -102,15 +102,28 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
 7. **Windows Backup management.** Full on servers (Windows Server Backup).
    On desktops, only what Windows exposes: File History and the system
    image.
-8. **Compliance (CMMC Level 1 and 2, NIST SP 800-171, CIS):**
-   * a scanner for Windows desktops and servers that shows what to change;
-   * automatic fixes through hardening's apply and undo wherever they are
-     safe;
-   * EasyRMM's own SSP, POA&M and evidence-upload workflow with OSCAL
-     export;
-   * an SPRS score estimate.
+8. **Compliance (CMMC Level 1 and 2, NIST SP 800-171):**
+   * a scanner for Windows desktops and servers. About 41 of 800-171's 110
+     requirements can be checked on the machine itself; the rest need
+     domain or network data, or are policy;
+   * automatic fixes only through hardening's apply and undo. Account
+     lockout, BitLocker enablement, FIPS mode, AppLocker/WDAC and LDAP
+     signing stay check-only;
+   * EasyRMM's own assessment, SSP, POA&M and evidence workflow, with OSCAL
+     export first;
+   * an SPRS score shown as a range until every requirement is assessed.
 
-   Research is in progress; the design will be its own ADR.
+   Built in slices:
+   * C1: scan and profiles;
+   * C2: attestations and evidence;
+   * C3: about 15 new endpoint checks;
+   * C4: domain-controller checks;
+   * C5: OSCAL export, and import of STIG and a customer's own CIS-CAT
+     results.
+
+   CIS Benchmark content cannot be shipped under CIS's terms, so CIS
+   appears only through a customer's own CIS-CAT results. The design will
+   be its own ADR.
 9. **The rest of the MSP feature plan's order:**
    * Windows hardening W2 (apply and undo) and W3 (the console)
    * the updater's console (4b): today an upgrade is
