@@ -8,6 +8,9 @@
   </picture>
 </h1>
 
+> [!WARNING]
+> **EasyRMM is in initial development and is not production-ready yet, but we're getting there.** Expect breaking changes between builds. Bug reports are welcome: please [open an issue](https://github.com/paulmataruso/EasyRMM/issues). For security problems, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+
 <p align="center">
   <b>Self-hosted remote monitoring, management and patching for Managed Service Providers.</b><br>
   Windows first, Linux too. One server, one console, one agent install.
