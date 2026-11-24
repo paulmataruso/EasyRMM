@@ -118,8 +118,10 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
      tier for each control. Each framework is a pack that maps its
      requirements onto that library, using authoritative public sources
      (NIST, HHS, DoD, DISA).
-   * **CIS Benchmark content is not included** unless EasyRMM obtains a
-     licence from CIS.
+   * **CIS Benchmark profiles for Windows and Windows Server,** built from
+     EasyRMM's own checks of the same settings and cross-referenced by CIS
+     recommendation number. CIS's own text is not copied, and the profiles
+     are not CIS-certified.
 
    The design will be its own ADR.
 9. **The rest of the MSP feature plan's order:**
