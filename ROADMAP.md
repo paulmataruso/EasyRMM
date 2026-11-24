@@ -102,7 +102,16 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
 7. **Windows Backup management.** Full on servers (Windows Server Backup).
    On desktops, only what Windows exposes: File History and the system
    image.
-8. **The rest of the MSP feature plan's order:**
+8. **Compliance (CMMC Level 1 and 2, NIST SP 800-171, CIS):**
+   * a scanner for Windows desktops and servers that shows what to change;
+   * automatic fixes through hardening's apply and undo wherever they are
+     safe;
+   * EasyRMM's own SSP, POA&M and evidence-upload workflow with OSCAL
+     export;
+   * an SPRS score estimate.
+
+   Research is in progress; the design will be its own ADR.
+9. **The rest of the MSP feature plan's order:**
    * Windows hardening W2 (apply and undo) and W3 (the console)
    * the updater's console (4b): today an upgrade is
      [run on the server](docs/operations/upgrading.md)
@@ -124,7 +133,7 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
    * log collection ([ADR-0060](docs/architecture/adr/0060-collecting-logs.md))
    * the new name ([ADR-0061](docs/architecture/adr/0061-moving-to-a-new-name.md))
    * Linux one-click hardening, last
-9. **Authenticode signing** of the Windows agents with a certificate of
+10. **Authenticode signing** of the Windows agents with a certificate of
    EasyRMM's own ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
 
 Also after 1.0.0:
