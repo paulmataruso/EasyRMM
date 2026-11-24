@@ -123,7 +123,13 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
      recommendation number. CIS's own text is not copied, and the profiles
      are not CIS-certified.
 
-   The design will be its own ADR.
+   * **Linux and network-device baselines** are in scope.
+   * **Every check records its provenance and a licence classification.**
+     Licensed content (such as CIS's own text) can only come in as
+     separate optional packages.
+
+   Requirements: [compliance engine](docs/architecture/requirements/2026-11-24-compliance-engine.md).
+   The design (an ADR) comes before any build.
 9. **The rest of the MSP feature plan's order:**
    * Windows hardening W2 (apply and undo) and W3 (the console)
    * the updater's console (4b): today an upgrade is
