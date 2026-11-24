@@ -65,6 +65,17 @@ Built and merged, ahead of 1.0.0. How each was verified is in
   PR #119, PR #120)
   ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
 
+## Next up
+
+* **Remote desktop: a single selected monitor is cut off.** When one monitor is
+  chosen in the remote desktop viewer, about the bottom quarter of the screen
+  (for example the Windows Start menu) is hidden. The viewer's scaling for the
+  selected display needs fixing.
+* **Patching tree: selection should scope the page.** Choosing a device in the
+  Patching tree should open that device's patching page. Choosing a group, site
+  or organization should open the Patching page scoped to it. Today every choice
+  opens the full Patching page.
+
 ## In progress
 
 * PR #122: reconnect remote access on a MeshAgent that will not stop.
@@ -83,26 +94,29 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
    same machine.** EasyRMM only ever touches its own.
 2. **A single Repair button** that works out what is down and uses
    whichever agent is still running to fix MeshAgent or the other agent.
-3. **The agent's live channel** (WebSockets)
+3. **Saved RDP credentials per device**, for users who choose to save
+   them. They are encrypted at rest, limited to users with permission,
+   audited on every use, and a saved password is never shown back.
+4. **The agent's live channel** (WebSockets)
    ([ADR-0059](docs/architecture/adr/0059-the-agents-websocket-channel.md),
    [ADR-0009](docs/architecture/adr/0009-agent-protocol.md)): jobs and
    changes reach a computer at once, chosen per device, site or
    organization: *Automatic* (recommended), *Live connection* or *Regular
    check-ins*.
-4. **A Windows Defender module**: management from the console (settings,
+5. **A Windows Defender module**: management from the console (settings,
    scans, signatures, threats and quarantine, exclusions, attack surface
    reduction, Controlled Folder Access). Defender events can be used as
    alert rules, with default rules. Tamper Protection is shown, not
    changed.
-5. **Active Directory**: detect domain controllers, manage users and
+6. **Active Directory**: detect domain controllers, manage users and
    groups, reset passwords, disable accounts. Extends AD health (feature 12
    of the MSP feature plan).
-6. **Server role modules**, each one can be switched off: AD Certificate
+7. **Server role modules**, each one can be switched off: AD Certificate
    Services, DNS, DHCP, file sharing, print server.
-7. **Windows Backup management.** Full on servers (Windows Server Backup).
+8. **Windows Backup management.** Full on servers (Windows Server Backup).
    On desktops, only what Windows exposes: File History and the system
    image.
-8. **Security frameworks and compliance:**
+9. **Security frameworks and compliance:**
    * **Pick a framework, check every host against it.** Frameworks: CMMC
      Level 1 and 2, NIST SP 800-171, NIST SP 800-53, the NIST
      Cybersecurity Framework, HIPAA, GDPR, SOC 2 (TSC), and more later (for
@@ -130,7 +144,7 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
 
    Requirements: [compliance engine](docs/architecture/requirements/2026-11-24-compliance-engine.md).
    The design (an ADR) comes before any build.
-9. **The rest of the MSP feature plan's order:**
+10. **The rest of the MSP feature plan's order:**
    * Windows hardening W2 (apply and undo) and W3 (the console)
    * the updater's console (4b): today an upgrade is
      [run on the server](docs/operations/upgrading.md)
@@ -152,7 +166,7 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
    * log collection ([ADR-0060](docs/architecture/adr/0060-collecting-logs.md))
    * the new name ([ADR-0061](docs/architecture/adr/0061-moving-to-a-new-name.md))
    * Linux one-click hardening, last
-10. **Authenticode signing** of the Windows agents with a certificate of
+11. **Authenticode signing** of the Windows agents with a certificate of
    EasyRMM's own ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
 
 Also after 1.0.0:
