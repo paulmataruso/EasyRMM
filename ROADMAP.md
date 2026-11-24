@@ -102,28 +102,26 @@ plans are [the feature plan](docs/architecture/feature-plan.md) and
 7. **Windows Backup management.** Full on servers (Windows Server Backup).
    On desktops, only what Windows exposes: File History and the system
    image.
-8. **Compliance (CMMC Level 1 and 2, NIST SP 800-171):**
-   * a scanner for Windows desktops and servers. About 41 of 800-171's 110
-     requirements can be checked on the machine itself; the rest need
-     domain or network data, or are policy;
-   * automatic fixes only through hardening's apply and undo. Account
-     lockout, BitLocker enablement, FIPS mode, AppLocker/WDAC and LDAP
-     signing stay check-only;
-   * EasyRMM's own assessment, SSP, POA&M and evidence workflow, with OSCAL
-     export first;
-   * an SPRS score shown as a range until every requirement is assessed.
+8. **Security frameworks and compliance:**
+   * **Pick a framework, check every host against it.** Frameworks: CMMC
+     Level 1 and 2, NIST SP 800-171, NIST SP 800-53, the NIST
+     Cybersecurity Framework, HIPAA, GDPR, SOC 2 (TSC), and more later (for
+     example PCI DSS, ISO 27001, Essential Eight, Cyber Essentials). The
+     check covers every requirement that can be verified on the machine.
+   * **One fix per gap,** applied only when the admin clicks apply. Risky
+     fixes (account lockout, BitLocker, FIPS mode, AppLocker/WDAC, LDAP
+     signing) show a warning and need typed agreement for each item.
+   * **For CMMC, a full SSP, POA&M and evidence workflow** in the console,
+     with OSCAL export and an SPRS score shown as a range until every
+     requirement is assessed.
+   * **Built on one control library** with check, apply, undo and a risk
+     tier for each control. Each framework is a pack that maps its
+     requirements onto that library, using authoritative public sources
+     (NIST, HHS, DoD, DISA).
+   * **CIS Benchmark content is not included** unless EasyRMM obtains a
+     licence from CIS.
 
-   Built in slices:
-   * C1: scan and profiles;
-   * C2: attestations and evidence;
-   * C3: about 15 new endpoint checks;
-   * C4: domain-controller checks;
-   * C5: OSCAL export, and import of STIG and a customer's own CIS-CAT
-     results.
-
-   CIS Benchmark content cannot be shipped under CIS's terms, so CIS
-   appears only through a customer's own CIS-CAT results. The design will
-   be its own ADR.
+   The design will be its own ADR.
 9. **The rest of the MSP feature plan's order:**
    * Windows hardening W2 (apply and undo) and W3 (the console)
    * the updater's console (4b): today an upgrade is
