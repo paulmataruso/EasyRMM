@@ -292,7 +292,7 @@ func scriptOptions(t *testing.T, c *scriptContainer) {
 
 // scriptListeningPorts: sockets listening outside loopback are ports apply would
 // leave open; loopback ones are not, nor the client socket dhclient binds to
-// a random port besides 68, nor any UDP socket in the ephemeral range (a stand-in named dhclient binds both). Needs
+// a random port besides 68, a UDP socket on an ephemeral-range port that is not dhclient's is kept open (a stand-in named dhclient binds both). Needs
 // perl or python3 in the image to listen with.
 func scriptListeningPorts(t *testing.T, c *scriptContainer) {
 	type sock struct {
@@ -365,7 +365,7 @@ func scriptListeningPorts(t *testing.T, c *scriptContainer) {
 	fw := scriptModule(t, parseScriptResult(t, out, []string{"firewall"}), "firewall")
 	if fw.Ports == nil || !slices.Contains(fw.Ports.TCP, "8443") || slices.Contains(fw.Ports.TCP, "9999") ||
 		!slices.Contains(fw.Ports.UDP, "5355") || slices.Contains(fw.Ports.UDP, "5356") ||
-		!slices.Contains(fw.Ports.UDP, "68") || slices.Contains(fw.Ports.UDP, "41234") || slices.Contains(fw.Ports.UDP, "40001") {
+		!slices.Contains(fw.Ports.UDP, "68") || slices.Contains(fw.Ports.UDP, "41234") || !slices.Contains(fw.Ports.UDP, "40001") {
 		t.Errorf("listening ports: %+v", fw.Ports)
 	}
 }
