@@ -20,6 +20,8 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/secrets"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 )
 
 // Limits of scripts and jobs.
@@ -96,6 +98,11 @@ type Service struct {
 	// stepUp checks a step-up proof for changes of the highest risk tier
 	// (ADR-0055); nil until it is wired, when those changes are refused.
 	stepUp StepUpVerifier
+	// catalog, gate and sealer run the winmod kind (ADR-0073); without
+	// them no winmod job is made.
+	catalog *winmod.Catalog
+	gate    ModuleGate
+	sealer  *secrets.Sealer
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs
@@ -182,6 +189,12 @@ func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 		if err != nil {
 			return err
 		}
+		// A secret is never held waiting: it goes at expiry, or when no run of
+		// its job is open (ADR-0073).
+		if _, err = tx.Exec(ctx, `DELETE FROM winmod_job_secrets s WHERE s.expires_at <= now()
+			OR NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = s.job_id AND r.status IN ('queued', 'sent', 'running'))`); err != nil {
+			return err
+		}
 		out.GuardsTimedOut, err = s.timeOutGuards(ctx, tx)
 		return err
 	})
@@ -219,8 +232,21 @@ func (s *Service) Purge(ctx context.Context) (Purged, error) {
 		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.batch_id IS NOT NULL AND j.created_at < now() - make_interval(secs => $1)
 			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
 			DailyCheckRetention.Seconds())
+		if err != nil {
+			return err
+		}
 		p.Jobs += tag.RowsAffected()
-		return err
+		// A winmod job, its params and its typed result go after the time
+		// its action says: an hour for a read, days for a change, minutes
+		// for a sensitive result. The audit rows stay (ADR-0073).
+		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.kind = 'winmod'
+			AND j.created_at < now() - make_interval(secs => (j.winmod->>'keepSeconds')::int)
+			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`)
+		if err != nil {
+			return err
+		}
+		p.Jobs += tag.RowsAffected()
+		return nil
 	})
 	return p, err
 }

@@ -77,6 +77,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 )
 
 // Version is set at build time with -ldflags.
@@ -238,6 +240,13 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
 	d.Modules = modules.New(db, auditLog, log)
 	d.Agents.SetRoleStore(d.Modules)
+	// The winmod job kind runs the catalog's actions where the module is
+	// on (ADR-0073, slice 5).
+	catalog, err := winmod.NewCatalog(defender.Actions()...)
+	if err != nil {
+		return nil, err
+	}
+	d.Jobs.SetWinmod(catalog, d.Modules, sealer)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
 	if d.Mesh != nil {
