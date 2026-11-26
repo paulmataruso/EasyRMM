@@ -2062,7 +2062,7 @@ remote PowerShell's slice 1, and before notifications.
   * **One change at a time** is in `claim`: an apply or undo is delivered
     only when no other hardening or software run of the device is sent,
     running or queued before it, and those wait behind it.
-  * **The daily check** (migration `90142`): a check job per Windows device
+  * **The daily check** (migration `00050`): a check job per Windows device
     with a record of EasyRMM's changes, at a time of day taken from the
     device's ID, created within an hour of it, never beside an apply, undo
     or confirm, expiring after 24 hours, with a batch id shared by an
