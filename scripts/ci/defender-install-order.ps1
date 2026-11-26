@@ -131,3 +131,5 @@ try {
     Stop-Job $job -ErrorAction SilentlyContinue
     Remove-Job $job -Force -ErrorAction SilentlyContinue
 }
+# The last install run failed on purpose; its exit code is not this script's.
+exit 0
