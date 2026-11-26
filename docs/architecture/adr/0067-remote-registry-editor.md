@@ -1384,6 +1384,63 @@ among step 28's.
 3. **Import**, with its preview and `registry.import`.
 4. **Bulk changes**, after ADR-0064's targets (its slice 4).
 
+### Slice 1 as built
+*Amended 2026-11-26 (decided in review).* The slice follows the Decision
+above; where the code showed a better shape, this is what was built.
+
+* **Data functions.** `easyrmm_job_run_result` reads a result under four
+  scopes (`job.view`, `job.view_sensitive`, the kind's `registry.view`, and
+  the person who asked for the kinds that say so) and records the read where
+  the kind says it is recorded. A **separate** `easyrmm_job_input` returns
+  the input, and `GET /api/v1/jobs/{id}/arguments` calls it for these
+  kinds (an `input` field beside `args`), rather than the arguments function
+  being rebuilt to return both: the arguments function and its catalogue
+  test stay as ADR-0063 left them.
+  `easyrmm_job_delivery_inputs` and `easyrmm_job_run_input_system` are the
+  system-scope readers the poll and the result path use. A refused result
+  or input read is recorded as `job_run.result_view` or
+  `job.arguments_view`; the refusal bound counts `job_run.result_view` and
+  `registry.refused` with the two it counted before (migration 00073).
+  `registry.refused` is written by `easyrmm_registry_refusal`, a definer
+  function that looks the device up under the caller's own scope.
+* **The result's lines.** One JSON object per line with a `t`: `begin`
+  (operation, hive, view, path, the rules' version, the build and its
+  architecture), `key`, `subkey`, `value`, `match`, `xkey` (an export's
+  key with its values), `refused`, `error` and `end`. The server decodes
+  every line strictly (`agentproto.ParseRegistryLines`), refuses a result
+  with a NUL or a lone surrogate in any escape, and stores the lines as a
+  `jsonb` array after masking, from what it decoded, not as received. A
+  result for another operation, hive, view or path, over its limits, with
+  a key outside the key asked for, or with a path the server's rules refuse
+  fails the run and is not stored.
+* **Not built, because they need slice 2**: `prepare`, the change lock in
+  the claim, `registry_changes`, the reveal, the protected paths' checks
+  and `registry.change_view` reads (the kind's table entry carries them).
+  `registry_masked_values` exists, with its grants and its purge, and holds
+  nothing in slice 1: a read never stores masked data.
+* **The claim.** A run delivered five times without starting fails
+  (`agentproto.MaxDeliveries`) for every kind, not only F2's. The answer is
+  chosen in Go from the candidates: quick runs first, then oldest first;
+  a quick run that is sent again goes first and alone; otherwise runs sent
+  again wait for an answer of their own. The signed size is bounded at
+  creation for every kind (`jobs.signed_bytes`).
+* **Links in a list** are marked `link` with their target, and a click
+  opens one: the agent follows it only where ADR-0067's rule allows.
+  Search lists a link as a match of kind `link` and never enters it.
+* **Counts of -1.** A listed subkey whose counts the agent did not read, for
+  want of time (the key's 30-second budget), has `subkeys` and `values` of
+  -1, and the console shows no count for it.
+* **Mounted copies.** A hive found in `hivelist` with a file named SAM or
+  SECURITY, or one under another name whose root holds `SAM\Domains` or
+  `Policy\Secrets`, is refused under `HKLM` and `HKU`.
+* **The child's folder** is `TEMP` and `TMP` on Windows, as a script's is,
+  and `HOME` elsewhere (only tests run a builtin off Windows).
+* **Not measured here.** The time to list a key of 1,000 subkeys and the
+  100,000-subkey page are printed by the Windows runners' tests
+  (`TestRegistryBigKeyAndValueAsSystem`); the owner's test instance's real
+  computer has not been used, so the guide must not call the editor
+  verified until it has been.
+
 ## Consequences
 * Technicians can read a Windows computer's registry from the console,
   with every read recorded, and, from slice 2, change it with backups

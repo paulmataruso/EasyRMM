@@ -16,10 +16,10 @@ enforce that higher roles are strict supersets of lower ones.
 | Permission | Read-Only | Technician | Site Admin | Org Admin | Super Admin |
 |---|:-:|:-:|:-:|:-:|:-:|
 | `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view`, `doc.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `device.edit`, `device.remote_desktop`, `device.rdp_credentials.save`, `device.terminal`, `device.files`, `doc.manage`, `log.view` | | ✓ | ✓ | ✓ | ✓ |
+| `device.edit`, `device.remote_desktop`, `device.rdp_credentials.save`, `device.terminal`, `device.files`, `doc.manage`, `log.view`, `eventlog.view` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
-| `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
+| `org.manage`, `user.manage`, `patch.configure`, `log.view_sensitive` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
 | `defender.view`, `ad.view`, `ad.helpdesk`, `dhcp.view`, `print.view`, `backup.view`, `defender.manage`, `print.manage`, `backup.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `ca.view`, `dns.view`, `shares.view`, `ad.view_sensitive`, `dns.manage`, `dhcp.manage`, `shares.manage` | | | ✓ | ✓ | ✓ |
@@ -42,6 +42,12 @@ contacts and places. They apply where the role is, and a site-scoped role
 sees its sites' contacts and places, not the organization's own contacts
 ([The customer record](../operations/customer-record.md#who-can-see-and-change-what),
 [ADR-0066](../architecture/adr/0066-customer-documentation-and-assets.md)).
+
+`eventlog.view` opens the Event logs tab of a Windows device: its channels, and a query over them with each event's fields, message and XML, for every
+channel but Security and without sensitive fields; reading a result needs `job.view_sensitive` as well, and only the person who asked reads it
+([ADR-0068](../architecture/adr/0068-remote-event-viewer.md)). `log.view_sensitive` (ADR-0060's) opens the Security log and the sensitive fields
+(command lines, scripts, service and task definitions) in that tab: it is held from Organization Administrator up and **only from an
+organization-wide grant**, never from a site's. A query that asked for sensitive data is read again only by someone who still holds it.
 
 `log.view` reads a device's agent logs: the records of the EasyRMM agent,
 the EasyPatch agent and MeshAgent. It is held from Technician up, not by

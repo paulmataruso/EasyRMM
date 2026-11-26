@@ -46,6 +46,10 @@ export type Permission =
   | "doc.view"
   | "doc.manage"
   | "log.view"
+  | "registry.view"
+  | "registry.edit"
+  | "eventlog.view"
+  | "log.view_sensitive"
   | "defender.view"
   | "defender.manage"
   | "defender.view_sensitive"
@@ -1329,7 +1333,7 @@ export interface JobArguments {
   args: string[];
 }
 
-export type JobKind = "script" | "software" | "hardening";
+export type JobKind = "script" | "software" | "hardening" | "registry_query" | "registry_change" | "eventlog_query";
 
 /** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
@@ -4378,4 +4382,279 @@ export interface TlsCheck {
   status: "ok" | "warn" | "fail";
   detail: string;
   fix?: string;
+
+// The registry editor (ADR-0067, slice 1).
+
+/** A read the server accepted: the run to follow, and the key as the server read it. */
+export interface RegistryRun {
+  jobId: string;
+  runId: string;
+  op: RegistryOp;
+  hive: RegistryHive;
+  view: RegistryView;
+  path: string[];
+  expiresAt: string;
+}
+
+export type RegistryOp = "list" | "value" | "search" | "export";
+export type RegistryHive = "HKLM" | "HKU" | "HKCR" | "HKCC";
+export type RegistryView = "64" | "32";
+
+/** What a read asks for. Either `text` (the address bar) or `hive` and `path`. */
+export interface RegistryQuery {
+  op: RegistryOp;
+  view: RegistryView;
+  hive?: RegistryHive;
+  path?: string[];
+  text?: string;
+  valueName?: string;
+  cursor?: { subkey?: string; value?: string };
+  term?: string;
+  depth?: number;
+}
+
+/** reported: read; unavailable: Windows denied access; refused: EasyRMM's rule; not_found; unknown: no answer, with why. */
+export type RegistryState = "reported" | "unavailable" | "not_found" | "refused" | "unknown";
+
+export interface RegistryKeyInfo {
+  kernel: string;
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  readAt: string;
+  link?: string;
+}
+
+export interface RegistrySubkey {
+  name: string;
+  rawName?: string;
+  /** -1 when the agent ran out of time before it opened the key. */
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  state?: "" | "link" | "denied" | "refused";
+  target?: string;
+  rule?: string;
+  label?: string;
+}
+
+export interface RegistryValue {
+  name: string;
+  rawName?: string;
+  /** The registry's type number. */
+  type: number;
+  size: number;
+  masked?: boolean;
+  noData?: boolean;
+  denied?: boolean;
+  text?: string;
+  items?: string[];
+  number?: number;
+  decimal?: string;
+  base64?: string;
+  raw?: string;
+  display?: string;
+  odd?: boolean;
+  cut?: boolean;
+}
+
+export interface RegistryMatch {
+  kind: "key" | "valueName" | "data" | "link";
+  path: string[];
+  name?: string;
+  type?: number;
+}
+
+export interface RegistryEnd {
+  complete: boolean;
+  stoppedBy?: "depth" | "matches" | "keys" | "time" | "size" | "exportKeys";
+  firstUnvisited?: string[];
+  visited?: number;
+  matches?: number;
+  moreSubkeys?: boolean;
+  moreValues?: boolean;
+  nextSubkey?: string;
+  nextValue?: string;
+  elapsedMs: number;
+}
+
+export interface RegistryResult {
+  state: RegistryState;
+  reason?: string;
+  complete: boolean;
+  kind: string;
+  runStatus: string;
+  op?: RegistryOp;
+  hive?: RegistryHive;
+  view?: RegistryView;
+  path?: string[];
+  readAt?: string;
+  agentVersion?: string;
+  rules?: number;
+  key?: RegistryKeyInfo;
+  subkeys?: RegistrySubkey[];
+  values?: RegistryValue[];
+  matches?: RegistryMatch[];
+  end?: RegistryEnd;
+  refused?: { path: string[]; rule: string; kernel?: string }[];
+  exportKeys?: number;
+  exportValues?: number;
+}
+
+// The event viewer (ADR-0068, slice 1).
+
+export type EventlogOp = "channels" | "query" | "event" | "provider";
+
+export interface EventlogIdRange {
+  from: number;
+  /** 0 or absent for a single ID. */
+  to?: number;
+}
+
+/** What the console asks for; the server builds the query from these typed filters. */
+export interface EventlogRequest {
+  op: EventlogOp;
+  channels?: string[];
+  levels?: number[];
+  ids?: EventlogIdRange[];
+  excludeIds?: EventlogIdRange[];
+  providers?: string[];
+  tasks?: number[];
+  /** A keyword mask, decimal. */
+  keywords?: string;
+  time?: { last?: "1h" | "12h" | "24h" | "7d" | "30d"; from?: string; to?: string };
+  text?: string;
+  record?: number;
+  provider?: string;
+  /** The person's choice to see the Security log or command lines and scripts. */
+  sensitive?: boolean;
+  /** The next page of that run's query: the server holds the filters and the cursor. */
+  previousRunId?: string;
+}
+
+export interface EventlogRun {
+  jobId: string;
+  runId: string;
+  op: EventlogOp;
+  sensitive: boolean;
+  expiresAt: string;
+}
+
+export type EventlogState = "reported" | "unavailable" | "not_found" | "refused" | "unknown";
+
+export interface EventlogChannel {
+  name: string;
+  type: "admin" | "operational" | "analytic" | "debug";
+  enabled: boolean;
+  classic?: boolean;
+  maxSize?: number;
+  retention?: boolean;
+  autoBackup?: boolean;
+  count?: number;
+  size?: number;
+  oldest?: string;
+  full?: boolean;
+  state?: "denied";
+}
+
+export interface EventlogDatum {
+  name?: string;
+  path?: string;
+  value: string;
+  hidden?: boolean;
+  cut?: boolean;
+}
+
+export interface EventlogEvent {
+  log: string;
+  channel: string;
+  record: number;
+  provider: string;
+  providerGuid?: string;
+  id: number;
+  qualifiers?: number;
+  version: number;
+  level: number;
+  levelName?: string;
+  task: number;
+  taskName?: string;
+  opcode: number;
+  opcodeName?: string;
+  keywords: string;
+  keywordNames?: string[];
+  /** Exactly as recorded, UTC. */
+  time: string;
+  /** The computer's offset from UTC at that instant, in seconds. */
+  offset?: number;
+  computer: string;
+  userSid?: string;
+  user?: string;
+  pid?: number;
+  tid?: number;
+  data?: EventlogDatum[];
+  dataDropped?: number;
+  message?: string;
+  messageNote?: string;
+  messageHidden?: boolean;
+  messageCut?: boolean;
+  hidden?: string[];
+  xml: string;
+  tooLarge?: boolean;
+}
+
+export interface EventlogChannelCursor {
+  channel: string;
+  record: number;
+  created?: string;
+  oldest?: number;
+  done?: boolean;
+}
+
+export interface EventlogPos {
+  channel: string;
+  state: "ok" | "not_found" | "denied" | "unavailable";
+  reason?: string;
+  created?: string;
+  oldest?: number;
+  oldestAt?: string;
+  ascending?: boolean;
+  cleared?: boolean;
+  overwritten?: boolean;
+}
+
+export interface EventlogEnd {
+  complete: boolean;
+  returned: number;
+  read: number;
+  stoppedBy: "end" | "page" | "bytes" | "read" | "time" | "cancel";
+  searchedBack?: string;
+  hiddenEvents?: number;
+  unreadable?: number;
+  redacted?: number;
+  dropped?: number;
+  cursor?: { channels: EventlogChannelCursor[] };
+  clock?: string;
+}
+
+export interface EventlogResult {
+  state: EventlogState;
+  reason?: string;
+  complete: boolean;
+  kind: string;
+  runStatus: string;
+  op?: EventlogOp;
+  sensitive: boolean;
+  readAt?: string;
+  agentVersion?: string;
+  rules?: number;
+  /** The computer's clock when it ran. */
+  clock?: string;
+  arch?: string;
+  crash?: { value: number; set: boolean };
+  channels?: EventlogChannel[];
+  pos?: EventlogPos[];
+  provider?: { name: string; guid?: string };
+  events?: EventlogEvent[];
+  end?: EventlogEnd;
+  errors?: { code: string; channel?: string; message: string }[];
 }
