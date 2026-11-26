@@ -1,6 +1,6 @@
 # ADR-0059: The agent's WebSocket channel
 
-* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). Not built yet.
+* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). C0 and S1 built (see *Amended 2026-11-26 (decided in review): as built in C0 and S1*); the rest not built yet.
   after ADR-0069 and the dev-scope guard (see *Refresh, 2026-11-26*, which
   wins where it disagrees with what follows). Not implemented.
 * Revised 2026-11-21 after an independent review: features the server
@@ -201,6 +201,34 @@ slices at the end.
 * **NGINX**: `docs/deployment/nginx.md` already forwards `Upgrade` and
   `Connection` in its one `location /`, with a 1 h read timeout; the agent's
   route needs no change (*Behind the reverse proxy*).
+
+### Amended 2026-11-26 (decided in review): as built in C0 and S1
+* **The switch is off by default.** `EASYRMM_AGENT_CHANNEL` is `off` until the
+  agent client (A1) and the message kinds (M1 to M5) have landed and been
+  verified; the integrator turns the default to `on` then. Off, the route
+  is not served (404, as any unknown route) and heartbeat answers carry no
+  `features`, `instance` or `jobsWaiting`.
+* **The route is `GET /api/agent/v1/channel`** (`agentproto.PathChannel`);
+  *The connection* below, which says `/connect`, is superseded.
+* **What names a connection.** `HeartbeatRequest.Transport` is a
+  `ChannelReport` (`connId`, `since`); `Channel` (`["v1"]`) lists the
+  versions the agent speaks. ADR-0058's `transport` document is not needed.
+* **Confirmation is in S1, in memory.** The registry is the hub's own
+  (one confirmed and at most one pending connection per device); the
+  `agent_connections` table, `server_instances`, the clone guard and the
+  stored capability check (a 404 for a device whose last report lists no
+  `channel.v1`) stay in H1. Until then the server lists `channel` to every
+  device of an organization in scope, and a server restart forgets who was
+  confirmed (agents reconnect and are named again by their next heartbeat).
+* **The claim loop is a hook.** `agentchannel.Options.Claim` is called, with
+  the byte budget of a jobs frame, only for a confirmed connection of an
+  organization in scope; M2 supplies it. A result that still exceeds the
+  budget is not sent and sets `jobsWaiting` (`HeartbeatResponse.JobsWaiting`),
+  which the next heartbeat answer carries once.
+* **A pending connection's inbound `logs.batch`** is verified and counted
+  against its limits but not stored and not acked.
+* **Retry-After on a 503.** `httpapi.WriteError` now sends it for a 503
+  whose error sets one (`channel_busy`, `channel_full`, `held`).
 
 ### What does not change (authority and trust)
 * **Every instruction on the channel is the object the heartbeat answer

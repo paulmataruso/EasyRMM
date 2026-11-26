@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentchannel"
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
@@ -63,6 +64,7 @@ type API struct {
 	logs    *agentlogs.Service
 	ep      EasyPatchInstalls
 	repairs Repairs
+	channel *agentchannel.Hub
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
@@ -70,6 +72,7 @@ type API struct {
 	inventories *auth.KeyedLimiter
 	hardware    *auth.KeyedLimiter
 	logLimit    *auth.KeyedLimiter
+	upgrades    *auth.KeyedLimiter
 	pollMu      sync.Mutex
 	polls       map[uuid.UUID]int
 }
@@ -145,6 +148,7 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 		inventories: auth.NewKeyedLimiter(inventoryEvery, inventoryBurst, maxTracked),
 		hardware:    auth.NewKeyedLimiter(hardwareEvery, hardwareBurst, maxTracked),
 		logLimit:    auth.NewKeyedLimiter(logEvery, logBurst, maxTracked),
+		upgrades:    auth.NewKeyedLimiter(agentproto.ChannelUpgradeEvery, agentproto.ChannelUpgradeBurst, maxTracked),
 		polls:       map[uuid.UUID]int{},
 	}
 	if ca != nil {
@@ -234,6 +238,13 @@ func (a *API) WithRepairs(r Repairs) *API {
 	return a
 }
 
+// WithChannel serves the agent's WebSocket channel from h (ADR-0059). With
+// the channel off the route is not served and nothing else changes.
+func (a *API) WithChannel(h *agentchannel.Hub) *API {
+	a.channel = h
+	return a
+}
+
 // Handler returns the handler for everything under agentproto.PathPrefix.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -255,6 +266,9 @@ func (a *API) Handler() http.Handler {
 	}
 	if a.logs != nil {
 		mux.Handle("POST "+agentproto.PathAgentLogs, httpapi.Handle(a.signedWith(agentproto.MaxLogBody, a.logLimit, a.agentLogs)))
+	}
+	if a.channel.Enabled() {
+		mux.Handle("GET "+agentproto.PathChannel, httpapi.Handle(a.signedWith(1024, a.upgrades, a.channelUpgrade)))
 	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
@@ -544,6 +558,16 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	if err != nil {
 		return mapError(err)
 	}
+	if a.channel.Enabled() {
+		// The heartbeat confirms the connection it names (ADR-0059).
+		c, _ := r.Context().Value(signedCallKey{}).(signedCall)
+		a.channel.Heartbeat(d.ID, in.Transport, c.req.SignedAt())
+		if devscope.Allowed(d.OrganizationID) {
+			out.Features = append(out.Features, agentproto.FeatureChannel)
+			out.Instance = a.channel.Instance()
+			out.JobsWaiting = a.channel.TakeJobsWaiting(d.ID)
+		}
+	}
 	if a.inv != nil {
 		// Metrics and the inventory hash are extras: a failure here is
 		// logged, and the heartbeat still counts.
@@ -574,6 +598,16 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// channelUpgrade opens the agent's WebSocket channel (ADR-0059). The
+// request is verified; the connection stays pending until a heartbeat names
+// it.
+func (a *API) channelUpgrade(w http.ResponseWriter, r *http.Request, d *agents.Device, _ []byte) error {
+	c, _ := r.Context().Value(signedCallKey{}).(signedCall)
+	return a.channel.Upgrade(w, r, agentchannel.Peer{
+		Device: d.ID, Org: d.OrganizationID, Key: c.req.PublicKey(), Nonce: c.req.Nonce(), SignedAt: c.req.SignedAt(),
+	})
 }
 
 // removed takes an agent's report on uninstalling itself (ADR-0050).

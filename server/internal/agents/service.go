@@ -68,6 +68,8 @@ type Service struct {
 	tokens *secrets.Sealer
 	// removed is called once a device was deleted (ADR-0050); nil for none.
 	removed func()
+	// gone is called with a device's id once it was deleted.
+	gone func(uuid.UUID)
 	// meshBins keeps the MeshAgent binaries fetched from MeshCentral.
 	meshBins meshCache
 }
@@ -75,6 +77,10 @@ type Service struct {
 // OnRemoved has f called after a device is deleted, such as to have the
 // patching engine told at once to remove the device's EasyPatch agent.
 func (s *Service) OnRemoved(f func()) { s.removed = f }
+
+// OnDeviceGone has f called with a device's id once it was deleted, such as
+// to close its agent channel connection (ADR-0059).
+func (s *Service) OnDeviceGone(f func(uuid.UUID)) { s.gone = f }
 
 // SetSealer keeps new tokens' secrets, sealed with sl, so that their install
 // commands can be shown again (ADR-0047).
