@@ -1234,6 +1234,8 @@ test("a domain controller's Directory tab reads the domain, and a password reset
   const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
   await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "ad_ds", state: "present" }] } });
   const caps = ["job.pwsh", "job.params"];
+  // The agent says what its build takes (parameters on standard input) before the server sends it a module action.
+  await agent.poll(caps);
   const SID = "S-1-5-21-1-2-3-1104";
   // The agent answers the next winmod job with the typed result its script would print.
   const answer = async (action: string, data: unknown) => {
