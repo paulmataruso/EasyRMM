@@ -103,6 +103,9 @@ type Service struct {
 	catalog *winmod.Catalog
 	gate    ModuleGate
 	sealer  *secrets.Sealer
+	// escrow is the verified-escrow gate native actions that turn on
+	// encryption ask.
+	escrow EscrowGate
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs

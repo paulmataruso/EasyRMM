@@ -14,8 +14,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -473,7 +475,7 @@ func (e *env) run(ctx context.Context) error {
 		r.Roles = &roles.Scanner{Read: roles.Read}
 		// BitLocker recovery keys are escrowed only with the escrow key the
 		// server's heartbeat answer carries (ADR-0081).
-		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, LUKS: cryptsetup.System(), Server: c, Store: e.store, Log: e.log}
+		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, Manager: escrow.SystemManager{}, LUKS: cryptsetup.System(), Server: c, Store: e.store, Log: e.log}
 	}
 	var mesh *meshagent.Manager
 	var ship *logship.Shipper
@@ -524,6 +526,11 @@ func (e *env) run(ctx context.Context) error {
 		r.Update = up
 	}
 	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log, Finished: r.RefreshInventory}
+	if ea, ok := r.Escrow.(*escrow.Agent); ok && e.paths.Windows() {
+		// Native actions (ADR-0081): BitLocker's enable runs as agent code, so
+		// the recovery password it makes never passes through a script.
+		w.Execute = jobs.WithNative(jobs.Execute, map[string]jobs.NativeHandler{agentproto.NativeBitLockerEnable: enableBitLocker(ea)})
+	}
 	if e.paths.Windows() {
 		// The state check leaves out the scripts' working folders: scripts
 		// ran there as SYSTEM and may have left links or files others own.
@@ -814,4 +821,18 @@ func (e *env) removeFiles() (later bool, err error) {
 		_ = os.Remove(filepath.Dir(e.paths.MeshAgent()))
 	}
 	return later, nil
+}
+
+// enableBitLocker is the native handler of BitLocker's enable action. The
+// parameters are the server's, signed and hash-checked; they are read strictly.
+func enableBitLocker(ea *escrow.Agent) jobs.NativeHandler {
+	return func(ctx context.Context, params []byte) string {
+		var p agentproto.BitLockerEnableParams
+		dec := json.NewDecoder(bytes.NewReader(params))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&p); err != nil || p.Computer == "" || p.Volume == "" {
+			return agentproto.NativeResult(agentproto.NativeBitLockerEnableVersion, nil, "bad_params", "The action's parameters are not valid.")
+		}
+		return ea.EnableBitLocker(ctx, p)
+	}
 }

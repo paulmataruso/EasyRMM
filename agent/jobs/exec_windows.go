@@ -34,7 +34,9 @@ func systemRoot() string { return cmp.Or(os.Getenv("SystemRoot"), `C:\Windows`) 
 // Accepts lists the job capabilities this build takes, for its polls
 // (agentproto.PollRequest.Accepts): pwsh jobs, their fallback and the
 // program a result reports.
-func Accepts() []string { return []string{agentproto.CapJobPwsh, agentproto.CapJobParams} }
+func Accepts() []string {
+	return []string{agentproto.CapJobPwsh, agentproto.CapJobParams, agentproto.CapJobNative}
+}
 
 // pwshRoots are where a pwsh run looks for PowerShell 7: Program Files and
 // Program Files (x86). Tests point them at folders of their own, since the

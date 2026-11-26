@@ -162,6 +162,11 @@ type Action struct {
 	// Changes says a successful run changes the module's state, so the
 	// module's snapshots of the device are dropped.
 	Changes bool
+	// NeedsEscrow says the action turns on disk encryption: the server makes
+	// the job only when the keystore can verify an escrowed recovery key now
+	// and the organization has an escrow key (ADR-0081 section 5), and the
+	// agent starts encryption only after that key is verified.
+	NeedsEscrow bool
 }
 
 // IsNative says the action's executor is agent Go code, not a script.
@@ -235,8 +240,11 @@ func (a Action) check() error {
 	case a.Freshness > 0 && (a.Destructive || a.Credential || a.Changes):
 		return errors.New("a snapshot read does not change anything")
 	}
-	if _, ok := modules.Lookup(a.Module); !ok {
+	if !modules.Known(a.Module) {
 		return errors.New("unknown module")
+	}
+	if a.NeedsEscrow && !a.IsNative() {
+		return errors.New("an action that needs escrow is native")
 	}
 	seen := map[string]bool{}
 	for _, p := range a.Params {

@@ -29,6 +29,9 @@ const (
 	StateManagedElsewhere = "managed_elsewhere"
 	// StateEscrowOff: the organization has not turned LUKS escrow on.
 	StateEscrowOff = "escrow_off"
+	// StateNotEncrypted: a Windows volume BitLocker is not on, which the
+	// enable action can turn on (ADR-0081 section 5).
+	StateNotEncrypted = "not_encrypted"
 )
 
 // ProtectorState is one recovery-password protector and the state of its
@@ -38,6 +41,10 @@ type ProtectorState struct {
 	State      string     `json:"state"`
 	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
 	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	// RotationDue says the key was read and will be replaced (ADR-0081
+	// section 5); RotationDueAt is when it was read.
+	RotationDue   bool       `json:"rotationDue,omitempty"`
+	RotationDueAt *time.Time `json:"rotationDueAt,omitempty"`
 }
 
 // VolumeState is a volume and its escrow state: the worst of its protectors,
@@ -73,8 +80,11 @@ type DeviceEscrow struct {
 	Keystore   Summary `json:"keystore"`
 	// CanRead: the caller holds the read permission here (ADR-0081, slice 2).
 	// TwoPerson: a read waits for a second person's approval.
-	CanRead   bool          `json:"canRead"`
-	TwoPerson bool          `json:"twoPerson"`
+	CanRead   bool `json:"canRead"`
+	TwoPerson bool `json:"twoPerson"`
+	// CanEnable: the caller may turn BitLocker on here, which needs the
+	// permission, a Windows device and escrow that can verify before encryption.
+	CanEnable bool `json:"canEnable"`
 	Volumes   []VolumeState `json:"volumes"`
 }
 
@@ -110,6 +120,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	out := &DeviceEscrow{Applicable: (platform == "windows" || platform == "linux") && devscope.Allowed(org), Volumes: []VolumeState{}}
 	out.Keystore = SummaryOf(s.CurrentStatus(ctx))
 	out.CanRead = c.Principal != nil && c.Can(rbac.PermRecoveryKeyRead, rbac.Site(org, site))
+	out.CanEnable = out.Applicable && platform == "windows" && c.Principal != nil && c.Can(rbac.PermBitLockerManage, rbac.Site(org, site))
 	if out.CanRead {
 		if on, err := s.twoPerson(ctx, org); err == nil {
 			out.TwoPerson = on
@@ -153,7 +164,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 		return nil, err
 	}
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT volume_id, protector_id, state, verified_at, updated_at FROM recovery_key_escrows
+		rows, err := tx.Query(ctx, `SELECT volume_id, protector_id, state, verified_at, updated_at, rotation_due, rotation_due_at FROM recovery_key_escrows
 			WHERE device_id = $1 AND state IN ('pending', 'verified', 'stale', 'conflict')`, deviceID)
 		if err != nil {
 			return err
@@ -161,9 +172,10 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 		defer rows.Close()
 		for rows.Next() {
 			var vol, prot, state string
-			var verifiedAt *time.Time
+			var verifiedAt, dueAt *time.Time
 			var updated time.Time
-			if err := rows.Scan(&vol, &prot, &state, &verifiedAt, &updated); err != nil {
+			var due bool
+			if err := rows.Scan(&vol, &prot, &state, &verifiedAt, &updated, &due, &dueAt); err != nil {
 				return err
 			}
 			for i := range out.Volumes {
@@ -185,6 +197,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 					}
 					if state == StateVerified {
 						p.VerifiedAt = verifiedAt
+						p.RotationDue, p.RotationDueAt = due, dueAt
 					}
 					u := updated
 					p.UpdatedAt = &u
@@ -196,6 +209,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 					ps := ProtectorState{ID: prot, State: state, UpdatedAt: &u}
 					if state == StateVerified {
 						ps.VerifiedAt = verifiedAt
+						ps.RotationDue, ps.RotationDueAt = due, dueAt
 					}
 					out.Volumes[i].Protectors = append(out.Volumes[i].Protectors, ps)
 				}
@@ -212,6 +226,10 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 			continue // the agent's verdict stands: there is nothing to escrow
 		}
 		v.State = StateMissing
+		if v.Kind == "bitlocker" && v.Status == "decrypted" && len(v.Protectors) == 0 {
+			v.State = StateNotEncrypted
+			continue
+		}
 		if len(v.Protectors) > 0 {
 			v.State = StateVerified
 			for _, p := range v.Protectors {
@@ -224,11 +242,21 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	return out, nil
 }
 
+// PlatformStatus is the keystore's status with where a KEK rotation stands.
+type PlatformStatus struct {
+	Status
+	// KEKUsage says how many organization keys each KEK version still wraps;
+	// a version with none is needed only by backups that retain it.
+	KEKUsage []KEKUse `json:"kekUsage"`
+}
+
 // Platform returns the keystore's status for a caller who may manage
 // platform settings, with the KEK versions' metadata.
-func (s *Service) Platform(ctx context.Context, c access.Caller) (Status, error) {
+func (s *Service) Platform(ctx context.Context, c access.Caller) (PlatformStatus, error) {
 	if !c.CanGlobal(rbac.PermSettingsManage) {
-		return Status{}, apperr.Forbidden()
+		return PlatformStatus{}, apperr.Forbidden()
 	}
-	return s.RefreshStatus(ctx), nil
+	st := s.RefreshStatus(ctx)
+	use, err := s.KEKUsage(ctx)
+	return PlatformStatus{Status: st, KEKUsage: use}, err
 }

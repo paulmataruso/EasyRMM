@@ -153,6 +153,12 @@ const (
 const (
 	PermRecoveryKeyRead    Permission = "device.recovery_key.read"
 	PermRecoveryKeyApprove Permission = "device.recovery_key.approve"
+	// PermBitLockerManage turns BitLocker on for a Windows computer, through
+	// the verified-escrow gate (ADR-0081 section 5). It changes a customer's
+	// computer, so it is held by organization administrators and the super
+	// administrator, and the action also needs a step-up and the computer's
+	// name typed.
+	PermBitLockerManage Permission = "device.bitlocker.manage"
 )
 
 // AddOnPermissions are the permissions only an add-on role grants.
@@ -176,6 +182,7 @@ var AllPermissions = []Permission{
 	PermComplianceView, PermComplianceScan, PermComplianceFix, PermComplianceFixHigh, PermComplianceFixApprove,
 	PermComplianceEdit, PermComplianceAttest, PermComplianceApprove, PermComplianceExport, PermComplianceAdmin,
 	PermQAView, PermQALinkCreate, PermQALinkPermanent, PermQASession, PermQATakeover, PermQAInstall,
+	PermBitLockerManage,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -276,7 +283,7 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 	PermBackupViewSensitive, PermBackupDestroy, PermPrintViewSensitive, PermPrintDestroy,
 })
 
-var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,
+var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure, PermBitLockerManage,
 	PermCAManage, PermADManage, PermADResetPassword,
 	// Every compliance permission but compliance.admin, which is server-wide.
 	PermComplianceFixHigh, PermComplianceFixApprove, PermComplianceEdit, PermComplianceAttest, PermComplianceApprove,

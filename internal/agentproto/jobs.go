@@ -55,20 +55,29 @@ const (
 	ShellSh      = "sh"
 	ShellBash    = "bash"
 	ShellPython3 = "python3"
+	// ShellNative is not a shell: the job's Script names a handler built into
+	// the agent (ADR-0073 as amended by ADR-0081), which receives the job's
+	// Params and answers with the same one result line a script prints. The
+	// server makes such a job only for a catalogued native action; the agent
+	// runs only handlers it was built with. It is not in Shells and not
+	// accepted from a user's script, whatever they type.
+	ShellNative = "native"
 )
 
 // Shells lists every shell, in the order the console offers them.
 var Shells = []string{ShellPowerShell, ShellPwsh, ShellCmd, ShellBash, ShellSh, ShellPython3}
 
-// ValidShell reports whether s is a known shell.
+// ValidShell reports whether s is a shell a person may give a script. The
+// native handler is not one.
 func ValidShell(s string) bool {
-	return ShellPlatforms(s) != nil
+	return s != ShellNative && ShellPlatforms(s) != nil
 }
 
 // ShellPlatforms says which device platforms a shell runs on.
 func ShellPlatforms(shell string) []string {
 	switch shell {
-	case ShellPowerShell, ShellPwsh, ShellCmd:
+	case ShellPowerShell, ShellPwsh, ShellCmd, ShellNative:
+		// Today's native handlers are Windows only (BitLocker).
 		return []string{"windows"}
 	case ShellSh, ShellBash, ShellPython3:
 		return []string{"linux"}
@@ -80,8 +89,11 @@ func ShellPlatforms(shell string) []string {
 // must accept to be sent a job in the shell: none for the shells every
 // agent runs.
 func ShellRequires(shell string) []string {
-	if shell == ShellPwsh {
+	switch shell {
+	case ShellPwsh:
 		return []string{CapJobPwsh}
+	case ShellNative:
+		return []string{CapJobNative, CapJobParams}
 	}
 	return []string{}
 }
@@ -96,6 +108,10 @@ const (
 	// refuses such a job, and the server sends one only to an agent that
 	// lists it.
 	CapJobParams = "job.params"
+	// CapJobNative is ShellNative: a build without it has no handlers and
+	// refuses the shell, and the server sends such a job only to an agent
+	// that lists it.
+	CapJobNative = "job.native"
 )
 
 // MaxAccepts bounds the capabilities a poll lists, and MaxAcceptLen each
@@ -351,8 +367,9 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 		return p, err
 	}
 	switch {
-	case (p.V != JobPayloadVersion && p.V != JobPayloadVersionParams) || p.RunID == "" || p.JobID == "" || !ValidShell(p.Shell) || p.Script == "" ||
-		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh:
+	case (p.V != JobPayloadVersion && p.V != JobPayloadVersionParams) || p.RunID == "" || p.JobID == "" || (!ValidShell(p.Shell) && p.Shell != ShellNative) || p.Script == "" ||
+		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh ||
+		p.Shell == ShellNative && p.V != JobPayloadVersionParams:
 		return p, ErrJobMalformed
 	case p.DeviceID != deviceID:
 		return p, ErrJobDevice

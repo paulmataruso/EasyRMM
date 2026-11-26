@@ -106,8 +106,20 @@ func (s *Service) ReportVolumes(ctx context.Context, d Device, rep agentproto.Es
 				}
 				out.Need = append(out.Need, agentproto.EscrowNeed{VolumeID: v.ID, ProtectorID: p.ID})
 			}
+			// A rotation after a read: finished when the old protector is gone,
+			// asked for when its time has come (ADR-0081 section 5).
+			present := make([]string, 0, len(v.Protectors))
+			for _, p := range v.Protectors {
+				present = append(present, p.ID)
+			}
+			if err := s.completeRotation(ctx, tx, d, v.ID, agentproto.EscrowBitLocker, present); err != nil {
+				return err
+			}
+			if err := s.rotationNeeds(ctx, tx, d, v, agentproto.EscrowBitLocker, present, &out); err != nil {
+				return err
+			}
 		}
-		return nil
+		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM recovery_key_escrows WHERE device_id = $1 AND state = 'verified' AND rotation_due)`, d.ID).Scan(&out.Watch)
 	})
 	return out, err
 }
@@ -149,6 +161,11 @@ func (s *Service) needLUKS(ctx context.Context, tx pgx.Tx, d Device, v agentprot
 		}
 		return nil
 	}
+	// A rotation after a read ends when the old slot is gone; it is not a slot
+	// that disappeared.
+	if err := s.completeRotation(ctx, tx, d, v.ID, agentproto.EscrowLUKS, ids); err != nil {
+		return err
+	}
 	// A slot that is gone: nothing can unlock with the escrowed key any more.
 	rows, err := tx.Query(ctx, `UPDATE recovery_key_escrows SET state = 'stale', updated_at = now()
 		WHERE device_id = $1 AND volume_id = $2 AND kind = 'luks' AND state = 'verified' AND NOT (protector_id = ANY($3::text[]))
@@ -183,6 +200,9 @@ func (s *Service) needLUKS(ctx context.Context, tx pgx.Tx, d Device, v agentprot
 	if _, err := tx.Exec(ctx, `UPDATE recovery_key_escrows e SET state = 'superseded', updated_at = now()
 		WHERE e.device_id = $1 AND e.volume_id = $2 AND e.kind = 'luks' AND e.state = 'stale' AND NOT (e.protector_id = ANY($3::text[]))
 			AND EXISTS (SELECT 1 FROM recovery_key_escrows o WHERE o.device_id = e.device_id AND o.volume_id = e.volume_id AND o.state = 'verified')`, d.ID, v.ID, ids); err != nil {
+		return err
+	}
+	if err := s.rotationNeeds(ctx, tx, d, v, agentproto.EscrowLUKS, ids, out); err != nil {
 		return err
 	}
 	var current bool
@@ -346,6 +366,9 @@ func (s *Service) Upload(ctx context.Context, d Device, ip netip.Addr, rec agent
 	if err == nil && answer.State == agentproto.EscrowConflict {
 		s.raiseConflict(ctx, d, in.volume, in.protector)
 	}
+	if err == nil && answer.State == agentproto.EscrowStale {
+		s.rotationUnverified(ctx, d, in.volume, in.protector)
+	}
 	return answer, err
 }
 
@@ -501,12 +524,17 @@ func (s *Service) VerifyPending(ctx context.Context) (int, error) {
 			continue
 		}
 		in := p.escrowRow
+		var ans agentproto.EscrowAnswer
 		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-			_, err := s.settle(ctx, tx, p.dev, netip.Addr{}, &in, nil, result)
+			var err error
+			ans, err = s.settle(ctx, tx, p.dev, netip.Addr{}, &in, nil, result)
 			return err
 		}); err != nil {
 			s.warn("recording an escrow verdict", err)
 			continue
+		}
+		if ans.State == agentproto.EscrowStale {
+			s.rotationUnverified(ctx, p.dev, in.volume, in.protector)
 		}
 		n++
 	}
@@ -527,6 +555,7 @@ func (s *Service) Run(ctx context.Context) {
 			if _, err := s.VerifyPending(ctx); err != nil && ctx.Err() == nil {
 				s.warn("checking the pending escrow records", err)
 			}
+			s.RotationStep(ctx)
 		}
 	}
 }

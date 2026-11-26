@@ -195,6 +195,30 @@ func (s *Server) handle(req *keystore.Request, admin bool) keystore.Response {
 			return errResp(err)
 		}
 		return keystore.Response{OK: true, Plaintext: pt}
+	case keystore.OpRewrapOrgKey:
+		if admin {
+			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not an admin operation"}
+		}
+		nw, ver, err := s.KS.RewrapOrgKey(req.Org, req.KeyID, req.Purpose, req.WrappedPrivate)
+		if err != nil {
+			return errResp(err)
+		}
+		return keystore.Response{OK: true, WrappedPrivate: nw, KEKVersion: ver}
+	case keystore.OpResealEscrow:
+		if admin || req.Context == nil || req.NewContext == nil {
+			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not a valid request"}
+		}
+		o, n := req.Context, req.NewContext
+		enc, ct, err := s.KS.ResealEscrow(ResealRequest{
+			RequestID: req.ID, Record: req.Record, Kind: req.Kind, OldWrapped: req.WrappedPrivate, NewPublic: req.NewPublic,
+			Old: escrowcrypto.Context{Org: o.Org, Device: o.Device, Volume: o.Volume, Protector: o.Protector, OrgKey: o.OrgKey},
+			New: escrowcrypto.Context{Org: n.Org, Device: n.Device, Volume: n.Volume, Protector: n.Protector, OrgKey: n.OrgKey},
+			Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: req.Fingerprint,
+		})
+		if err != nil {
+			return errResp(err)
+		}
+		return keystore.Response{OK: true, Enc: enc, Ciphertext: ct}
 	case keystore.OpLog:
 		if admin {
 			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not an admin operation"}

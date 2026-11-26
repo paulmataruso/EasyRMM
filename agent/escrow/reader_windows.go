@@ -41,7 +41,10 @@ type wmi struct {
 	closers []func()
 }
 
-func connect() (*wmi, error) {
+func connect() (*wmi, error) { return connectTo(namespace) }
+
+// connectTo is connect for another WMI namespace.
+func connectTo(ns string) (*wmi, error) {
 	runtime.LockOSThread()
 	w := &wmi{}
 	inited := true
@@ -70,10 +73,10 @@ func connect() (*wmi, error) {
 		return nil, fmt.Errorf("opening WMI: %w", err)
 	}
 	w.closers = append(w.closers, func() { w.locator.Release() })
-	v, err := oleutil.CallMethod(w.locator, "ConnectServer", "", namespace)
+	v, err := oleutil.CallMethod(w.locator, "ConnectServer", "", ns)
 	if err != nil {
 		w.close()
-		return nil, fmt.Errorf("connecting to BitLocker's WMI namespace: %w", err)
+		return nil, fmt.Errorf("connecting to the WMI namespace %s: %w", ns, err)
 	}
 	w.svc = v.ToIDispatch()
 	w.closers = append(w.closers, func() { w.svc.Release() })

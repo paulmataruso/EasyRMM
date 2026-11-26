@@ -21,6 +21,15 @@ const (
 	// OpLog returns the keystore's own log from a sequence number on, for
 	// the server's hourly reconciliation.
 	OpLog = "log"
+	// OpRewrapOrgKey moves an organization's wrapped private key from the
+	// KEK version that wraps it to the primary version, inside the keystore
+	// (ADR-0081 section 10). The private key never leaves; only the new
+	// wrapped form comes back.
+	OpRewrapOrgKey = "rewrap_org_key"
+	// OpResealEscrow opens an escrow record under the organization's old key
+	// and seals it to its new one inside the keystore, with no plaintext
+	// leaving it (ADR-0081 section 10, organization key rotation).
+	OpResealEscrow = "reseal_escrow"
 )
 
 // Operations only the admin socket accepts: it exists inside the keystore
@@ -114,6 +123,12 @@ type Request struct {
 	// read_escrow: the escrow record's ID, for the keystore's log.
 	Record string `json:"record,omitempty"`
 
+	// reseal_escrow: the organization's new escrow key. Context names the
+	// old key (the one WrappedPrivate is); NewContext differs from it in
+	// the key's ID only.
+	NewPublic  []byte         `json:"newPublic,omitempty"`
+	NewContext *EscrowContext `json:"newContext,omitempty"`
+
 	// log
 	Since int64 `json:"since,omitempty"`
 	Limit int   `json:"limit,omitempty"`
@@ -141,6 +156,10 @@ type Response struct {
 
 	// verify_escrow: Match or Mismatch, nothing else.
 	Result string `json:"result,omitempty"`
+
+	// reseal_escrow: the record sealed to the new key (ciphertext only).
+	Enc        []byte `json:"enc,omitempty"`
+	Ciphertext []byte `json:"ciphertext,omitempty"`
 
 	// read_escrow: the BitLocker recovery password, normalized. The only
 	// plaintext the keystore ever returns; both sides zero it after use.
