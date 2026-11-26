@@ -1,6 +1,8 @@
 # ADR-0059: The agent's WebSocket channel
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21); refreshed 2026-11-26 against the code
+  after ADR-0069 and the dev-scope guard (see *Refresh, 2026-11-26*, which
+  wins where it disagrees with what follows). Not implemented.
 * Revised 2026-11-21 after an independent review: features the server
   lists, what *Automatic* counts as a failure, several servers before the
   held poll is dropped, presence confirmed by the heartbeat, descriptors
@@ -132,9 +134,225 @@ first, "the WebSocket channel later". What exists:
   network blocks it, remote access is unavailable. EasyRMM's agent must
   keep working wherever HTTPS does.
 
+## Refresh, 2026-11-26 (decided in review)
+
+This section was added after ADR-0069, ADR-0070, ADR-0072 and the dev-scope
+guard landed, and after the owner asked "Lets get the websockets stuff
+setup as well". **Where it contradicts the sections below, it wins**; the
+sections it supersedes carry a pointer to it. Everything it does not touch
+(authentication, signed messages, keepalives, reconnection, limits,
+presence, several servers, the console, tests) stands and is built in the
+slices at the end.
+
+### What was stale
+* **Wake-only and "Full delivery: not now" are reversed.** The channel
+  now carries work, not only signals: job pushes, `logs.follow` and
+  `logs.verbose` (and the live log lines they ask for), repair
+  instructions, settings pushes and wakes. The heartbeat and the signed
+  poll stay, unchanged, as the fallback and the only path when no
+  channel is up. Authority is unchanged (*What does not change*).
+* **ADR-0057 and ADR-0058 are still proposed and unbuilt** (no per-device
+  job-key generations, no `agent.transport`, no `capabilities` in the
+  report), yet *What this needs from ADR-0057* blocked slice 1 on them.
+  The channel does not wait: it signs with the server's one job key the
+  agent already trusts (`SetKey`, `HeartbeatResponse.JobKey`) and takes
+  the key IDs of ADR-0057 when that lands (a `closing` of `refresh` at a
+  cut-over is already specified). The transport is a **server-wide
+  setting** until ADR-0058 lands: `EASYRMM_AGENT_CHANNEL` (`on`, the
+  default, or `off`), which decides whether `features` lists `channel`.
+  The per-device choice (*The transport, a setting per device*) is built
+  with ADR-0058; it is not a slice here. Until then an agent needs no
+  setting: it connects when its last heartbeat answer listed `channel`.
+* **The agent's capability list** is the heartbeat request's new field
+  `channel: ["v1"]` (additive, read leniently by older servers), not
+  ADR-0058's `capabilities`; job capabilities stay in the poll's
+  `accepts` (ADR-0064).
+* **`poll.noWait` is dropped** (*Jobs are never lost*, slice 3 as
+  written). A push replaces the held poll: the server claims and sends.
+  When a heartbeat answer says `jobsWaiting`, a live agent makes one
+  ordinary poll, which answers at once if work exists. No new request
+  field, so no level problem (ADR-0009).
+* **`logs.follow` is real.** ADR-0069 shipped `LogInstructions`
+  (`verboseUntil`, `followUntil`, clamped by `MaxVerbose` 24 h and
+  `MaxFollow` 15 min from receipt) in the heartbeat answer and in the
+  answer to `POST /api/agent/v1/agent-logs`, and the agent sends batches
+  every `LogFollowEvery` (2 s) while followed, else `LogEvery` (30 s).
+  The "Amended by ADR-0069" note at the end said the channel "carries
+  nothing from the agent"; that changes for log batches only, below.
+* **Repairs are signed instructions in the heartbeat answer**
+  (`HeartbeatResponse.Repair`, `SignedRepair`), produced by
+  `recovery.Service.AgentHeartbeat`, which also settles the agent's
+  `RepairReport`. The server's own Dispatch has already checked
+  `publishes()` (the recovery copy's SHA must be a build the server
+  publishes for that organization, platform and architecture) before it
+  stores a step. The old text knew none of this.
+* **The agent runner** (`agent/runner/runner.go`) applies a heartbeat
+  answer in one place (update, EasyPatch install, uninstall, repair,
+  logs, MeshAgent settings, interval); the channel must feed the same
+  code, never a second implementation.
+* **Dev scope.** `server/internal/devscope` (`Allowed(org)`) did not
+  exist. A new automatic behavior reaches only the organization in scope
+  while one is set; see *Dev scope*.
+* **The websocket library exists**: `github.com/coder/websocket` v1.8.15
+  is in `go.mod` (used for MeshCentral and remote sessions). The channel
+  uses it on both sides, pinned there; no other is added. The `net/http`
+  edge (`app/edge.go`) needs no change: its `IdleTimeout` and
+  `ReadHeaderTimeout` do not apply once a connection is hijacked.
+* **NGINX**: `docs/deployment/nginx.md` already forwards `Upgrade` and
+  `Connection` for MeshAgent; the agent's route gets the same location
+  settings (*Behind the reverse proxy*).
+
+### What does not change (authority and trust)
+* **Every instruction on the channel is the object the heartbeat answer
+  or the poll answer would carry, byte for byte**: `SignedRepair`,
+  `SignedUpdate`, the signed jobs of `PollResponse`, `LogInstructions`,
+  the settings fields. They keep their own signatures (job key,
+  `EASYRMM-…` domains) and their own checks on the agent. The channel's
+  envelope adds the server's signature on the frame (*Messages*), which
+  authenticates the frame; it never replaces the instruction's own.
+* **Builds are still checked where they are decided.** A push of a
+  repair or update takes the step the server stored after its
+  `publishes()` check (and the agent's own SHA-256 check of what it
+  downloads); the push path has no way to name a hash.
+* **RBAC and audit are not on the channel.** Who may ask for a repair, a
+  job or a follow is decided by the existing API (`access.Caller`, the
+  audit log) when the request is made; the channel only moves what that
+  decision stored. A push writes no audit row of its own; the existing
+  rows (repair requested, job queued, logs followed) stand, and the
+  channel adds a log line and a metric per push.
+* **No instruction exists only on the channel.** Each is stored first
+  (job runs, repair steps, the follow window in `agentlogs`, settings) and
+  is therefore also found by the next heartbeat or poll. A push can be
+  lost, late or repeated; it cannot be the only copy.
+* **Agent-to-server frames** are log batches only (below), each signed
+  with the device key; everything else the agent says stays on its signed
+  HTTPS requests.
+
+### What the channel carries (`channel.v1`, additions)
+Server to agent, all with the envelope of *Messages* (`hello`, `tick`,
+`wake`, `closing` as written there), plus:
+
+| Type | Fields | Agent does | Stored first in |
+|---|---|---|---|
+| `jobs` | a `PollResponse` (`jobs`, `cancel`) | feeds the worker as a poll answer; the journal dedupes; `start` and `result` stay signed HTTPS | `job_runs` (claimed `sent`) |
+| `logs` | a `LogInstructions` | the same function that handles the heartbeat's `logs` | the follow window in `agentlogs` |
+| `repair` | a `SignedRepair` | the same function that handles `HeartbeatResponse.Repair`; reports in its next heartbeat, and asks for one at once when done | `recovery` step |
+| `settings` | `heartbeatSeconds`, `meshAgent` (the `settingsSha256`), later ADR-0058's documents | the same function that applies them from a heartbeat answer | the device's settings |
+| `wake` | `what`: `checkin` or `jobs` | a heartbeat, or one poll, now | whatever made it due |
+
+Agent to server, signed by the agent (`EASYRMM-CHANNEL-AGENT-V1\n` + `connId` +
+`seq` + payload, the device key, `connId` from `hello`, `seq` from 1):
+
+| Type | Fields | Server does |
+|---|---|---|
+| `logs.batch` | a `LogBatch` (at most 64 KiB, at most one a second) | stores it through the same `agentlogs` function as the HTTPS route (same validation, same dedupe by device and sequence), and answers `logs.ack` (highest stored `seq`, plus the follow window) |
+
+* **Why agent frames are signed here, though ADR-0059 had none.** Log lines
+  are shown to technicians; on the proxy's plain hop they could be
+  injected. Signing costs one Ed25519 signature a second per followed
+  device, only while someone watches. A frame that fails, repeats or
+  skips a `seq`, or comes at more than one a second, closes the
+  connection (1008). The HTTPS route stays and is used whenever the
+  channel is down; both write the same rows, so a batch sent on both is
+  stored once.
+* **How `jobs` is pushed.** One goroutine per connection waits on the
+  jobs hub (`hub.subscribe(device)`, as `Poll` does today), on `hello`,
+  and on the sweep, and runs the same `claim(ctx, device, accepts)` with
+  the `accepts` the device last kept (`keepAccepts`), then sends the
+  result as `jobs`. Claiming marks the runs `sent`, as a poll does, so a
+  push that never arrives is redelivered after `RedeliverAfter` (2
+  minutes), a cancellation after `CancelResend`, exactly as a lost poll
+  answer. The agent acknowledges with `start`, the start check
+  (ADR-0017), so there is no second acknowledgement path. A write that
+  fails or takes over 10 s closes the connection and the agent returns to
+  long polls at once. The sweep (every 30 s) runs the claim for live
+  devices, so redeliveries need no wake.
+* **How `repair`, `settings` and `logs` are pushed.** The code that
+  decides, `recovery.Dispatch` after it stores a step, the logs service
+  when a technician opens or closes the follow or verbose switch,
+  and the settings and site-change code, calls `channel.Push(device,
+  kind)` after its transaction commits; a failure to push is never an
+  error (the heartbeat finds it). The pushed body is built by the same
+  function the heartbeat answer uses (a new `instructions(ctx, device)` in
+  `agentapi` that `heartbeat` also calls, so there is one builder).
+  `recovery.AgentHeartbeat`, which settles reports and hands out steps,
+  is split so a push reads the pending step without settling anything.
+* **A repair is pushed once.** The step's `sent_at` is set when pushed, as
+  when answered in a heartbeat; the agent's report in its next heartbeat
+  settles it, and a step not reported in time is handled by the existing
+  waits (`waitFor`, `maxRunning`).
+* **`update`, `easyPatchInstall` and `uninstall`** stay on `wake` plus
+  heartbeat: they are the rare, high-impact instructions, and an answer
+  to a signed heartbeat confirms who is asking (decided in review; they
+  can move to a push with a one-line change later).
+
+### Dev scope
+`devscope.Allowed(orgID)` is checked, on the server, in each of:
+* the heartbeat's `features`: `channel` is listed only to a device whose
+  organization is allowed, and the upgrade of any other answers 404, so an
+  organization outside the scope never opens a channel while a scope is
+  set;
+* `channel.Push` for every kind, before it sends (a device already
+  connected when a scope is set stops receiving pushes; its heartbeat
+  and poll carry them as they do today, and the server closes its
+  connection with `closing` `refresh` within a minute);
+* the sweep and the wake queue (the same call), so they spend nothing on
+  devices outside it.
+The agent side has nothing to check: it does what the server sends. A test
+sets the scope to one organization and proves that a device of another
+organization neither connects nor receives a push, while its heartbeat
+and poll still work.
+
+### Behind the reverse proxy and TLS
+* **The route** is `GET /api/agent/v1/channel`, on the same listener and
+  TLS certificate as the rest of the agent API, so the agent's pinned CA
+  (ADR-0015) verifies it as it does every request. There is no second
+  port and no plain WebSocket (`ws://`): the agent refuses any URL that is
+  not `https`.
+* **Direct deployments** need nothing; the `net/http` edge serves the
+  upgrade. **NGINX** (`docs/deployment/nginx.md`): the location for
+  `/api/agent/` gets `proxy_http_version 1.1`, `Upgrade` and `Connection`
+  from `$connection_upgrade`, `proxy_read_timeout` and `proxy_send_timeout`
+  of 1 h (above the 75-second keepalive window, so NGINX never cuts a
+  live connection), and `proxy_buffering off`. The guide's sizing of
+  `worker_connections` stays as written.
+* **What the server sees**: `httpapi.ClientIP` as for every request. The
+  signed upgrade does not depend on the proxy; a proxy that strips
+  `Upgrade` makes the upgrade answer 200 or 400, which the agent counts
+  as a failed attempt (*Automatic's fallback*) and works as today.
+* **Compression** is off (`websocket.CompressionDisabled`): signed frames
+  gain nothing, and per-message compression costs memory per connection.
+
+### Reconnects, backoff and limits, as built
+* **Reconnects and backoff**: as in *Reconnecting, with jitter*, kept: a
+  random wait up to 30 s then exponential backoff with full jitter from 5
+  s to 5 min; a signed `closing` sets the wait; 404 waits for a heartbeat
+  that lists `channel`; `429`/`503` with the server's code honour
+  `Retry-After` (at most 30 min). A sleep (wall clock jumps by over 30 s)
+  reconnects at once. The agent never reconnects faster than the 10-second
+  per-device upgrade limit.
+* **Per device**: one live connection (a second, once confirmed, replaces
+  the first with `replaced`); an upgrade at most every 10 s after a burst
+  of six; **server frames at most 20 a second (burst 50)**, beyond that
+  the push is dropped and the heartbeat carries it; **agent frames at
+  most one a second**.
+* **Frame sizes** (this changes the 16 KiB rule in *Messages*): the agent
+  accepts up to **1 MiB** for `jobs`, `repair` and `settings` (a signed
+  script job is the largest instruction; slice 4 checks the real maximum
+  against `agentproto` and fixes the number), and still 16 KiB for the
+  others; the server reads at most **64 KiB** from the agent.
+* **Per server**: 200 verified upgrades a second (503 `channel_busy`),
+  `EASYRMM_AGENT_CONNECTIONS_MAX` 10,000 (503 `channel_full`), the
+  descriptor gate on Linux; one reader and one writer goroutine per
+  connection, a small bounded outbound queue, no database connection held,
+  all as in *Server limits*.
+* **Per organization**: no limit of its own until ADR-0058.
+
 ## Decision
 
 ### Wake-only
+_Superseded by *Refresh, 2026-11-26*: the channel also carries job pushes, `logs`, `repair` and `settings`._
+
 * **The connection carries signals, not work.** The server sends *wake*
   ("ask for jobs now", "check in now"), keepalives, and why it closes the
   connection. Jobs, cancellations, instructions and settings still travel
@@ -151,6 +369,8 @@ first, "the WebSocket channel later". What exists:
   most agent requests; and the console knows who is connected now.
 
 ### Full delivery: not now
+_Reversed by *Refresh, 2026-11-26*; kept for the reasons it weighed. The cost it names is met by storing every instruction first, using the existing claim, `start` and journal, and keeping the heartbeat and poll as the fallback._
+
 * **Not planned.** Pushing signed jobs and instructions over the
   connection would save one round trip per wake, milliseconds, and cost a
   second delivery path with its own acknowledgements, redelivery and
@@ -703,6 +923,8 @@ instance reaches a device whose poll another holds at once.
   forgets it at once.
 
 ### What this needs from ADR-0057
+_Not a blocker any more (*Refresh, 2026-11-26*): the build signs with the one job key until ADR-0057 lands; this list is what ADR-0057 adds then._
+
 The channel's messages are signed with the job key. ADR-0057 (proposed, in
 its own review) must provide, and slice 1 does not start until it does:
 
@@ -859,33 +1081,121 @@ its own review) must provide, and slice 1 does not start until it does:
   first, then the platform's default.
 
 ## Slices
-After ADR-0057 and ADR-0058's three slices. Each merges and is verified on
-its own:
+Refreshed 2026-11-26. ADR-0057 and ADR-0058 are not prerequisites. The
+slices are written so builders work in parallel: **C0 first and small,
+then S1 and A1 together, then the message kinds M1 to M5 together**, then
+the tests and the hardening. Each merges and is verified on its own; the
+HTTPS paths are untouched by every one, so a slice that is behind leaves
+the product as it is.
 
-1. **The channel, beside the long poll.** The route, the signed messages,
-   `features` and `instance`, `channel.v1` in the agent's report, the
-   limits (per device, per server after verification, per organization,
-   descriptors on Linux), shutdown and the hold, removal,
-   `agent_connections` and `server_instances`; the agent's client with its
-   keepalives, the sleep check, reconnection and the fallback;
-   confirmation by the heartbeat, pending connections and the clone
-   guard; `agent.transport`, *Regular check-ins* by default, technicians on
-   one device; `checkin` wakes through the queue; the agent's report; the
-   device's *Connection* and *Last wake*; `agentsim -transport`; the
-   NGINX guide's sizing. The long poll
-   is untouched. Verified by unit, integration and bundle tests, the CI
-   load test, and on Windows as above.
-2. **Several servers**: wakes and long polls through `LISTEN` and
-   `NOTIFY`, one connection per device across instances. Long polls are
-   still held. Verified by the two-instance integration tests.
-3. **The live connection replaces the held poll.** `poll.noWait`, `jobs`
-   wakes and the sweep's, `noWait`, `jobsWaiting`, polls on connect and on
-   wakes, long polls again the moment the connection ends; *Automatic*
-   becomes the default, with a release note sizing NGINX; the
-   *Connection* column and its filter, Settings → Agent settings.
-   Verified by the tests that jobs survive cuts, lost wakes and lost
-   answers, the test against the previous slice's server, the bundle
-   again, and the drills.
+**C0, the contract (one builder, first, about a day).**
+`internal/agentproto/channel.go`: the route constant, the envelope
+(`payload`, `signature`), the types and fields above as Go structs, the
+signing domains (`EASYRMM-CHANNEL-SIG-V1\n`, `EASYRMM-CHANNEL-AGENT-V1\n`),
+`Sign`/`Verify` helpers for both directions, the limits as constants
+(frame sizes, rates, 75 s, 30 s, 10 s), `HeartbeatRequest.Channel`,
+`HeartbeatResponse.Features` and `.Instance`, with golden-vector tests.
+Additive only (a hotspot file). Nothing else depends on anything but this.
+
+**S1, server endpoint and hub** (new package `server/internal/agentchannel`,
+route wired in `agentapi.Handler` with `signedFor` for `GET`, empty body,
+using `BeginSigned`/`FinishSigned` as the other routes do).
+The upgrade, `hello` first, `tick`, `closing`, the registry (device to
+connection), `Push(device, msg) bool`, per-device and per-server limits,
+the descriptor gate, shutdown and the hold, removal closes the
+connection, `features`/`instance` in heartbeat answers,
+`EASYRMM_AGENT_CHANNEL`, `devscope.Allowed` in the upgrade and in
+`Push`. Reads no instruction; knows nothing of jobs. Verified by unit tests
+and an integration test with a test client that uses only `agentproto`.
+
+**A1, agent client** (new package `agent/channel`, started by
+`runner.go`, a small additive block).
+Connect only after a heartbeat answer listed `channel`; verify every
+frame; reconnect, backoff, jitter, the sleep check, 404 and
+`Retry-After` handling, the stop after three unlisted messages; `wake`
+handling; the connection state exposed to the runner (live or not); it
+sends WebSocket pings only. Verified against the test server of S1's
+fixture (a package-local fake built on `agentproto`, since S1 may not have
+landed; the real pairing is T1).
+
+**M1, wakes and settings** (needs S1, A1). `checkin` wakes through the
+queue (at most 100 a second), `settings` pushes (heartbeat interval,
+MeshAgent settings hash) built by the shared `instructions` function,
+the agent applying them through the runner's existing answer code.
+**M2, jobs.** The per-connection claim loop, `jobs` frames, the live
+agent stops holding long polls while its `hello` listed `channel` and the
+channel is live, `jobsWaiting` in heartbeat answers for live devices,
+one ordinary poll on `jobsWaiting`, the sweep claiming for live devices,
+the real maximum frame size. The poll is untouched.
+**M3, repair.** Split `recovery.AgentHeartbeat` so a push reads the pending
+step without settling reports; `Push` after Dispatch; the agent calls its
+existing repair start and asks for a heartbeat when done.
+**M4, logs, both directions.** `logs` pushes when the follow or verbose
+switch changes (the logs service), the agent's `logs.batch` frames and the
+server's `logs.ack` through the shared `agentlogs` ingest, signed agent
+frames, rate limit, HTTPS fallback when the channel is down.
+**M5, console and docs.** The device's connection state (from the hub on
+one instance; the table in H1 for several), Settings → Agent settings
+(connections open, descriptors), the NGINX location settings and sizing
+in `docs/deployment/nginx.md`, the metrics, the release note. No new
+page; the device page shows a *Live connection* line only (ADR-0072).
+
+**T1, end to end, agent and server over the channel** (integration build
+tag, real PostgreSQL, the real server `app` and the real agent runner and
+worker; no fake of ours in the path). Cases, each against both the channel
+and the heartbeat alone:
+* a job queued reaches a connected agent with no poll held, and its result
+  returns; the same job with the channel disabled arrives by long poll;
+* the connection cut mid-job, mid-push and mid-claim: the job runs once
+  (journal), is redelivered after `RedeliverAfter` if its push was lost,
+  and a cancellation is found;
+* the server refusing upgrades (404, `channel_busy`), the connection
+  killed every few seconds, and the proxy holding the upgrade: the agent
+  falls back to the heartbeat and the poll within one interval and
+  loses nothing (**the fallback test**: heartbeat answer carries the
+  repair, the settings and the log window; poll carries the jobs);
+* a repair stored with a build the server does not publish is never
+  pushed, and one that is published arrives on the channel and is
+  reported;
+* `logs.follow`: a technician opens Logs, `logs` is pushed, lines arrive
+  over `logs.batch` within a few seconds, close it and the agent returns
+  to its 30-second batches; a forged, replayed or too-fast agent frame
+  closes the connection;
+* a forged, replayed, reordered, oversized or wrongly signed server frame
+  closes it on the agent; three unlisted messages stop it;
+* `devscope.Set(orgA)`: a device of org B neither connects nor receives a
+  push and still works by heartbeat and poll; clearing the scope restores
+  it; RBAC and audit rows of the API calls that caused a push are the same
+  with and without the channel;
+* limits: per-device upgrade rate, the 10,000 and 200 gates (with small
+  numbers set by environment), the descriptor gate by a lowered limit.
+**T2, load and Windows.** The 10,000-connection run on a drill host
+(never the owner's instance) with the memory figure of *Server limits*;
+`GOOS=windows` build and the Windows agent harness; `agentsim -channel`.
+
+**H1 to H3, hardening, after the above, each with its own tests** (the
+sections as written in this ADR): H1 presence confirmed by the heartbeat,
+pending connections, `agent_connections`, `server_instances` and the
+clone guard; H2 several servers through `LISTEN`/`NOTIFY`, one connection
+per device across instances; H3 *Automatic's fallback* in full and, with
+ADR-0058, `agent.transport` per device, the *Connection* column and its
+filter. Until H1 the server trusts its own registry for "connected" and
+the console says so; online is still decided by heartbeats.
+
+**Order of work and conflicts.** C0, then S1 and A1 in parallel (disjoint
+packages), then M1 to M5 in parallel (each in its own package: `agentchannel`
+kind files, `agent/channel` handlers, and one additive block each in
+`runner.go`, `agentapi.go` and the services they call), then T1 and T2.
+`runner.go`, `agentapi.go` and `agentproto` are hotspots: blocks only, never
+reorderings.
+
+## Owner decisions
+None are open. Decided in review: the channel carries work and the
+heartbeat stays the fallback; ADR-0057 and ADR-0058 are not prerequisites;
+a server-wide switch until ADR-0058; `update`, `easyPatchInstall` and
+`uninstall` stay on the heartbeat; agent log frames signed; `noWait`
+dropped. To confirm when the owner next looks: that the per-device
+*Connection* choice waits for ADR-0058.
 
 ## Consequences
 * Changes reach a live device at once; the server stops holding its polls
@@ -907,13 +1217,15 @@ its own:
 * ADR-0009 is refined: the WebSocket is an optional channel that wakes the
   agent, authenticated by the signed upgrade and confirmed by the signed
   heartbeat, not a signed challenge; the signed poll and heartbeat stay
-  the primary channel. Full delivery over the connection, and heartbeats
-  over it, are not built.
+  the fallback channel. Since 2026-11-26 the connection also carries
+  instructions (jobs, repairs, settings, log windows), each stored first
+  and also found by the heartbeat or poll; heartbeats over it are not
+  built.
 
-* Amended by ADR-0069 (slice L1, 2026-11-23): log records travel from the
-  agent over signed HTTPS (`POST /api/agent/v1/agent-logs`), never on the
-  channel, which carries nothing from the agent. The channel is not built,
-  so what ADR-0069 calls the channel message `logs.follow {until}` travels
-  today in the answers the agent already receives, the heartbeat's and the
-  log batch's (`logs.followUntil`, `logs.verboseUntil`); a channel would
-  carry the same message and the agent would act on it the same way.
+* Amended by ADR-0069 (slice L1, 2026-11-23), refreshed 2026-11-26: log
+  records travel over signed HTTPS (`POST /api/agent/v1/agent-logs`), and
+  the instruction `logs.follow {until}` (and `verbose`) travels in the
+  answers the agent already receives. The channel carries the same
+  `LogInstructions` as a `logs` push and, while someone follows, the
+  agent's signed `logs.batch` frames; the HTTPS route stays the fallback
+  and writes the same rows.
