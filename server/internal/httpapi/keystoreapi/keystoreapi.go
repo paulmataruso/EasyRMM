@@ -70,7 +70,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	for _, c := range res.Key {
-		if (c < '0' || c > '9') && c != '-' {
+		if (c < '0' || c > '9') && c != '-' && (c < 'a' || c > 'z') { // a BitLocker password, or a LUKS passphrase
 			return errors.New("keystoreapi: the key is not in the form the console shows") // never says what it was
 		}
 	}

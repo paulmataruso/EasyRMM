@@ -510,8 +510,8 @@ func (k *Keystore) CreateOrgKey(org, keyID, purpose string) (pub []byte, wrapped
 // record that does not open, does not parse or does not carry the claimed
 // fingerprint is a mismatch; a keystore that cannot try is an error.
 func (k *Keystore) VerifyEscrow(wrappedPrivate string, c escrowcrypto.Context, enc, ct, claimed []byte, kind string) (string, error) {
-	if kind != "bitlocker" {
-		return "", fail(keystore.CodeBadRequest, "this slice checks BitLocker records only")
+	if kind != escrowcrypto.KindBitLocker && kind != escrowcrypto.KindLUKS {
+		return "", fail(keystore.CodeBadRequest, "the kind of the record is not known")
 	}
 	if !c.Valid() || len(claimed) != escrowcrypto.FingerprintSize {
 		return "", fail(keystore.CodeBadRequest, "the escrow check request is not valid")
@@ -538,7 +538,7 @@ func (k *Keystore) VerifyEscrow(wrappedPrivate string, c escrowcrypto.Context, e
 		return keystore.Mismatch, nil
 	}
 	defer zero(pt)
-	norm, err := escrowcrypto.NormalizeBitLockerBytes(pt)
+	norm, err := escrowcrypto.NormalizeBytes(kind, pt)
 	if err != nil {
 		return keystore.Mismatch, nil
 	}
@@ -553,13 +553,15 @@ func (k *Keystore) VerifyEscrow(wrappedPrivate string, c escrowcrypto.Context, e
 // IDs for the log.
 type ReadRequest struct {
 	RequestID, Record string
-	Wrapped           string
-	Context           escrowcrypto.Context
-	Enc, Ciphertext   []byte
-	Fingerprint       []byte
+	// Kind is the record's kind (bitlocker when empty).
+	Kind            string
+	Wrapped         string
+	Context         escrowcrypto.Context
+	Enc, Ciphertext []byte
+	Fingerprint     []byte
 }
 
-// ReadEscrow opens one escrow record and returns its recovery password,
+// ReadEscrow opens one escrow record and returns its recovery key (a BitLocker password or a LUKS passphrase),
 // normalized, in a slice the caller must zero. It is the only call that
 // returns a key (ADR-0081 sections 6 and 7). Before it opens anything it
 // checks the keystore's own limits (per organization and in total); the log
@@ -603,9 +605,13 @@ func (k *Keystore) ReadEscrow(r ReadRequest) ([]byte, error) {
 		return refuse(fail(keystore.CodeRefused, "the record does not open"))
 	}
 	defer zero(pt) // norm is a subslice of pt; the caller gets a copy
-	norm, err := escrowcrypto.NormalizeBitLockerBytes(pt)
+	kind := r.Kind
+	if kind == "" {
+		kind = escrowcrypto.KindBitLocker
+	}
+	norm, err := escrowcrypto.NormalizeBytes(kind, pt)
 	if err != nil {
-		return refuse(fail(keystore.CodeRefused, "the record is not a recovery password"))
+		return refuse(fail(keystore.CodeRefused, "the record is not a recovery key"))
 	}
 	fp := escrowcrypto.Fingerprint(c.Protector, norm)
 	if subtle.ConstantTimeCompare(fp[:], r.Fingerprint) != 1 {

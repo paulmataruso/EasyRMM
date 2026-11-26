@@ -3914,7 +3914,16 @@ export interface QuickAssistSession {
 }
 
 /** The state of one volume's recovery-key escrow (ADR-0081). No key, ciphertext or fingerprint is ever shown. */
-export type EscrowState = "missing" | "pending" | "verified" | "stale" | "conflict";
+export type EscrowState =
+  | "missing"
+  | "pending"
+  | "verified"
+  | "stale"
+  | "conflict"
+  /** A LUKS volume only a passphrase unlocks, or LUKS1: the agent cannot escrow it (ADR-0081, slice 3). */
+  | "cannot_escrow"
+  /** A LUKS volume Clevis or a distribution's own scheme manages: never rewritten. */
+  | "managed_elsewhere";
 
 export interface EscrowProtector {
   id: string;
@@ -3925,6 +3934,10 @@ export interface EscrowProtector {
 
 export interface EscrowVolume {
   id: string;
+  /** "bitlocker" or "luks". */
+  kind: "bitlocker" | "luks";
+  /** Why a LUKS volume cannot be escrowed, in words. */
+  reason?: string;
   mount: string;
   status: string;
   state: EscrowState;
@@ -4015,7 +4028,7 @@ export interface DeviceEscrow {
   canRead: boolean;
   /** A read waits for a second person's approval. */
   twoPerson: boolean;
-  /** False where the device cannot escrow here: not a Windows device, or outside the dev scope. */
+  /** False where the device cannot escrow here: neither a Windows nor a Linux device, or outside the dev scope. */
   applicable: boolean;
   keystore: KeystoreSummary;
   volumes: EscrowVolume[];

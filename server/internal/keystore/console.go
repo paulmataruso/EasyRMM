@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
@@ -22,6 +23,10 @@ const (
 	StateVerified = "verified"
 	StateStale    = "stale"
 	StateConflict = "conflict"
+	// The agent's verdict on a LUKS volume it cannot escrow (slice 3): only a
+	// passphrase unlocks it, or something else manages it.
+	StateCannotEscrow     = "cannot_escrow"
+	StateManagedElsewhere = "managed_elsewhere"
 )
 
 // ProtectorState is one recovery-password protector and the state of its
@@ -36,10 +41,14 @@ type ProtectorState struct {
 // VolumeState is a volume and its escrow state: the worst of its protectors,
 // and missing when it reports no recovery-password protector at all.
 type VolumeState struct {
-	ID         string           `json:"id"`
-	Mount      string           `json:"mount"`
-	Status     string           `json:"status"`
-	State      string           `json:"state"`
+	ID string `json:"id"`
+	// Kind is "bitlocker" or "luks".
+	Kind   string `json:"kind"`
+	Mount  string `json:"mount"`
+	Status string `json:"status"`
+	State  string `json:"state"`
+	// Reason says in words why a LUKS volume cannot be escrowed.
+	Reason     string           `json:"reason,omitempty"`
 	Protectors []ProtectorState `json:"protectors"`
 	ReportedAt time.Time        `json:"reportedAt"`
 }
@@ -95,7 +104,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	if !c.Can(rbac.PermDeviceView, rbac.Site(org, site)) {
 		return nil, apperr.NotFound()
 	}
-	out := &DeviceEscrow{Applicable: platform == "windows" && devscope.Allowed(org), Volumes: []VolumeState{}}
+	out := &DeviceEscrow{Applicable: (platform == "windows" || platform == "linux") && devscope.Allowed(org), Volumes: []VolumeState{}}
 	out.Keystore = SummaryOf(s.CurrentStatus(ctx))
 	out.CanRead = c.Principal != nil && c.Can(rbac.PermRecoveryKeyRead, rbac.Site(org, site))
 	if out.CanRead {
@@ -107,7 +116,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 		return out, nil
 	}
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		vols, err := tx.Query(ctx, `SELECT volume_id, mount, status, protectors, reported_at FROM device_encrypted_volumes
+		vols, err := tx.Query(ctx, `SELECT volume_id, kind, mount, status, protectors, escrow_state, reason, reported_at FROM device_encrypted_volumes
 			WHERE device_id = $1 ORDER BY mount, volume_id`, deviceID)
 		if err != nil {
 			return err
@@ -116,8 +125,12 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 		for vols.Next() {
 			var v VolumeState
 			var raw []byte
-			if err := vols.Scan(&v.ID, &v.Mount, &v.Status, &raw, &v.ReportedAt); err != nil {
+			var verdict string
+			if err := vols.Scan(&v.ID, &v.Kind, &v.Mount, &v.Status, &raw, &verdict, &v.Reason, &v.ReportedAt); err != nil {
 				return err
+			}
+			if verdict == agentproto.LUKSCannotEscrow || verdict == agentproto.LUKSManagedElsewhere {
+				v.State = verdict
 			}
 			var ps []protectorRef
 			if err := json.Unmarshal(raw, &ps); err != nil {
@@ -178,6 +191,9 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	}
 	for i := range out.Volumes {
 		v := &out.Volumes[i]
+		if v.State == StateCannotEscrow || v.State == StateManagedElsewhere {
+			continue // the agent's verdict stands: there is nothing to escrow
+		}
 		v.State = StateMissing
 		if len(v.Protectors) > 0 {
 			v.State = StateVerified

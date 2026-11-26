@@ -188,7 +188,7 @@ func (s *Server) handle(req *keystore.Request, admin bool) keystore.Response {
 		}
 		c := req.Context
 		pt, err := s.KS.ReadEscrow(ReadRequest{
-			RequestID: req.ID, Record: req.Record, Wrapped: req.WrappedPrivate, Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: req.Fingerprint,
+			RequestID: req.ID, Record: req.Record, Kind: req.Kind, Wrapped: req.WrappedPrivate, Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: req.Fingerprint,
 			Context: escrowcrypto.Context{Org: c.Org, Device: c.Device, Volume: c.Volume, Protector: c.Protector, OrgKey: c.OrgKey},
 		})
 		if err != nil {

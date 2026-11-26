@@ -51,6 +51,22 @@ const (
 // Kinds of escrowed key.
 const (
 	EscrowBitLocker = "bitlocker"
+	// EscrowLUKS is a passphrase the agent added to a LUKS volume's key slots
+	// (ADR-0081 section 5) and sealed.
+	EscrowLUKS = "luks"
+)
+
+// What the agent found of a LUKS volume (EscrowVolume.State).
+const (
+	// LUKSEscrowable: the agent can unlock the volume by itself (a key file in
+	// /etc/crypttab or a TPM2 token) and so add a key slot of its own.
+	LUKSEscrowable = "escrowable"
+	// LUKSCannotEscrow: only a passphrase unlocks it, or it is LUKS1 (which
+	// has no token to mark a slot as EasyRMM's).
+	LUKSCannotEscrow = "cannot_escrow"
+	// LUKSManagedElsewhere: Clevis or a distribution's own TPM scheme manages
+	// it; EasyRMM never rewrites it.
+	LUKSManagedElsewhere = "managed_elsewhere"
 )
 
 // Escrow record states, as the server and agent name them.
@@ -144,10 +160,12 @@ var escrowIDPattern = regexp.MustCompile(`^[A-Za-z0-9{}\-_.:\\? /]{1,128}$`)
 
 func validEscrowID(s string) bool { return escrowIDPattern.MatchString(s) }
 
-// EscrowProtector is a BitLocker recovery-password protector. Only its ID is
-// reported.
+// EscrowProtector is a BitLocker recovery-password protector or a LUKS key slot
+// of EasyRMM's. Only its ID is reported, and for a slot the hash of its header
+// area (hex SHA-256), which says whether it still is what was escrowed.
 type EscrowProtector struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Hash string `json:"hash,omitempty"`
 }
 
 // EscrowVolume is a volume the agent found with BitLocker on it.
@@ -158,26 +176,57 @@ type EscrowVolume struct {
 	// Status is BitLocker's conversion status in words: "encrypted",
 	// "encrypting", "decrypted", ...
 	Status string `json:"status"`
-	// Protectors are the volume's numerical-password protectors.
+	// Protectors are the volume's numerical-password protectors, or the key
+	// slots of its EasyRMM tokens.
 	Protectors []EscrowProtector `json:"protectors"`
+	// State and Reason are a LUKS volume's verdict (LUKSEscrowable and the
+	// others) and, for the others, why in words.
+	State  string `json:"state,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
-// EscrowVolumesReport is what the agent sends to PathEscrowVolumes.
+// EscrowVolumesReport is what the agent sends to PathEscrowVolumes: the
+// volumes of one kind, BitLocker when Kind is empty.
 type EscrowVolumesReport struct {
+	Kind    string         `json:"kind,omitempty"`
 	Volumes []EscrowVolume `json:"volumes"`
+}
+
+// KindOrDefault is the report's kind.
+func (r EscrowVolumesReport) KindOrDefault() string {
+	if r.Kind == "" {
+		return EscrowBitLocker
+	}
+	return r.Kind
 }
 
 // Check refuses a report that is oversized or has an ID that is not one.
 func (r EscrowVolumesReport) Check() error {
+	kind := r.KindOrDefault()
+	if kind != EscrowBitLocker && kind != EscrowLUKS {
+		return errors.New("an unknown kind")
+	}
 	if len(r.Volumes) > MaxEscrowVolumes {
 		return errors.New("too many volumes")
 	}
 	for _, v := range r.Volumes {
-		if !validEscrowID(v.ID) || len(v.Mount) > 16 || len(v.Status) > 32 || len(v.Protectors) > MaxEscrowProtectors {
+		if !validEscrowID(v.ID) || len(v.Mount) > 64 || len(v.Status) > 32 || len(v.Protectors) > MaxEscrowProtectors || len(v.Reason) > 200 {
 			return errors.New("a volume is not valid")
 		}
+		switch v.State {
+		case "":
+		case LUKSEscrowable, LUKSCannotEscrow, LUKSManagedElsewhere:
+			if kind != EscrowLUKS {
+				return errors.New("a volume state is for LUKS only")
+			}
+		default:
+			return errors.New("a volume state is not valid")
+		}
+		if kind == EscrowLUKS && v.State == "" {
+			return errors.New("a LUKS volume needs a state")
+		}
 		for _, p := range v.Protectors {
-			if !validEscrowID(p.ID) {
+			if !validEscrowID(p.ID) || (p.Hash != "" && !validSlotHash(p.Hash)) {
 				return errors.New("a protector is not valid")
 			}
 		}
@@ -185,10 +234,18 @@ func (r EscrowVolumesReport) Check() error {
 	return nil
 }
 
-// EscrowNeed names a protector whose escrow the server wants (again).
+var slotHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validSlotHash(s string) bool { return slotHashPattern.MatchString(s) }
+
+// EscrowNeed names a protector whose escrow the server wants (again). For a
+// LUKS volume ProtectorID is empty: the agent makes a new key slot, and
+// Replace names the slots of EasyRMM's whose escrow went stale, which the agent
+// removes once the new one is confirmed (never the last slot).
 type EscrowNeed struct {
-	VolumeID    string `json:"volumeId"`
-	ProtectorID string `json:"protectorId"`
+	VolumeID    string   `json:"volumeId"`
+	ProtectorID string   `json:"protectorId"`
+	Replace     []string `json:"replace,omitempty"`
 }
 
 // EscrowVolumesAnswer is the server's answer: what to escrow now.
@@ -209,11 +266,14 @@ type EscrowRecord struct {
 	Ciphertext string `json:"ciphertext"`
 	// Fingerprint is the 16-byte fingerprint, hex.
 	Fingerprint string `json:"fingerprint"`
+	// SlotHash is, for a LUKS key slot, the hash of its header area when the
+	// key was made (hex SHA-256).
+	SlotHash string `json:"slotHash,omitempty"`
 }
 
 // Check refuses a record with a field that is not one.
 func (r EscrowRecord) Check() error {
-	if !validEscrowID(r.VolumeID) || !validEscrowID(r.ProtectorID) || !validEscrowID(r.KeyID) || r.Kind != EscrowBitLocker {
+	if !validEscrowID(r.VolumeID) || !validEscrowID(r.ProtectorID) || !validEscrowID(r.KeyID) || (r.Kind != EscrowBitLocker && r.Kind != EscrowLUKS) {
 		return errors.New("an identifier is not valid")
 	}
 	enc, err := base64.StdEncoding.DecodeString(r.Enc)
@@ -226,6 +286,9 @@ func (r EscrowRecord) Check() error {
 	}
 	if len(r.Fingerprint) != 32 {
 		return errors.New("fingerprint is not valid")
+	}
+	if (r.Kind == EscrowLUKS) != (r.SlotHash != "") || (r.SlotHash != "" && !validSlotHash(r.SlotHash)) {
+		return errors.New("slot hash is not valid")
 	}
 	return nil
 }

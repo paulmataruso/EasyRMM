@@ -25,6 +25,7 @@ function routes(escrow: DeviceEscrow) {
 
 const volume = (over: Partial<DeviceEscrow["volumes"][number]> = {}): DeviceEscrow["volumes"][number] => ({
   id: "\\\\?\\Volume{1}\\",
+  kind: "bitlocker",
   mount: "C:",
   status: "encrypted",
   state: "verified",
@@ -59,11 +60,39 @@ describe("disk recovery keys (ADR-0081)", () => {
     expect(within(card).queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("shows a LUKS volume's key slots, and why one cannot be escrowed", async () => {
+    const luks = (over: Partial<DeviceEscrow["volumes"][number]>) =>
+      volume({ kind: "luks", status: "luks2", mount: "/", protectors: [], ...over });
+    installFakeApi(
+      routes({
+        applicable: true, canRead: false, twoPerson: false, keystore: READY,
+        volumes: [
+          luks({ id: "u1", state: "verified", protectors: [{ id: "0a0a-1", state: "verified", verifiedAt: "2026-11-01T10:00:00Z" }] }),
+          luks({ id: "u2", mount: "/data", state: "cannot_escrow", reason: "Only a passphrase unlocks this volume." }),
+          luks({ id: "u3", mount: "/srv", state: "managed_elsewhere", reason: "Clevis manages how this volume unlocks." }),
+          luks({ id: "u4", mount: "/var", state: "missing" }),
+        ],
+      }),
+    );
+    renderApp("/devices/d1?tab=hardware");
+    const card = (await screen.findByRole("heading", { name: "Disk recovery keys" })).closest("section") as HTMLElement;
+    const rows = within(card).getAllByRole("row").slice(1) as HTMLElement[];
+    expect(rows).toHaveLength(4);
+    expect(within(rows[0]!).getByText("LUKS (luks2)")).toBeInTheDocument();
+    expect(within(rows[0]!).getAllByText("Verified")).toHaveLength(2);
+    expect(within(rows[1]!).getByText("Cannot escrow")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("Only a passphrase unlocks this volume.")).toBeInTheDocument();
+    expect(within(rows[2]!).getByText("Managed elsewhere")).toBeInTheDocument();
+    expect(within(rows[3]!).getByText("Missing")).toBeInTheDocument();
+    expect(within(rows[3]!).getByText("No key slot of EasyRMM's yet")).toBeInTheDocument();
+    expect(within(card).getByText(/On Linux the agent adds a key slot of its own/)).toBeInTheDocument();
+  });
+
   it("says why escrow is not running, and warns about the file stand-in", async () => {
     installFakeApi(routes({ applicable: true, canRead: false, twoPerson: false, keystore: { state: "uninitialised", recoveryVerified: false, fileMode: false }, volumes: [] }));
     renderApp("/devices/d1?tab=hardware");
     expect(await screen.findByText(/The keystore is not initialised, so recovery-key escrow is off/)).toBeInTheDocument();
-    expect(screen.getByText("No BitLocker volumes reported")).toBeInTheDocument();
+    expect(screen.getByText("No encrypted volumes reported")).toBeInTheDocument();
   });
 
   it("warns that the stand-in mode keeps its key in a file", async () => {

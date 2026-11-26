@@ -120,11 +120,48 @@ func TestVerifyEscrowKeyRefusesMalformedInstructions(t *testing.T) {
 	if (EscrowVolumesReport{Volumes: []EscrowVolume{{ID: "v", Protectors: []EscrowProtector{{ID: "a|b"}}}}}).Check() == nil {
 		t.Error("a bad protector id passed")
 	}
-	if (EscrowVolumesReport{Volumes: []EscrowVolume{{ID: "v", Mount: strings.Repeat("x", 17)}}}).Check() == nil {
+	if (EscrowVolumesReport{Volumes: []EscrowVolume{{ID: "v", Mount: strings.Repeat("x", 65)}}}).Check() == nil {
 		t.Error("a long mount passed")
 	}
 	rec := EscrowRecord{VolumeID: "v", ProtectorID: "p", Kind: EscrowBitLocker, KeyID: "k", Enc: base64.StdEncoding.EncodeToString(make([]byte, 32)), Ciphertext: "***", Fingerprint: strings.Repeat("a", 32)}
 	if rec.Check() == nil {
 		t.Error("a ciphertext that is not base64 passed")
+	}
+}
+
+func TestLUKSReportAndRecordAreChecked(t *testing.T) {
+	ok := EscrowVolume{ID: "6c4a9e2a-1111-4222-8333-444455556666", Mount: "/", Status: "luks2", State: LUKSEscrowable,
+		Protectors: []EscrowProtector{{ID: "0a0a0a0a-0000-4000-8000-000000000001", Hash: strings.Repeat("ab", 32)}}}
+	if err := (EscrowVolumesReport{Kind: EscrowLUKS, Volumes: []EscrowVolume{ok}}).Check(); err != nil {
+		t.Fatal(err)
+	}
+	bad := map[string]EscrowVolumesReport{
+		"unknown kind":              {Kind: "veracrypt", Volumes: []EscrowVolume{ok}},
+		"luks volume with no state": {Kind: EscrowLUKS, Volumes: []EscrowVolume{{ID: "v"}}},
+		"a state that is not one":   {Kind: EscrowLUKS, Volumes: []EscrowVolume{{ID: "v", State: "maybe"}}},
+		"a LUKS state on BitLocker": {Volumes: []EscrowVolume{{ID: "v", State: LUKSEscrowable}}},
+		"a hash that is not one":    {Kind: EscrowLUKS, Volumes: []EscrowVolume{{ID: "v", State: LUKSEscrowable, Protectors: []EscrowProtector{{ID: "p", Hash: "xyz"}}}}},
+		"a long reason":             {Kind: EscrowLUKS, Volumes: []EscrowVolume{{ID: "v", State: LUKSCannotEscrow, Reason: strings.Repeat("x", 201)}}},
+	}
+	for name, r := range bad {
+		if r.Check() == nil {
+			t.Errorf("%s passed", name)
+		}
+	}
+	if (EscrowVolumesReport{}).KindOrDefault() != EscrowBitLocker {
+		t.Error("the default kind is BitLocker")
+	}
+	rec := EscrowRecord{VolumeID: "v", ProtectorID: "p", Kind: EscrowLUKS, KeyID: "k", Enc: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		Ciphertext: base64.StdEncoding.EncodeToString(make([]byte, 56)), Fingerprint: strings.Repeat("a", 32), SlotHash: strings.Repeat("c", 64)}
+	if err := rec.Check(); err != nil {
+		t.Fatal(err)
+	}
+	rec.SlotHash = ""
+	if rec.Check() == nil {
+		t.Error("a LUKS record with no slot hash passed")
+	}
+	rec.Kind, rec.SlotHash = EscrowBitLocker, strings.Repeat("c", 64)
+	if rec.Check() == nil {
+		t.Error("a BitLocker record with a slot hash passed")
 	}
 }
