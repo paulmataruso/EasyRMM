@@ -33,10 +33,10 @@
    "url": "https://www.acq.osd.mil/asda/dpc/cp/cyber/safeguarding.html",
    "licence_class": "PUBLIC_DOMAIN",
    "licence_spdx": null,
-   "licence_note": "A work of the U.S. government, not subject to copyright in the United States (17 U.S.C. 105). Weights are transcribed by EasyRMM and not yet verified against the published table.",
+   "licence_note": "A work of the U.S. government, not subject to copyright in the United States (17 U.S.C. 105). Weights are EasyRMM's own transcription of the numbers, verified against Version 1.2.1 (June 24, 2020), Annex A, on 2026-11-26.",
    "attribution": null,
    "retrieved_at": "2026-11-26",
-   "sha256": null,
+   "sha256": "9efdc8b03d602df76ef526c8d002182c8e3b1a20fbeed37741e298f0d086fae5",
    "review_state": "none"
   },
   {

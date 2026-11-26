@@ -16,7 +16,7 @@
   "source_id": "cmmc-32cfr170",
   "text_policy": "full",
   "weights_source": "dod-sprs-methodology",
-  "weights_verified": false
+  "weights_verified": true
  },
  "requirements": [
   {
@@ -279,7 +279,8 @@
    "flags": {
     "family": "AC",
     "l1": true,
-    "nist": "3.1.20"
+    "nist": "3.1.20",
+    "poam_barred": true
    }
   },
   {
@@ -305,7 +306,8 @@
    "flags": {
     "family": "AC",
     "l1": true,
-    "nist": "3.1.22"
+    "nist": "3.1.22",
+    "poam_barred": true
    }
   },
   {
@@ -620,7 +622,8 @@
     "family": "IA",
     "no_check_yet": true,
     "l1": false,
-    "nist": "3.5.3"
+    "nist": "3.5.3",
+    "partial_points": 3
    }
   },
   {
@@ -825,7 +828,7 @@
    "title_own": "Multifactor for remote maintenance",
    "text_full": "Require multifactor authentication to establish nonlocal maintenance sessions via external network connections and terminate such connections when nonlocal maintenance is complete.",
    "class": "partly",
-   "weight": 3,
+   "weight": 5,
    "flags": {
     "family": "MA",
     "l1": false,
@@ -1024,7 +1027,8 @@
    "flags": {
     "family": "PE",
     "l1": true,
-    "nist": "3.10.3"
+    "nist": "3.10.3",
+    "poam_barred": true
    }
   },
   {
@@ -1037,7 +1041,8 @@
    "flags": {
     "family": "PE",
     "l1": true,
-    "nist": "3.10.4"
+    "nist": "3.10.4",
+    "poam_barred": true
    }
   },
   {
@@ -1050,7 +1055,8 @@
    "flags": {
     "family": "PE",
     "l1": true,
-    "nist": "3.10.5"
+    "nist": "3.10.5",
+    "poam_barred": true
    }
   },
   {
@@ -1154,7 +1160,8 @@
    "flags": {
     "family": "CA",
     "l1": false,
-    "nist": "3.12.4"
+    "nist": "3.12.4",
+    "poam_barred": true
    }
   },
   {
@@ -1298,7 +1305,8 @@
    "flags": {
     "family": "SC",
     "l1": false,
-    "nist": "3.13.11"
+    "nist": "3.13.11",
+    "partial_points": 3
    }
   },
   {

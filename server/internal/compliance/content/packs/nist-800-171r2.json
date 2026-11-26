@@ -16,7 +16,7 @@
   "source_id": "nist-800-171r2",
   "text_policy": "full",
   "weights_source": "dod-sprs-methodology",
-  "weights_verified": false
+  "weights_verified": true
  },
  "requirements": [
   {
@@ -239,7 +239,8 @@
    "class": "partly",
    "weight": 1,
    "flags": {
-    "family": "AC"
+    "family": "AC",
+    "poam_barred": true
    }
   },
   {
@@ -261,7 +262,8 @@
    "class": "organisational",
    "weight": 1,
    "flags": {
-    "family": "AC"
+    "family": "AC",
+    "poam_barred": true
    }
   },
   {
@@ -528,7 +530,8 @@
    "weight": 5,
    "flags": {
     "family": "IA",
-    "no_check_yet": true
+    "no_check_yet": true,
+    "partial_points": 3
    }
   },
   {
@@ -703,7 +706,7 @@
    "title_own": "Multifactor for remote maintenance",
    "text_full": "Require multifactor authentication to establish nonlocal maintenance sessions via external network connections and terminate such connections when nonlocal maintenance is complete.",
    "class": "partly",
-   "weight": 3,
+   "weight": 5,
    "flags": {
     "family": "MA"
    }
@@ -870,7 +873,8 @@
    "class": "organisational",
    "weight": 1,
    "flags": {
-    "family": "PE"
+    "family": "PE",
+    "poam_barred": true
    }
   },
   {
@@ -881,7 +885,8 @@
    "class": "organisational",
    "weight": 1,
    "flags": {
-    "family": "PE"
+    "family": "PE",
+    "poam_barred": true
    }
   },
   {
@@ -892,7 +897,8 @@
    "class": "organisational",
    "weight": 1,
    "flags": {
-    "family": "PE"
+    "family": "PE",
+    "poam_barred": true
    }
   },
   {
@@ -980,7 +986,8 @@
    "class": "organisational",
    "weight": 0,
    "flags": {
-    "family": "CA"
+    "family": "CA",
+    "poam_barred": true
    }
   },
   {
@@ -1102,7 +1109,8 @@
    "class": "technical",
    "weight": 5,
    "flags": {
-    "family": "SC"
+    "family": "SC",
+    "partial_points": 3
    }
   },
   {
