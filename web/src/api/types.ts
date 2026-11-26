@@ -4956,3 +4956,33 @@ export interface EventlogResult {
   end?: EventlogEnd;
   errors?: { code: string; channel?: string; message: string }[];
 }
+
+/** One chain's verification on a device (ADR-0055, slice 5b1). */
+export interface TlsTrustCheck {
+  /** Whose trust was checked: the EasyRMM agent's own, or the EasyPatch agent's (checked by the EasyRMM agent). */
+  scope: "agent" | "easypatch";
+  host: string;
+  purpose: "served" | "fallback" | "target";
+  state: "pending" | "passed" | "failed";
+  error?: string;
+  /** A Linux device's EasyPatch result: the EasyRMM agent checked it against the system's bundle, which the EasyPatch agent may read differently. */
+  standIn?: boolean;
+  requestedAt: string;
+  checkedAt?: string;
+}
+
+/** What a device's agent trusts, as the server learned it by asking the agent to verify chains. */
+export interface TlsTrust {
+  capable: boolean;
+  origin?: string;
+  trusts?: "system" | "ca-file" | "system+ca-file";
+  widened: boolean;
+  reportedAt?: string;
+  refused?: string;
+  checks: TlsTrustCheck[];
+  unprotected: boolean;
+  reinstall?: { reason: string; fix: string };
+  canTerminal: boolean;
+  platform: string;
+  siteId: string;
+}
