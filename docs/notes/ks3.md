@@ -62,3 +62,5 @@
 * Not run: a real TPM2 token, a Windows or BitLocker device, a real TPM keystore container, a distribution other
   than Alpine and Debian 12 for cryptsetup, systemd-cryptenroll volumes. `hardening.test.tsx` "10 of 14 modules"
   fails on this base without these changes.
+
+* LUKS escrow is opt-in per organization (`keystore_org_settings.luks_escrow`, off by default, `org.manage` + step-up, audited as `keystore.luks_escrow`, on the Recovery keys tab). Off: volumes are reported and shown as *escrow off*, the server asks for nothing and refuses LUKS uploads; the agent only ever adds a slot for a volume the server's need list names.

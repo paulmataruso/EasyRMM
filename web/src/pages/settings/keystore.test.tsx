@@ -73,7 +73,7 @@ function routes(session: ReturnType<typeof sessionView>, extra: Record<string, u
     "GET /keystore": ok(STATUS),
     "GET /keystore/alerts": ok({ alerts: [ALERT, ORG_ALERT, OTHER_ALERT] }),
     "GET /keystore/notices": ok({ notices: NOTICES }),
-    "GET /organizations/:id/keystore-settings": ok({ twoPerson: false, approvers: 1 } satisfies KeystoreOrgSettings),
+    "GET /organizations/:id/keystore-settings": ok({ twoPerson: false, luksEscrow: false, approvers: 1 } satisfies KeystoreOrgSettings),
     ...extra,
   };
 }
@@ -126,8 +126,8 @@ describe("an organization's Recovery keys tab", () => {
     const user = userEvent.setup();
     const server = installFakeApi(
       routes(ORG_ADMIN, {
-        "GET /organizations/:id/keystore-settings": ok({ twoPerson: false, approvers: 2 }),
-        "PUT /organizations/:id/keystore-settings": ok({ twoPerson: true, approvers: 2 }),
+        "GET /organizations/:id/keystore-settings": ok({ twoPerson: false, luksEscrow: false, approvers: 2 }),
+        "PUT /organizations/:id/keystore-settings": ok({ twoPerson: true, luksEscrow: false, approvers: 2 }),
       }),
     );
     renderApp("/organizations/o1?tab=recovery-keys");
@@ -139,6 +139,22 @@ describe("an organization's Recovery keys tab", () => {
     const call = server.call("PUT /organizations/:id/keystore-settings");
     expect(call.path).toBe("/organizations/o1/keystore-settings");
     expect(call.body).toEqual({ twoPerson: true });
+  });
+
+  it("has the LUKS escrow switch off, says what it does, and turns it on", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      routes(ORG_ADMIN, {
+        "PUT /organizations/:id/keystore-settings": ok({ twoPerson: false, luksEscrow: true, approvers: 1 }),
+      }),
+    );
+    renderApp("/organizations/o1?tab=recovery-keys");
+    const main = within(await screen.findByRole("main"));
+    const sw = await main.findByRole("checkbox", { name: /Escrow the keys of encrypted Linux volumes/ });
+    expect(sw).not.toBeChecked();
+    expect(main.getByText(/add a key slot to each encrypted Linux volume it can unlock by itself/)).toBeInTheDocument();
+    await user.click(sw);
+    expect(server.call("PUT /organizations/:id/keystore-settings").body).toEqual({ luksEscrow: true });
   });
 
   it("explains a refusal to turn it on without two approvers", async () => {

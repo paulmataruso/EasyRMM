@@ -39,7 +39,8 @@ function SettingsCard({ id }: { id: string }) {
   const path = `/organizations/${id}/keystore-settings`;
   const q = useApi<KeystoreOrgSettings>(path);
   const set = useApiMutation(
-    (twoPerson: boolean) => api.put<KeystoreOrgSettings>(path, { twoPerson }),
+    (v: { twoPerson: boolean } | { luksEscrow: boolean }) =>
+      api.put<KeystoreOrgSettings>(path, v),
     {
       invalidate: [path, "/audit"],
       onSuccess: () => toast.success("Saved."),
@@ -65,7 +66,7 @@ function SettingsCard({ id }: { id: string }) {
                 className="mt-0.5 size-4 accent-accent"
                 checked={q.data.twoPerson}
                 disabled={set.isPending}
-                onChange={(e) => set.mutate(e.target.checked)}
+                onChange={(e) => set.mutate({ twoPerson: e.target.checked })}
               />
               <span>
                 <span className="font-medium text-fg">
@@ -76,6 +77,26 @@ function SettingsCard({ id }: { id: string }) {
                   a key alone. It needs at least two people with the Recovery
                   Key Approver add-on here (now {q.data.approvers}) and asks
                   for your second factor.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-accent"
+                checked={q.data.luksEscrow}
+                disabled={set.isPending}
+                onChange={(e) => set.mutate({ luksEscrow: e.target.checked })}
+              />
+              <span>
+                <span className="font-medium text-fg">
+                  Escrow the keys of encrypted Linux volumes (LUKS)
+                </span>
+                <span className="block text-xs text-muted">
+                  Off by default. Turning it on lets the agent add a key slot
+                  to each encrypted Linux volume it can unlock by itself, and
+                  keep that key in the keystore. It writes to the disk&apos;s
+                  header and asks for your second factor.
                 </span>
               </span>
             </label>

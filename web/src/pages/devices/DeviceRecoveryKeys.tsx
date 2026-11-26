@@ -63,6 +63,11 @@ export const ESCROW_STATE_TEXT: Record<
     tone: "warn",
     help: "Only a passphrase unlocks this volume, so the agent cannot add a key slot of its own. Nothing was changed on it.",
   },
+  escrow_off: {
+    label: "Escrow off",
+    tone: "neutral",
+    help: "LUKS escrow is off for this organization. Turn it on in the organization's Recovery keys tab.",
+  },
   managed_elsewhere: {
     label: "Managed elsewhere",
     tone: "neutral",

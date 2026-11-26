@@ -53,6 +53,13 @@ func (s *Service) ReportVolumes(ctx context.Context, d Device, rep agentproto.Es
 		return out, fmt.Errorf("%w: %w", ErrRecordMismatch, err)
 	}
 	kind := rep.KindOrDefault()
+	luksOn := false
+	if kind == agentproto.EscrowLUKS {
+		var err error
+		if luksOn, err = s.luksEscrowOn(ctx, d.Org); err != nil {
+			return out, err
+		}
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		keep := make([]string, 0, len(rep.Volumes))
 		for _, v := range rep.Volumes {
@@ -78,7 +85,7 @@ func (s *Service) ReportVolumes(ctx context.Context, d Device, rep agentproto.Es
 		}
 		for _, v := range rep.Volumes {
 			if kind == agentproto.EscrowLUKS {
-				if err := s.needLUKS(ctx, tx, d, v, &out); err != nil {
+				if err := s.needLUKS(ctx, tx, d, v, luksOn, &out); err != nil {
 					return err
 				}
 				continue
@@ -107,9 +114,9 @@ func (s *Service) ReportVolumes(ctx context.Context, d Device, rep agentproto.Es
 
 // needLUKS judges one LUKS volume of a report: it marks the records whose slot
 // is gone or changed as stale and says whether the agent must make a new key.
-func (s *Service) needLUKS(ctx context.Context, tx pgx.Tx, d Device, v agentproto.EscrowVolume, out *agentproto.EscrowVolumesAnswer) error {
-	if v.State != agentproto.LUKSEscrowable {
-		return nil // cannot escrow, or managed elsewhere: nothing to ask, nothing to rewrite
+func (s *Service) needLUKS(ctx context.Context, tx pgx.Tx, d Device, v agentproto.EscrowVolume, on bool, out *agentproto.EscrowVolumesAnswer) error {
+	if v.State != agentproto.LUKSEscrowable || !on {
+		return nil // escrow off for the organization: reported, never asked // cannot escrow, or managed elsewhere: nothing to ask, nothing to rewrite
 	}
 	ids := make([]string, 0, len(v.Protectors))
 	for _, p := range v.Protectors {
@@ -218,6 +225,13 @@ func (s *Service) Upload(ctx context.Context, d Device, ip netip.Addr, rec agent
 	}
 	if err := rec.Check(); err != nil {
 		return agentproto.EscrowAnswer{}, fmt.Errorf("%w: %w", ErrRecordMismatch, err)
+	}
+	if rec.Kind == agentproto.EscrowLUKS {
+		if on, err := s.luksEscrowOn(ctx, d.Org); err != nil {
+			return agentproto.EscrowAnswer{}, err
+		} else if !on {
+			return agentproto.EscrowAnswer{}, ErrOutOfScope
+		}
 	}
 	enc, _ := base64.StdEncoding.DecodeString(rec.Enc)
 	ct, _ := base64.StdEncoding.DecodeString(rec.Ciphertext)

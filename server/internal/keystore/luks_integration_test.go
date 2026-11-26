@@ -17,6 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/escrowcrypto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -41,6 +42,7 @@ type luksFixture struct {
 func luksFx(t *testing.T) *luksFixture {
 	t.Helper()
 	f := newFx(t)
+	f.exec(`INSERT INTO keystore_org_settings (organization_id, luks_escrow) VALUES ($1, true)`, f.acme)
 	id := f.device(f.acme, f.hq, "lx1", "linux")
 	dev := f.dv(id, f.acme, f.hq)
 	s := f.svc.Instruction(f.ctx, dev, "linux", caps)
@@ -312,4 +314,47 @@ func reconcileClean(r *reader) error {
 		return errors.New("a read through the console did not reconcile")
 	}
 	return nil
+}
+
+// LUKS escrow is opt-in: with the switch off a volume is reported and shown as
+// "escrow off", nothing is asked of the agent and an upload is refused; on, it is asked.
+func TestLUKSEscrowIsOptIn(t *testing.T) {
+	l := luksFx(t)
+	l.exec(`UPDATE keystore_org_settings SET luks_escrow = false`)
+	if n := l.report(agentproto.LUKSEscrowable).Need; len(n) != 0 {
+		t.Fatalf("need with the switch off: %+v", n)
+	}
+	st, _ := l.svc.DeviceState(l.ctx, access.System("test"), l.dev.ID)
+	if len(st.Volumes) != 1 || st.Volumes[0].State != keystore.StateEscrowOff {
+		t.Fatalf("shown as %+v", st.Volumes)
+	}
+	if _, err := l.svc.Upload(l.ctx, l.dev, netip.Addr{}, l.record(luksTok1, luksPass1, hashA)); !errors.Is(err, keystore.ErrOutOfScope) {
+		t.Fatalf("upload with the switch off: %v", err)
+	}
+	// The switch needs org.manage and step-up, and is audited.
+	r := &reader{fx: l.fx, step: &stepper{ok: map[uuid.UUID]bool{}}, mail: &notifier{}}
+	l.svc.SetStepUp(r.step)
+	tech, tctx := r.person("tech@example.test", rbac.RoleTechnician)
+	if _, err := l.svc.SetLUKSEscrow(tctx, tech, l.acme, true); err == nil {
+		t.Fatal("a technician turned it on")
+	}
+	admin, actx := r.person("admin@example.test", rbac.RoleOrgAdmin)
+	if _, err := l.svc.SetLUKSEscrow(actx, admin, l.acme, true); !errors.Is(err, httpapi.ErrStepUpRequired) {
+		t.Fatalf("without step-up: %v", err)
+	}
+	r.step.set(actx.Value(ctxUser{}).(uuid.UUID), true)
+	set, err := l.svc.SetLUKSEscrow(actx, admin, l.acme, true)
+	if err != nil || !set.LUKSEscrow {
+		t.Fatalf("turn on: %+v %v", set, err)
+	}
+	if l.str(`SELECT count(*)::text FROM audit_log WHERE action = 'keystore.luks_escrow'`) != "1" {
+		t.Error("not audited")
+	}
+	l.later()
+	if n := l.report(agentproto.LUKSEscrowable).Need; len(n) != 1 {
+		t.Fatalf("need with the switch on: %+v", n)
+	}
+	if ans := l.upload(luksTok1, luksPass1, hashA); ans.State != agentproto.EscrowVerified {
+		t.Fatalf("upload: %+v", ans)
+	}
 }

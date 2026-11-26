@@ -23,7 +23,11 @@ ALTER TABLE device_encrypted_volumes ADD CONSTRAINT device_encrypted_volumes_mou
 ALTER TABLE recovery_key_escrows
     ADD COLUMN slot_hash bytea CHECK (slot_hash IS NULL OR octet_length(slot_hash) = 32);
 
+-- LUKS escrow writes a key slot to a customer's disk header, so it is opt-in per organization.
+ALTER TABLE keystore_org_settings ADD COLUMN luks_escrow boolean NOT NULL DEFAULT false;
+
 -- +goose Down
+ALTER TABLE keystore_org_settings DROP COLUMN luks_escrow;
 ALTER TABLE recovery_key_escrows DROP COLUMN slot_hash;
 DELETE FROM device_encrypted_volumes WHERE length(mount) > 16;
 ALTER TABLE device_encrypted_volumes DROP CONSTRAINT device_encrypted_volumes_mount_check;

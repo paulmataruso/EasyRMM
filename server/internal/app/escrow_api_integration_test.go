@@ -412,7 +412,7 @@ func TestLUKSEscrowEndToEnd(t *testing.T) {
 	sock := escrowKeystore(t)
 	ctx := context.Background()
 	h := newHarnessWith(t, false, func(c *config.Config) { c.KeystoreSocket = sock })
-	admin, _ := setUp(t, h)
+	admin, adminTOTP := setUp(t, h)
 	acme := orgID(t, admin, "Acme")
 	var hq idObj
 	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
@@ -446,6 +446,16 @@ func TestLUKSEscrowEndToEnd(t *testing.T) {
 	}
 	luksVol := "6c4a9e2a-1111-4222-8333-444455556666"
 	l := &stubLUKS{vol: luksVol}
+	// Opt-in: with the switch off the agent reports the volume and adds nothing.
+	agentOff := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
+		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	agentOff.Answered(resp.Escrow)
+	agentOff.Sync(ctx)
+	if l.slot.TokenID != "" {
+		t.Fatal("the agent added a key slot with LUKS escrow off")
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, adminTOTP, time.Now().Add(30*time.Second))}, nil)
+	admin.expect(http.StatusOK, "PUT", "/api/v1/organizations/"+acme+"/keystore-settings", map[string]any{"luksEscrow": true}, nil)
 	agent := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
 		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	agent.Answered(resp.Escrow)

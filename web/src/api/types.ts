@@ -3923,7 +3923,9 @@ export type EscrowState =
   /** A LUKS volume only a passphrase unlocks, or LUKS1: the agent cannot escrow it (ADR-0081, slice 3). */
   | "cannot_escrow"
   /** A LUKS volume Clevis or a distribution's own scheme manages: never rewritten. */
-  | "managed_elsewhere";
+  | "managed_elsewhere"
+  /** The organization has not turned LUKS escrow on. */
+  | "escrow_off";
 
 export interface EscrowProtector {
   id: string;
@@ -3980,6 +3982,8 @@ export interface KeystoreNotice {
 /** An organization's keystore settings. The two-person switch is off until an organization turns it on. */
 export interface KeystoreOrgSettings {
   twoPerson: boolean;
+  /** The agent adds a key slot to each encrypted Linux volume it can unlock by itself; off until turned on. */
+  luksEscrow: boolean;
   /** People holding the Recovery Key Approver add-on here. */
   approvers: number;
 }

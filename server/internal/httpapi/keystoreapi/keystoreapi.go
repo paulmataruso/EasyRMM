@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 )
@@ -163,14 +164,25 @@ func (a *API) setSettings(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var b struct {
-		TwoPerson bool `json:"twoPerson"`
+		TwoPerson  *bool `json:"twoPerson"`
+		LUKSEscrow *bool `json:"luksEscrow"`
 	}
 	if err := httpapi.DecodeJSON(w, r, &b); err != nil {
 		return err
 	}
-	out, err := a.svc.SetTwoPerson(r.Context(), httpapi.Caller(r), id, b.TwoPerson)
-	if err != nil {
-		return err
+	var out keystore.Settings
+	if b.TwoPerson != nil {
+		if out, err = a.svc.SetTwoPerson(r.Context(), httpapi.Caller(r), id, *b.TwoPerson); err != nil {
+			return err
+		}
+	}
+	if b.LUKSEscrow != nil {
+		if out, err = a.svc.SetLUKSEscrow(r.Context(), httpapi.Caller(r), id, *b.LUKSEscrow); err != nil {
+			return err
+		}
+	}
+	if b.TwoPerson == nil && b.LUKSEscrow == nil {
+		return apperr.Invalid("twoPerson", "Say which setting to change.")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

@@ -27,11 +27,12 @@ import (
 
 // Audit actions of reads (ADR-0007). None carries a key.
 const (
-	ActionRead      = "recovery_key.read"
-	ActionRequested = "recovery_key.read_requested"
-	ActionApproved  = "recovery_key.read_approved"
-	ActionDenied    = "recovery_key.read_denied"
-	ActionSetting   = "keystore.two_person"
+	ActionRead        = "recovery_key.read"
+	ActionRequested   = "recovery_key.read_requested"
+	ActionApproved    = "recovery_key.read_approved"
+	ActionDenied      = "recovery_key.read_denied"
+	ActionSetting     = "keystore.two_person"
+	ActionLUKSSetting = "keystore.luks_escrow"
 )
 
 // ReadLimits are the server's own limits on reads (section 7); the

@@ -27,6 +27,8 @@ const (
 	// passphrase unlocks it, or something else manages it.
 	StateCannotEscrow     = "cannot_escrow"
 	StateManagedElsewhere = "managed_elsewhere"
+	// StateEscrowOff: the organization has not turned LUKS escrow on.
+	StateEscrowOff = "escrow_off"
 )
 
 // ProtectorState is one recovery-password protector and the state of its
@@ -104,6 +106,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	if !c.Can(rbac.PermDeviceView, rbac.Site(org, site)) {
 		return nil, apperr.NotFound()
 	}
+	luksOn, _ := s.luksEscrowOn(ctx, org)
 	out := &DeviceEscrow{Applicable: (platform == "windows" || platform == "linux") && devscope.Allowed(org), Volumes: []VolumeState{}}
 	out.Keystore = SummaryOf(s.CurrentStatus(ctx))
 	out.CanRead = c.Principal != nil && c.Can(rbac.PermRecoveryKeyRead, rbac.Site(org, site))
@@ -131,6 +134,8 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 			}
 			if verdict == agentproto.LUKSCannotEscrow || verdict == agentproto.LUKSManagedElsewhere {
 				v.State = verdict
+			} else if verdict == agentproto.LUKSEscrowable && !luksOn {
+				v.State = StateEscrowOff
 			}
 			var ps []protectorRef
 			if err := json.Unmarshal(raw, &ps); err != nil {
@@ -203,7 +208,7 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	}
 	for i := range out.Volumes {
 		v := &out.Volumes[i]
-		if v.State == StateCannotEscrow || v.State == StateManagedElsewhere {
+		if v.State == StateCannotEscrow || v.State == StateManagedElsewhere || v.State == StateEscrowOff {
 			continue // the agent's verdict stands: there is nothing to escrow
 		}
 		v.State = StateMissing
