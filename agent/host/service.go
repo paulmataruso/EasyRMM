@@ -27,6 +27,10 @@ type Service struct {
 	Dir string
 	// Quiet discards the program's standard output (systemd).
 	Quiet bool
+	// TimeSync orders the unit after time-sync.target (systemd): a clone or a
+	// board without a real-time clock must not ask a server before its clock
+	// is set (ADR-0056).
+	TimeSync bool
 	// RestartDelay is the pause before a stopped service is started again.
 	RestartDelay time.Duration
 }
@@ -63,6 +67,7 @@ func (p Paths) AgentService() Service {
 		Binary:        p.Binary(),
 		Args:          []string{"run"},
 		RestartDelay:  10 * time.Second,
+		TimeSync:      true,
 	}
 	if p.Windows() {
 		s.Name, s.DisplayName = AgentWindowsService, "EasyRMM Agent"
@@ -85,6 +90,17 @@ func Available() bool {
 
 // Install writes the unit, then enables and starts it.
 func (s Systemd) Install(ctx context.Context, svc Service) error {
+	return s.install(ctx, svc, true)
+}
+
+// Enable writes the unit and enables it without starting it: what an image
+// built offline, or a machine whose policy-rc.d forbids starting services,
+// needs (ADR-0056). `systemctl enable` works without a running systemd.
+func (s Systemd) Enable(ctx context.Context, svc Service) error {
+	return s.install(ctx, svc, false)
+}
+
+func (s Systemd) install(ctx context.Context, svc Service, start bool) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // the system unit directory
 		return err
 	}
@@ -94,8 +110,17 @@ func (s Systemd) Install(ctx context.Context, svc Service) error {
 	if _, err := s.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
+	if !start {
+		_, err := s.Run(ctx, "systemctl", "enable", svc.Name)
+		return err
+	}
 	_, err := s.Run(ctx, "systemctl", "enable", "--now", svc.Name)
 	return err
+}
+
+// Enabler is a service manager that can enable a service without starting it.
+type Enabler interface {
+	Enable(ctx context.Context, s Service) error
 }
 
 // Restart restarts a unit.
@@ -141,7 +166,11 @@ func UnitContent(s Service) string {
 	if s.Documentation != "" {
 		b.WriteString("Documentation=" + s.Documentation + "\n")
 	}
-	b.WriteString("After=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\n")
+	after := "network-online.target"
+	if s.TimeSync {
+		after += " time-sync.target"
+	}
+	b.WriteString("After=" + after + "\nWants=network-online.target\n\n[Service]\nType=simple\n")
 	if s.Dir != "" {
 		b.WriteString("WorkingDirectory=" + s.Dir + "\n")
 	}

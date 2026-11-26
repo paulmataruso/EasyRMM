@@ -179,6 +179,8 @@ floors=(
   "agent/defender                          83"
   "agent/meshagent                         80"
   "agent/state                             75"
+  # The enrollment file (ADR-0056); its Windows half runs in the windows job.
+  "agent/enrollfile                        85"
   "agent/cmd/easyrmm-agent                 75"
   "agent/jobs                              80"
   # The registry builtin's engine (ADR-0067); its Windows half runs on the Windows runners.

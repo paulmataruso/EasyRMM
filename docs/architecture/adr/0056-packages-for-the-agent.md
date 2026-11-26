@@ -2,8 +2,9 @@
 
 * Status: Proposed (2026-11-21). Slice 0 implemented (PR #61, merged
   2026-11-21, with the two tests it lacked added in PR #68, see
-  [below](#the-state-folder-is-protected-before-anything-reads-it)); the
-  rest not implemented.
+  [below](#the-state-folder-is-protected-before-anything-reads-it)). Slice
+  1 implemented on `ws/pkg1` (2026-11-26, not merged; amended below);
+  slices 2 to 7 not implemented.
 * Revised after an independent review (2026-11-21), and again after a
   second check (2026-11-21). Decided in review, not by the owner: tokens
   for deployment tools and their ceilings, *Uninstalled*, RPM signatures,
@@ -1255,6 +1256,42 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    server included.
 7. **The operator's signed MSI**: the script and the guide. Verified on
    the Windows runner with a certificate made for the run.
+
+### Amended 2026-11-26 (decided in review): slice 1 as built
+Slice 1 has no package, no server change and no signature or hash to check:
+its refusals are the enrollment file's, and each is tested. Where the ADR left
+a choice open:
+
+* **The record** is `package.json` in the state folder (`kind`, `was`, `made`,
+  and the agent's last note on the file). `made` says that the run installed
+  the agent; every adopting run clears it. `uninstall --package KIND
+  --rollback` removes the agent where the record says `made`, and otherwise
+  only goes back to the package that held the agent before, or deletes the
+  record. A removal script's `uninstall --package KIND` removes the agent.
+* **The agent waits only where the record exists**, so an agent installed by
+  `install --server` keeps today's behaviour with no enrollment.
+* **`capabilities` prints one word a line**; `package` is the one the package's
+  copy looks for. `run` and `enroll` from the copy always go to the installed
+  agent, whether or not it lists `package`, since the copy never runs as the
+  agent; other commands go only to an agent that lists it.
+* **Hand-over** replaces the process on Linux and runs the installed agent as a
+  child, with its exit code, on Windows.
+* **A refused file** during `install --package` does not stop the install: the
+  agent and its service are installed and wait, the command returns the
+  refusal as an error (a DEB's or RPM's script prints it and finishes; the MSI
+  rolls back).
+* **Environment input that failed** is written to the file for the service only
+  when the answer may change (no answer, a server error, a certificate). A
+  token the server refused is not written. One certificate fits in the file:
+  an `EASYRMM_CA_FILE` with several is used at once but cannot be kept.
+* **An enrolled agent looks for the file at its start and every 30 seconds**,
+  not in the heartbeat's own loop; the effect is the same.
+* **The MSI's upgrade code** is `{DA28A5EF-C528-4A43-9375-59DF190A02E2}`
+  (`host.MSIUpgradeCode`); slice 6 uses it.
+* **Not in slice 1**: the *Uninstalled* report (ADR-0053's slice) and the
+  removal instruction's path through `uninstall --package`, which belong to
+  slices 2 and 4. The bundle test's waiting scenario is not added: it needs
+  the packages' machine and the console's install flow.
 
 ## Consequences
 * Slice 0 closes a hole in today's Windows agent: a standard user who
