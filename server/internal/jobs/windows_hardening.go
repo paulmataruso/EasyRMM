@@ -37,6 +37,8 @@ var WindowsHardeningModules = []string{
 	"audit", "device-guard", "bitlocker", "laps",
 	// ADR-0078, C3.
 	"session", "removable", "mobile-code", "rights", "time", "app-control", "office",
+	// ADR-0078, C4: the domain controller's own checks; they only read.
+	"dc",
 }
 
 // WindowsHardeningOptions are Windows' options besides the ports
@@ -362,6 +364,8 @@ type windowsSetting struct {
 	Only       *struct {
 		Client   *bool    `json:"client,omitempty"`
 		NotRoles []string `json:"notRoles,omitempty"`
+		// Roles are the only roles it applies to (ADR-0078, C4).
+		Roles    []string `json:"roles,omitempty"`
 		MinBuild int      `json:"minBuild,omitempty"`
 	} `json:"only,omitempty"`
 	// CSP is the Policy CSP's Area/Policy that sets the same value, read

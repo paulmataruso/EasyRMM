@@ -23,7 +23,10 @@ type SettingInfo struct {
 	// only; NotDomainController for one that does not apply to a domain
 	// controller; MinBuild is the lowest Windows build it applies to.
 	Client, NotDomainController bool
-	MinBuild                    int
+	// DomainControllerOnly is true for a Windows setting that applies to
+	// domain controllers only (ADR-0078, C4).
+	DomainControllerOnly bool
+	MinBuild             int
 }
 
 // WindowsSettingCatalog lists the settings of windows-settings.json.
@@ -34,6 +37,7 @@ func WindowsSettingCatalog() []SettingInfo {
 		if s.Only != nil {
 			i.Client = s.Only.Client != nil && *s.Only.Client
 			i.NotDomainController = slices.Contains(s.Only.NotRoles, "domain_controller")
+			i.DomainControllerOnly = slices.Equal(s.Only.Roles, []string{"domain_controller"})
 			i.MinBuild = s.Only.MinBuild
 		}
 		out = append(out, i)

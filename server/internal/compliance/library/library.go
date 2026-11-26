@@ -68,6 +68,8 @@ var windowsModules = map[string]moduleInfo{
 	"session": {severity: "medium"}, "removable": {severity: "medium"}, "mobile-code": {severity: "medium"},
 	"rights": {severity: "medium"}, "time": {severity: "medium"}, "app-control": {severity: "high"},
 	"office": {severity: "medium"},
+	// ADR-0078, C4.
+	"dc": {severity: "high"},
 }
 
 var linuxModules = map[string]moduleInfo{
@@ -85,7 +87,7 @@ var windowsTiers = [...]string{compliance.TierReport, compliance.TierReversible,
 
 // reportOnlyAdvice is what to do about a Windows control that has no setting
 // to change, in place of the general text (ADR-0078, C3).
-var reportOnlyAdvice = map[string]string{
+var reportOnlyAdvice = map[string]string{ //nolint:gosec // advice texts, not credentials
 	"session-legal-caption":   "Write the title your organization's policy requires and set it in Group Policy (Interactive logon: message title for users attempting to log on). EasyRMM does not write the text for you.",
 	"session-legal-text":      "Write the text your organization's policy requires and set it in Group Policy (Interactive logon: message text for users attempting to log on). EasyRMM does not write the text for you.",
 	"rights-debug":            "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). A wrong change can lock people out, so EasyRMM only reports it.",
@@ -103,6 +105,28 @@ var reportOnlyAdvice = map[string]string{
 	"lockout-faillock-active": "Turn pam_faillock on with authselect (RHEL, Fedora) or pam-auth-update (Debian, Ubuntu). A wrong change to the sign-in stack can lock everyone out, so EasyRMM only reports it.",
 	"lockout-deny-threshold":  "Set deny to a number from 1 to 10 in /etc/security/faillock.conf. EasyRMM only reports it.",
 	"office-internet-macros":  "Block macros in files from the internet for each Office application (Group Policy, Office administrative templates). EasyRMM only reports it.",
+	// ADR-0078, C4.
+	"dc-ldap-signing":           "Set Domain controller: LDAP server signing requirements to Require signing in the Default Domain Controllers Policy. Clients that send unsigned binds stop working, so check the directory's LDAP events first. EasyRMM only reports it.",
+	"dc-ldap-channel-binding":   "Set Domain controller: LDAP server channel binding token requirements to Always in the Default Domain Controllers Policy. Older clients that cannot bind to the channel stop working. EasyRMM only reports it.",
+	"dc-kerberos-types":         "Set Network security: Configure encryption types allowed for Kerberos to AES128 and AES256 only in Group Policy, after finding what still uses RC4. EasyRMM only reports it.",
+	"dc-kdc-default-types":      "Set the KDC's DefaultDomainSupportedEncTypes to AES only after finding which accounts and services still need RC4. EasyRMM only reports it.",
+	"dc-krbtgt-age":             "Reset the krbtgt password twice, with the time the domain's tickets live between the two resets, using Microsoft's published procedure. A wrong reset breaks sign-in domain-wide, so EasyRMM only reports it.",
+	"dc-dsrm-logon":             "Remove DsrmAdminLogonBehavior, or set it to 0, so that the restore mode account signs in only while the controller is in restore mode. EasyRMM only reports it.",
+	"dc-password-length":        "Raise the minimum password length in the Default Domain Policy. A change applies to every account at its next password change. EasyRMM only reports it.",
+	"dc-password-complexity":    "Turn on Password must meet complexity requirements in the Default Domain Policy. EasyRMM only reports it.",
+	"dc-password-history":       "Raise Enforce password history in the Default Domain Policy. EasyRMM only reports it.",
+	"dc-lockout-threshold":      "Set Account lockout threshold in the Default Domain Policy to a number from 1 to 10. A low number can lock out people and services with an old saved password, so EasyRMM only reports it.",
+	"dc-lockout-duration":       "Set Account lockout duration in the Default Domain Policy to at least 15 minutes, or to 0 for an administrator to unlock. EasyRMM only reports it.",
+	"dc-domain-admins":          "Remove the accounts that do not need to administer the whole domain from Domain Admins, and use delegated rights for the rest. EasyRMM only reports it.",
+	"dc-enterprise-admins":      "Keep Enterprise Admins empty except when a forest-wide change is under way; add an account for the change and remove it after. EasyRMM only reports it.",
+	"dc-schema-admins":          "Keep Schema Admins empty except while the schema is being changed; add an account for the change and remove it after. EasyRMM only reports it.",
+	"dc-administrators":         "Remove the accounts that do not need to administer the domain controllers from the domain's Administrators group. EasyRMM only reports it.",
+	"dc-stale-accounts":         "Review the accounts that have not signed in and disable or delete the ones nobody uses. EasyRMM reports the count and does not name them; the Active Directory page lists accounts.",
+	"dc-password-never-expires": "Review the accounts whose password never expires; give people's accounts an expiry, and move services to group managed service accounts. EasyRMM reports the count and does not name them.",
+	"dc-time-hierarchy":         "Point the PDC emulator at outside time servers (w32tm /config /manualpeerlist) and leave the other controllers on the domain hierarchy. EasyRMM only reports it.",
+	"dc-replication":            "Find why replication fails (a stopped service, a blocked port, a controller that was off longer than the tombstone lifetime) with the directory's own tools. EasyRMM only reports it.",
+	"dc-sysvol":                 "Start DFS Replication, and check that SYSVOL and NETLOGON are shared; if they are not, repair SYSVOL with Microsoft's procedure. EasyRMM only reports it.",
+	"dc-backup":                 "Back up the directory's system state with Windows Server Backup or the backup product in use, and keep a copy off the domain. EasyRMM only reports it.",
 }
 
 // GenerateWindows builds the Windows library from windows-settings.json.
@@ -116,6 +140,8 @@ func GenerateWindows() File {
 		scopes := []string{"any"}
 		if s.Client {
 			scopes = []string{"workstation"}
+		} else if s.DomainControllerOnly {
+			scopes = []string{"domain_controller"}
 		} else if s.NotDomainController {
 			scopes = []string{"workstation", "member_server"}
 		}

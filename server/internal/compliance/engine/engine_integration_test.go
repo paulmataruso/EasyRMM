@@ -195,12 +195,12 @@ func TestLoadContentStoresTheLibraryAndPacks(t *testing.T) {
 		}
 	}
 	for q, want := range map[string]int{
-		`SELECT count(*) FROM compliance_controls`:                                            260,
+		`SELECT count(*) FROM compliance_controls`:                                            281,
 		`SELECT count(*) FROM compliance_controls WHERE apply_supported`:                      -1,
 		`SELECT count(*) FROM compliance_frameworks`:                                          13,
 		`SELECT count(*) FROM compliance_requirements WHERE framework_key = 'nist-800-171r2'`: 110,
 		`SELECT count(*) FROM compliance_requirements WHERE framework_key = 'cmmc-l1'`:        17,
-		`SELECT count(*) FROM compliance_profiles`:                                            5,
+		`SELECT count(*) FROM compliance_profiles`:                                            6,
 		`SELECT count(*) FROM compliance_sources`:                                             11,
 	} {
 		if got := f.n(q); want >= 0 && got != want {
@@ -344,7 +344,7 @@ func TestSecurityOfTheTables(t *testing.T) {
 			t.Errorf("%s as system: %d, want 2", q, got)
 		}
 	}
-	if count(acme, `SELECT count(*) FROM compliance_controls`) != 260 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
+	if count(acme, `SELECT count(*) FROM compliance_controls`) != 281 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
 		t.Error("the library is not readable by every scope")
 	}
 	// The library is read-only to a user's scope; a user's scope writes nothing at all.
@@ -605,10 +605,10 @@ func TestFrameworkRollUpFromScans(t *testing.T) {
 			t.Errorf("%+v", p.Coverage)
 		}
 	}
-	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 151 {
+	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 172 {
 		t.Errorf("%d windows controls, %v", len(cs), err)
 	}
-	if ps, err := f.svc.Profiles(f.ctx, admin); err != nil || len(ps) != 5 {
+	if ps, err := f.svc.Profiles(f.ctx, admin); err != nil || len(ps) != 6 {
 		t.Errorf("%d profiles, %v", len(ps), err)
 	}
 }
@@ -966,4 +966,63 @@ func (f *fixture) exists(sql string) bool {
 		f.t.Fatal(err)
 	}
 	return b
+}
+
+// TestC4ControlsAreInTheLibrary: slice C4's controls are stored with the
+// check they read, for domain controllers only, report only, with the
+// requirements they bear on; and the domain controller profile names them.
+func TestC4ControlsAreInTheLibrary(t *testing.T) {
+	f := newFixture(t).loaded()
+	type want struct {
+		id, setting string
+		reqs        []string
+	}
+	for _, w := range []want{
+		{"win.dc.ldap-signing", "dc-ldap-signing", []string{"3.13.8", "3.13.15"}},
+		{"win.dc.ldap-channel-binding", "dc-ldap-channel-binding", []string{"3.13.8", "3.13.15"}},
+		{"win.dc.kerberos-types", "dc-kerberos-types", []string{"3.13.8"}},
+		{"win.dc.kdc-default-types", "dc-kdc-default-types", []string{"3.13.8"}},
+		{"win.dc.krbtgt-age", "dc-krbtgt-age", []string{"3.13.10"}},
+		{"win.dc.dsrm-logon", "dc-dsrm-logon", []string{"3.1.5"}},
+		{"win.dc.password-length", "dc-password-length", []string{"3.5.7"}},
+		{"win.dc.password-history", "dc-password-history", []string{"3.5.8"}},
+		{"win.dc.lockout-threshold", "dc-lockout-threshold", []string{"3.1.8"}},
+		{"win.dc.schema-admins", "dc-schema-admins", []string{"3.1.5"}},
+		{"win.dc.stale-accounts", "dc-stale-accounts", []string{"3.5.6"}},
+		{"win.dc.time-hierarchy", "dc-time-hierarchy", []string{"3.3.7"}},
+		{"win.dc.backup", "dc-backup", []string{"3.8.9"}},
+		// Replication and SYSVOL bear on no 800-171 requirement; they are in
+		// the domain controller profile only.
+		{"win.dc.replication", "dc-replication", nil},
+		{"win.dc.sysvol", "dc-sysvol", nil},
+	} {
+		var module, setting, tier, scope string
+		var apply bool
+		if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(f.ctx, `SELECT executor_ref->>'module', executor_ref->>'setting', risk_tier, apply_supported, scopes[1]
+				FROM compliance_controls WHERE id = $1`, w.id).Scan(&module, &setting, &tier, &apply, &scope)
+		}); err != nil {
+			t.Errorf("%s: %v", w.id, err)
+			continue
+		}
+		if module != "dc" || setting != w.setting || tier != "T0" || apply || scope != "domain_controller" {
+			t.Errorf("%s: %s %s %s %v %s", w.id, module, setting, tier, apply, scope)
+		}
+		for _, r := range w.reqs {
+			if f.n(`SELECT count(*) FROM compliance_mappings WHERE framework_key = 'nist-800-171r2' AND req_id = $1 AND control_id = $2`, r, w.id) != 1 {
+				t.Errorf("%s is not mapped to 800-171 %s", w.id, r)
+			}
+		}
+	}
+	// None of the 21 has a fix (a change to a domain's settings is not C4's),
+	// and each one has advice in its own words.
+	if n := f.n(`SELECT count(*) FROM compliance_controls WHERE id LIKE 'win.dc.%'`); n != 21 {
+		t.Errorf("%d domain controller controls, want 21", n)
+	}
+	if n := f.n(`SELECT count(*) FROM compliance_controls WHERE id LIKE 'win.dc.%' AND (apply_supported OR remediation_text NOT LIKE '%EasyRMM%')`); n != 0 {
+		t.Errorf("%d domain controller controls with a fix or without advice", n)
+	}
+	if n := f.n(`SELECT count(*) FROM compliance_profile_controls WHERE profile_key = 'win-domain-controller'`); n != 24 {
+		t.Errorf("%d controls in the domain controller profile, want 24", n)
+	}
 }

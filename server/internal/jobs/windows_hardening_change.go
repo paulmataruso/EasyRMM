@@ -53,6 +53,8 @@ var windowsModuleTiers = map[string]int{
 	// stop a person's work; the rest report.
 	"session": tierWorkflow, "removable": tierWorkflow, "mobile-code": tierWorkflow,
 	"rights": tierReport, "time": tierReport, "app-control": tierReport, "office": tierReport,
+	// ADR-0078, C4: the domain controller checks only read.
+	"dc": tierReport,
 }
 
 // windowsSettingTiers are the settings that are riskier than their module:

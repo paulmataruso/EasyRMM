@@ -10195,6 +10195,1056 @@
       },
       "licence_class": "ORIGINAL",
       "review_state": "none"
+    },
+    {
+      "id": "win.dc.ldap-signing",
+      "version": 1,
+      "title": "The domain controller requires LDAP signing",
+      "description": "The domain controller requires LDAP signing.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-ldap-signing"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-ldap-signing."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set Domain controller: LDAP server signing requirements to Require signing in the Default Domain Controllers Policy. Clients that send unsigned binds stop working, so check the directory's LDAP events first. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-ldap-signing"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.ldap-channel-binding",
+      "version": 1,
+      "title": "The domain controller always requires LDAP channel binding",
+      "description": "The domain controller always requires LDAP channel binding.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-ldap-channel-binding"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-ldap-channel-binding."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set Domain controller: LDAP server channel binding token requirements to Always in the Default Domain Controllers Policy. Older clients that cannot bind to the channel stop working. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-ldap-channel-binding"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.kerberos-types",
+      "version": 1,
+      "title": "Kerberos encryption types by policy: AES only, no RC4 or DES",
+      "description": "Kerberos encryption types by policy: AES only, no RC4 or DES.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-kerberos-types"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-kerberos-types."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set Network security: Configure encryption types allowed for Kerberos to AES128 and AES256 only in Group Policy, after finding what still uses RC4. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-kerberos-types"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.kdc-default-types",
+      "version": 1,
+      "title": "The default Kerberos encryption types for accounts: AES only, no RC4",
+      "description": "The default Kerberos encryption types for accounts: AES only, no RC4.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-kdc-default-types"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-kdc-default-types."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set the KDC's DefaultDomainSupportedEncTypes to AES only after finding which accounts and services still need RC4. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-kdc-default-types"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.krbtgt-age",
+      "version": 1,
+      "title": "The krbtgt password changed within the last 180 days",
+      "description": "The krbtgt password changed within the last 180 days.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-krbtgt-age"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-krbtgt-age."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Reset the krbtgt password twice, with the time the domain's tickets live between the two resets, using Microsoft's published procedure. A wrong reset breaks sign-in domain-wide, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-krbtgt-age"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.dsrm-logon",
+      "version": 1,
+      "title": "The directory services restore mode account cannot sign in while the domain controller runs normally",
+      "description": "The directory services restore mode account cannot sign in while the domain controller runs normally.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-dsrm-logon"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-dsrm-logon."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove DsrmAdminLogonBehavior, or set it to 0, so that the restore mode account signs in only while the controller is in restore mode. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-dsrm-logon"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.password-length",
+      "version": 1,
+      "title": "The domain password policy requires at least 14 characters",
+      "description": "The domain password policy requires at least 14 characters.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-password-length"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-password-length."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Raise the minimum password length in the Default Domain Policy. A change applies to every account at its next password change. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-password-length"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.password-complexity",
+      "version": 1,
+      "title": "The domain password policy requires complexity",
+      "description": "The domain password policy requires complexity.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-password-complexity"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-password-complexity."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Turn on Password must meet complexity requirements in the Default Domain Policy. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-password-complexity"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.password-history",
+      "version": 1,
+      "title": "The domain password policy remembers at least 24 passwords",
+      "description": "The domain password policy remembers at least 24 passwords.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-password-history"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-password-history."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Raise Enforce password history in the Default Domain Policy. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-password-history"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.lockout-threshold",
+      "version": 1,
+      "title": "The domain locks an account out after 1 to 10 failed sign-ins",
+      "description": "The domain locks an account out after 1 to 10 failed sign-ins.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-lockout-threshold"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-lockout-threshold."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set Account lockout threshold in the Default Domain Policy to a number from 1 to 10. A low number can lock out people and services with an old saved password, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-lockout-threshold"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.lockout-duration",
+      "version": 1,
+      "title": "A locked-out domain account stays locked at least 15 minutes",
+      "description": "A locked-out domain account stays locked at least 15 minutes.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-lockout-duration"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-lockout-duration."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set Account lockout duration in the Default Domain Policy to at least 15 minutes, or to 0 for an administrator to unlock. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-lockout-duration"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.domain-admins",
+      "version": 1,
+      "title": "At most 5 direct members in Domain Admins",
+      "description": "At most 5 direct members in Domain Admins.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-domain-admins"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-domain-admins."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that do not need to administer the whole domain from Domain Admins, and use delegated rights for the rest. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-domain-admins"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.enterprise-admins",
+      "version": 1,
+      "title": "At most 1 direct member in Enterprise Admins",
+      "description": "At most 1 direct member in Enterprise Admins.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-enterprise-admins"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-enterprise-admins."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Keep Enterprise Admins empty except when a forest-wide change is under way; add an account for the change and remove it after. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-enterprise-admins"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.schema-admins",
+      "version": 1,
+      "title": "No direct members in Schema Admins",
+      "description": "No direct members in Schema Admins.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-schema-admins"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-schema-admins."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Keep Schema Admins empty except while the schema is being changed; add an account for the change and remove it after. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-schema-admins"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.administrators",
+      "version": 1,
+      "title": "At most 5 direct members in the domain Administrators group",
+      "description": "At most 5 direct members in the domain Administrators group.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-administrators"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-administrators."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that do not need to administer the domain controllers from the domain's Administrators group. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-administrators"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.stale-accounts",
+      "version": 1,
+      "title": "No enabled user account without a sign-in for 90 days",
+      "description": "No enabled user account without a sign-in for 90 days.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-stale-accounts"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-stale-accounts."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Review the accounts that have not signed in and disable or delete the ones nobody uses. EasyRMM reports the count and does not name them; the Active Directory page lists accounts.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-stale-accounts"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.password-never-expires",
+      "version": 1,
+      "title": "No enabled user account whose password never expires",
+      "description": "No enabled user account whose password never expires.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-password-never-expires"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-password-never-expires."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Review the accounts whose password never expires; give people's accounts an expiry, and move services to group managed service accounts. EasyRMM reports the count and does not name them.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-password-never-expires"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.time-hierarchy",
+      "version": 1,
+      "title": "The PDC emulator uses an outside time source and the other controllers follow the domain",
+      "description": "The PDC emulator uses an outside time source and the other controllers follow the domain.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-time-hierarchy"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-time-hierarchy."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Point the PDC emulator at outside time servers (w32tm /config /manualpeerlist) and leave the other controllers on the domain hierarchy. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-time-hierarchy"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.replication",
+      "version": 1,
+      "title": "Directory replication succeeding with every partner",
+      "description": "Directory replication succeeding with every partner.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-replication"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-replication."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Find why replication fails (a stopped service, a blocked port, a controller that was off longer than the tombstone lifetime) with the directory's own tools. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-replication"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.sysvol",
+      "version": 1,
+      "title": "SYSVOL and NETLOGON shared and their replication service running",
+      "description": "SYSVOL and NETLOGON shared and their replication service running.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-sysvol"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-sysvol."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Start DFS Replication, and check that SYSVOL and NETLOGON are shared; if they are not, repair SYSVOL with Microsoft's procedure. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-sysvol"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.dc.backup",
+      "version": 1,
+      "title": "The directory backed up within the last 7 days",
+      "description": "The directory backed up within the last 7 days.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "domain_controller"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "dc",
+        "setting": "dc-backup"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module dc, setting dc-backup."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Back up the directory's system state with Windows Server Backup or the backup product in use, and keep a copy off the domain. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting dc-backup"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
     }
   ]
 }

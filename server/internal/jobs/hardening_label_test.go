@@ -6,7 +6,7 @@ import "testing"
 // many modules gets their number, and a short list keeps its names.
 func TestHardeningLabelFitsTheJobsTable(t *testing.T) {
 	all := Hardening{Platform: HardeningWindows, Mode: HardeningCheck, Modules: WindowsHardeningModules[:len(WindowsHardeningModules)-1]}
-	if l := all.windowsLabel(); len(l) > 200 || l != "Check Windows hardening: 29 modules" {
+	if l := all.windowsLabel(); len(l) > 200 || l != "Check Windows hardening: 30 modules" {
 		t.Errorf("%q", l)
 	}
 	few := Hardening{Platform: HardeningWindows, Mode: HardeningCheck, Modules: []string{"rdp", "session"}}

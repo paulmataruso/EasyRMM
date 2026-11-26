@@ -174,6 +174,28 @@
     {"id": "time-source-configured", "module": "time", "what": "A time source set: NTP servers, or the domain hierarchy", "kind": "registry", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters", "name": "Type", "want": "in", "data": ["NTP","NT5DS"]},
     {"id": "time-synchronized", "module": "time", "what": "Synchronized with a time source within the last 24 hours", "kind": "custom", "data": 24},
     {"id": "app-control-enforced", "module": "app-control", "what": "App Control for Business or AppLocker enforcing a policy", "kind": "custom"},
-    {"id": "office-internet-macros", "module": "office", "what": "Office blocks macros in files from the internet", "kind": "custom"}
+    {"id": "office-internet-macros", "module": "office", "what": "Office blocks macros in files from the internet", "kind": "custom"},
+
+    {"id": "dc-ldap-signing", "module": "dc", "what": "The domain controller requires LDAP signing", "kind": "registry", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters", "name": "LDAPServerIntegrity", "want": "eq", "data": 2, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-ldap-channel-binding", "module": "dc", "what": "The domain controller always requires LDAP channel binding", "kind": "registry", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters", "name": "LdapEnforceChannelBinding", "want": "eq", "data": 2, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-kerberos-types", "module": "dc", "what": "Kerberos encryption types by policy: AES only, no RC4 or DES", "kind": "custom", "path": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\Kerberos\\Parameters", "name": "SupportedEncryptionTypes", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-kdc-default-types", "module": "dc", "what": "The default Kerberos encryption types for accounts: AES only, no RC4", "kind": "custom", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\KDC", "name": "DefaultDomainSupportedEncTypes", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-krbtgt-age", "module": "dc", "what": "The krbtgt password changed within the last 180 days", "kind": "custom", "data": 180, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-dsrm-logon", "module": "dc", "what": "The directory services restore mode account cannot sign in while the domain controller runs normally", "kind": "registry", "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa", "name": "DsrmAdminLogonBehavior", "want": "eq", "data": 0, "absent": "in_place", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-password-length", "module": "dc", "what": "The domain password policy requires at least 14 characters", "kind": "custom", "data": 14, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-password-complexity", "module": "dc", "what": "The domain password policy requires complexity", "kind": "custom", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-password-history", "module": "dc", "what": "The domain password policy remembers at least 24 passwords", "kind": "custom", "data": 24, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-lockout-threshold", "module": "dc", "what": "The domain locks an account out after 1 to 10 failed sign-ins", "kind": "custom", "data": 10, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-lockout-duration", "module": "dc", "what": "A locked-out domain account stays locked at least 15 minutes", "kind": "custom", "data": 15, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-domain-admins", "module": "dc", "what": "At most 5 direct members in Domain Admins", "kind": "custom", "key": "domain-admins", "data": 5, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-enterprise-admins", "module": "dc", "what": "At most 1 direct member in Enterprise Admins", "kind": "custom", "key": "enterprise-admins", "data": 1, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-schema-admins", "module": "dc", "what": "No direct members in Schema Admins", "kind": "custom", "key": "schema-admins", "data": 0, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-administrators", "module": "dc", "what": "At most 5 direct members in the domain Administrators group", "kind": "custom", "key": "administrators", "data": 5, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-stale-accounts", "module": "dc", "what": "No enabled user account without a sign-in for 90 days", "kind": "custom", "data": 90, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-password-never-expires", "module": "dc", "what": "No enabled user account whose password never expires", "kind": "custom", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-time-hierarchy", "module": "dc", "what": "The PDC emulator uses an outside time source and the other controllers follow the domain", "kind": "custom", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-replication", "module": "dc", "what": "Directory replication succeeding with every partner", "kind": "custom", "data": 24, "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-sysvol", "module": "dc", "what": "SYSVOL and NETLOGON shared and their replication service running", "kind": "custom", "only": {"roles": ["domain_controller"]}},
+    {"id": "dc-backup", "module": "dc", "what": "The directory backed up within the last 7 days", "kind": "custom", "data": 7, "only": {"roles": ["domain_controller"]}}
   ]
 }

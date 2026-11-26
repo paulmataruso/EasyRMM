@@ -769,6 +769,46 @@ every item that edits a GPO is in the T3 table; protected-account guard
 (ADR-0073) is honoured by every fix; read-only controls pass the
 `winmod` lint.
 
+*Amended 2026-11-26 (decided in review, C4 built):*
+
+* **How the checks read the directory.** The scan ingests only the results
+  of the hardening check (C1), and ADR-0075's collector is a `winmod` action
+  that needs a chosen controller and an optional credential, so a scan cannot
+  run it. C4 is therefore one new Windows hardening module, `dc`, that runs
+  on the domain controller and reads its own directory through ADSI (the
+  .NET `DirectorySearcher`, so no Active Directory module is needed), the
+  registry, the services and repadmin. The module's settings carry
+  `only.roles: ["domain_controller"]`: on any other role they are not
+  applicable, and where Windows did not report the role they are unknown.
+  ADR-0075's own reads (`health_read`, `privileged_members`) stay what the
+  Active Directory page shows; a scan that reads through a chosen controller
+  needs the `winmod` executor in the scan, which is not built.
+* **Built (21 controls, all T0, none with a fix):** LDAP signing and channel
+  binding; Kerberos encryption types by policy and the KDC default (RC4 and
+  DES off); `krbtgt` password age; DSRM logon behaviour; the Default Domain
+  Policy's password length, complexity, history and lockout threshold and
+  duration; direct members of Domain Admins, Enterprise Admins, Schema
+  Admins and the domain Administrators group (counts); enabled accounts
+  without a sign-in for 90 days and with a password that never expires
+  (counts); the time hierarchy against the PDC emulator; replication health;
+  SYSVOL and NETLOGON and their replication service; the directory's backup
+  recency. A `win-domain-controller` profile names them and the existing
+  checks that bear on a controller (Print Spooler, SMB signing required, the
+  audit subcategories). The 800-171 and CMMC mappings are `related`.
+* **Not in C4:** fixes for any of them (a change to a domain's policy can
+  lock out every computer and person, and ADR-0073's protected-account guard
+  and the typed agreement for a GPO belong to the slice that writes); the
+  file-server checks (shares and their permissions, SMB encryption, shadow
+  copies, data-volume BitLocker), which are not about a domain controller and
+  need the server-role detection of ADR-0076 in the scan.
+* **Thresholds are EasyRMM's own** (14 characters, 24 passwords, 1 to 10
+  failed attempts, 15 minutes, 180 days for `krbtgt`, 90 days without a
+  sign-in, 7 days for the backup). No CIS or STIG number or text is claimed.
+  The repadmin `/showbackup` form was written from documentation and has not
+  been recorded on a real controller.
+* **Privacy.** Results hold counts, ages and settings, never the name of an
+  account, a group member or a controller.
+
 #### C5: CMMC SSP, POA&M, evidence, OSCAL export, SPRS range
 
 *Goal:* the assessment workspace, as our own build modelled on the ideas of

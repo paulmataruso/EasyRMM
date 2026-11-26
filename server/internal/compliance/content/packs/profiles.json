@@ -1854,6 +1854,82 @@
      "params": {}
     },
     {
+     "control_id": "win.dc.administrators",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.backup",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.domain-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.dsrm-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.enterprise-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kdc-default-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kerberos-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.krbtgt-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-channel-binding",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-signing",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-history",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-never-expires",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.schema-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.stale-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.time-hierarchy",
+     "params": {}
+    },
+    {
      "control_id": "win.defender.behavior",
      "params": {}
     },
@@ -2249,6 +2325,82 @@
      "params": {}
     },
     {
+     "control_id": "win.dc.administrators",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.backup",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.domain-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.dsrm-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.enterprise-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kdc-default-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kerberos-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.krbtgt-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-channel-binding",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-signing",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-history",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-never-expires",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.schema-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.stale-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.time-hierarchy",
+     "params": {}
+    },
+    {
      "control_id": "win.defender.behavior",
      "params": {}
     },
@@ -2470,6 +2622,114 @@
     },
     {
      "control_id": "win.wdigest.logon-credential",
+     "params": {}
+    }
+   ]
+  },
+  {
+   "key": "win-domain-controller",
+   "version": "2026.1",
+   "title": "Domain controller checks (they read only, and apply to domain controllers)",
+   "platform": {
+    "os": "windows",
+    "role": "domain_controller"
+   },
+   "framework_key": null,
+   "controls": [
+    {
+     "control_id": "win.audit.subcategories",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.administrators",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.backup",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.domain-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.dsrm-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.enterprise-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kdc-default-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.kerberos-types",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.krbtgt-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-channel-binding",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.ldap-signing",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-history",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.password-never-expires",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.replication",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.schema-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.stale-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.sysvol",
+     "params": {}
+    },
+    {
+     "control_id": "win.dc.time-hierarchy",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.spooler",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-required",
      "params": {}
     }
    ]

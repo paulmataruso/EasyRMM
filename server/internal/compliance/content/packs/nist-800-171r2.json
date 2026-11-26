@@ -2158,6 +2158,104 @@
    ],
    "relation": "related",
    "note": "Shows the Windows script host is off and Office blocks macros from the internet; the machine policy only."
+  },
+  {
+   "req_id": "3.13.8",
+   "control_ids": [
+    "win.dc.ldap-signing",
+    "win.dc.ldap-channel-binding",
+    "win.dc.kerberos-types",
+    "win.dc.kdc-default-types"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain controller requires signed and channel-bound LDAP and Kerberos with AES only; the controller policy only."
+  },
+  {
+   "req_id": "3.13.15",
+   "control_ids": [
+    "win.dc.ldap-signing",
+    "win.dc.ldap-channel-binding"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain controller refuses unsigned LDAP binds and binds that are not tied to their channel."
+  },
+  {
+   "req_id": "3.13.10",
+   "control_ids": [
+    "win.dc.krbtgt-age"
+   ],
+   "relation": "related",
+   "note": "C4: Shows how old the key that signs the domain's Kerberos tickets is."
+  },
+  {
+   "req_id": "3.1.5",
+   "control_ids": [
+    "win.dc.dsrm-logon",
+    "win.dc.domain-admins",
+    "win.dc.enterprise-admins",
+    "win.dc.schema-admins",
+    "win.dc.administrators"
+   ],
+   "relation": "related",
+   "note": "C4: Shows how many accounts hold the domain's most powerful rights, as counts, and that the restore mode account cannot sign in on a running controller."
+  },
+  {
+   "req_id": "3.5.7",
+   "control_ids": [
+    "win.dc.password-length",
+    "win.dc.password-complexity"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain password policy's length and complexity (the Default Domain Policy)."
+  },
+  {
+   "req_id": "3.5.8",
+   "control_ids": [
+    "win.dc.password-history"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain password policy remembers earlier passwords (the Default Domain Policy)."
+  },
+  {
+   "req_id": "3.1.8",
+   "control_ids": [
+    "win.dc.lockout-threshold",
+    "win.dc.lockout-duration"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain locks an account out after failed sign-ins, and for how long."
+  },
+  {
+   "req_id": "3.5.6",
+   "control_ids": [
+    "win.dc.stale-accounts"
+   ],
+   "relation": "related",
+   "note": "C4: Counts enabled accounts without a sign-in for 90 days; it does not name them."
+  },
+  {
+   "req_id": "3.1.1",
+   "control_ids": [
+    "win.dc.password-never-expires"
+   ],
+   "relation": "related",
+   "note": "C4: Counts enabled accounts whose password never expires, which escape the password policy; it does not name them."
+  },
+  {
+   "req_id": "3.3.7",
+   "control_ids": [
+    "win.dc.time-hierarchy"
+   ],
+   "relation": "related",
+   "note": "C4: Shows the domain controllers follow one time hierarchy with an outside source at its top."
+  },
+  {
+   "req_id": "3.8.9",
+   "control_ids": [
+    "win.dc.backup"
+   ],
+   "relation": "related",
+   "note": "C4: Shows when the directory was last backed up; it does not show how the backup is protected."
   }
  ],
  "mapping_defaults": {

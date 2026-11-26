@@ -290,7 +290,9 @@ device. The modules, in the order they run:
 `winrm`, `printing`, `features`, `tls`, four that only ever report:
 `audit`, `device-guard`, `bitlocker`, `laps`; then (ADR-0078) `session`,
 `removable`, `mobile-code`, which can change settings, and four that only
-report: `rights`, `time`, `app-control`, `office`. On Linux, `lockout` only
+report: `rights`, `time`, `app-control`, `office`; and `dc`, which reads
+a domain controller's own directory (and is not applicable on any other
+computer) and only reports. On Linux, `lockout` only
 reports.
 
 The options change what a check compares with, as they will change what

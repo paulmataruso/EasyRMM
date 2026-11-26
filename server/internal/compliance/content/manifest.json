@@ -19,7 +19,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "047b5783c6f74a71cd7add38825fddcdbc3f458f871c2599b646b4826f4b4a2e"
+   "sha256": "f1935145296d2b5cc14829f3b6f63c4c7c9114a252147209e75fca82643358c5"
   },
   {
    "path": "packs/cis-xref.json",
@@ -49,7 +49,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "ca70a2d0cc6bcde69e344f0928bea7335f2023dcab282b4c31bd491ac8f90ebe"
+   "sha256": "cae50af0f493f8ca45ad0a7d2aca0aab25d77240ded591ca3df14669a1325cf8"
   },
   {
    "path": "packs/gdpr-indicative.json",
@@ -79,7 +79,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "a0ad5e9b42efdc59082971973bfc7476ace48d024b7e88ff46f0a4883cf45a5a"
+   "sha256": "d7a3f76d7207cc7209b3bc1b80055b9dabf979370beba7350301794c0978035b"
   },
   {
    "path": "packs/nist-800-53r5.json",
@@ -109,7 +109,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "e8360f4562ece4ee12b05765212b2b5b19e1bb33387fe67c7de9d7d6720b1e4e"
+   "sha256": "30a97a51a05ec35f6930804b3d1405f8185242c1313b9550e2612cb0f536eeff"
   },
   {
    "path": "packs/soc2-tsc-indicative.json",
