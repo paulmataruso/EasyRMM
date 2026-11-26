@@ -6,7 +6,7 @@
   "yah it can hold LUKS to thats fine"; and that the keys stay on the
   EasyRMM server: "So we just need to find a super secure way to store the
   keys on the EasyRMM server". Everything marked *decided in review* is the
-  writer's call; everything marked *owner decision* is open.
+  writer's call; the three choices once left to the owner are decided in review below.
 * Builds on: [ADR-0007](0007-hash-chained-audit-log.md) (audit),
   [ADR-0055](0055-lets-encrypt-in-one-step.md) section Step-up (5 minutes),
   [ADR-0057](0057-rotating-the-job-key.md) (what the job key signs),
@@ -331,7 +331,7 @@ There is no recovery key to read, so the agent makes one:
 
 1. **Needs an existing unlock the agent has by itself**: a TPM2 token in a
    LUKS2 header, or a key file (`/etc/crypttab`'s). A volume protected only
-   by a passphrase cannot be escrowed by the agent alone (§Owner questions).
+   by a passphrase cannot be escrowed by the agent alone (see "Decided in review in place of owner questions").
 2. The agent generates a passphrase from `crypto/rand` (40 characters from a
    32-letter alphabet, about 200 bits), then `cryptsetup luksAddKey`, with the
    new key on standard input or a descriptor (**never a command line**) and
@@ -375,8 +375,7 @@ There is no recovery key to read, so the agent makes one:
   approve permission to turn it on, and the console recommends it. When on:
   the requester gives a reason; an approver other than the requester, with
   their own step-up, approves within 10 minutes; the approval is single-use
-  and the key is shown to the requester only. (Open as an owner question:
-  the default.)
+  and the key is shown to the requester only. (Decided in review below.)
 * **Shown once**, with `Cache-Control: no-store`, in a panel that clears on
   close or after 60 seconds, with no copy-to-clipboard history on our side.
   Never in any list, export, report CSV, notification, error or job output.
@@ -426,7 +425,7 @@ Super administrators and the host operator are trusted: they can run any
 command on every managed computer already. Anyone who holds `script.run` or
 `device.terminal` on a device can reach `manage-bde` on **an online** device,
 and the keystore's permission does not change that: said plainly in the
-console and the guide. (Open as an owner question: acceptance.)
+console and the guide. (Accepted; decided in review below.)
 
 | Attacker | What they get | What stops the rest |
 |---|---|---|
@@ -566,16 +565,18 @@ calls `devscope.Allowed`, as ADR-0073 does.
 6. **Later**: TPM+PIN, the RDP-credential move (§9), split unseal, a USB HSM,
    extra recovery recipients, and the passphrase-only LUKS route once decided.
 
-## Owner questions
+## Decided in review in place of owner questions
 
-1. **Two-person approval default.** Decided off per organization, with a
-   recommendation to turn it on. Needs confirming if you want it required.
-2. **LUKS volumes protected only by a passphrase.** The agent cannot unlock
-   them alone. Recommendation: report *cannot escrow*, and offer a console
-   flow where a technician types the existing passphrase under step-up,
-   delivered like TPM+PIN's PIN and never kept (slice 6).
-3. **Script and terminal rights reach online devices' keys.** Recommendation:
-   accept, and say so in the console and the guide.
+These were open when the ADR was written. Each is decided in review as
+recommended below and can be changed by the owner; none blocks slice 1.
+
+1. **Two-person approval default:** off per organization, with the
+   console recommending it; an organization turns it on.
+2. **LUKS volumes protected only by a passphrase:** report *cannot escrow*;
+   slice 6 adds the console flow where a technician types the existing
+   passphrase under step-up, delivered like TPM+PIN's PIN and never kept.
+3. **Script and terminal rights reach an online device's keys:** accepted,
+   and said so in the console and the guide.
 
 ## Consequences
 
