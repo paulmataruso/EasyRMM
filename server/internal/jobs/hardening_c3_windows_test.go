@@ -90,15 +90,18 @@ func TestWindowsC3ChecksAsSystem(t *testing.T) {
 		{"session", "session-inactivity-lock", "in_place"},
 		{"session", "session-legal-caption", "in_place"},
 		{"session", "session-legal-text", "not_in_place"},
-		{"session", "session-credential-feedback", "not_in_place"},
+		{"session", "session-credential-feedback", "check_only"},
 		{"rdp", "rdp-idle-limit", "in_place"},
-		{"rdp", "rdp-disconnected-limit", "not_in_place"},
+		{"rdp", "rdp-disconnected-limit", "check_only"},
 		{"removable", "removable-deny-write", "in_place"},
 		{"mobile-code", "mobile-code-script-host", "in_place"},
 	} {
 		s := setting(r, c.module, c.id)
-		// A policy owner other than the planted value turns not in place into
-		// managed elsewhere; a runner has none.
+		// A wrong value planted under SOFTWARE\Policies, which no Group
+		// Policy object or MDM here explains, is check_only
+		// (unexplained_policy, ADR-0054): the reader cannot say who set it,
+		// so apply would not overwrite it. A wrong value elsewhere (the
+		// legal text under CurrentVersion\Policies\System) is not_in_place.
 		if s == nil || s.State != c.state {
 			t.Errorf("%s: %+v, want %s", c.id, s, c.state)
 		}
