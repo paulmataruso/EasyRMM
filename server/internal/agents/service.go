@@ -67,6 +67,14 @@ type Service struct {
 	removed func()
 	// meshBins keeps the MeshAgent binaries fetched from MeshCentral.
 	meshBins meshCache
+	// scope decides where the agent may manage Defender exclusions and
+	// report installed-file hashes (ADR-0070); nil allows every device.
+	scope DefenderScope
+	// version is called with an agent version the first heartbeat reports
+	// for a device (ADR-0070); nil for none.
+	version func(version string)
+	// builtChanged is called after the served builds were loaded.
+	builtChanged func()
 }
 
 // OnRemoved has f called after a device is deleted, such as to have the

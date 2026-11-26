@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentfiles"
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
@@ -33,6 +34,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentfilesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentlogsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
@@ -99,6 +101,8 @@ type Deps struct {
 	Setup   *usersapi.Setup
 	Devices *devices.Service
 	Agents  *agents.Service
+	// AgentFiles is the hash list of everything installed (ADR-0070).
+	AgentFiles *agentfiles.Service
 	// Jobs is the script library and job delivery (ADR-0017).
 	Jobs *jobs.Service
 	// Inventory stores devices' inventory and metrics (ADR-0018).
@@ -260,6 +264,19 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
+	// The hash list of everything the server hands out or installs, kept
+	// current: on start, on a signed build, on a new agent version, on a
+	// timer (ADR-0070). Where the development scope takes effect: see
+	// agents.DefenderScope; wire devscope.Allowed here once it has landed:
+	//
+	//	d.Agents.SetDefenderScope(agents.ScopeFunc(devscope.Allowed))
+	var files agentfiles.Mesh
+	if mesh != nil {
+		files = mesh
+	}
+	d.AgentFiles = agentfiles.New(db, log, builds, files, d.EasyPatch)
+	d.Agents.OnServedBuildsChanged(func() { go d.AgentFiles.ServedChanged(context.WithoutCancel(ctx)) })
+	d.Agents.OnAgentVersion(func(v string) { go d.AgentFiles.VersionReported(v) })
 	return d, nil
 }
 
@@ -509,6 +526,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
+	agentfilesapi.New(d.AgentFiles).Register(mux)
 	removalapi.New(d.Agents, d.Devices).Register(mux)
 	repairsapi.New(d.Recovery).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
@@ -660,6 +678,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge, deps.AgentLogs.Purge)
 	wg.Go(func() { deps.Agents.Run(ctx) })
+	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })

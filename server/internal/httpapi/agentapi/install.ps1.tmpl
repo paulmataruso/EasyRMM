@@ -17,10 +17,13 @@
 #   & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('{{.Server}}/api/agent/v1/install.ps1'))) -Token 'ert_...'
 {{- end}}
 #
-# It downloads the agent for this machine's processor from the server,
-# checks it against the server's checksums, and installs it as the
-# EasyRMMAgent service in %ProgramFiles%\EasyRMM\Agent. The agent then
-# installs MeshAgent for remote access.
+# It creates the agent's folders, locks them down to SYSTEM and
+# Administrators, verifies that, and excludes them from Microsoft Defender
+# (ADR-0070); only then does it download the agent for this machine's
+# processor from the server, check it against the server's checksums, and
+# install it as the EasyRMMAgent service in %ProgramFiles%\EasyRMM\Agent.
+# The agent then installs MeshAgent for remote access. If anything fails it
+# removes the exclusions and the folders it made.
 param(
     # A deployment token from the EasyRMM console; EASYRMM_TOKEN otherwise.
     [string]$Token = $env:EASYRMM_TOKEN
@@ -58,9 +61,225 @@ switch ($machine) {
 $file = "easyrmm-agent-windows-$arch.exe"
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
-$tmp = Join-Path ([IO.Path]::GetTempPath()) ('easyrmm-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $tmp | Out-Null
+
+# ---------------------------------------------------------------------------
+# The order (ADR-0070): create the folders, lock them down, verify them,
+# exclude them from Defender, and only then download anything. Each step
+# writes a line to $env:EASYRMM_INSTALL_TRACE when that is set, and a step
+# named in $env:EASYRMM_INSTALL_FAIL_AT fails: CI proves the order and the
+# clean-up with them.
+# ---------------------------------------------------------------------------
+$programFiles = $env:ProgramW6432
+if (-not $programFiles) { $programFiles = $env:ProgramFiles }
+$programData = [Environment]::GetFolderPath('CommonApplicationData')
+$dataRoot  = Join-Path $programData 'EasyRMM'
+$stateDir  = Join-Path $dataRoot 'Agent'
+$installDir = Join-Path $stateDir 'install'
+$filesRoot = Join-Path $programFiles 'EasyRMM'
+$agentDir  = Join-Path $filesRoot 'Agent'
+$meshDir   = Join-Path $filesRoot 'MeshAgent'
+$agentExe  = Join-Path $agentDir 'easyrmm-agent.exe'
+$meshExe   = Join-Path $meshDir 'meshagent.exe'
+$recordFile = Join-Path $stateDir 'defender-exclusions.json'
+$workFolders = @($stateDir, $agentDir, $meshDir)
+# SYSTEM and Administrators only, nothing inherited (the agent's own list).
+$protectedSddl = 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+$trustedSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+$creatorSids = @('S-1-3-0', 'S-1-3-1')
+# Rights that change a file, a folder, what it holds, or who may.
+$writeMask = [int64](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000)
+
+$created = New-Object System.Collections.ArrayList   # folders this run made
+$added = New-Object System.Collections.ArrayList    # exclusions this run added
+$ok = $false
+
+function Step([string]$Name) {
+    if ($env:EASYRMM_INSTALL_TRACE) {
+        Add-Content -LiteralPath $env:EASYRMM_INSTALL_TRACE -Value ('{0} {1}' -f $Name, [DateTime]::UtcNow.Ticks)
+    }
+    if ($env:EASYRMM_INSTALL_FAIL_AT -eq $Name) { Fail "forced failure at step $Name" }
+}
+
+# Why an entry is not safe to trust, or $null: not a plain file or folder,
+# an owner that is not SYSTEM, Administrators, TrustedInstaller or this
+# account, or an entry that lets anyone else write.
+function Get-Problem([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'is a link or junction' }
+    $folder = $item.PSIsContainer
+    $acl = $item.GetAccessControl()
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($trustedSids -notcontains $owner) { return "is owned by $owner" }
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        $sid = $rule.IdentityReference.Value
+        if (($trustedSids -contains $sid) -or ($creatorSids -contains $sid)) { continue }
+        if (-not $folder -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+        if (([int64]$rule.FileSystemRights -band $writeMask) -ne 0) { return "can be changed by $sid" }
+    }
+    return $null
+}
+
+function Test-Tree([string]$Root) {
+    $why = Get-Problem $Root
+    if ($why) { return "$Root $why" }
+    foreach ($e in (Get-ChildItem -LiteralPath $Root -Force -Recurse -ErrorAction Stop)) {
+        $why = Get-Problem $e.FullName
+        if ($why) { return "$($e.FullName) $why" }
+    }
+    return $null
+}
+
+# A folder is made with its access list in one step, so that there is no
+# moment it is open to users.
+function New-ProtectedFolder([string]$Path) {
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetSecurityDescriptorSddlForm($protectedSddl, [Security.AccessControl.AccessControlSections]::Access)
+    [void][IO.Directory]::CreateDirectory($Path, $sec)
+    [void]$created.Add($Path)
+}
+
+function Set-Protected([string]$Path) {
+    $sec = New-Object Security.AccessControl.DirectorySecurity
+    $sec.SetSecurityDescriptorSddlForm($protectedSddl, [Security.AccessControl.AccessControlSections]::Access)
+    Set-Acl -LiteralPath $Path -AclObject $sec
+}
+
+# Step 1. Under ProgramData any user may make folders, so one that is not
+# trustworthy is moved aside, not used; in Program Files only administrators
+# can, so one that is not is a failure.
+function Ensure-Folder([string]$Path, [bool]$UnderProgramData) {
+    if (Test-Path -LiteralPath $Path) {
+        $why = Get-Problem $Path
+        if (-not $why) { return }
+        if (-not $UnderProgramData) { Fail "$Path $why" }
+        $aside = '{0}.untrusted-{1}' -f $Path, [Guid]::NewGuid().ToString('N')
+        Write-Host "easyrmm: $Path $why; moving it to $aside"
+        Move-Item -LiteralPath $Path -Destination $aside
+    }
+    New-ProtectedFolder $Path
+}
+
+function Get-Record {
+    $entries = @()
+    if (Test-Path -LiteralPath $recordFile) {
+        try {
+            $r = Get-Content -LiteralPath $recordFile -Raw | ConvertFrom-Json
+            if ($r.version -eq 1) { $entries = @($r.entries) }
+        } catch { }
+    }
+    return ,$entries
+}
+
+# The record is written in the agent's format, without a byte order mark.
+function Save-Record($Entries) {
+    $items = @($Entries | ForEach-Object { ([ordered]@{ kind = $_.kind; path = $_.path; at = $_.at; agentVersion = $_.agentVersion }) | ConvertTo-Json -Compress })
+    $json = '{"version":1,"entries":[' + ($items -join ',') + ']}'
+    [IO.File]::WriteAllText($recordFile, $json, (New-Object Text.UTF8Encoding($false)))
+}
+
+$kindParam = @{
+    path    = 'ExclusionPath'
+    process = 'ExclusionProcess'
+    asr     = 'AttackSurfaceReductionOnlyExclusions'
+    cfa     = 'ControlledFolderAccessAllowedApplications'
+}
+
+function Test-Listed($List, [string]$Path) {
+    foreach ($e in @($List)) { if ($e -and ([string]$e).TrimEnd('\') -ieq $Path.TrimEnd('\')) { return $true } }
+    return $false
+}
+
+# Step 4. Where Defender is not the active antivirus, or is not there, no
+# exclusion is added and nothing is wrong. No protection of Defender's is
+# ever turned off. An entry Defender already lists is not ours: it is neither
+# recorded nor removed.
+function Add-Exclusions {
+    try {
+        $pref = Get-MpPreference
+        $status = Get-MpComputerStatus
+    } catch {
+        Write-Host "easyrmm: Microsoft Defender is not available here ($($_.Exception.Message)); no exclusions were added."
+        return
+    }
+    if (($status.AMRunningMode -and $status.AMRunningMode -ne 'Normal') -or -not $status.AntivirusEnabled -or -not $status.RealTimeProtectionEnabled) {
+        Write-Host 'easyrmm: Microsoft Defender is not the active antivirus here; no exclusions were added.'
+        return
+    }
+    $record = [System.Collections.ArrayList]@(Get-Record)
+    $want = @()
+    foreach ($f in $workFolders) { $want += ,@('path', $f); $want += ,@('asr', $f) }
+    foreach ($x in @($agentExe, $meshExe)) { $want += ,@('process', $x); $want += ,@('cfa', $x) }
+    $lists = @{ path = $pref.ExclusionPath; process = $pref.ExclusionProcess; asr = $pref.AttackSurfaceReductionOnlyExclusions; cfa = $pref.ControlledFolderAccessAllowedApplications }
+    foreach ($w in $want) {
+        $kind, $path = $w[0], $w[1]
+        if (Test-Listed $lists[$kind] $path) { continue }
+        $param = $kindParam[$kind]
+        try {
+            $args1 = @{ $param = $path }
+            Add-MpPreference @args1 -ErrorAction Stop
+        } catch {
+            # Defender may refuse (Tamper Protection, policy): the agent
+            # reports it; the folders are locked down either way.
+            Write-Warning "easyrmm: Defender did not take the $kind exclusion for $path ($($_.Exception.Message))"
+            continue
+        }
+        $entry = [pscustomobject]@{ kind = $kind; path = $path; at = [DateTime]::UtcNow.ToString('o'); agentVersion = 'install.ps1' }
+        [void]$record.Add($entry)
+        [void]$added.Add($entry)
+        Save-Record $record
+    }
+}
+
+# On failure: the exclusions this run added, then the folders it made that
+# hold nothing (a folder with anything in it is left alone).
+function Undo-Install {
+    foreach ($e in @($added)) {
+        try {
+            $args1 = @{ $kindParam[$e.kind] = $e.path }
+            Remove-MpPreference @args1 -ErrorAction Stop
+        } catch { Write-Warning "easyrmm: could not remove the $($e.kind) exclusion for $($e.path): $($_.Exception.Message)" }
+    }
+    if ($added.Count -gt 0 -and (Test-Path -LiteralPath $recordFile)) {
+        $keep = @()
+        foreach ($r in @(Get-Record)) {
+            $ours = $false
+            foreach ($a in @($added)) { if ($a.kind -eq $r.kind -and $a.path -eq $r.path) { $ours = $true } }
+            if (-not $ours) { $keep += $r }
+        }
+        if ($keep.Count -gt 0) { Save-Record $keep } else { Remove-Item -LiteralPath $recordFile -Force -ErrorAction SilentlyContinue }
+    }
+    $folders = @($created)
+    [Array]::Reverse($folders)
+    foreach ($p in $folders) {
+        try { [IO.Directory]::Delete($p, $false) } catch { }
+    }
+}
+
 try {
+    Step 'create'
+    Ensure-Folder $dataRoot $true
+    Ensure-Folder $stateDir $true
+    Ensure-Folder $installDir $true
+    New-Item -ItemType Directory -Force -Path $filesRoot -ErrorAction SilentlyContinue | Out-Null
+    Ensure-Folder $agentDir $false
+    Ensure-Folder $meshDir $false
+
+    Step 'lock'
+    foreach ($f in $workFolders) { Set-Protected $f }
+    Set-Protected $installDir
+
+    Step 'verify'
+    foreach ($f in @($dataRoot, $stateDir, $installDir, $agentDir, $meshDir)) {
+        $why = Test-Tree $f
+        if ($why) { Fail "will not exclude a folder that is not safe: $why" }
+    }
+
+    Step 'exclude'
+    Add-Exclusions
+
+    Step 'download'
+    $tmp = $installDir
 {{- if .KeyPin}}
     # Trust this server's key, nothing else, for the downloads.
     [Net.ServicePointManager]::ServerCertificateValidationCallback = {
@@ -106,11 +325,13 @@ try {
         Remove-Item Env:EASYRMM_TOKEN -ErrorAction SilentlyContinue
     }
     if ($code -ne 0) { Fail "the agent was not installed (exit code $code)" }
+    $ok = $true
     # The agent has said whether the device is enrolled or waits for approval.
     Write-Host 'easyrmm: done.'
 } finally {
 {{- if .KeyPin}}
     [Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 {{- end}}
-    Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force -Path $installDir -ErrorAction SilentlyContinue
+    if (-not $ok) { Undo-Install }
 }

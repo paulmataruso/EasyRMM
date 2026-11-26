@@ -17,6 +17,25 @@
   and every heartbeat that reports a new version, every new agent-side
   action is gated by `devscope.Allowed(org)`, the CI jobs prove the
   order, and each slice lists its files and tests.
+* Amended 2026-11-26 (decided in review), while building slice A: (1) a
+  Defender refusal or an unreadable Defender during `install.ps1` step 4
+  is a warning and the agent reports it (`refused`, `unavailable`); only a
+  failure of the script's own steps stops it, so a machine with Tamper
+  Protection can still be installed; (2) the hash list refreshes on its own
+  thirty-minute timer, not on the connector poll, and the server reads the
+  engine's packages directly from the engine, not through the agent edge,
+  checking each package's SHA-256 against the engine's list; (3) the
+  Windows CI steps are one new job, `windows-defender`, not additions to
+  `windows-system` and `windows-hardening`, and it covers steps 0 to 4, 6,
+  8a and 9; steps 5, 7 and 8 (moved winget and update work, MeshAgent's
+  update, the .NET extraction folders) wait for slice B and real devices;
+  (4) the server answers every heartbeat with `defender.enabled`, the
+  development-scope result, and the agent reconciles and reports only after
+  an answer that says yes; MeshAgent's version is read from
+  `meshagent -info`'s compile line, which is to confirm on a real device;
+  (5) **the AMSI probe has not run yet**: it is `TestAMSIStaysOnAsSystem`
+  in the `windows-defender` job, and its result is to be written here as an
+  amendment before the feature ships.
 * Asked for by the owner (2026-11-23), who suspects antivirus is blocking
   the agents on client machines. **Revised the same day to the owner's
   changed design** (below, *Owner decisions*): whole working folders are

@@ -378,3 +378,10 @@ func TestHelpers(t *testing.T) {
 		t.Errorf("timeout: %v", err)
 	}
 }
+
+func TestTempEnvKeepsWorkInTheAgentsFolder(t *testing.T) {
+	got := tempEnv(`C:\ProgramData\EasyRMM\Agent\easypatch`)
+	if len(got) != 2 || got[0] != `TEMP=C:\ProgramData\EasyRMM\Agent\easypatch` || got[1] != `TMP=C:\ProgramData\EasyRMM\Agent\easypatch` {
+		t.Fatalf("env = %v", got)
+	}
+}

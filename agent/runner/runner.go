@@ -147,6 +147,11 @@ type Runner struct {
 	// reading (2 min); HardwareEvery is the wait between readings (30
 	// min), each plus up to HardwareJitter (1 min).
 	HardwareFirst, HardwareEvery, HardwareJitter time.Duration
+	// Defender keeps the Microsoft Defender exclusions (ADR-0070) and
+	// Installed hashes the installed programs; nil never does. Both run
+	// only where the server's last answer allowed it.
+	Defender  DefenderManager
+	Installed InstalledReporter
 
 	status      state.Status
 	failures    int
@@ -162,6 +167,7 @@ type Runner struct {
 	repair  repairs
 	// settled: Settled has returned true.
 	settled bool
+	defend  defenderState
 }
 
 // RefreshInventory has the inventory collected again at the next heartbeat,
@@ -270,6 +276,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			req.MeshAgent = &st
 		}
 		req.Repair = r.repair.report(time.Now())
+		r.defendRequest(ctx, &req)
 	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
@@ -282,6 +289,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		return r.failed(err), nil
 	}
 	r.failures = 0
+	r.defendAnswered(resp.Defender)
 	if r.Update != nil {
 		r.Update.Reached()
 		if r.Settled != nil && !r.settled {

@@ -89,6 +89,14 @@ export class Agent {
     await this.post("/api/agent/v1/hardware", report);
   }
 
+  /**
+   * A heartbeat (agentproto.HeartbeatRequest) with the facts given, and what else the agent reports with it: the
+   * Defender state and the installed files' hashes (ADR-0070). Returns the server's answer.
+   */
+  async heartbeat(request: { facts: unknown; defender?: unknown; installedFiles?: unknown }): Promise<{ defender?: { enabled: boolean } }> {
+    return (await (await this.post("/api/agent/v1/heartbeat", request)).json()) as { defender?: { enabled: boolean } };
+  }
+
   /** Reports that the run ended with exit code 0 and this output, and the program it started when given. */
   async succeeded(runId: string, stdout: string, interpreter?: Interpreter): Promise<void> {
     const now = new Date().toISOString();

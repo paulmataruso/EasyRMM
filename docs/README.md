@@ -38,6 +38,9 @@ Everything about running, using and building EasyRMM. Start with the
 * [Hardening Linux computers](operations/hardening.md): checks, each
   device's findings, and drift across the fleet.
 * [Reports](operations/reports.md)
+* [Antivirus and EasyRMM](operations/antivirus.md): the Microsoft Defender
+  exclusions the Windows agent adds, what the device page shows, and the hash
+  list for allow-listing.
 * [Forwarding the audit log](operations/audit-forwarding.md)
 * [Mail](operations/mail.md): the mail server in the console or `.env`,
   the test message, and the limits.

@@ -307,3 +307,27 @@ func TestCheckAbove(t *testing.T) {
 	folder(`real\Modules`, "")
 	wantUntrusted(t, "a junction on the way", CheckAbove(filepath.Join(j, "Modules")), j, "is a link, junction or other reparse point")
 }
+
+// TestCheckSubtreeToleratesOpenFilesAndFindsWriters: ADR-0070 verifies the
+// folders it excludes without the exclusive open (the agent's own log is
+// open), and still finds a file or folder anyone else may write.
+func TestCheckSubtreeToleratesOpenFilesAndFindsWriters(t *testing.T) {
+	elevated(t)
+	dir := installLike(t)
+	held, err := os.OpenFile(filepath.Join(dir, "a.dll"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+	if err := CheckSubtree(dir); err != nil {
+		t.Fatalf("an open file failed the subtree check: %v", err)
+	}
+	if err := CheckTree(dir, false); err == nil {
+		t.Fatal("the exclusive check was expected to refuse a file open for writing")
+	}
+	out, err := exec.Command("icacls", filepath.Join(dir, "lib"), "/grant", "*S-1-5-32-545:(OI)(CI)(W)").CombinedOutput()
+	if err != nil {
+		t.Fatalf("icacls: %v: %s", err, out)
+	}
+	wantUntrusted(t, "a folder Users may write", CheckSubtree(dir), filepath.Join(dir, "lib"), "can be changed by BUILTIN\\Users")
+}
