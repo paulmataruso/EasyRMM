@@ -125,6 +125,17 @@ func environment(p agentproto.JobPayload, home string) []string {
 	return append(env, "TEMP="+home, "TMP="+home, "EASYRMM_JOB_ID="+p.JobID, "EASYRMM_RUN_ID="+p.RunID)
 }
 
+// scriptBody is the script as the shell reads it. A PowerShell script that
+// takes parameters (a Windows module's, ADR-0073) gets agentproto.ParamsPrologue,
+// so its standard input and output are UTF-8; the signature was checked on the
+// script as sent, and nothing else about it changes.
+func scriptBody(p agentproto.JobPayload) string {
+	if len(p.Params) > 0 && (p.Shell == agentproto.ShellPowerShell || p.Shell == agentproto.ShellPwsh) {
+		return agentproto.ParamsPrologue + p.Script
+	}
+	return p.Script
+}
+
 // writeScript writes the script as the shell reads it: PowerShell scripts as
 // UTF-8 with a byte order mark (Windows PowerShell reads a script without
 // one in the ANSI code page), batch files with CRLF line ends in the OEM
