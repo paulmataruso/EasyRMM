@@ -79,6 +79,7 @@ func (a *Agent) uploadSecret(ctx context.Context, key *agentproto.EscrowKeyPaylo
 	if err != nil {
 		return agentproto.EscrowAnswer{}, errors.New("the recovery password is not in the expected form")
 	}
+	defer escrowcrypto.Zero(secret)
 	enc, ct, err := escrowcrypto.Seal(pub, escrowcrypto.Context{Org: key.OrgID, Device: a.DeviceID, Volume: volume, Protector: protector, OrgKey: key.KeyID}, secret)
 	if err != nil {
 		return agentproto.EscrowAnswer{}, errors.New("sealing the recovery password failed")

@@ -58,7 +58,7 @@ const (
 	// ShellNative is not a shell: the job's Script names a handler built into
 	// the agent (ADR-0073 as amended by ADR-0081), which receives the job's
 	// Params and answers with the same one result line a script prints. The
-	// server makes such a job only for a catalogued native action; the agent
+	// server makes such a job only for a cataloged native action; the agent
 	// runs only handlers it was built with. It is not in Shells and not
 	// accepted from a user's script, whatever they type.
 	ShellNative = "native"

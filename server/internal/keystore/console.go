@@ -84,7 +84,7 @@ type DeviceEscrow struct {
 	TwoPerson bool `json:"twoPerson"`
 	// CanEnable: the caller may turn BitLocker on here, which needs the
 	// permission, a Windows device and escrow that can verify before encryption.
-	CanEnable bool `json:"canEnable"`
+	CanEnable bool          `json:"canEnable"`
 	Volumes   []VolumeState `json:"volumes"`
 }
 

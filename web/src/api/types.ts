@@ -14,6 +14,7 @@ export type Permission =
   | "device.rdp_credentials.save"
   | "device.recovery_key.read"
   | "device.recovery_key.approve"
+  | "device.bitlocker.manage"
   | "quickassist.view"
   | "quickassist.link.create"
   | "quickassist.link.permanent"

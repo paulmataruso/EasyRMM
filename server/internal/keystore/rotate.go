@@ -137,7 +137,7 @@ func (s *Service) RewrapKEK(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	clear(s.keys) // a cached public key is unchanged, but nothing here may outlive a rotation
 	s.mu.Unlock()
-	return n, nil
+	return n, nil //nolint:nilerr // a keystore that went away or refused one key is tried again at the next run
 }
 
 // KEKUse is how many organization keys each KEK version still wraps.

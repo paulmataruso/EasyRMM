@@ -189,10 +189,9 @@ func (s *bitlockerSim) eventsString() string {
 
 // ksAgentServer is the agent's routes, answered by the real service.
 type ksAgentServer struct {
-	svc      *keystore.Service
-	dev      keystore.Device
-	tamper   bool
-	failures int
+	svc    *keystore.Service
+	dev    keystore.Device
+	tamper bool
 }
 
 func (k *ksAgentServer) EscrowVolumes(ctx context.Context, rep agentproto.EscrowVolumesReport) (agentproto.EscrowVolumesAnswer, error) {
