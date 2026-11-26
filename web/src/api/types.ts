@@ -57,6 +57,8 @@ export type Permission =
   | "backup.manage"
   | "backup.view_sensitive"
   | "backup.destroy"
+  | "print.view_sensitive"
+  | "print.destroy"
   | "settings.manage";
 
 export type Role =

@@ -390,6 +390,7 @@ func TestWindowsModulePermissions(t *testing.T) {
 		PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
 		PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 		PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
+		PermPrintViewSensitive, PermPrintDestroy,
 	}
 	want := map[Role][]Permission{
 		RoleReadOnly: {},
@@ -399,7 +400,8 @@ func TestWindowsModulePermissions(t *testing.T) {
 		},
 	}
 	want[RoleSiteAdmin] = append(slices.Clone(want[RoleTechnician]),
-		PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADViewSensitive)
+		PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADViewSensitive,
+		PermPrintViewSensitive, PermPrintDestroy)
 	want[RoleOrgAdmin] = append(slices.Clone(want[RoleSiteAdmin]), PermCAManage, PermADManage, PermADResetPassword)
 	want[RoleSuperAdmin] = all
 	for role, held := range want {
