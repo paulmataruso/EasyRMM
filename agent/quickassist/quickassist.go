@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -52,7 +53,10 @@ type Options struct {
 	// address actually used, and the server still checks the ticket against
 	// its own address, so this lets nobody reach a server that did not make
 	// the ticket.
-	Server  string
+	Server string
+	// Install runs the permanent installation with the conversion token;
+	// default: this program's own "install" command.
+	Install func(ctx context.Context, server, token string) error
 	Version string
 	In      io.Reader
 	Out     io.Writer
@@ -160,7 +164,8 @@ this session. Nothing is installed, and everything is removed when it ends.
   session, and only by typing it.
 
 Type YES to allow, anything else to cancel: `, su.Host, code)
-	line, _ := bufio.NewReader(o.In).ReadString('\n')
+	rd := bufio.NewReader(o.In)
+	line, _ := rd.ReadString('\n')
 	if strings.TrimSpace(line) != "YES" {
 		_, _ = fmt.Fprintln(o.Out, "Canceled. Nothing was sent and nothing was changed.")
 		return ErrDeclined
@@ -194,7 +199,7 @@ Type YES to allow, anything else to cancel: `, su.Host, code)
 	}
 	_, _ = fmt.Fprintf(o.Out, "\nWaiting for %s's technician to accept. Press Ctrl+C to end the session at any time.\n", res.Organization)
 
-	reason := run(ctx, c, o, res)
+	reason := run(ctx, c, o, rd, tk.Server, res)
 	_, _ = fmt.Fprintf(o.Out, "\nEnding the session (%s) and removing everything this program made.\n", reason)
 	rep := cleanup(dir, lock)
 	// The final report is sent even when the user pressed Ctrl+C.
@@ -215,7 +220,7 @@ Type YES to allow, anything else to cancel: `, su.Host, code)
 
 // run waits for acceptance and then holds the session until it ends, and
 // returns the reason.
-func run(ctx context.Context, c *client.Client, o Options, res *client.QAEnrollResult) string {
+func run(ctx context.Context, c *client.Client, o Options, rd *bufio.Reader, server string, res *client.QAEnrollResult) string {
 	every := o.Poll
 	if every == 0 {
 		every = time.Duration(res.HeartbeatSeconds) * time.Second
@@ -225,7 +230,7 @@ func run(ctx context.Context, c *client.Client, o Options, res *client.QAEnrollR
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
-	announced := false
+	announced, asked := false, false
 	for {
 		st, err := c.QAStatus(ctx)
 		switch {
@@ -234,6 +239,11 @@ func run(ctx context.Context, c *client.Client, o Options, res *client.QAEnrollR
 		case err == nil && st.State == "active" && !announced:
 			announced = true
 			_, _ = fmt.Fprintln(o.Out, "The technician accepted. The session is active.")
+		case err == nil && st.State == "active" && st.Offer != nil && !asked:
+			asked = true
+			if done := offerInstall(ctx, c, o, rd, server, st.Offer); done {
+				return "converted"
+			}
 		case err == nil && st.State != "requested" && st.State != "active":
 			r := st.EndReason
 			if r == "" {
@@ -247,6 +257,47 @@ func run(ctx context.Context, c *client.Client, o Options, res *client.QAEnrollR
 		case <-t.C:
 		}
 	}
+}
+
+// offerInstall asks the user whether to keep EasyRMM on this computer, as
+// the technician asked. Only a yes typed here goes to the server. It reports
+// whether the permanent agent is now in place.
+func offerInstall(ctx context.Context, c *client.Client, o Options, rd *bufio.Reader, server string, off *client.QAOffer) bool {
+	_, _ = fmt.Fprintf(o.Out, `
+The technician asks to keep EasyRMM on this computer, so they can support it
+later. It would run in the background and start with the computer, for
+%s (%s). You can remove it at any time.
+
+Type INSTALL to allow, anything else to say no: `, off.Organization, off.Site)
+	line, _ := rd.ReadString('\n')
+	yes := strings.TrimSpace(line) == "INSTALL"
+	tok, err := c.QAInstall(ctx, yes)
+	if err != nil {
+		_, _ = fmt.Fprintf(o.Out, "Could not tell the server: %v\n", err)
+		return false
+	}
+	if !yes || tok == "" {
+		_, _ = fmt.Fprintln(o.Out, "Nothing was installed.")
+		return false
+	}
+	install := o.Install
+	if install == nil {
+		install = func(ctx context.Context, server, token string) error {
+			cmd := exec.CommandContext(ctx, o.Self, "install", "--server", server, "--token", token) //nolint:gosec // this program, with the token the server just made
+			cmd.Stdout, cmd.Stderr = o.Out, o.Out
+			return cmd.Run()
+		}
+	}
+	if err := install(ctx, server, tok); err != nil {
+		_, _ = fmt.Fprintf(o.Out, "The installation failed and was rolled back: %v\n", err)
+		return false
+	}
+	if err := c.QAConverted(ctx); err != nil {
+		_, _ = fmt.Fprintf(o.Out, "Installed, but the server could not link it to this session: %v\n", err)
+		return false
+	}
+	_, _ = fmt.Fprintln(o.Out, "EasyRMM is installed on this computer.")
+	return true
 }
 
 // trailerLen is the length of the trailer at the end of b.

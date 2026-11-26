@@ -60,6 +60,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/quickassist/sessions/{id}/decline", a.decline)
 	r("POST /api/v1/quickassist/sessions/{id}/end", a.end)
 	r("POST /api/v1/quickassist/sessions/{id}/takeover", a.takeover)
+	r("POST /api/v1/quickassist/sessions/{id}/install", a.install)
 
 	mux.Handle("GET /qa/{token}", httpapi.Handle(a.page))
 	mux.Handle("GET /qa/{token}/download", httpapi.Handle(a.download))
@@ -256,6 +257,17 @@ func (a *API) decline(w http.ResponseWriter, r *http.Request) error {
 
 func (a *API) end(w http.ResponseWriter, r *http.Request) error {
 	return a.simple(func(r *http.Request, id uuid.UUID) error { return a.svc.End(r.Context(), httpapi.Caller(r), id) })(w, r)
+}
+
+// install asks to keep the agent on the computer. It needs a second factor
+// within five minutes; nothing happens until the user agrees on their screen.
+func (a *API) install(w http.ResponseWriter, r *http.Request) error {
+	if err := a.stepUp.StepUp(r); err != nil {
+		return err
+	}
+	return a.simple(func(r *http.Request, id uuid.UUID) error {
+		return a.svc.RequestInstall(r.Context(), httpapi.Caller(r), id)
+	})(w, r)
 }
 
 func (a *API) takeover(w http.ResponseWriter, r *http.Request) error {

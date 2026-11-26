@@ -115,7 +115,9 @@ type Service struct {
 
 // OnThrottled sets what is told that a link went over its bucket (the
 // alert mail). It runs after the transaction commits.
-func (s *Service) OnThrottled(f func(ctx context.Context, org uuid.UUID, link string)) { s.onThrottled = f }
+func (s *Service) OnThrottled(f func(ctx context.Context, org uuid.UUID, link string)) {
+	s.onThrottled = f
+}
 
 // New builds the service. publicURL is the console's address the ticket
 // names; key signs tickets (the server's job key).

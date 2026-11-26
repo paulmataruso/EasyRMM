@@ -20,6 +20,8 @@ import (
 type QuickAssist interface {
 	Enroll(ctx context.Context, ip netip.Addr, req quickassist.EnrollRequest) (*quickassist.EnrollResult, error)
 	Status(ctx context.Context, device uuid.UUID) (*quickassist.RunnerState, error)
+	InstallConsent(ctx context.Context, device uuid.UUID, ip netip.Addr, accept bool) (*quickassist.Conversion, error)
+	Converted(ctx context.Context, device uuid.UUID, ip netip.Addr) error
 	RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr, reason string, rep *quickassist.Cleanup) error
 }
 
@@ -36,6 +38,8 @@ func (a *API) registerQuickAssist(mux *http.ServeMux) {
 	mux.Handle("POST "+qaticket.PathEnroll, httpapi.Handle(a.qaEnroll))
 	mux.Handle("POST "+qaticket.PathStatus, httpapi.Handle(a.signed(a.qaStatus)))
 	mux.Handle("POST "+qaticket.PathEnd, httpapi.Handle(a.signed(a.qaEnd)))
+	mux.Handle("POST "+qaticket.PathInstall, httpapi.Handle(a.signed(a.qaInstall)))
+	mux.Handle("POST "+qaticket.PathConverted, httpapi.Handle(a.signed(a.qaConverted)))
 }
 
 var (
@@ -87,6 +91,32 @@ func (a *API) qaEnd(w http.ResponseWriter, r *http.Request, d *agents.Device, bo
 		return err
 	}
 	if err := a.qa.RunnerEnd(r.Context(), d.ID, httpapi.ClientIP(r), in.Reason, in.Cleanup); err != nil {
+		return mapQA(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) qaInstall(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in struct {
+		Accept bool `json:"accept"`
+	}
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	out, err := a.qa.InstallConsent(r.Context(), d.ID, httpapi.ClientIP(r), in.Accept)
+	if err != nil {
+		return mapQA(err)
+	}
+	if out == nil {
+		out = &quickassist.Conversion{}
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) qaConverted(w http.ResponseWriter, r *http.Request, d *agents.Device, _ []byte) error {
+	if err := a.qa.Converted(r.Context(), d.ID, httpapi.ClientIP(r)); err != nil {
 		return mapQA(err)
 	}
 	w.WriteHeader(http.StatusNoContent)
