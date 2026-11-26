@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/paulmataruso/easyrmm/agent/channel"
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/easypatch"
 	"github.com/paulmataruso/easyrmm/agent/hardware"
@@ -401,6 +402,10 @@ func (e *env) mesh(cfg *state.Config) *meshagent.Manager {
 	return meshagent.NewManager(e.paths.MeshAgent(), mode, e.sd, e.log)
 }
 
+// channelEnv is the agent-side off switch of the WebSocket channel: set to
+// "off" in the agent's environment, it never connects.
+const channelEnv = "EASYRMM_AGENT_CHANNEL"
+
 func (e *env) run(ctx context.Context) error {
 	if err := e.openStore(); err != nil {
 		return err
@@ -510,6 +515,13 @@ func (e *env) run(ctx context.Context) error {
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
 	g.Go(func() { ship.Run(ctx, sendLogs(c)) })
+	if os.Getenv(channelEnv) != "off" {
+		// The WebSocket channel (ADR-0059), which only shortens the wait for
+		// the next check-in. EASYRMM_AGENT_CHANNEL=off turns it off here.
+		ch := channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log})
+		r.Channel = ch
+		g.Go(func() { ch.Run(ctx) })
+	}
 	err = r.Run(ctx)
 	cancel()
 	g.Wait()
