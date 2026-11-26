@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -88,7 +87,7 @@ func TestWindowsChangeArguments(t *testing.T) {
 
 type stepUpStub struct{ err error }
 
-func (s stepUpStub) VerifyStepUp(context.Context, access.Caller, string, time.Duration) error {
+func (s stepUpStub) VerifyStepUp(context.Context) error {
 	return s.err
 }
 

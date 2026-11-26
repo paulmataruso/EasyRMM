@@ -120,7 +120,21 @@ export function setAuthErrorListener(listener: AuthListener | null): void {
   authListener = listener;
 }
 
+type StepUpHandler = () => Promise<boolean>;
+let stepUpHandler: StepUpHandler | null = null;
+
+/**
+ * Registered by the step-up dialog (ADR-0055): asked when a request is refused with `step_up_required`. It
+ * resolves true once the person has confirmed a second factor, and the request is sent again, once; false when
+ * they gave up, and the refusal reaches the caller.
+ */
+export function setStepUpHandler(handler: StepUpHandler | null): void {
+  stepUpHandler = handler;
+}
+
 export interface RequestOptions {
+  /** The request is already the retry after a step-up: do not ask again. */
+  noStepUp?: boolean;
   params?: QueryParams;
   body?: unknown;
   /** A file sent as the body as it is (application/octet-stream), instead of JSON. */
@@ -199,6 +213,10 @@ export async function request<T>(method: string, path: string, options: RequestO
       }
       if (response.ok) return parse<T>(response);
       error = await readError(response);
+    }
+    // The action needs a second factor confirmed in the last few minutes: ask for it, then send the request again.
+    if (error.code === "step_up_required" && !options.noStepUp && stepUpHandler && (await stepUpHandler())) {
+      return request<T>(method, path, { ...options, noStepUp: true });
     }
     const sessionProblem =
       (error.status === 401 && error.code === "unauthenticated") || (error.status === 403 && error.code === "mfa_required");

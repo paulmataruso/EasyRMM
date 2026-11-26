@@ -88,19 +88,16 @@ type HardeningConfirmation struct {
 	Typed string `json:"typed,omitempty"`
 	// StepUp is the proof of a recent step-up (ADR-0055), which tier 3
 	// needs as well.
-	StepUp string `json:"stepUp,omitempty"`
 }
 
-// StepUpVerifier checks a step-up proof (ADR-0055).
+// StepUpVerifier checks that the request's session is stepped up (ADR-0055
+// §Step-up: a second factor within the last five minutes, on the session).
 type StepUpVerifier interface {
-	VerifyStepUp(ctx context.Context, c access.Caller, proof string, within time.Duration) error
+	VerifyStepUp(ctx context.Context) error
 }
 
-// stepUpWithin is how recent a tier 3 change's step-up must be.
-const stepUpWithin = 10 * time.Minute
-
-// SetStepUp gives the service the step-up check. Until ADR-0055's step-up
-// is built and wired here, a change of tier 3 is refused.
+// SetStepUp gives the service the step-up check. Without one, a change of
+// tier 3 is refused.
 func (s *Service) SetStepUp(v StepUpVerifier) { s.stepUp = v }
 
 // windowsChange is a checked apply or undo.
@@ -129,12 +126,10 @@ func (s *Service) windowsChangeGuard(c access.Caller, ids []uuid.UUID, h Hardeni
 		return nil, err
 	}
 	if ch.tier == tierDangerous {
-		// TODO(ADR-0055): the step-up is being built (ws/f5-stepup); until
-		// it is wired through SetStepUp, no change of tier 3 is allowed.
 		if s.stepUp == nil {
 			return nil, apperr.Conflict("step_up_required", "This change can cut access to the computer and needs step-up authentication (ADR-0055), which is not available yet, so it cannot be made from here.")
 		}
-		ch.verify = func(ctx context.Context) error { return s.stepUp.VerifyStepUp(ctx, c, in.StepUp, stepUpWithin) }
+		ch.verify = s.stepUp.VerifyStepUp
 	}
 	return ch, nil
 }

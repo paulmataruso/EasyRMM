@@ -897,6 +897,30 @@ it. 5b2 builds it.
   the method). Failures count against the session as a wrong password
   does in `reauthenticate`, which ends it after `MaxMFAFailures`.
 
+*Amended 2026-11-26 (decided in review):* step-up is built ahead of 5b2, as
+F5, so that ADR-0057, ADR-0064, ADR-0073 and ADR-0078 can attach it by
+name. What was built, where this section left it open:
+
+* `sessions.stepped_up_at`, set only by `POST /api/v1/auth/step-up/totp`,
+  `…/webauthn/finish` or a provider's fresh sign-in; checked by
+  `Sessions.RequireStepUp` (or `Sessions.StepUp` inside a handler), which
+  answers 401 `step_up_required`. The window is `auth.StepUpWindow`.
+* A TOTP code already used (at sign-in or by an earlier step-up) is refused
+  (`totp_last_step`). A code that looks like a recovery code is refused
+  without being used up, and audited as denied.
+* Failed step-ups count in `sessions.reauth_failures`, the counter
+  `reauthenticate` uses, and end the session after `MaxMFAFailures`.
+  Attempts are rate limited per address and per account, as sign-in is.
+* The provider a session signed in through is kept on it
+  (`sessions.sso_provider_id`). The provider's answer returns to the
+  ordinary callback, which finds the step-up by its `state` (kept hashed on
+  the session's row): the session cookie is `SameSite=Strict` and does not
+  come back from the provider. `auth_time` must be at or after the start
+  of the step-up, to the second.
+* A security key's answer is a ceremony of its own kind, `stepup`.
+* `POST /api/v1/auth/step-up/check` answers 204 once stepped up: the
+  console asks for a step-up ahead of an action with it.
+
 ### Audit
 All under `tls.`, with the name, issuer, serial and validity in the
 details, never a key or a credential:

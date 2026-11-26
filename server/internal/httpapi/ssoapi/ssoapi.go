@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
@@ -35,6 +36,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/auth/sso", h(a.buttons))
 	mux.Handle("GET /api/v1/auth/sso/{id}/start", http.HandlerFunc(a.start))
 	mux.Handle("GET "+sso.CallbackPath, http.HandlerFunc(a.callback))
+	// Step-up through the provider (ADR-0055): a fresh sign-in there.
+	mux.Handle("POST /api/v1/auth/step-up/oidc/begin", httpapi.RequireActive(h(a.beginStepUp)))
 	mux.Handle("GET /api/v1/auth/identities", httpapi.RequireActive(h(a.identities)))
 	mux.Handle("DELETE /api/v1/auth/identities/{id}", httpapi.RequireActive(h(a.unlink)))
 
@@ -131,8 +134,43 @@ func (a *API) start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusSeeOther) //nolint:gosec // G710: the authorization endpoint of a provider a super administrator set up
 }
 
+type stepUpRequest struct {
+	ReturnTo string `json:"returnTo"`
+}
+
+// beginStepUp answers with the provider's address for a fresh sign-in; the
+// console goes there, and the provider sends the browser back to the callback.
+func (a *API) beginStepUp(w http.ResponseWriter, r *http.Request) error {
+	var req stepUpRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	authURL, err := a.svc.StartStepUp(r.Context(), id.Session, req.ReturnTo, httpapi.Meta(r))
+	switch {
+	case errors.Is(err, auth.ErrNoSecondFactor):
+		return &httpapi.Error{Status: http.StatusConflict, Code: "no_second_factor", Message: "This sign-in cannot be repeated at your provider. Set up an authenticator app or a security key in your account settings."}
+	case errors.Is(err, auth.ErrRateLimited):
+		return httpapi.ErrTooMany
+	case err != nil:
+		var f *sso.Failure
+		if errors.As(err, &f) {
+			return &httpapi.Error{Status: http.StatusBadGateway, Code: "provider_unavailable", Message: "The identity provider could not be reached."}
+		}
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"authUrl": authURL})
+	return nil
+}
+
 func (a *API) callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// A step-up's state is on its session's row; the session cookie is
+	// SameSite=Strict and does not come back from the provider.
+	if a.svc.IsStepUp(r.Context(), q.Get("state")) {
+		a.stepUpCallback(w, r)
+		return
+	}
 	in := sso.CallbackInput{State: q.Get("state"), Code: q.Get("code"), Error: q.Get("error"), ErrorDescription: q.Get("error_description")}
 	if c, err := r.Cookie(a.flowCookieName()); err == nil {
 		in.Sealed = c.Value
@@ -226,4 +264,29 @@ func (a *API) remove(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+// stepUpCallback completes a step-up and sends the browser back to the
+// console page it came from, saying how it went (?stepup=done or failed).
+func (a *API) stepUpCallback(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	in := sso.CallbackInput{State: q.Get("state"), Code: q.Get("code"), Error: q.Get("error"), ErrorDescription: q.Get("error_description")}
+	returnTo, err := a.svc.CompleteStepUp(r.Context(), in, httpapi.Meta(r))
+	u := *a.public
+	u.Path, u.RawQuery = "/", ""
+	if p, perr := url.Parse(sso.SafeReturn(returnTo)); perr == nil {
+		u.Path, u.RawQuery = p.Path, p.RawQuery
+	}
+	v := u.Query()
+	v.Set("stepup", "done")
+	if err != nil {
+		v.Set("stepup", "failed")
+		var f *sso.Failure
+		if errors.As(err, &f) {
+			v.Set("reason", f.Code)
+		}
+	}
+	u.RawQuery = v.Encode()
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, u.String(), http.StatusSeeOther) //nolint:gosec // G710: the configured public URL and SafeReturn's path
 }

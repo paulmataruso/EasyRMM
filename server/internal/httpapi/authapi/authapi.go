@@ -62,6 +62,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/auth/security-keys/finish", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.finishKey)))
 	mux.Handle("POST /api/v1/auth/security-keys/{id}/remove", httpapi.RequireActive(h(a.removeKey)))
 	mux.Handle("POST /api/v1/auth/passkey-prompt", httpapi.RequireActive(h(a.answerPasskeyPrompt)))
+	// Step-up authentication (ADR-0055): the second factor again, for what needs it.
+	mux.Handle("GET /api/v1/auth/step-up", httpapi.RequireActive(h(a.stepUpStatus)))
+	mux.Handle("POST /api/v1/auth/step-up/totp", httpapi.RequireActive(h(a.stepUpTOTP)))
+	mux.Handle("POST /api/v1/auth/step-up/webauthn/begin", httpapi.RequireActive(h(a.beginStepUpKey)))
+	mux.Handle("POST /api/v1/auth/step-up/webauthn/finish", httpapi.RequireActive(h(a.finishStepUpKey)))
+	mux.Handle("POST /api/v1/auth/step-up/check", httpapi.RequireActive(a.sessions.RequireStepUp(h(a.stepUpCheck))))
 	// The link `easyrmm-server recover` prints (ADR-0044).
 	mux.Handle("POST /api/v1/auth/recover", h(a.recover))
 }
@@ -125,6 +131,12 @@ func mapAuthError(err error) error {
 		return &httpapi.Error{Status: http.StatusConflict, Code: "last_factor", Message: "This is your only second factor. Add an authenticator app or another key before removing it."}
 	case errors.Is(err, auth.ErrKeyNotFound):
 		return httpapi.ErrNotFound
+	case errors.Is(err, auth.ErrStepUpRequired):
+		return httpapi.ErrStepUpRequired
+	case errors.Is(err, auth.ErrNoSecondFactor):
+		return &httpapi.Error{Status: http.StatusConflict, Code: "no_second_factor", Message: "This account has no second factor for that. Set up an authenticator app or a security key in your account settings first."}
+	case errors.Is(err, auth.ErrRecoveryCodeRefused):
+		return &httpapi.Error{Status: http.StatusUnauthorized, Code: "recovery_code_refused", Message: "A recovery code cannot confirm this. Use the current code from your authenticator app or a security key."}
 	}
 	if msg := auth.PasswordAdvice(err); msg != "" {
 		return httpapi.Validation(map[string]string{"password": msg})
@@ -644,4 +656,60 @@ func qrSVG(content string) (string, error) {
 	}
 	b.WriteString(`"/></svg>`)
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(b.String())), nil
+}
+
+func (a *API) stepUpStatus(w http.ResponseWriter, r *http.Request) error {
+	id := httpapi.IdentityFrom(r.Context())
+	st, err := a.svc.StepUpStatus(r.Context(), id.Session, id.User)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, st)
+	return nil
+}
+
+func (a *API) stepUpTOTP(w http.ResponseWriter, r *http.Request) error {
+	var req codeRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	if err := a.svc.StepUpWithCode(r.Context(), id.Session, id.User, req.Code, httpapi.Meta(r)); err != nil {
+		return mapAuthError(err)
+	}
+	return a.stepUpStatus(w, r)
+}
+
+func (a *API) beginStepUpKey(w http.ResponseWriter, r *http.Request) error {
+	id := httpapi.IdentityFrom(r.Context())
+	assertion, err := a.svc.BeginStepUpKey(r.Context(), id.Session, httpapi.Meta(r))
+	if err != nil {
+		return mapAuthError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, assertion)
+	return nil
+}
+
+func (a *API) finishStepUpKey(w http.ResponseWriter, r *http.Request) error {
+	var req credentialRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	body, err := req.body()
+	if err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	if err := a.svc.FinishStepUpKey(r.Context(), id.Session, id.User, body, httpapi.Meta(r)); err != nil {
+		return mapAuthError(err)
+	}
+	return a.stepUpStatus(w, r)
+}
+
+// stepUpCheck answers 204 to a stepped-up session, and the step-up error to
+// any other (see RequireStepUp). The console uses it to ask for a step-up
+// ahead of an action.
+func (a *API) stepUpCheck(w http.ResponseWriter, _ *http.Request) error {
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
