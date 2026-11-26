@@ -208,6 +208,12 @@ log collection feature will).
   services that are enabled but not running as *ports unknown* (they
   would be cut off when they start: the operator adds their ports or
   starts them first), and the result records them.
+  *Amended 2026-11-26 (decided in review):* a UDP socket bound in the
+  local ephemeral range (`net.ipv4.ip_local_port_range`, 32768 to 60999 by
+  default) is a client socket (a resolver's, DHCP's, one apt leaves), not a
+  service, and is not counted: counting it made the check flap between
+  runs. A service on a fixed UDP port inside that range is not listed
+  either; the operator adds it with `allow-udp`. TCP is unchanged.
 * **Managed elsewhere**, left alone and reported: an active ufw or
   firewalld (EasyRMM never turns either on: ufw drops forwarded traffic by
   default, and firewalld started after Docker breaks container

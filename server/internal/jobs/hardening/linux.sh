@@ -1408,10 +1408,20 @@ fw_elsewhere() {
 # one at each start: a client's, which nothing reaches, so it is left out.
 listening() {
 	li_dhcp=$(dhclient_sockets)
+	# UDP sockets bound in the local ephemeral range are client sockets
+	# (a resolver's, DHCP's, one apt leaves): they come and go, and a
+	# check that counted them would flap. A service on a fixed UDP port in
+	# that range is not listed; the operator adds it with allow-udp.
+	li_lo=32768
+	li_hi=60999
+	if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then
+		read -r li_a li_b </proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || li_a=
+		case $li_a$li_b in *[!0-9]* | '') ;; *) li_lo=$li_a li_hi=$li_b ;; esac
+	fi
 	for li_f in tcp tcp6 udp udp6; do
 		[ -r "/proc/net/$li_f" ] || continue
 		case $li_f in tcp*) li_state=0A ;; *) li_state=07 ;; esac
-		awk -v proto="${li_f%6}" -v want="$li_state" -v dhcp=" $li_dhcp " '
+		awk -v proto="${li_f%6}" -v want="$li_state" -v dhcp=" $li_dhcp " -v lo="$li_lo" -v hi="$li_hi" '
 		function hex(h,  i, n) { n = 0; h = toupper(h); for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1; return n }
 		NR > 1 && $4 == want {
 			split($2, a, ":"); addr = toupper(a[1])
@@ -1420,6 +1430,7 @@ listening() {
 			if (length(addr) == 32 && substr(addr, 1, 24) == "0000000000000000FFFF0000" && substr(addr, 31, 2) == "7F") next
 			port = hex(a[2])
 			if (proto == "udp" && port != 68 && index(dhcp, " " $10 " ")) next
+			if (proto == "udp" && port >= lo + 0 && port <= hi + 0 && port != 68) next
 			print proto, port
 		}' "/proc/net/$li_f"
 	done | sort -u

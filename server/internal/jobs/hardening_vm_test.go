@@ -139,6 +139,13 @@ awk -F: '{ print "group", $1, $3 }' /etc/group
 // (whose accounts leftAccount compares).
 func volatile(line string) bool {
 	f := strings.Fields(line)
+	// fwupd, not EasyRMM, tightens /etc/fwupd/fwupd.conf from 0644 to 0640
+	// when its daemon starts (recent fwupd; no hardening module touches
+	// that file). Only that path, and only that mode change, is let through.
+	if len(f) >= 5 && f[1] == "path" && f[2] == "f" && f[3] == "/etc/fwupd/fwupd.conf" &&
+		(f[0] == "-" && f[4] == "-rw-r--r--" || f[0] == "+" && f[4] == "-rw-r-----") {
+		return true
+	}
 	var path string
 	switch {
 	case len(f) == 4 && f[1] == "content":
