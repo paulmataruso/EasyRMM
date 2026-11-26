@@ -24,6 +24,8 @@ Chains are public certificates; nothing secret is stored or sent. The server sto
 - Coverage floors added: `agent/trust` 90, `server/internal/tlstrust` 85, `server/internal/httpapi/tlstrustapi` 75.
 - `devscope.Allowed(org)` gates every instruction and every stored question.
 
+- `device_tls_state` and `device_tls_trust` follow their device in a move (the disposition test lists them as "follows"; ADR-0069's list needs the two names): what an agent trusts is a fact of the computer.
+
 ## Not done in 5b1
 - The expiry alert listing unprotected devices, an ask-again button, the .NET bundle check, the Pebble end-to-end run with a real agent binary.
 

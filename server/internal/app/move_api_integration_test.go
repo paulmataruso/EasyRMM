@@ -338,6 +338,8 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"device_hardening": follows, "posture_patching": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
 		"device_metrics": follows, "device_removals": follows, "device_software": follows, "enrollment_requests": follows,
 		"retired_agent_nonces": follows,
+		// what the computer's agent trusts (ADR-0055 5b1) is the computer's own fact
+		"device_tls_state": follows, "device_tls_trust": follows,
 		// recovery (R1-R3): the machine's own state and repair history
 		"agent_conditions": follows, "agent_repairs": ends,
 		// the keystore (ADR-0081): the volume rows follow within an organization and end with a move out of it
