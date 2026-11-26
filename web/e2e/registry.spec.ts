@@ -189,7 +189,11 @@ test("a Read-Only user sees no Registry tab, and the server refuses them a read"
   await reader.getByRole("button", { name: "Verify" }).click();
   await expect(reader.getByRole("tab", { name: "Overview" })).toBeVisible();
   await expect(reader.getByRole("tab", { name: "Registry" })).toHaveCount(0);
-  const refused = await reader.request.post(`/api/v1/devices/${agent.deviceId}/registry/query`, { data: { op: "list", hive: "HKLM", path: [] } });
+  const { csrfToken } = (await (await reader.request.get("/api/v1/auth/session")).json()) as { csrfToken: string };
+  const refused = await reader.request.post(`/api/v1/devices/${agent.deviceId}/registry/query`, {
+    headers: { "X-CSRF-Token": csrfToken },
+    data: { op: "list", hive: "HKLM", path: [] },
+  });
   expect(refused.status()).toBe(422);
   expect(await refused.text()).toContain("You cannot read the registry");
   await context.close();
