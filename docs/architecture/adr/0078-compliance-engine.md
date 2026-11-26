@@ -197,12 +197,24 @@ with the SQL of every migration. The decisions this ADR rests on:
   required") are read by the engine without a job.
 * **Per-control results.** The hardening `device_hardening` table holds a
   state per module. The compliance tables hold a result per device and
-  *control*. *Assumption to verify in C1:* the hardening script's JSON
-  `detail` already names its settings by the ids in `windows-settings.json`.
-  If it names only modules, C1 adds a per-setting list to the script's
-  result, a small additive change that the script's own tests cover. The
-  ingester maps setting ids to control ids through the control's
-  `executor_ref`.
+  *control*, with every scan's results kept (append-only history; see the
+  data model). Where the setting ids come from (verified in the code):
+  * **Windows:** the check's result already lists each setting by the id in
+    `windows-settings.json` (`HardeningSetting.ID`, `WindowsFinding.Settings`,
+    `server/internal/jobs/windows_hardening.go`). The ingester maps setting
+    ids to control ids through the control's `executor_ref`.
+  * **Linux:** the finding has only `Missing`, `Changes` and `Done` lists of
+    free text (`HardeningFinding`, `server/internal/jobs/hardening.go`).
+    **Slice C0** gives Linux settings ids and a typed per-setting list.
+* **Truncated results are never a pass.** The Windows result is limited in
+  size; when it is too long the script drops settings that are in place
+  (`settingsOmitted = in_place`) and then all settings (`all`)
+  (`windows.ps1`, the result-size code). The ingester treats any control
+  whose setting is absent from a truncated result as `unknown`, **never
+  `in_place`**. The planner then re-runs only the affected modules (one
+  module per job, then smaller groups) until the result is complete, and
+  marks the scan `partial` if it cannot. A control whose module could not
+  complete stays `unknown` and counts as not assessed.
 * **State vocabulary** is ADR-0054's (`in_place`, `partly`, `not_in_place`,
   `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`,
   `failed`) plus `unknown` and `stale` (older than the organization's
@@ -277,8 +289,8 @@ who owns the value if managed elsewhere, and the requirements it would help
 |---|---|---|---|
 | T0 | Report only: there is no setting to change (information) | TPM present, Secure Boot state | none; no Apply button |
 | T1 | Reversible, no service effect | AutoRun off, WDigest off, SMBv1 off where unused | per-item checkbox with the warning shown on the row |
-| T2 | Can break a workflow or a user's access | SMB signing, NTLM level, TLS versions, RDP idle limits, removable-storage deny, UAC, ASR block, firewall profiles, SSH timeouts | per-item agreement in a dialog that shows the warning and the affected host |
-| T3 | Can lock out access, lose data, or cannot be undone remotely | account lockout, disable or rename an account, deny-logon rights, BitLocker enable, FIPS mode, AppLocker or WDAC enforce, LDAP signing, Credential Guard, domain GPO changes | typed confirmation, step-up authentication, preconditions displayed |
+| T2 | Can break a workflow or a user's access | SMB signing, NTLM level, TLS versions, RDP idle limits, removable-storage deny, UAC, ASR block, SSH timeouts | per-item agreement in a dialog that shows the warning and the affected host |
+| T3 | Can lock out access, lose data, or cannot be undone remotely | firewall profile changes, RDP disable, NLA changes, account lockout, disable or rename an account, deny-logon rights, BitLocker enable, FIPS mode, AppLocker or WDAC enforce, LDAP signing, Credential Guard, domain GPO changes | typed confirmation, step-up authentication, preconditions displayed |
 
 **Agreement rules.**
 
@@ -295,7 +307,9 @@ who owns the value if managed elsewhere, and the requirements it would help
 4. **T3**: one item at a time. The user types the host's name (the typed
    text) after the dialog shows the preconditions and, for account items,
    the exposure scan's named accounts. Step-up authentication within 10
-   minutes (ADR-0073 slice 4, or F5 if it lands first).
+   minutes. **Step-up is a named prerequisite** (ADR-0073 slice 4, or F5 if it
+   lands first): until it ships, T3 fixes and attestations are disabled, not
+   offered without it (see the slice order).
 5. **No "fix all"** above T1, and no default selection of any item.
 6. **Preconditions** are checked on the server before dispatch and again by
    the script: BitLocker enable needs a protector and the recovery key in
@@ -311,7 +325,19 @@ who owns the value if managed elsewhere, and the requirements it would help
    agreement is a second row. This is the "approval workflow" of the
    requirements, optional because the owner's rule is that the administrator
    agrees.
-8. **Declining** is recorded: an item can be *accepted as a risk* or
+8. **The access guard** ("a fix must not cut our own way in"). Any fix that
+   could cut access to the computer or to its agents (RDP, WinRM, a firewall
+   profile or rule that the EasyRMM agent, MeshAgent or the patching agent
+   need) shows that risk in its warning, is T3 whatever its other
+   properties, and **runs a post-apply connectivity check**: after the change
+   the server waits for the agent's next check-in (a bounded window set per
+   control). If the agent has not reported by then, the script's own timer
+   (set before the change, on the computer) **undoes the change
+   automatically**, and the item is `failed` with that reason. Because the
+   undo is local and timed, it does not depend on the agent being
+   reachable. A control that cannot offer this safety net (no timer undo)
+   is not offered at all (`apply_supported = false`, manual text only).
+9. **Declining** is recorded: an item can be *accepted as a risk* or
    *deferred* with a reason and an expiry; a declined item feeds a draft
    POA&M item in C5. It stays visible; it is never silently hidden.
 
@@ -382,7 +408,7 @@ New in `server/internal/rbac/rbac.go`, added at the end of the existing lists
 | `compliance.export` | export reports, OSCAL, evidence bundles | no |
 | `compliance.admin` | packs, edition switches (server-wide) | yes |
 
-Fix permissions also need `device.harden` on the device. Defaults (*decided in
+Rows marked step-up are **disabled until step-up ships** (ADR-0073 slice 4 or F5): the permission exists but the action is refused. Fix permissions also need `device.harden` on the device. Defaults (*decided in
 review*): Organization Administrators hold all but `compliance.admin`;
 Technicians hold view, scan and `compliance.fix`; Read-Only holds none
 (evidence may hold sensitive configuration). Super administrators hold
@@ -431,7 +457,10 @@ accident.
   4. every `ATTRIBUTION_REQUIRED` and `OPEN_LICENSE` source must appear in
      the generated `NOTICE` file (the check regenerates it and fails on a
      diff);
-  5. a content string scan fails on a banned marker: "Center for Internet
+  5. a content string scan (**a plain string match**, so it is a backstop,
+     not the control: the primary gate is the required provenance and licence
+     class on every file, with a named author asserting
+     `derived_from_content: false`, and a second person's review) fails on a banned marker: "Center for Internet
      Security" or "CIS Benchmark" in a description, rationale or
      remediation text field (the cross-reference number field is exempt),
      a Wazuh header, a GPL header;
@@ -459,11 +488,52 @@ accident.
 
 ### 11. Slices
 
-In order, for parallel builders. C1 first; C2, C3 and C4 can start from C1's
-interfaces in parallel; C5 needs C1 and C2. Each is merged only when the gates
-in the builder rules pass. Migration numbers below are reserved for the
-slices and are renumbered by the integrator (design placeholder; the brief
-named none).
+*Amended 2026-11-26 (decided in review, after independent review):* slice C0 added; W2 and step-up made explicit prerequisites; C2 changes the scripts to take setting ids; truncated results are `unknown`; firewall, RDP and NLA fixes are T3 with a post-apply connectivity check and automatic undo; per-scan result history; evidence encrypted at rest; OSCAL pinned.
+
+In order, for parallel builders:
+
+1. **C0** (Linux per-setting ids) first; C1 after C0.
+2. C2, C3 and C4 can start from C1's interfaces in parallel; C5 needs C1 and
+   C2.
+3. **Prerequisites that gate fixes** (they are other slices, not compliance
+   work):
+   * **ADR-0054 W2** (apply and undo). Today the Windows script refuses any
+     mode but `check` (`windows.ps1`, `Read-ErArguments`: "this release has
+     check only"). **No fix button ships before W2's first modules**, and
+     each fix control ships only with its module's W2 apply and undo.
+   * **Step-up** (ADR-0073 slice 4, or F5). T3 fixes, attestations and
+     approvals are disabled until it ships.
+   * **The keystore** (plan step 19) for BitLocker enable.
+   * ADR-0075's collector for C4.
+4. C1 and C5 are read-only and can ship without W2 and step-up, except that
+   C5's attestations wait for step-up.
+
+Each slice is merged only when the gates in the builder rules pass.
+Migration numbers below are reserved for the slices and are renumbered by the
+integrator (design placeholder; the brief named none).
+
+#### C0: Linux per-setting ids
+
+*Goal:* the Linux hardening check reports a typed result per setting, as the
+Windows check does, so a control can name a setting. This is an additive
+change to ADR-0051's script and result; nothing else in compliance starts
+before it.
+
+Files:
+* `server/internal/jobs/hardening/linux.sh`: each module's check prints its
+  settings by id (`ssh-permit-root-login`, `ssh-password-auth`, ...) with
+  state, value and wanted value.
+* `server/internal/jobs/hardening.go`: a `Settings []HardeningSetting` list
+  on `HardeningFinding` (the Windows type, shared), parsing and validation.
+* `server/internal/jobs/hardening/linux-settings.json` (new): the id list
+  per module, the counterpart of `windows-settings.json`.
+* `web`: the existing Linux hardening panel keeps its text lists; nothing
+  new is shown yet.
+
+Tests: a table test per module of the check output to the setting list; the
+existing SSH integration harness (`hardening_script_ssh_integration_test.go`)
+asserts ids and states; an old script's result without the list still parses
+(compatibility); `go vet -tags integration,vm`.
 
 #### C1: the library, packs and scan
 
@@ -514,9 +584,20 @@ Tests:
 
 #### C2: results and the fix queue
 
-*Goal:* fixes with agreement. Depends on ADR-0054 W2 for the first modules
-(T1 first, then T2, then T3 one module at a time, each after its machine
-test; BitLocker waits for the keystore).
+*Goal:* fixes with agreement. **Needs ADR-0054 W2** (apply and undo) for
+every module it fixes, and step-up for T3 (see the slice order). T1 first,
+then T2, then T3 one module at a time, each after its machine test;
+BitLocker waits for the keystore.
+
+*Script change (new, part of C2).* Today both scripts take **module names**
+(`Hardening.Modules` in `hardening.go`; `Read-ErArguments` in `windows.ps1`).
+A fix must change **one control**, not a whole module, or the agreement does
+not match what runs. C2 extends both scripts to accept **setting ids**
+(`--settings id,id` and the Windows equivalent), validated against the
+settings file, and signed in the job like the module list. A job carries
+either modules (as now) or setting ids (from the queue), never both. Windows
+and Linux scripts apply only the listed settings, read each back, and return
+the typed per-setting result.
 
 Files:
 * `server/migrations/90782_compliance_fix_queue.sql` (items, agreements,
@@ -615,10 +696,14 @@ Files:
   approved, archived; copy-on-write freeze), `rollup.go` (scan to objective
   determination, rule in section 12), `sprs.go` (weights, range, gate),
   `poam.go` (eligibility), `ssp.go` (templates, generated sections),
-  `evidence.go` (blobs as `bytea`, 64 MiB cap, SHA-256, never deleted,
-  superseded), `oscal/` (export), `export/` (CSV, ZIP bundle, PDF).
+  `evidence.go` (envelope-encrypted blobs, 64 MiB cap, SHA-256, never
+  deleted, superseded, download audit; see *Evidence storage*), `oscal/` (export), `export/` (CSV, ZIP bundle, PDF).
 * `server/internal/compliance/content/templates/` : SSP, POA&M, policy and
-  procedure skeletons (our wording; see the appendix on CC BY 4.0 reuse).
+  procedure skeletons, **in our own wording**. There is **no DoD template** for
+  an SSP or a POA&M (research, "DoD POA&M spreadsheet template ... not
+  located"), so the fields follow the NIST OSCAL SSP and POA&M models and
+  the CMMC Assessment Guide. Where CC BY 4.0 skeletons are reused, attribution
+  is kept (*decided in review*).
 * `server/internal/httpapi/complianceapi/assess.go`.
 * Web: the CMMC workspace (scope editor, per-requirement view with
   objectives, statements, evidence attach, attestation, POA&M board, SSP
@@ -635,6 +720,54 @@ evidence immutability and hash; OSCAL output validates against NIST's
 published schema in CI (the schema is fetched at a pinned version and
 checksum, or vendored as public-domain data); RLS across organizations;
 audit event per state change; export hash recorded.
+
+### Evidence storage
+
+*Amended 2026-11-26 (decided in review):* evidence is **encrypted at rest**.
+ADR-0066's plain `bytea` pattern is not used for compliance evidence,
+because it may hold CUI.
+
+* **What exists and is reused.** `server/internal/secrets` (`Sealer`)
+  already seals small values with AES-256-GCM under a master key carrying a
+  key id, supports rotation (`NeedsReseal`), takes associated data, and
+  derives keys (`DeriveKeys`). Evidence reuses it as the **key-wrapping
+  layer**. The `Sealer` is for small secrets, so it is not used to seal a
+  64 MiB body directly.
+* **Envelope encryption.**
+  * Each organization has one **data key** (32 random bytes) in
+    `compliance_org_keys`, **wrapped** by `Sealer.Seal` with associated data
+    `easyrmm:compliance:dek:<organization_id>`; created on first use,
+    never stored in clear.
+  * Each evidence file is encrypted with **AES-256-GCM** under that data key
+    with a fresh 96-bit nonce per file and associated data
+    `easyrmm:compliance:evidence:<organization_id>:<evidence_id>`, so a
+    blob cannot be moved to another organization or row. The ciphertext
+    and nonce are stored (`body`, `nonce`, `key_id`).
+  * The SHA-256 recorded is of the **plaintext**, computed before
+    encryption, and is checked on every download.
+  * Rotation: when the server master key rotates, only the wrapped data
+    keys are re-sealed (`NeedsReseal`); blobs are untouched. A data-key
+    rotation (new `key_id`) re-encrypts in the background and is a later
+    task, not in C5.
+  * The 64 MiB cap stays (with `http.MaxBytesReader`, ADR-0066's pattern).
+    The body is held in the database so backups contain it, as ADR-0066
+    does, now as ciphertext. **A backup that holds the evidence also holds
+    the wrapped keys, and the master key is kept apart** (the existing
+    backup guide's rule for `EASYRMM_SECRET_KEY`).
+  * If the plan's keystore (step 19) lands, wrapping moves to it; until
+    then this depends only on what `secrets` already provides.
+* **Access.** Per-organization RBAC: reading or downloading needs
+  `compliance.view` for that organization (a user of another organization
+  gets 404, and the row-level policy agrees); upload needs
+  `compliance.edit`. **Every download and every upload writes an audit row**
+  (`compliance.evidence.download`, `.upload`): user, organization, evidence
+  id, hash, time, source address.
+* **Retention.** Evidence is never deleted, only superseded; a retention
+  period, **default 6 years, configurable per organization**
+  (`compliance_org_settings.retention_years`), decides when a superseded
+  or expired item may be purged by an administrator action that is itself
+  audited. **Pending owner confirmation** (owner decision 2); the CMMC
+  rule's own period was not verified.
 
 ### 12. The CMMC workspace (C5 in outline)
 
@@ -658,16 +791,33 @@ The data model is in the appendix. The rules the code follows:
   requirement (EasyRMM's own contribution is one such owner).
 * **POA&M**: a failing requirement creates a draft item with the failing
   hosts, the fix-queue items, the weight and the 180-day clock; the owner
-  confirms. Eligibility follows 32 CFR 170.21 as the research read it.
+  confirms. Eligibility follows 32 CFR 170.21 as the research read it (**the exact
+  paragraph text should be re-read when C5 starts**): at most one point per
+  item (single exception: 3.13.11 where encryption is used but not
+  FIPS-validated), closeout within 180 days, and **these may never be on a
+  POA&M**: 3.1.20 (external connections), 3.1.22 (publicly accessible
+  content), 3.12.4 (the SSP), 3.10.3 (visitors), 3.10.4 (physical access
+  logs) and 3.10.5 (physical access devices). The six are data
+  (`flags.poam_barred`) and a test.
 * **SPRS**: start at 110, subtract the weights of requirements that are not
   met (the DoD methodology's 5, 3 and 1 point values and the two partial
   credit cases). Show *score if unassessed fail* and *score if unassessed
   pass*; show a single number only when they are equal. Never post to SPRS.
 * **Assessment freeze.** Approval freezes the record; a later scan opens a
   new draft.
-* **OSCAL** (system security plan, assessment results, POA&M) with our own
-  generated 800-171 r2 catalogue and profile (NIST publishes only r3); the
-  OSCAL version to target is unverified and is pinned in C5.
+* **OSCAL** (system security plan, assessment results, POA&M).
+  * **Catalogue:** NIST publishes an OSCAL catalogue only for 800-171 r3.
+    The r2 catalogue and profile are **generated by us** from NIST's r2
+    publication and its 171A objectives XLSX/CSV (public domain), by a
+    checked-in generator that records the source checksums
+    (like `controls/extract`).
+  * **Validation:** the generated catalogue, and every exported SSP,
+    assessment-results and POA&M file, is validated in CI against NIST's
+    **OSCAL JSON schema** for the pinned version, with the schema file
+    vendored at a pinned checksum (public domain).
+  * **Pinned version:** OSCAL **1.1.2** (`oscalVersion` constant in
+    `oscal/`; C5 confirms it against NIST's release page before use and
+    changes it only by an ADR amendment).
 * **Evidence may hold CUI.** Per organization access control only, no
   cross-organization aggregates without `compliance.view` at the root. The
   appendix lists the external-service-provider question as a risk for
@@ -758,8 +908,14 @@ Only these are open. Everything else above is decided in review.
    works with any. The owner has said to include them; this is who clears
    them and what evidence counts.
 2. **Retention of compliance records** (assessments, attestations, evidence,
-   the audit rows), in years. The CMMC rule's retention period was not
-   verified.
+   the audit rows): the design defaults to **6 years, configurable per
+   organization, pending owner confirmation**. The CMMC rule's retention
+   period was not verified.
+
+Not owner questions (stated so they are not asked again): the Elastic
+License 2.0 project is ideas only and nothing is reused; CC BY 4.0 skeleton
+templates may be used with attribution (decided in review); step-up
+authentication is a scheduling dependency (slice order), not a decision.
 
 ## References
 

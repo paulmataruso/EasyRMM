@@ -358,6 +358,7 @@ CREATE TABLE compliance_org_settings (
     freshness_days  integer NOT NULL DEFAULT 30 CHECK (freshness_days BETWEEN 1 AND 365),
     scan_schedule   text,                         -- cron-like, null = manual only
     require_approval jsonb NOT NULL DEFAULT '{"T2":false,"T3":false}',
+    retention_years integer NOT NULL DEFAULT 6 CHECK (retention_years BETWEEN 1 AND 50),  -- pending owner confirmation
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE compliance_org_packs (
@@ -380,25 +381,37 @@ CREATE TABLE compliance_scans (
     started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz,
     result_hash text                           -- hash of the result rows, evidence for C5
 );
-CREATE TABLE compliance_scan_jobs (scan_id uuid REFERENCES compliance_scans ON DELETE CASCADE,
-    device_id uuid REFERENCES devices ON DELETE CASCADE, job_id uuid REFERENCES jobs ON DELETE SET NULL,
-    PRIMARY KEY (scan_id, device_id, job_id));
-
--- the latest result per device and control; history lives in snapshots and the audit log
-CREATE TABLE compliance_results (
+CREATE TABLE compliance_scan_jobs (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+    scan_id         uuid NOT NULL REFERENCES compliance_scans ON DELETE CASCADE,
+    device_id       uuid NOT NULL REFERENCES devices ON DELETE CASCADE,
+    job_id          uuid REFERENCES jobs ON DELETE SET NULL,   -- nullable, not part of any key
+    modules         text[] NOT NULL DEFAULT '{}',               -- the re-run unit when a result was truncated
+    UNIQUE (scan_id, device_id, modules));
+
+-- Append-only: one row per scan, device and control. A scan's rows are never changed,
+-- so a snapshot hash over them is reproducible (C5 evidence).
+CREATE TABLE compliance_results_history (
+    id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    organization_id uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+    scan_id         uuid NOT NULL REFERENCES compliance_scans (id) ON DELETE CASCADE,
     device_id       uuid NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
     control_id      text NOT NULL, control_version integer NOT NULL,
     state text NOT NULL CHECK (state IN ('in_place','partly','not_in_place','not_applicable',
                   'managed_elsewhere','not_supported','half_applied','failed','unknown')),
-    observed jsonb, expected jsonb,           -- values; sensitive ones redacted as in ADR-0063
-    owner jsonb,                              -- who manages it, and whether their value meets it
-    param_override jsonb,
-    scan_id uuid REFERENCES compliance_scans (id) ON DELETE SET NULL,
+    observed jsonb, expected jsonb, owner jsonb, param_override jsonb,
     job_id uuid REFERENCES jobs (id) ON DELETE SET NULL,
     checked_at timestamptz NOT NULL,
-    PRIMARY KEY (device_id, control_id)
-);   -- 'stale' is computed from checked_at and the freshness window, not stored
+    UNIQUE (scan_id, device_id, control_id)
+);   -- insert-only (trigger refuses UPDATE and DELETE except by retention purge)
+
+-- The latest result per device and control, as a view over the history (no second copy).
+-- Reading it is the compliance tab's query; 'stale' is computed from checked_at.
+CREATE VIEW compliance_results WITH (security_invoker = true) AS
+    SELECT DISTINCT ON (device_id, control_id) *
+      FROM compliance_results_history ORDER BY device_id, control_id, checked_at DESC, id DESC;
+
 
 CREATE TABLE compliance_fix_items (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -416,6 +429,7 @@ CREATE UNIQUE INDEX compliance_fix_open ON compliance_fix_items (device_id, cont
 
 CREATE TABLE compliance_agreements (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
     item_id uuid NOT NULL REFERENCES compliance_fix_items (id) ON DELETE CASCADE,
     role text NOT NULL CHECK (role IN ('requester','approver')),
     user_id uuid NOT NULL REFERENCES users (id),
@@ -424,16 +438,29 @@ CREATE TABLE compliance_agreements (
     lifted_guards text[] NOT NULL DEFAULT '{}',   -- ADR-0054 guards the agreement lifts
     agreed_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE compliance_declines (item_id uuid PRIMARY KEY REFERENCES compliance_fix_items ON DELETE CASCADE,
+CREATE TABLE compliance_declines (
+    organization_id uuid NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+    item_id uuid PRIMARY KEY REFERENCES compliance_fix_items ON DELETE CASCADE,
     user_id uuid NOT NULL, reason text NOT NULL, kind text NOT NULL CHECK (kind IN ('accepted_risk','deferred')),
     expires_at timestamptz, declined_at timestamptz NOT NULL DEFAULT now());
 ```
+
+**Every per-organization table has `organization_id NOT NULL`**, including
+children such as agreements, declines, evidence links, scan jobs and every
+assessment child. It is denormalized on purpose: row-level security uses
+that column everywhere, with no join to a parent. Consistency with the parent
+is enforced by a composite foreign key `(parent_id, organization_id)` to
+the parent's `UNIQUE (id, organization_id)` (a child cannot name another
+organization's parent), and, where a row has several optional parents
+(evidence links), by a constraint trigger. An integration test inserts a
+mismatched child and expects the error.
 
 All per-organization tables have forced RLS: read when
 `organization_id = ANY (easyrmm_scope_ids('easyrmm.scope_orgs'))` or
 `easyrmm_scope_all()`; writes by the system scope only (the server writes on
 behalf of users, as `device_hardening` does). `compliance_agreements` rows
-are insert-only (a trigger like `easyrmm_audit_immutable`).
+are insert-only (a trigger like `easyrmm_audit_immutable`), as is
+`compliance_results_history`.
 
 ## The assessment workspace (C5)
 
@@ -441,6 +468,7 @@ are insert-only (a trigger like `easyrmm_audit_immutable`).
 CREATE TABLE compliance_assessments (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations ON DELETE CASCADE,
+    UNIQUE (id, organization_id),     -- target of the children's composite foreign keys
     framework_key text NOT NULL, framework_version text NOT NULL, profile_key text,
     title text NOT NULL, assessor text,
     state text NOT NULL CHECK (state IN ('draft','in_review','approved','archived')),
@@ -449,7 +477,9 @@ CREATE TABLE compliance_assessments (
     created_at timestamptz NOT NULL DEFAULT now());
 
 CREATE TABLE compliance_scope_assets (
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE,
     device_id uuid REFERENCES devices ON DELETE CASCADE, group_id uuid REFERENCES device_groups ON DELETE CASCADE,
     category text NOT NULL CHECK (category IN ('cui','security_protection','contractor_risk_managed',
                                                'specialized','out_of_scope')),
@@ -457,7 +487,9 @@ CREATE TABLE compliance_scope_assets (
     CHECK ((device_id IS NULL) <> (group_id IS NULL)));
 
 CREATE TABLE compliance_implementations (
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE,
     req_id text NOT NULL,
     status text NOT NULL CHECK (status IN ('met','not_met','not_applicable','not_assessed')),
     origin text NOT NULL CHECK (origin IN ('scan','attested','manual')),
@@ -467,54 +499,82 @@ CREATE TABLE compliance_implementations (
     PRIMARY KEY (assessment_id, req_id));
 
 CREATE TABLE compliance_objective_results (
+    organization_id uuid NOT NULL,
     assessment_id uuid NOT NULL, req_id text NOT NULL, obj_id text NOT NULL,
     determination text NOT NULL CHECK (determination IN ('met','not_met','not_applicable','not_assessed')),
     method text, source text NOT NULL CHECK (source IN ('scan','attestation','upload','interview')),
     decided_by uuid, decided_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (assessment_id, req_id, obj_id));
+    PRIMARY KEY (assessment_id, req_id, obj_id),
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE);
 
 CREATE TABLE compliance_evidence (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id uuid NOT NULL REFERENCES organizations ON DELETE CASCADE,
     kind text NOT NULL CHECK (kind IN ('scan_snapshot','upload','link','attestation','screenshot')),
-    title text NOT NULL, media_type text, size_bytes bigint CHECK (size_bytes <= 67108864),
-    body bytea,                       -- like ADR-0066: kept in the database so backups hold it
-    url text, sha256 text NOT NULL,
+    UNIQUE (id, organization_id),
+    title text NOT NULL, media_type text, size_bytes bigint CHECK (size_bytes <= 67108864),  -- plaintext size
+    body bytea,                       -- AES-256-GCM ciphertext (ADR-0078, Evidence storage); kept in the database so backups hold it
+    nonce bytea, key_id text,         -- 96-bit nonce; the data key version
+    url text, sha256 text NOT NULL,   -- SHA-256 of the plaintext, checked on download
     collected_at timestamptz NOT NULL, collector uuid REFERENCES users,
     expires_at timestamptz, superseded_by uuid REFERENCES compliance_evidence,
     scan_id uuid REFERENCES compliance_scans);   -- never deleted, only superseded
-CREATE TABLE compliance_evidence_links (evidence_id uuid REFERENCES compliance_evidence,
-    assessment_id uuid, req_id text, obj_id text, fix_item_id uuid, poam_id uuid);
+CREATE TABLE compliance_evidence_links (
+    organization_id uuid NOT NULL REFERENCES organizations ON DELETE CASCADE,
+    evidence_id uuid NOT NULL,
+    assessment_id uuid, req_id text, obj_id text, fix_item_id uuid, poam_id uuid,
+    FOREIGN KEY (evidence_id, organization_id) REFERENCES compliance_evidence (id, organization_id) ON DELETE CASCADE);
+-- The other end (assessment, fix item, POA&M item) is checked to be in the same organization
+-- by a constraint trigger, since a link row has several optional parents.
+
+CREATE TABLE compliance_org_keys (   -- the per-organization data key, wrapped by secrets.Sealer
+    organization_id uuid NOT NULL REFERENCES organizations ON DELETE CASCADE,
+    key_id text NOT NULL, wrapped text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (organization_id, key_id));
 
 CREATE TABLE compliance_attestations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments, req_id text NOT NULL,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL, req_id text NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id),
     objectives text[] NOT NULL DEFAULT '{}', statement text NOT NULL, statement_sha256 text NOT NULL,
     signer uuid NOT NULL REFERENCES users, stepup_proof text NOT NULL,
     signed_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL);
 
 CREATE TABLE compliance_poam_items (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE,
+    UNIQUE (id, organization_id),
     req_id text NOT NULL, weakness text NOT NULL, point_value integer NOT NULL,
     owner_user uuid REFERENCES users, resources text, scheduled_completion date,
     status text NOT NULL CHECK (status IN ('draft','open','in_progress','closed','accepted')),
     eligible boolean NOT NULL, eligibility_reason text NOT NULL,    -- computed, shown
     opened_on date NOT NULL DEFAULT current_date, closes_by date);   -- 180-day clock
 CREATE TABLE compliance_poam_milestones (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    poam_id uuid NOT NULL REFERENCES compliance_poam_items ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    poam_id uuid NOT NULL,
+    FOREIGN KEY (poam_id, organization_id) REFERENCES compliance_poam_items (id, organization_id) ON DELETE CASCADE,
     title text NOT NULL, due date, status text NOT NULL, evidence_id uuid REFERENCES compliance_evidence);
 
 CREATE TABLE compliance_documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE,
+    UNIQUE (id, organization_id),
     kind text NOT NULL CHECK (kind IN ('ssp','policy','procedure','plan')), template_id text NOT NULL,
     version integer NOT NULL, approver uuid REFERENCES users, approved_at timestamptz);
-CREATE TABLE compliance_document_sections (document_id uuid REFERENCES compliance_documents ON DELETE CASCADE,
+CREATE TABLE compliance_document_sections (organization_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    FOREIGN KEY (document_id, organization_id) REFERENCES compliance_documents (id, organization_id) ON DELETE CASCADE,
     position integer, heading text NOT NULL, body text NOT NULL, generated boolean NOT NULL,
     PRIMARY KEY (document_id, position));
 
 CREATE TABLE compliance_score_snapshots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    assessment_id uuid NOT NULL REFERENCES compliance_assessments ON DELETE CASCADE,
+    organization_id uuid NOT NULL,
+    assessment_id uuid NOT NULL,
+    FOREIGN KEY (assessment_id, organization_id) REFERENCES compliance_assessments (id, organization_id) ON DELETE CASCADE,
     taken_at timestamptz NOT NULL DEFAULT now(),
     sprs_low integer NOT NULL, sprs_high integer NOT NULL,
     l2_gate jsonb NOT NULL, l1_count integer, basis jsonb NOT NULL);
@@ -531,7 +591,7 @@ second chain is added.
 | File (placeholder number) | Slice | Contents | Down |
 |---|---|---|---|
 | `90780_compliance_library.sql` | C1 | sources, packs, controls, refs, profiles, frameworks, requirements, objectives, mappings, org settings and org packs | drop in reverse order |
-| `90781_compliance_results.sql` | C1 | scans, scan jobs, results | drop; no data outside the compliance tables is touched |
+| `90781_compliance_results.sql` | C1 | scans, scan jobs, results history and the latest-result view | drop; no data outside the compliance tables is touched |
 | `90782_compliance_fix_queue.sql` | C2 | fix items, agreements, declines; new audit event names need no schema | drop |
 | `90783_compliance_assessment.sql` | C5 | assessment workspace tables | drop |
 

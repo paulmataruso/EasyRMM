@@ -100,10 +100,13 @@ strategy.)
    (Apache-2.0) and ComplianceAsCode (BSD-3-Clause) are permissive, but
    nothing from them is needed. ADR-0037 allows only permissive
    dependencies.
-7. **A review loop.** Every pack carries a `review_state`; a quarterly
+7. **Decided in review:** reusing CC BY 4.0 templates with attribution is
+   accepted; Elastic License 2.0 material is ideas only, nothing reused. Not
+   owner questions.
+8. **A review loop.** Every pack carries a `review_state`; a quarterly
    re-read of the licences in `compliance_sources` (the `retrieved_at` date
    makes stale ones visible) and a re-run of `packlint` on each release.
-8. **Marketing wording** follows ADR-0078 section 9: assessment aid, never
+9. **Marketing wording** follows ADR-0078 section 9: assessment aid, never
    "compliant" or "certified", never "CIS Level 1", and no claim that
    EasyRMM files or can file anything with SPRS.
 

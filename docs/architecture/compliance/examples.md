@@ -73,6 +73,11 @@ How it runs:
 
 ## 8. A Linux check
 
+The Linux finding today has only free-text `Missing`, `Changes` and `Done`
+lists, so the setting id below (`ssh-permit-root-login`) does **not exist
+yet**. ADR-0078 slice C0 creates per-setting ids for the Linux script; the
+example uses the id C0 will create.
+
 **Root cannot sign in over SSH.**
 
 ```json
@@ -85,7 +90,7 @@ How it runs:
   "scopes": ["any"],
   "severity": "high",
   "executor": "hardening",
-  "executor_ref": {"module": "ssh", "setting": "ssh-permit-root-login"},
+  "executor_ref": {"module": "ssh", "setting": "ssh-permit-root-login"},   // an id slice C0 creates in linux-settings.json; it does not exist in the code today
   "detect": {
     "summary": "Ask the running SSH server for its effective settings and read permitrootlogin. Do not parse the file: include files and Match blocks change the effective value.",
     "command_shape": "sshd -T (effective settings, as the daemon sees them)"
@@ -95,7 +100,7 @@ How it runs:
   "remediation_text": "Set PermitRootLogin to no in a drop-in file under the SSH configuration directory, check the configuration with sshd -t, and reload the service. Before you do, make sure another account can sign in and use sudo.",
   "apply_supported": true,
   "undo_kind": "restore_backup",
-  "risk_tier": "T2",
+  "risk_tier": "T3",
   "warning_id": "w.ssh.permit-root-login.v1",
   "needs_restart": false,
   "preconditions": [
