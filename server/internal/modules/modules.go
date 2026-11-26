@@ -33,6 +33,22 @@ const (
 	GroupPolicy          Module = "group_policy"
 )
 
+// BitLocker is the module of ADR-0081's BitLocker actions. It is not in
+// Catalog: no role offers it and it has no toggle, since turning BitLocker on
+// is always a person's explicit, confirmed act; the dev-scope guard still
+// applies to it.
+const BitLocker Module = "bitlocker"
+
+// Known says whether a module is one the framework can run actions of: the
+// catalogue's, and BitLocker.
+func Known(m Module) bool {
+	if m == BitLocker {
+		return true
+	}
+	_, ok := Lookup(m)
+	return ok
+}
+
 // Def describes a module: the role whose presence offers it and the
 // permission that reads it.
 type Def struct {

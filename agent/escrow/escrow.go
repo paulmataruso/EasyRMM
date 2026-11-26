@@ -74,9 +74,12 @@ type Agent struct {
 	// Key returns the pinned job key, nil while none is pinned.
 	Key    func() ed25519.PublicKey
 	Reader Reader
-	Server Server
-	Store  KeyStore
-	Log    *slog.Logger
+	// Manager turns BitLocker on and rotates recovery passwords (ADR-0081
+	// section 5); nil where the agent only reads.
+	Manager Manager
+	Server  Server
+	Store   KeyStore
+	Log     *slog.Logger
 	// LUKS escrows the passphrase of a key slot the agent adds to a LUKS volume
 	// it can unlock by itself (Linux, ADR-0081 section 5); nil where there is none.
 	LUKS LUKS
@@ -96,6 +99,8 @@ type Agent struct {
 	needs      []agentproto.EscrowNeed
 	lastTry    map[string]time.Time
 	busy       atomic.Bool
+	// watch: the server says a rotation of this device is under way.
+	watch bool
 
 	luks luksState
 }
@@ -189,6 +194,9 @@ func (a *Agent) syncBitLocker(ctx context.Context, key *agentproto.EscrowKeyPayl
 	if reportEvery == 0 {
 		reportEvery = defaultReportEvery
 	}
+	if a.watch {
+		reportEvery = readEvery // a rotation is under way: report as often as the volumes are read
+	}
 	if a.lastRead.IsZero() || now.Sub(a.lastRead) >= readEvery {
 		a.lastRead = now
 		vols, err := a.Reader.Volumes(ctx)
@@ -204,8 +212,28 @@ func (a *Agent) syncBitLocker(ctx context.Context, key *agentproto.EscrowKeyPayl
 		if ctx.Err() != nil {
 			return
 		}
-		a.upload(ctx, key, pub, n)
+		if n.Check() != nil {
+			continue
+		}
+		switch {
+		case len(n.Remove) > 0:
+			a.removeBitLocker(ctx, n)
+			a.dropNeed(n)
+		case n.Rotating != "":
+			a.rotateBitLocker(ctx, key, pub, n)
+			a.dropNeed(n)
+		default:
+			a.upload(ctx, key, pub, n)
+		}
 	}
+}
+
+// dropNeed forgets a need that was acted on; the next report brings it again
+// if it still stands.
+func (a *Agent) dropNeed(n agentproto.EscrowNeed) {
+	a.needs = slices.DeleteFunc(a.needs, func(x agentproto.EscrowNeed) bool {
+		return x.VolumeID == n.VolumeID && x.ProtectorID == n.ProtectorID && x.Rotating == n.Rotating && slices.Equal(x.Remove, n.Remove)
+	})
 }
 
 // report sends the volumes when they changed or an hour passed.
@@ -233,6 +261,7 @@ func (a *Agent) report(ctx context.Context, vols []Volume, now time.Time, every 
 		return
 	}
 	a.sent, a.lastReport, a.needs = fp, now, ans.Need
+	a.watch = ans.Watch
 }
 
 func hashReport(r agentproto.EscrowVolumesReport) []byte {

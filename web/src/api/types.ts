@@ -14,6 +14,7 @@ export type Permission =
   | "device.rdp_credentials.save"
   | "device.recovery_key.read"
   | "device.recovery_key.approve"
+  | "device.bitlocker.manage"
   | "quickassist.view"
   | "quickassist.link.create"
   | "quickassist.link.permanent"
@@ -3969,13 +3970,18 @@ export type EscrowState =
   /** A LUKS volume Clevis or a distribution's own scheme manages: never rewritten. */
   | "managed_elsewhere"
   /** The organization has not turned LUKS escrow on. */
-  | "escrow_off";
+  | "escrow_off"
+  /** A Windows volume BitLocker is not on: the enable action can turn it on (ADR-0081, slice 4). */
+  | "not_encrypted";
 
 export interface EscrowProtector {
   id: string;
   state: EscrowState;
   verifiedAt?: string;
   updatedAt?: string;
+  /** The key was read and will be replaced by a new, verified one (ADR-0081 section 5). */
+  rotationDue?: boolean;
+  rotationDueAt?: string;
 }
 
 export interface EscrowVolume {
@@ -4030,6 +4036,17 @@ export interface KeystoreOrgSettings {
   luksEscrow: boolean;
   /** People holding the Recovery Key Approver add-on here. */
   approvers: number;
+  /** Where the organization's escrow key rotation stands; absent until its first escrow makes the key. */
+  key?: OrgKeyInfo;
+}
+
+/** The active escrow key's version, the KEK version wrapping it, how many retired keys are kept and how many records wait to move. */
+export interface OrgKeyInfo {
+  version: number;
+  kekVersion: number;
+  createdAt: string;
+  retired: number;
+  toMove: number;
 }
 
 /** One KEK version, metadata only. */
@@ -4050,6 +4067,8 @@ export interface KeystoreStatus {
   versions: KeystoreKekVersion[];
   recoveryVerified: boolean;
   detail?: string;
+  /** How many organization keys each KEK version still wraps; a version with none is needed only by retained backups. */
+  kekUsage?: { version: number; keys: number }[];
 }
 
 /** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
@@ -4076,6 +4095,8 @@ export interface DeviceEscrow {
   canRead: boolean;
   /** A read waits for a second person's approval. */
   twoPerson: boolean;
+  /** The caller may turn BitLocker on here (device.bitlocker.manage). */
+  canEnable?: boolean;
   /** False where the device cannot escrow here: neither a Windows nor a Linux device, or outside the dev scope. */
   applicable: boolean;
   keystore: KeystoreSummary;

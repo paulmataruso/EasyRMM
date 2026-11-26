@@ -23,6 +23,7 @@ import {
   TableWrap,
 } from "../../components/ui";
 import { formatRelative } from "../../lib/format";
+import { EnableBitLocker } from "./EnableBitLocker";
 import { RevealRecoveryKey } from "./RevealRecoveryKey";
 
 export const ESCROW_STATE_TEXT: Record<
@@ -67,6 +68,11 @@ export const ESCROW_STATE_TEXT: Record<
     label: "Escrow off",
     tone: "neutral",
     help: "LUKS escrow is off for this organization. Turn it on in the organization's Recovery keys tab.",
+  },
+  not_encrypted: {
+    label: "Not encrypted",
+    tone: "warn",
+    help: "BitLocker is not on this volume. Turning it on escrows and verifies the recovery key before encryption starts.",
   },
   managed_elsewhere: {
     label: "Managed elsewhere",
@@ -149,9 +155,12 @@ function Approvals({ deviceId }: { deviceId: string }) {
 
 export function RecoveryKeysCard({
   deviceId,
+  deviceName = "",
   hideWhenEmpty = false,
 }: {
   deviceId: string;
+  /** The computer's name, which turning BitLocker on asks to have typed. */
+  deviceName?: string;
   /** Linux computers mostly have no LUKS volume: the card shows only when one was reported. */
   hideWhenEmpty?: boolean;
 }) {
@@ -242,7 +251,18 @@ export function RecoveryKeysCard({
                           {v.reason}
                         </p>
                       )}
-                      {v.protectors.length === 0 && !v.reason && (
+                      {v.state === "not_encrypted" && e.canEnable && deviceName && (
+                        <span className="ml-2">
+                          <EnableBitLocker
+                            deviceId={deviceId}
+                            deviceName={deviceName}
+                            volume={v.id}
+                            mount={v.mount}
+                            onDone={() => void q.refetch()}
+                          />
+                        </span>
+                      )}
+                      {v.protectors.length === 0 && !v.reason && v.state !== "not_encrypted" && (
                         <span className="ml-2 text-xs text-muted">
                           {v.kind === "luks"
                             ? "No key slot of EasyRMM's yet"
@@ -268,6 +288,14 @@ export function RecoveryKeysCard({
                               <span className="text-xs text-muted">
                                 verified {formatRelative(p.verifiedAt)}
                               </span>
+                            )}
+                            {p.rotationDue && (
+                              <Badge
+                                tone="info"
+                                title="This key was read. The agent adds a new one, escrows and verifies it, and only then removes this one."
+                              >
+                                Will be replaced
+                              </Badge>
                             )}
                             {e.canRead && p.state === "verified" && (
                               <RevealRecoveryKey

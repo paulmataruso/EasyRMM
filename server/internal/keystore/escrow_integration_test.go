@@ -58,6 +58,9 @@ type fx struct {
 	vol       string
 	prot      string
 	dir       string
+	// code is the recovery code of KEK version 1, kept for the tests that make
+	// and verify a later version.
+	code []byte
 }
 
 func newFx(t *testing.T) *fx {
@@ -82,6 +85,7 @@ func newFx(t *testing.T) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.code = append([]byte{}, rc...)
 	if _, err := f.ks.VerifyRecovery(bf, rc); err != nil {
 		t.Fatal(err)
 	}

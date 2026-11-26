@@ -335,3 +335,34 @@ func TestEscrowKeyVersionIsKept(t *testing.T) {
 		t.Fatalf("damaged file: %+v", k)
 	}
 }
+
+func TestPackageRecord(t *testing.T) {
+	s := Store{dir: t.TempDir()}
+	if _, err := s.LoadPackage(); !errors.Is(err, ErrNoPackage) {
+		t.Fatalf("no record: %v", err)
+	}
+	want := &Package{Kind: "deb", Was: "rpm", Made: true, At: time.Now().UTC().Truncate(time.Second), Note: "x"}
+	if err := s.SavePackage(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadPackage()
+	if err != nil || got.Kind != "deb" || got.Was != "rpm" || !got.Made || got.Note != "x" {
+		t.Fatalf("LoadPackage = %+v, %v", got, err)
+	}
+	if err := s.RemovePackage(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemovePackage(); err != nil {
+		t.Errorf("removing twice: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, packageFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadPackage(); err == nil || errors.Is(err, ErrNoPackage) {
+		t.Errorf("a damaged record: %v", err)
+	}
+	// A store that Open did not make reads and writes nothing.
+	if _, err := (Store{}).LoadPackage(); err == nil {
+		t.Error("an unopened store read the record")
+	}
+}

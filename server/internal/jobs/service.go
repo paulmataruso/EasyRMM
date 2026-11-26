@@ -106,6 +106,9 @@ type Service struct {
 	// winmodHooks and approvals are a module's own business with a result and a request (ADR-0083).
 	winmodHooks []WinmodResultHook
 	approvals   ApprovalGate
+	// escrow is the verified-escrow gate native actions that turn on
+	// encryption ask.
+	escrow EscrowGate
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs

@@ -246,11 +246,42 @@ type EscrowNeed struct {
 	VolumeID    string   `json:"volumeId"`
 	ProtectorID string   `json:"protectorId"`
 	Replace     []string `json:"replace,omitempty"`
+	// Rotating asks for a rotation after a read (ADR-0081 section 5), for
+	// BitLocker: add a new recovery password, escrow it and, once the server
+	// has verified it, remove the protector named here. Never before.
+	Rotating string `json:"rotating,omitempty"`
+	// Remove names protectors to remove because a verified record of
+	// Successor, which is on the volume, replaces them: the server's word
+	// that the new key is escrowed and verified. The agent still checks the
+	// successor is on the volume and that it never removes the last way in.
+	Remove    []string `json:"remove,omitempty"`
+	Successor string   `json:"successor,omitempty"`
+}
+
+// Check validates the identifiers of a need before the agent acts on them.
+func (n EscrowNeed) Check() error {
+	if !validEscrowID(n.VolumeID) || (n.ProtectorID != "" && !validEscrowID(n.ProtectorID)) ||
+		(n.Rotating != "" && !validEscrowID(n.Rotating)) || (n.Successor != "" && !validEscrowID(n.Successor)) ||
+		len(n.Replace) > MaxEscrowProtectors || len(n.Remove) > MaxEscrowProtectors {
+		return errors.New("a need is not valid")
+	}
+	for _, id := range append(append([]string{}, n.Replace...), n.Remove...) {
+		if !validEscrowID(id) {
+			return errors.New("a need is not valid")
+		}
+	}
+	if len(n.Remove) > 0 && n.Successor == "" {
+		return errors.New("a removal names its successor")
+	}
+	return nil
 }
 
 // EscrowVolumesAnswer is the server's answer: what to escrow now.
 type EscrowVolumesAnswer struct {
 	Need []EscrowNeed `json:"need"`
+	// Watch says a rotation of this device is under way: report again after
+	// ten minutes instead of an hour, so that its steps follow each other.
+	Watch bool `json:"watch,omitempty"`
 }
 
 // EscrowRecord is one sealed recovery key (PathEscrow).

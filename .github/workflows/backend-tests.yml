@@ -138,6 +138,11 @@ jobs:
           EASYRMM_TEST_AGENT_BEFORE: ${{ runner.temp }}\easyrmm-agent-before.exe
           EASYRMM_TEST_AGENT_AFTER: ${{ runner.temp }}\easyrmm-agent-after.exe
         run: go test -count=1 -v -run '^(TestStandardUserPlantsState|TestUpdateFromBeforeTheStateCheck|TestRepairInstallOnWindows)$' ./agent/cmd/easyrmm-agent/
+      # ADR-0056: the enrollment file is read only where the owner, the access
+      # list and every folder above it are the administration's. Elevated, as
+      # the runner is: the tests make files owned by another account.
+      - name: Enrollment file checks (access lists, links, held open)
+        run: go test -count=1 -v -run 'OpenPrivate' ./agent/host/
       - name: Build the Windows agents
         run: |
           go build -trimpath -o easyrmm-agent-windows-amd64.exe ./agent/cmd/easyrmm-agent
@@ -294,6 +299,22 @@ jobs:
           ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
             -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\jobs-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
             -Environment 'EASYRMM_TEST_SYSTEM=1'
+          exit $LASTEXITCODE
+      # ADR-0081, slice 4: BitLocker's WMI as the agent calls it, as LocalSystem,
+      # on a 64 MiB file-backed virtual disk made for the test: recovery-password
+      # protectors are added, read and removed (a rotation's steps), the
+      # computer's preconditions are read. Nothing is encrypted and the system
+      # drive is never touched; there is no TPM here, so the TPM protector and
+      # encryption are not exercised. The tests skip, and say so, on an image
+      # whose edition has no BitLocker WMI class.
+      - name: BitLocker's WMI on a virtual disk, as LocalSystem
+        run: |
+          go test -c -o "$env:RUNNER_TEMP\escrow.test.exe" ./agent/escrow
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\escrow.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=TestWindows' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\escrow" `
+            -Environment 'EASYRMM_TEST_BITLOCKER=1'
           exit $LASTEXITCODE
       # The Windows half of agent/powershell runs only here, as LocalSystem,
       # so its floor is kept here rather than in check-coverage.sh: the

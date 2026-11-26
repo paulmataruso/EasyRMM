@@ -77,6 +77,7 @@ type luksState struct {
 	sent                 []byte
 	needs                []agentproto.EscrowNeed
 	lastTry, backoff     map[string]time.Time
+	watch                bool
 }
 
 // syncLUKS is Sync for LUKS: report the volumes when due, then make the key
@@ -89,6 +90,9 @@ func (a *Agent) syncLUKS(ctx context.Context, key *agentproto.EscrowKeyPayload, 
 	}
 	if reportEvery == 0 {
 		reportEvery = defaultReportEvery
+	}
+	if st.watch {
+		reportEvery = readEvery
 	}
 	if st.lastRead.IsZero() || now.Sub(st.lastRead) >= readEvery {
 		st.lastRead = now
@@ -104,6 +108,16 @@ func (a *Agent) syncLUKS(ctx context.Context, key *agentproto.EscrowKeyPayload, 
 	for _, n := range slices.Clone(st.needs) {
 		if ctx.Err() != nil {
 			return
+		}
+		if n.Check() != nil {
+			continue
+		}
+		if len(n.Remove) > 0 {
+			a.removeLUKS(ctx, n)
+			st.needs = slices.DeleteFunc(st.needs, func(x agentproto.EscrowNeed) bool {
+				return x.VolumeID == n.VolumeID && slices.Equal(x.Remove, n.Remove)
+			})
+			continue
 		}
 		a.escrowLUKS(ctx, key, pub, n)
 	}
@@ -137,6 +151,7 @@ func (a *Agent) reportLUKS(ctx context.Context, vols []LUKSVolume, now time.Time
 		return
 	}
 	st.sent, st.lastReport, st.needs = fp, now, ans.Need
+	st.watch = ans.Watch
 }
 
 // escrowLUKS makes one key slot for a volume the server asked for, escrows its

@@ -64,6 +64,7 @@ export function KeystoreTab() {
                       <th className="px-3 py-2 font-medium">Made</th>
                       <th className="px-3 py-2 font-medium">Recovery</th>
                       <th className="px-3 py-2 font-medium">In use</th>
+                      <th className="px-3 py-2 font-medium">Keys it wraps</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -86,6 +87,9 @@ export function KeystoreTab() {
                           )}
                         </td>
                         <td className="px-3 py-2">{v.open ? "yes" : "no"}</td>
+                        <td className="px-3 py-2">
+                          {q.data.kekUsage?.find((u) => u.version === v.version)?.keys ?? 0}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

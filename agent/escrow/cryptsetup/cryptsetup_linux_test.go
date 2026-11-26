@@ -475,3 +475,103 @@ func TestRealLUKSThroughTheAgent(t *testing.T) {
 		t.Fatalf("the administrator's key was disturbed or slots = %d", len(l.activeSlots(dev)))
 	}
 }
+
+// A rotation after a read (ADR-0081 section 5), with the real cryptsetup: the
+// new slot is added and escrowed first; while the server has not said the new
+// key is verified the old slot stays; once it says so the old slot goes, and
+// never the administrator's, never the last slot of the volume.
+func TestRealLUKSRotationRemovesTheOldSlotOnlyOnceTheNewOneIsVerified(t *testing.T) {
+	l := labFor(t)
+	admin := bytes.Repeat([]byte("a"), 64)
+	dev, uuid, _ := l.volume("luks2", admin, true)
+
+	store, _, err := state.Open(host.Paths{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(store.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	signPub, signKey, _ := ed25519.GenerateKey(rand.Reader)
+	orgPriv, orgPub, _ := escrowcrypto.GenerateKey()
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	logs := &bytes.Buffer{}
+	srv := &fakeServer{answer: agentproto.EscrowAnswer{State: agentproto.EscrowVerified}, need: []agentproto.EscrowNeed{{VolumeID: uuid}}}
+	a := &escrow.Agent{
+		DeviceID: device, Key: func() ed25519.PublicKey { return signPub },
+		Reader: stubReader{}, LUKS: l.backend(), Server: srv, Store: store,
+		Log: slog.New(slog.NewTextHandler(logs, nil)), Now: func() time.Time { return now },
+	}
+	signed, err := agentproto.SignEscrowKey(signKey, agentproto.EscrowKeyPayload{
+		V: agentproto.EscrowKeyPayloadVersion, DeviceID: device, OrgID: org, KeyID: "key-1", KeyVersion: 1,
+		PublicKey: base64.StdEncoding.EncodeToString(orgPub), IssuedAt: now, ExpiresAt: now.Add(48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Answered(&signed)
+	open := func(r agentproto.EscrowRecord) []byte {
+		enc, _ := base64.StdEncoding.DecodeString(r.Enc)
+		ct, _ := base64.StdEncoding.DecodeString(r.Ciphertext)
+		pt, err := escrowcrypto.Open(orgPriv, escrowcrypto.Context{Org: org, Device: device, Volume: uuid, Protector: r.ProtectorID, OrgKey: "key-1"}, enc, ct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pt
+	}
+	sync := func(d time.Duration) {
+		now = now.Add(d)
+		a.Sync(context.Background())
+	}
+
+	sync(0)
+	if len(srv.records) != 1 {
+		t.Fatalf("the first escrow: %d records\n%s", len(srv.records), logs)
+	}
+	first := srv.records[0]
+	firstKey := open(first)
+
+	// The key was read: the server asks for a replacement, but the keystore is
+	// away, so the new record is only pending. Both slots stay.
+	srv.answer = agentproto.EscrowAnswer{State: agentproto.EscrowPending}
+	srv.need = []agentproto.EscrowNeed{{VolumeID: uuid, Replace: []string{first.ProtectorID}}}
+	sync(time.Hour)
+	if len(srv.records) != 2 {
+		t.Fatalf("the replacement: %d records\n%s", len(srv.records), logs)
+	}
+	second := srv.records[1]
+	secondKey := open(second)
+	if !l.opens(dev, firstKey) || !l.opens(dev, secondKey) || !l.opens(dev, admin) {
+		t.Fatal("a slot was removed before the new key was verified")
+	}
+
+	// A removal that names a successor which is not on the volume does nothing.
+	srv.need = []agentproto.EscrowNeed{{VolumeID: uuid, Remove: []string{first.ProtectorID}, Successor: "0a0a0a0a-0000-4000-8000-00000000dead"}}
+	sync(time.Hour)
+	if !l.opens(dev, firstKey) {
+		t.Fatal("a slot was removed for a successor that is not on the volume")
+	}
+
+	// The server says the new key is verified: the old slot goes, the administrator's stays.
+	srv.need = []agentproto.EscrowNeed{{VolumeID: uuid, Remove: []string{first.ProtectorID}, Successor: second.ProtectorID}}
+	sync(time.Hour)
+	if l.opens(dev, firstKey) || !l.opens(dev, secondKey) || !l.opens(dev, admin) {
+		t.Fatalf("after the removal: old=%v new=%v admin=%v\n%s", l.opens(dev, firstKey), l.opens(dev, secondKey), l.opens(dev, admin), logs)
+	}
+
+	// Asked to remove the administrator's slot (which has no EasyRMM token), the
+	// agent refuses; and the passphrases are in no log.
+	if len(l.activeSlots(dev)) != 2 {
+		t.Fatalf("slots = %d", len(l.activeSlots(dev)))
+	}
+	srv.need = []agentproto.EscrowNeed{{VolumeID: uuid, Remove: []string{"0a0a0a0a-0000-4000-8000-00000000beef"}, Successor: second.ProtectorID}}
+	sync(time.Hour)
+	if !l.opens(dev, admin) || len(l.activeSlots(dev)) != 2 {
+		t.Fatal("a slot that is not the agent's was removed")
+	}
+	for _, k := range [][]byte{firstKey, secondKey} {
+		if strings.Contains(logs.String(), string(k)) {
+			t.Fatal("a passphrase is in the agent's log")
+		}
+	}
+}

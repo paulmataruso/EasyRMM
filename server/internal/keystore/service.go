@@ -27,6 +27,13 @@ const (
 	ActionVerified      = "recovery_key.verified"
 	ActionStale         = "recovery_key.stale"
 	ActionConflict      = "recovery_key.conflict"
+	// Slice 4 (rotation).
+	ActionRotated        = "recovery_key.rotated"
+	ActionResealed       = "recovery_key.resealed"
+	ActionRewrapped      = "keystore.org_key_rewrapped"
+	ActionOrgKeyRotated  = "keystore.org_key_rotated"
+	ActionOrgKeyDrained  = "keystore.org_key_drained"
+	ActionRotationFailed = "recovery_key.rotation_failed"
 )
 
 // Limits on uploads (ADR-0081 section 5): one per volume per five minutes and
@@ -53,6 +60,8 @@ type Verifier interface {
 	VerifyEscrow(ctx context.Context, requestID, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) (string, error)
 	ReadEscrow(ctx context.Context, requestID, record, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) ([]byte, error)
 	Log(ctx context.Context, seq int64, limit int) (LogPage, error)
+	RewrapOrgKey(ctx context.Context, org, keyID, purpose, wrappedPrivate string) (MadeKey, error)
+	ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newWrapped string, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error)
 }
 
 var _ Verifier = (*Client)(nil)

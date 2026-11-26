@@ -107,6 +107,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/activedirectory"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/backup"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/bitlocker"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy/gpowire"
@@ -316,7 +317,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetRoleStore(d.Modules)
 	// The winmod job kind runs the catalog's actions where the module is
 	// on (ADR-0073, slice 5).
-	catalog, err := winmod.NewCatalog(slices.Concat(defender.Actions(), backup.Actions(), roles.Actions())...)
+	catalog, err := winmod.NewCatalog(slices.Concat(defender.Actions(), backup.Actions(), roles.Actions(), bitlocker.Actions())...)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +420,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	if cfg.TLSMode == config.TLSAcme {
 		d.TLS = newTLS(cfg, db, auditLog, sealer, d.Notify, log)
 	}
+	// BitLocker's enable action asks the keystore's gate before it makes a job.
+	d.Jobs.SetEscrowGate(d.Keystore)
 	var files agentfiles.Mesh
 	if mesh != nil {
 		files = mesh
