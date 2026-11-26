@@ -1521,6 +1521,18 @@ deleted by hand leaves logging configured, which is harmless.
   search and exports; alerts and notifications carry no event content;
   every search and export is audited where the customer's administrators
   can see it.
+* **On demand, Technicians and above see one computer's events**,
+  sign-ins and process starts outside the Security log included, without
+  command lines and scripts; each query is recorded (a length for the text,
+  never an event). Amended by ADR-0068 (slice 1): the Event logs tab reads a
+  computer's own logs through a job, for holders of `eventlog.view`, and
+  keeps the result an hour, for the person who asked only. This widens who
+  sees such events through the console, not only through a shell: a
+  Technician already holds a terminal on the computer. What stays at
+  `log.view` is this ADR's: search across computers and sites, and history
+  after a computer's own log has moved on or the computer is gone. The
+  Security log and the sensitive fields need `log.view_sensitive`, from an
+  organization-wide grant.
 * **EasyRMM's tokens are redacted** on the computer, by the agent and by
   the server; EasyRMM's jobs' argument values are replaced in what
   EasyRMM collects, and are otherwise seen only with the job.

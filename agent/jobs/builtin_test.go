@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,6 +48,17 @@ func childMain() {
 		line(`{"t":"subkey","name":"a","subkeys":0,"values":0}`)
 		_, _ = f.WriteString(`{"t":"subkey","name":"b`)
 	case "hang":
+		line(`{"t":"subkey","name":"a","subkeys":0,"values":0}`)
+		_ = f.Sync()
+		time.Sleep(time.Hour)
+	case "stdin":
+		// Waits for its input to close, as the eventlog builtin's watchdog
+		// does, then writes its last line and ends.
+		line(`{"t":"subkey","name":"a","subkeys":0,"values":0}`)
+		_ = f.Sync()
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		line(`{"t":"end","complete":false,"elapsedMs":1}`)
+	case "deaf":
 		line(`{"t":"subkey","name":"a","subkeys":0,"values":0}`)
 		_ = f.Sync()
 		time.Sleep(time.Hour)
@@ -271,10 +283,55 @@ func TestAcceptsListsTheEditorWhereItRuns(t *testing.T) {
 		}
 		return false
 	}
-	if windows := has(agentproto.CapJobPwsh); has(agentproto.CapJobStructured) != windows || has(agentproto.CapBuiltin("registry", 1)) != windows {
+	if windows := has(agentproto.CapJobPwsh); has(agentproto.CapJobStructured) != windows || has(agentproto.CapBuiltin("registry", 1)) != windows || has(agentproto.CapBuiltin("eventlog", 1)) != windows {
 		t.Errorf("accepts %v", got)
 	}
 	if !has(agentproto.CapJobParams) {
 		t.Errorf("accepts %v", got)
+	}
+}
+
+func eventlogPayload(mode string, timeout int) agentproto.JobPayload {
+	p := builtinPayload(mode, timeout)
+	p.Builtin = agentproto.BuiltinEventlog
+	return p
+}
+
+func TestEventlogBuiltinIsCancelledThroughItsInput(t *testing.T) {
+	useChild(t)
+	old, oldGrace := KillGrace, InputGrace
+	KillGrace, InputGrace = time.Second, 10*time.Second
+	defer func() { KillGrace, InputGrace = old, oldGrace }()
+	// A cancel closes the child's input; it writes its last line and exits by
+	// itself, well before the grace ends.
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(500*time.Millisecond, func() { cancel(errCanceled) })
+	start := time.Now()
+	res := Execute(ctx, eventlogPayload("stdin", 30), t.TempDir())
+	ls := lines(t, res)
+	if res.Status != agentproto.RunCanceled || len(ls) != 3 || !strings.Contains(string(ls[2]), `"end"`) || time.Since(start) > 8*time.Second {
+		t.Fatalf("cancel: %+v %q after %s", res, ls, time.Since(start))
+	}
+	// So does the timeout.
+	res = Execute(context.Background(), eventlogPayload("stdin", 1), t.TempDir())
+	if res.Status != agentproto.RunTimedOut || len(lines(t, res)) != 3 {
+		t.Fatalf("timeout: %+v", res)
+	}
+}
+
+func TestEventlogBuiltinThatIgnoresItsInputIsEndedAfterTheGrace(t *testing.T) {
+	useChild(t)
+	old, oldGrace := KillGrace, InputGrace
+	KillGrace, InputGrace = time.Second, time.Second
+	defer func() { KillGrace, InputGrace = old, oldGrace }()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(300*time.Millisecond, func() { cancel(errCanceled) })
+	start := time.Now()
+	res := Execute(ctx, eventlogPayload("deaf", 30), t.TempDir())
+	if res.Status != agentproto.RunCanceled || len(lines(t, res)) != 2 {
+		t.Fatalf("%+v", res)
+	}
+	if d := time.Since(start); d < time.Second || d > 12*time.Second {
+		t.Fatalf("ended after %s: the grace is %s", d, InputGrace)
 	}
 }

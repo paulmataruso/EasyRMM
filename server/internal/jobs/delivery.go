@@ -111,6 +111,18 @@ func (s *Service) keepAccepts(ctx context.Context, device uuid.UUID, accepts []s
 	})
 }
 
+// oneEventlogAtATime holds an event log query back while another one of the
+// device is running, or was delivered and has not yet been given up on: the
+// claim delivers one to a device only while none is running there, so that at
+// most one of the quick lane's two slots holds an event log query and registry
+// reads are not starved by searches (ADR-0068, Settings per kind). $2 is the
+// time after which a delivered run is sent again.
+const oneEventlogAtATime = `(j.kind <> 'eventlog_query' OR NOT EXISTS (
+	SELECT 1 FROM job_runs r2 JOIN jobs j2 ON j2.id = r2.job_id
+	WHERE r2.device_id = r.device_id AND r2.id <> r.id AND j2.kind = 'eventlog_query'
+	  AND (r2.status = 'running' OR (r2.status = 'sent' AND r2.sent_at >= now() - make_interval(secs => $2)))
+))`
+
 // oneChangeAtATime holds a hardening apply or undo back while another
 // hardening or software run of the device is sent, running or queued
 // before it, and holds those back while an apply or undo is (ADR-0054, One
@@ -160,12 +172,13 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		}
 		// Due runs, quick ones first, then oldest first.
 		rows, err := tx.Query(ctx, `SELECT r.id, r.status = 'sent',
-				coalesce(nullif(j.signed_bytes, 0), octet_length(j.body) * 2 + 4096)
+				coalesce(nullif(j.signed_bytes, 0), octet_length(j.body) * 2 + 4096), j.kind = 'eventlog_query'
 			FROM job_runs r JOIN jobs j ON j.id = r.job_id
 			WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
 			  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
 			  AND j.requires <@ $4::text[]
 			  AND `+oneChangeAtATime+`
+			  AND `+oneEventlogAtATime+`
 			ORDER BY (j.lane IS NOT NULL) DESC, r.created_at, r.id LIMIT $3
 			FOR UPDATE OF r SKIP LOCKED`,
 			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs, accepts)
@@ -173,14 +186,15 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 			return err
 		}
 		type candidate struct {
-			id     uuid.UUID
-			resent bool
-			size   int
+			id       uuid.UUID
+			resent   bool
+			size     int
+			eventlog bool
 		}
 		var cands []candidate
 		for rows.Next() {
 			var c candidate
-			if err := rows.Scan(&c.id, &c.resent, &c.size); err != nil {
+			if err := rows.Scan(&c.id, &c.resent, &c.size, &c.eventlog); err != nil {
 				rows.Close()
 				return err
 			}
@@ -195,6 +209,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		// an answer of its own, never with others.
 		var chosen []uuid.UUID
 		total := 0
+		eventlogChosen := false
 		for i, c := range cands {
 			if i == 0 && c.resent {
 				chosen = append(chosen, c.id)
@@ -206,6 +221,10 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 			if len(chosen) > 0 && total+c.size > agentproto.MaxAnswerBytes {
 				break
 			}
+			if c.eventlog && eventlogChosen {
+				continue // one event log query runs on a device at a time (ADR-0068)
+			}
+			eventlogChosen = eventlogChosen || c.eventlog
 			chosen = append(chosen, c.id)
 			total += c.size
 		}

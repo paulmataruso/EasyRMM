@@ -47,6 +47,9 @@ export interface RegistryInput {
 /** The capabilities of an agent that has F2 and the registry builtin (agentproto.CapJobStructured, CapBuiltin). */
 export const REGISTRY_ACCEPTS = ["job.pwsh", "job.params", "job.structured", "builtin.registry.v1"];
 
+/** The capabilities of an agent that has F2 and the event viewer's builtin (agentproto.CapBuiltin("eventlog", 1)). */
+export const EVENTLOG_ACCEPTS = ["job.pwsh", "job.params", "job.structured", "builtin.eventlog.v1"];
+
 /** The input of a structured job, decoded. */
 export function inputOf(job: JobPayload): RegistryInput {
   return JSON.parse(Buffer.from(job.input ?? "", "base64").toString("utf8")) as RegistryInput;

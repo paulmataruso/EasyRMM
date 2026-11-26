@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -59,6 +60,56 @@ func TestRegistryBuiltinAsSystem(t *testing.T) {
 	}
 	// Accepts lists the editor on Windows.
 	if !strings.Contains(strings.Join(Accepts(), ","), "builtin.registry.v1") {
+		t.Errorf("accepts %v", Accepts())
+	}
+}
+
+// TestEventlogBuiltinAsSystem: a signed structured job runs the real agent
+// program as "easyrmm-agent.exe builtin eventlog", in a job object, with a
+// pipe on its input: a channel list comes back, and a cancel ends a long
+// search through the input and not through the job object's kill.
+func TestEventlogBuiltinAsSystem(t *testing.T) {
+	if os.Getenv("EASYRMM_TEST_SYSTEM") == "" {
+		t.Skip("runs as LocalSystem on a computer made for it; CI's job sets EASYRMM_TEST_SYSTEM")
+	}
+	exe := os.Getenv("EASYRMM_TEST_AGENT_EXE")
+	if exe == "" {
+		t.Skip("EASYRMM_TEST_AGENT_EXE names the agent's program")
+	}
+	old := builtinProgram
+	builtinProgram = func(name string) (string, []string, error) { return exe, []string{"builtin", name}, nil }
+	defer func() { builtinProgram = old }()
+	AgentVersion = "test"
+	payload := func(in string, timeout int) agentproto.JobPayload {
+		return agentproto.JobPayload{V: 3, RunID: "r", JobID: "j", DeviceID: "d", Executor: agentproto.ExecutorBuiltin, Builtin: "eventlog",
+			Lane: agentproto.LaneQuick, Input: []byte(in), TimeoutSeconds: timeout}
+	}
+	res := Execute(context.Background(), payload(`{"v":1,"op":"channels","rules":1,"sensitive":false}`, 60), t.TempDir())
+	if res.Status != agentproto.RunSucceeded || res.Result == "" {
+		t.Fatalf("%+v", res)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(res.Result)
+	ls := agentproto.SplitResultLines(raw)
+	if len(ls) < 10 || !strings.Contains(string(ls[len(ls)-1]), `"t":"end"`) {
+		t.Fatalf("%d lines", len(ls))
+	}
+	// A cancel closes the child's input; it writes its last line and exits.
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(time.Second, func() { cancel(errCanceled) })
+	start := time.Now()
+	res = Execute(ctx, payload(`{"v":1,"op":"query","rules":1,"sensitive":false,"channels":["System","Application"],"text":"easyrmm-no-event-holds-this"}`, 60), t.TempDir())
+	t.Logf("canceled after %s: %s", time.Since(start), res.Status)
+	if res.Status != agentproto.RunCanceled {
+		t.Fatalf("%+v", res)
+	}
+	if res.Result != "" {
+		raw, _ := base64.StdEncoding.DecodeString(res.Result)
+		ls := agentproto.SplitResultLines(raw)
+		if !strings.Contains(string(ls[len(ls)-1]), `"t":"end"`) {
+			t.Errorf("the child was killed before its last line: %s", ls[len(ls)-1])
+		}
+	}
+	if !strings.Contains(strings.Join(Accepts(), ","), "builtin.eventlog.v1") {
 		t.Errorf("accepts %v", Accepts())
 	}
 }

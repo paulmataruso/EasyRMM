@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +36,18 @@ var builtinProgram = func(name string) (string, []string, error) {
 }
 
 // builtins are the builtins this build has, with the input versions each reads.
-var builtins = map[string]bool{agentproto.BuiltinRegistry: true}
+var builtins = map[string]bool{agentproto.BuiltinRegistry: true, agentproto.BuiltinEventlog: true}
+
+// cancelsOnInput are the builtins that stop their work when the end of their
+// standard input closes (ADR-0068): the agent starts them with a pipe on it
+// and closes it to cancel, so that the work Windows does for them stops
+// rather than being left to a killed client. The others are ended by the job
+// object at once.
+var cancelsOnInput = map[string]bool{agentproto.BuiltinEventlog: true}
+
+// InputGrace is how long a builtin that cancels on input is given, after its
+// input is closed, to stop by itself before the job object ends it.
+var InputGrace = 5 * time.Second
 
 // Names of the files in a structured run's folder.
 const (
@@ -80,6 +92,12 @@ func executeBuiltin(ctx context.Context, p agentproto.JobPayload, workRoot strin
 	cmd.Env = withEnv(environment(p, dir), []string{"EASYRMM_JOB_INPUT=" + inPath, "EASYRMM_JOB_RESULT=" + outPath})
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.WaitDelay = 5 * time.Second
+	var stdin io.WriteCloser
+	if cancelsOnInput[p.Builtin] {
+		if stdin, err = cmd.StdinPipe(); err != nil {
+			return fail("Could not open the builtin's input: " + err.Error())
+		}
+	}
 	g, err := startLimited(cmd, builtinMemoryLimit)
 	if err != nil {
 		return fail("Could not start " + prog + ": " + err.Error())
@@ -98,12 +116,25 @@ func executeBuiltin(ctx context.Context, p agentproto.JobPayload, workRoot strin
 		stopped = context.Cause(ctx)
 	}
 	if stopped != nil {
-		g.terminate()
-		select {
-		case waitErr = <-done:
-		case <-time.After(KillGrace):
-			g.kill()
-			waitErr = <-done
+		exited := false
+		if stdin != nil {
+			// Closing the input is the cancel: the child cancels its query and
+			// exits, which tells the Event Log service to stop.
+			_ = stdin.Close()
+			select {
+			case waitErr = <-done:
+				exited = true
+			case <-time.After(InputGrace):
+			}
+		}
+		if !exited {
+			g.terminate()
+			select {
+			case waitErr = <-done:
+			case <-time.After(KillGrace):
+				g.kill()
+				waitErr = <-done
+			}
 		}
 	}
 	res.FinishedAt = time.Now().UTC()

@@ -26,7 +26,7 @@ func TestKindsTable(t *testing.T) {
 	if !isStructured(KindRegistryChange) || isStructured(KindScript) || isStructured("nothing") {
 		t.Error("isStructured")
 	}
-	if len(builtinKinds()) != 2 || builtinKinds()[0].Name != KindRegistryChange {
+	if len(builtinKinds()) != 3 || builtinKinds()[0].Name != KindEventlogQuery || builtinKinds()[1].Name != KindRegistryChange {
 		t.Errorf("%+v", builtinKinds())
 	}
 	s := &Service{outputRetention: 1e9, retention: 2e9}
