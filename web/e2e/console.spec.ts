@@ -1039,6 +1039,20 @@ test("Update all now for a site installs every available update, and restarts th
   await expect(page.getByRole("dialog")).toBeHidden();
 });
 
+test("the one Repair button says what it would do, and refuses to repair what is not down", async () => {
+  const page = admin;
+  await page.goto(`/devices/${agent.deviceId}`);
+  // One button for the three agents, whatever is down.
+  await expect(page.getByRole("button", { name: "Reconnect remote access" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Repair patching agent" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Repair", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /^Repair / });
+  // The agent checks in, and no MeshAgent or EasyPatch agent is expected here: nothing is down.
+  await expect(dialog.getByTestId("repair-plan")).toHaveText("Everything that should run on this device is running.");
+  await expect(dialog.getByRole("button", { name: "Repair", exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close" }).first().click();
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();

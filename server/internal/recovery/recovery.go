@@ -22,6 +22,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/internal/logredact"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
+	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
@@ -48,9 +49,6 @@ const (
 	// ManualWaitPatching is the same for the EasyPatch agent, whose check-in
 	// reaches EasyRMM through the engine every 5 minutes.
 	ManualWaitPatching = 7 * time.Minute
-	// DiagnosticsKeep is how long a repair keeps the diagnostics a step
-	// returned (ADR-0069: the engine keeps them 14 days as well).
-	DiagnosticsKeep = 14 * 24 * time.Hour
 	// MaxDiagnostics is the most bytes of diagnostics kept for a repair.
 	MaxDiagnostics = 256 * 1024
 	// AgentFresh is how recently the EasyRMM agent must have checked in to
@@ -531,7 +529,16 @@ func (s *Service) settleStep(ctx context.Context, tx pgx.Tx, carrier string, dev
 	now := s.now().UTC()
 	list[step].DoneAt = &now
 	if diagnostics = keepDiagnostics(diagnostics); diagnostics != "" {
-		if _, err := tx.Exec(ctx, `UPDATE agent_repairs SET diagnostics = $2 WHERE id = $1`, id, diagnostics); err != nil {
+		// The step's diagnostics go into the device's agent log, where the
+		// Logs tab shows them with the other sources (ADR-0069, amended
+		// 2026-11-26). The carrier is the EasyPatch agent: it is the only
+		// one that returns them.
+		level := agentproto.LogInfo
+		if !rep.OK {
+			level = agentproto.LogWarn
+		}
+		if err := agentlogs.StoreText(ctx, tx, deviceID, agentproto.LogSourceEasyPatch, level, now, diagnostics,
+			map[string]string{"repair": id.String(), "step": list[step].Step}); err != nil {
 			return err
 		}
 	}
@@ -669,9 +676,7 @@ func (s *Service) purge(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM agent_repairs WHERE state <> 'running' AND ended_at < $1`, s.now().Add(-Keep)); err != nil {
 			return err
 		}
-		// What a step returned is kept for less time than the repair.
-		_, err := tx.Exec(ctx, `UPDATE agent_repairs SET diagnostics = '' WHERE diagnostics <> '' AND state <> 'running' AND ended_at < $1`, s.now().Add(-DiagnosticsKeep))
-		return err
+		return nil
 	})
 }
 

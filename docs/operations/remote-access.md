@@ -24,10 +24,13 @@ The page also shows the host in the settings and the last error the agent
 read (a failed start, restart or repair). The agent never sends a secret
 with it; texts are cut at 300 characters.
 
+## The Repair button
+
+One **Repair** button on the device page (ADR-0069, amended 2026-11-26) replaces the three that were here. Before it asks, it says what will happen. The server works out which of the EasyRMM agent, MeshAgent and the EasyPatch agent is down and has a running agent repair it: the EasyRMM agent repairs MeshAgent and the EasyPatch agent; where the EasyRMM agent is down and the EasyPatch agent runs, the EasyPatch agent repairs the EasyRMM agent first (press Repair again for what waits). Where no agent that can repair is running, it says so and asks you to reinstall the EasyRMM agent. The sections below describe each repair.
+
 ## Reconnect remote access
 
-The button is on the device page for those who hold `device.edit` on the
-device, while the EasyRMM agent checks in. It starts a **repair** of
+The Repair button (`device.edit` on the device) starts, while the EasyRMM agent checks in and MeshAgent is not connected, a **repair** of
 MeshAgent that the EasyRMM agent carries out, in two steps:
 
 1. **Restart MeshAgent**: its service, or the child process the agent
@@ -51,9 +54,8 @@ Each request and each end is in the audit log (*Asked to reconnect remote access
 
 ## Repair patching agent
 
-On the same page, for those who hold `device.edit`, while the EasyRMM agent
-checks in and the device's EasyPatch agent is linked to it, **Repair
-patching agent** has the EasyRMM agent repair the EasyPatch agent **in
+With the Repair button, for those who hold `device.edit`, while the EasyRMM agent
+checks in and the device's EasyPatch agent is linked to it and silent, has the EasyRMM agent repair the EasyPatch agent **in
 place, keeping its enrollment**, in two steps:
 
 1. **Restart the EasyPatch agent's service** (the `EasyPatchAgent` Windows
@@ -137,8 +139,8 @@ linked, and an EasyPatch agent of a version that declares the
 `repair-companion` capability (the engine sends it nothing otherwise and
 says so).
 
-* **By hand**: **Repair EasyRMM agent through patching** on the device page
-  (with `patch.manage`), while the EasyRMM agent is not checking in and the
+* **By hand**: the **Repair** button on the device page
+  (with `patch.manage` for this repair), while the EasyRMM agent is not checking in and the
   EasyPatch agent was heard from in the last 10 minutes. The page shows the
   steps: *Restart the EasyRMM agent*, then, if it is still silent 2
   minutes after, *Put the EasyRMM agent back from its recovery copy*.

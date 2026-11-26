@@ -25,7 +25,7 @@ import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
-import { EasyRmmRepairCard, PatchingRepairCard, ReconnectRemoteButton, RemoteRepairCard, RepairEasyRmmButton, RepairPatchingButton } from "./remoteRepair";
+import { EasyRmmRepairCard, PatchingRepairCard, RemoteRepairCard, RepairButton } from "./remoteRepair";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
@@ -56,7 +56,7 @@ function NotConnected({ device: d }: { device: Device }) {
       start once it reconnects; this page checks every 30 seconds.
       {r?.host && r.reason === "other_server" && <span className="mt-1 block text-muted">Its settings name {r.host}.</span>}
       {r?.error && <span className="mt-1 block break-words text-muted">Last error on the device: {r.error}</span>}
-      {d.canReconnectRemote && <span className="mt-1 block text-muted">Reconnect remote access restarts MeshAgent and, if that does not help, puts it back in place.</span>}
+      {d.canReconnectRemote && <span className="mt-1 block text-muted">Repair restarts MeshAgent and, if that does not help, puts it back in place.</span>}
     </>
   );
 }
@@ -133,9 +133,7 @@ export function DeviceDetailPage() {
                 Run script
               </Button>
             )}
-            <ReconnectRemoteButton device={d} />
-            <RepairPatchingButton device={d} />
-            <RepairEasyRmmButton device={d} />
+            <RepairButton device={d} />
             {can("device.edit") && (
               <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(true)}>
                 Move to…

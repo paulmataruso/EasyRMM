@@ -1,6 +1,5 @@
 // Package repairsapi exposes repairing a device's agents (ADR-0069): what a
-// device's repairs are and asking for one, as the console's "Reconnect
-// remote access" does.
+// device's repairs are, what the one Repair button would do, and pressing it.
 package repairsapi
 
 import (
@@ -23,6 +22,7 @@ func (a *API) Register(mux *http.ServeMux) {
 		mux.Handle(pattern, httpapi.RequireActive(httpapi.Handle(h)))
 	}
 	r("GET /api/v1/devices/{id}/repairs", a.list)
+	r("GET /api/v1/devices/{id}/repair-plan", a.plan)
 	r("POST /api/v1/devices/{id}/repairs", a.request)
 }
 
@@ -39,11 +39,22 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// request is what the console sends to ask for a repair.
-type request struct {
-	// Target is meshagent: "Reconnect remote access".
-	Target string `json:"target"`
+func (a *API) plan(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	p, err := a.svc.Plan(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, p)
+	return nil
 }
+
+// request is the console's one Repair button: the body is empty (an object
+// with no fields); the server decides what to repair (ADR-0069).
+type request struct{}
 
 func (a *API) request(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
@@ -54,10 +65,10 @@ func (a *API) request(w http.ResponseWriter, r *http.Request) error {
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	rep, err := a.svc.Request(r.Context(), httpapi.Caller(r), id, in.Target)
+	out, err := a.svc.RepairDevice(r.Context(), httpapi.Caller(r), id)
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusCreated, rep)
+	httpapi.WriteJSON(w, http.StatusCreated, out)
 	return nil
 }

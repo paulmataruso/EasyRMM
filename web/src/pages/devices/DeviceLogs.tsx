@@ -8,7 +8,7 @@ import { MenuButton } from "../../components/Menu";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, Card, cx, EmptyState, InlineError, Input, Select, SelectField, Spinner, type Tone } from "../../components/ui";
 import { formatDateTime } from "../../lib/format";
-import { clock, DEFAULT_VERBOSE_HOURS, LOG_LEVELS, LOG_SOURCES, LOG_SPANS, sourceName, VERBOSE_HOURS } from "./agentLogsText";
+import { clock, highestId, mergeNewestFirst, DEFAULT_VERBOSE_HOURS, LOG_LEVELS, LOG_SOURCES, LOG_SPANS, sourceName, VERBOSE_HOURS } from "./agentLogsText";
 
 /** How many records one read brings, and how many the page keeps. */
 const PAGE = 300;
@@ -66,7 +66,7 @@ export function AgentLogsPanel({ device }: { device: Device }) {
     api
       .get<AgentLogPage>(path, params(filters, { limit: PAGE, follow: live }), ctl.signal)
       .then((page) => {
-        newest.current = page.items.at(-1)?.id ?? 0;
+        newest.current = highestId(page.items, 0);
         setRows(page.items);
         setMore(page.more);
         setMeta({ verbose: page.verbose, retentionDays: page.retentionDays, online: page.online });
@@ -91,8 +91,8 @@ export function AgentLogsPanel({ device }: { device: Device }) {
         .then((page) => {
           setMeta({ verbose: page.verbose, retentionDays: page.retentionDays, online: page.online });
           if (page.items.length === 0) return;
-          newest.current = page.items.at(-1)?.id ?? newest.current;
-          setRows((old) => [...old, ...page.items].slice(-KEEP));
+          newest.current = highestId(page.items, newest.current);
+          setRows((old) => mergeNewestFirst(old, page.items).slice(0, KEEP));
         })
         .catch(() => undefined); // the next tick asks again
     }, LIVE_EVERY);
@@ -102,19 +102,19 @@ export function AgentLogsPanel({ device }: { device: Device }) {
     };
   }, [live, state, path, filtersKey]);
 
-  // Stay at the bottom while records arrive, unless the reader scrolled up.
+  // Stay at the top (the newest records) while records arrive, unless the reader scrolled down.
   useEffect(() => {
     const el = scroller.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+    if (el && pinned.current) el.scrollTop = 0;
   }, [rows]);
 
   const earlier = useCallback(() => {
-    const before = rows[0]?.id;
+    const before = rows.at(-1)?.id;
     if (!before) return;
     api
       .get<AgentLogPage>(path, params(filters, { before, limit: PAGE }))
       .then((page) => {
-        setRows((old) => [...page.items, ...old].slice(-KEEP));
+        setRows((old) => mergeNewestFirst(old, page.items).slice(0, KEEP));
         setMore(page.more);
         pinned.current = false;
       })
@@ -226,20 +226,20 @@ export function AgentLogsPanel({ device }: { device: Device }) {
             tabIndex={0}
             onScroll={(e) => {
               const el = e.currentTarget;
-              pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+              pinned.current = el.scrollTop < 24;
             }}
             className="max-h-[32rem] overflow-auto rounded-md border border-line bg-raised font-mono text-xs leading-5"
           >
+            {rows.map((r) => (
+              <LogRow key={r.id} r={r} />
+            ))}
             {more && (
-              <div className="sticky top-0 border-b border-line bg-raised p-1.5 text-center">
+              <div className="sticky bottom-0 border-t border-line bg-raised p-1.5 text-center">
                 <Button size="sm" onClick={earlier}>
                   Load earlier records
                 </Button>
               </div>
             )}
-            {rows.map((r) => (
-              <LogRow key={r.id} r={r} />
-            ))}
           </div>
         )}
         <p className="mt-3 text-xs text-muted">

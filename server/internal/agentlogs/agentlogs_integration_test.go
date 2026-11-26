@@ -204,7 +204,7 @@ func TestReadNeedsLogViewAndRespectsTenancy(t *testing.T) {
 	ro := f.user("ro@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
 	outsider := f.user("out@example.com", rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: f.glob})
 	page, err := f.svc.Read(f.ctx, tech, f.dev, agentlogs.Query{Limit: 100}, false)
-	if err != nil || len(page.Items) != 4 || page.Items[0].Message != "record 1" || page.RetentionDays != 14 {
+	if err != nil || len(page.Items) != 4 || page.Items[3].Message != "record 1" || page.Items[0].Message != "Disk FULL here" || page.RetentionDays != 14 {
 		t.Fatalf("technician: %+v, %v", page, err)
 	}
 	if _, err := f.svc.Read(f.ctx, ro, f.dev, agentlogs.Query{}, false); !errors.Is(err, apperr.ErrForbidden) {
@@ -221,8 +221,8 @@ func TestReadNeedsLogViewAndRespectsTenancy(t *testing.T) {
 		"level":    {agentlogs.Query{Level: "warn"}, 1},
 		"text":     {agentlogs.Query{Text: "disk full"}, 1},
 		"percent":  {agentlogs.Query{Text: "%"}, 0},
-		"after":    {agentlogs.Query{After: page.Items[1].ID}, 2},
-		"before":   {agentlogs.Query{Before: page.Items[1].ID}, 1},
+		"after":    {agentlogs.Query{After: page.Items[2].ID}, 2},
+		"before":   {agentlogs.Query{Before: page.Items[2].ID}, 1},
 		"newest 2": {agentlogs.Query{Limit: 2}, 2},
 		"future":   {agentlogs.Query{Since: time.Now().Add(time.Hour)}, 0},
 	} {
@@ -231,8 +231,8 @@ func TestReadNeedsLogViewAndRespectsTenancy(t *testing.T) {
 			t.Errorf("%s: %d records, %v; want %d", name, len(p.Items), err, tc.want)
 		}
 	}
-	if p, _ := f.svc.Read(f.ctx, tech, f.dev, agentlogs.Query{Limit: 2}, false); !p.More || p.Items[1].Message != "Disk FULL here" {
-		t.Errorf("the newest two, oldest first: %+v", p)
+	if p, _ := f.svc.Read(f.ctx, tech, f.dev, agentlogs.Query{Limit: 2}, false); !p.More || p.Items[0].Message != "Disk FULL here" || p.Items[1].Message != "record 3" {
+		t.Errorf("the newest two, newest first: %+v", p)
 	}
 	if _, err := f.svc.Read(f.ctx, tech, f.dev, agentlogs.Query{Level: "loud"}, false); err == nil {
 		t.Error("an unknown level was accepted")

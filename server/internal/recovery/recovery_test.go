@@ -1,6 +1,8 @@
 package recovery
 
 import (
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +80,55 @@ func TestWhenATargetIsBack(t *testing.T) {
 		if got := c.f.back(c.target, now, done, c.waitOver); got != c.want {
 			t.Errorf("%s: %v, want %v", name, got, c.want)
 		}
+	}
+}
+
+// The decision table of the one Repair button (ADR-0069, amended 2026-11-26).
+func TestDecideNamesTheRunningAgentThatRepairsWhatIsDown(t *testing.T) {
+	const (
+		rmm   = agentproto.TargetEasyRMMAgent
+		mesh  = agentproto.TargetMeshAgent
+		patch = agentproto.TargetEasyPatchAgent
+	)
+	// Everything runs; each case takes something down.
+	all := Facts{Enrolled: true, RMMUp: true, MeshExpected: true, MeshUp: true, PatchExpected: true, PatchUp: true, HasKey: true, HasPatching: true}
+	with := func(f func(*Facts)) Facts { c := all; f(&c); return c }
+	type act = [2]string // target, carried by
+	for name, c := range map[string]struct {
+		f       Facts
+		down    []string
+		repairs []act
+		later   []string
+		refusal string
+	}{
+		"nothing down":               {f: all, refusal: RefuseNothingDown},
+		"mesh down":                  {f: with(func(f *Facts) { f.MeshUp = false }), down: []string{mesh}, repairs: []act{{mesh, rmm}}},
+		"patch down":                 {f: with(func(f *Facts) { f.PatchUp = false }), down: []string{patch}, repairs: []act{{patch, rmm}}},
+		"mesh and patch down":        {f: with(func(f *Facts) { f.MeshUp, f.PatchUp = false, false }), down: []string{mesh, patch}, repairs: []act{{mesh, rmm}, {patch, rmm}}},
+		"rmm down":                   {f: with(func(f *Facts) { f.RMMUp = false }), down: []string{rmm}, repairs: []act{{rmm, patch}}},
+		"rmm and mesh down":          {f: with(func(f *Facts) { f.RMMUp, f.MeshUp = false, false }), down: []string{rmm, mesh}, repairs: []act{{rmm, patch}}, later: []string{mesh}},
+		"rmm down, patch down":       {f: with(func(f *Facts) { f.RMMUp, f.PatchUp = false, false }), down: []string{rmm, patch}, refusal: RefuseNoRunning},
+		"all down":                   {f: with(func(f *Facts) { f.RMMUp, f.MeshUp, f.PatchUp = false, false, false }), down: []string{rmm, mesh, patch}, refusal: RefuseNoRunning},
+		"rmm down, no patching here": {f: with(func(f *Facts) { f.RMMUp, f.PatchExpected, f.PatchUp = false, false, false }), down: []string{rmm}, refusal: RefuseNoRunning},
+		"no agent":                   {f: Facts{}, refusal: RefuseNoAgent},
+		"leaving":                    {f: with(func(f *Facts) { f.MeshUp, f.Leaving = false, true }), refusal: RefuseLeaving},
+		"no key":                     {f: with(func(f *Facts) { f.MeshUp, f.HasKey = false, false }), down: []string{mesh}, refusal: RefuseNoJobKey},
+		"mesh running already":       {f: with(func(f *Facts) { f.MeshUp, f.Running = false, map[string]bool{mesh: true} }), down: []string{mesh}, refusal: RefuseRunning},
+		"one of two running":         {f: with(func(f *Facts) { f.MeshUp, f.PatchUp, f.Running = false, false, map[string]bool{mesh: true} }), down: []string{mesh, patch}, repairs: []act{{patch, rmm}}},
+	} {
+		p := Decide(c.f)
+		var got []act
+		for _, a := range p.Repairs {
+			got = append(got, act{a.Target, a.CarriedBy})
+		}
+		if !slices.Equal(p.Down, c.down) && (len(p.Down) != 0 || len(c.down) != 0) && c.refusal != RefuseLeaving && c.refusal != RefuseNoAgent && c.refusal != RefuseNoJobKey {
+			t.Errorf("%s: down = %v, want %v", name, p.Down, c.down)
+		}
+		if !slices.Equal(got, c.repairs) || !slices.Equal(p.Later, c.later) || p.Refusal != c.refusal || p.Summary == "" {
+			t.Errorf("%s: plan = %+v, want repairs %v later %v refusal %q", name, p, c.repairs, c.later, c.refusal)
+		}
+	}
+	if s := Decide(with(func(f *Facts) { f.RMMUp, f.MeshUp = false, false })).Summary; !strings.Contains(s, "The EasyPatch agent will restart the EasyRMM agent") || !strings.Contains(s, "press Repair again") {
+		t.Errorf("summary = %q", s)
 	}
 }
