@@ -12,6 +12,8 @@ export type Permission =
   | "device.harden"
   | "device.remote_desktop"
   | "device.rdp_credentials.save"
+  | "device.recovery_key.read"
+  | "device.recovery_key.approve"
   | "quickassist.view"
   | "quickassist.link.create"
   | "quickassist.link.permanent"
@@ -81,7 +83,7 @@ export type Permission =
   | "settings.manage";
 
 export type Role =
-  "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
+  "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only" | "key_reader" | "key_approver";
 export type ScopeKind = "global" | "organization" | "site";
 export type SessionState = "mfa_required" | "mfa_enrollment" | "active";
 
@@ -3939,7 +3941,30 @@ export interface KeystoreSummary {
   fileMode: boolean;
 }
 
+/** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
+export interface RecoveryKeyRequest {
+  id: string;
+  deviceId: string;
+  device: string;
+  volume: string;
+  protector: string;
+  requester: string;
+  reason: string;
+  ticket?: string;
+  state: "pending" | "approved" | "denied" | "used";
+  approver?: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt?: string;
+  mine: boolean;
+  canDecide: boolean;
+}
+
 export interface DeviceEscrow {
+  /** The caller holds the read permission here. */
+  canRead: boolean;
+  /** A read waits for a second person's approval. */
+  twoPerson: boolean;
   /** False where the device cannot escrow here: not a Windows device, or outside the dev scope. */
   applicable: boolean;
   keystore: KeystoreSummary;

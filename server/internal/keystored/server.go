@@ -2,6 +2,7 @@ package keystored
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -118,11 +119,44 @@ func (s *Server) serveConn(c net.Conn, admin bool) {
 	_ = c.SetWriteDeadline(time.Now().Add(2 * time.Minute))
 	resp := s.handle(&req, admin)
 	s.Log.Info("keystore: request", "op", req.Op, "request_id", req.ID, "ok", resp.OK, "code", resp.Code)
+	s.journal(&req, &resp)
 	writeResp(c, resp)
 }
 
+// journal writes the log line of an operation that is not a read (reads write
+// their own before they answer) and is not a status poll. The line is also
+// the host's journal's, through the process log.
+func (s *Server) journal(req *keystore.Request, resp *keystore.Response) {
+	switch req.Op {
+	case keystore.OpStatus, keystore.OpLog, keystore.OpReadEscrow:
+		return
+	}
+	res := "ok"
+	if !resp.OK {
+		res = resp.Code
+	}
+	org := req.Org
+	if org == "" && req.Context != nil {
+		org = req.Context.Org
+	}
+	s.KS.note(keystore.LogEntry{Op: req.Op, Org: org, RequestID: req.ID, Result: res})
+}
+
+// writeResp sends the answer. A key is never given to the JSON encoder, whose
+// buffers are pooled and kept: it is encoded by hand into a slice this
+// function zeroes, and the key itself is zeroed once written.
 func writeResp(c net.Conn, r keystore.Response) {
-	_ = json.NewEncoder(c).Encode(r)
+	if len(r.Plaintext) == 0 {
+		_ = json.NewEncoder(c).Encode(r)
+		return
+	}
+	defer zero(r.Plaintext)
+	b := make([]byte, 0, 32+base64.StdEncoding.EncodedLen(len(r.Plaintext)))
+	defer func() { zero(b[:cap(b)]) }()
+	b = append(b, `{"ok":true,"plaintext":"`...)
+	b = base64.StdEncoding.AppendEncode(b, r.Plaintext)
+	b = append(b, '"', '}', '\n')
+	_, _ = c.Write(b)
 }
 
 func errResp(err error) keystore.Response {
@@ -148,6 +182,28 @@ func (s *Server) handle(req *keystore.Request, admin bool) keystore.Response {
 			return errResp(err)
 		}
 		return keystore.Response{OK: true, PublicKey: pub, WrappedPrivate: wrapped, KEKVersion: ver}
+	case keystore.OpReadEscrow:
+		if admin || req.Context == nil {
+			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not a valid request"}
+		}
+		c := req.Context
+		pt, err := s.KS.ReadEscrow(ReadRequest{
+			RequestID: req.ID, Record: req.Record, Wrapped: req.WrappedPrivate, Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: req.Fingerprint,
+			Context: escrowcrypto.Context{Org: c.Org, Device: c.Device, Volume: c.Volume, Protector: c.Protector, OrgKey: c.OrgKey},
+		})
+		if err != nil {
+			return errResp(err)
+		}
+		return keystore.Response{OK: true, Plaintext: pt}
+	case keystore.OpLog:
+		if admin {
+			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not an admin operation"}
+		}
+		prev, entries, err := s.KS.LogSince(req.Since, req.Limit)
+		if err != nil {
+			return errResp(err)
+		}
+		return keystore.Response{OK: true, Entries: entries, LogPrev: prev}
 	case keystore.OpVerifyEscrow:
 		if admin || req.Context == nil {
 			return keystore.Response{Code: keystore.CodeBadRequest, Error: "not a valid request"}

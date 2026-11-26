@@ -146,7 +146,20 @@ const (
 	PermComplianceAdmin      Permission = "compliance.admin"
 )
 
-// AllPermissions lists every permission.
+// The disk-recovery-key permissions (ADR-0081, section 6). They are held only
+// through the add-on roles below and are implied by no other role: a super
+// administrator can already run anything on every computer, but reading a key
+// must still be an explicit, recorded act of someone who holds the permission.
+const (
+	PermRecoveryKeyRead    Permission = "device.recovery_key.read"
+	PermRecoveryKeyApprove Permission = "device.recovery_key.approve"
+)
+
+// AddOnPermissions are the permissions only an add-on role grants.
+var AddOnPermissions = []Permission{PermRecoveryKeyRead, PermRecoveryKeyApprove}
+
+// AllPermissions lists every permission a built-in role other than the
+// add-on roles can hold.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
 	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
@@ -178,6 +191,10 @@ const (
 	RoleSiteAdmin  Role = "site_admin"
 	RoleTechnician Role = "technician"
 	RoleReadOnly   Role = "read_only"
+	// The add-on roles (ADR-0081): assigned beside a person's ordinary role,
+	// at an organization or a site, they add one permission and nothing else.
+	RoleKeyReader   Role = "key_reader"
+	RoleKeyApprover Role = "key_approver"
 )
 
 // ScopeKind describes which scopes a role may be assigned at.
@@ -287,6 +304,16 @@ var Roles = map[Role]RoleDef{
 		Role: RoleTechnician, Name: "Technician", Rank: 40,
 		Description: "Supports assigned devices: remote access, scripts, software, patches and alerts.",
 		Permissions: technicianPerms, Scopes: []ScopeKind{ScopeOrganization, ScopeSite},
+	},
+	RoleKeyReader: {
+		Role: RoleKeyReader, Name: "Recovery Key Reader", Rank: 10,
+		Description: "Add-on: may read a device's disk recovery key, with a reason and a second factor. Never part of another role.",
+		Permissions: []Permission{PermRecoveryKeyRead}, Scopes: []ScopeKind{ScopeOrganization, ScopeSite},
+	},
+	RoleKeyApprover: {
+		Role: RoleKeyApprover, Name: "Recovery Key Approver", Rank: 10,
+		Description: "Add-on: may approve another person's request to read a disk recovery key, where the organization asks for two people.",
+		Permissions: []Permission{PermRecoveryKeyApprove}, Scopes: []ScopeKind{ScopeOrganization, ScopeSite},
 	},
 	RoleReadOnly: {
 		Role: RoleReadOnly, Name: "Read-Only", Rank: 20,

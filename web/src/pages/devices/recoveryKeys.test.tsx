@@ -36,7 +36,7 @@ const volume = (over: Partial<DeviceEscrow["volumes"][number]> = {}): DeviceEscr
 describe("disk recovery keys (ADR-0081)", () => {
   it("shows each volume's escrow state and never a key", async () => {
     const escrow: DeviceEscrow = {
-      applicable: true,
+      applicable: true, canRead: false, twoPerson: false,
       keystore: READY,
       volumes: [
         volume(),
@@ -60,20 +60,20 @@ describe("disk recovery keys (ADR-0081)", () => {
   });
 
   it("says why escrow is not running, and warns about the file stand-in", async () => {
-    installFakeApi(routes({ applicable: true, keystore: { state: "uninitialised", recoveryVerified: false, fileMode: false }, volumes: [] }));
+    installFakeApi(routes({ applicable: true, canRead: false, twoPerson: false, keystore: { state: "uninitialised", recoveryVerified: false, fileMode: false }, volumes: [] }));
     renderApp("/devices/d1?tab=hardware");
     expect(await screen.findByText(/The keystore is not initialised, so recovery-key escrow is off/)).toBeInTheDocument();
     expect(screen.getByText("No BitLocker volumes reported")).toBeInTheDocument();
   });
 
   it("warns that the stand-in mode keeps its key in a file", async () => {
-    installFakeApi(routes({ applicable: true, keystore: { ...READY, mode: "file", fileMode: true }, volumes: [volume()] }));
+    installFakeApi(routes({ applicable: true, canRead: false, twoPerson: false, keystore: { ...READY, mode: "file", fileMode: true }, volumes: [volume()] }));
     renderApp("/devices/d1?tab=hardware");
     expect(await screen.findByText("Keystore protection: file (stand-in)")).toBeInTheDocument();
   });
 
   it("is not shown where the device cannot escrow", async () => {
-    installFakeApi(routes({ applicable: false, keystore: READY, volumes: [] }));
+    installFakeApi(routes({ applicable: false, canRead: false, twoPerson: false, keystore: READY, volumes: [] }));
     renderApp("/devices/d1?tab=hardware");
     await screen.findByRole("heading", { name: "Disks" });
     expect(screen.queryByRole("heading", { name: "Disk recovery keys" })).not.toBeInTheDocument();

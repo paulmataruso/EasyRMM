@@ -57,6 +57,7 @@ type fx struct {
 	dev, dev2 uuid.UUID
 	vol       string
 	prot      string
+	dir       string
 }
 
 func newFx(t *testing.T) *fx {
@@ -71,6 +72,7 @@ func newFx(t *testing.T) *fx {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	f.dir = dir
 	f.ks, err = keystored.Open(keystored.Options{Dir: filepath.Join(dir, "state"), Mode: keystore.ModeFile})
 	if err != nil {
 		t.Fatal(err)

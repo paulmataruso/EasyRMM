@@ -35,6 +35,13 @@ var ErrUnavailable = errors.New("keystore: not reachable")
 // Do sends a request and returns the response, or a *RemoteError for a
 // refusal, or an error wrapping ErrUnavailable.
 func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
+	return c.do(ctx, req, false)
+}
+
+// do is Do. With secret the answer is read into a buffer of ours, decoded
+// and the buffer zeroed, so that the only copy of a key left is the one in the
+// Response, which the caller zeroes.
+func (c *Client) do(ctx context.Context, req Request, secret bool) (*Response, error) {
 	timeout := c.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -54,7 +61,13 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	var resp Response
-	if err := json.NewDecoder(io.LimitReader(conn, MaxMessage)).Decode(&resp); err != nil {
+	if secret {
+		raw, err := io.ReadAll(io.LimitReader(conn, MaxMessage))
+		defer func() { clear(raw[:cap(raw)]) }()
+		if err != nil || json.Unmarshal(raw, &resp) != nil {
+			return nil, fmt.Errorf("%w: no answer", ErrUnavailable)
+		}
+	} else if err := json.NewDecoder(io.LimitReader(conn, MaxMessage)).Decode(&resp); err != nil {
 		// A refused peer gets silence: no answer at all.
 		return nil, fmt.Errorf("%w: no answer", ErrUnavailable)
 	}
@@ -106,4 +119,39 @@ func (c *Client) VerifyEscrow(ctx context.Context, requestID, wrappedPrivate str
 		return "", fmt.Errorf("%w: unexpected answer", ErrUnavailable)
 	}
 	return r.Result, nil
+}
+
+// ReadEscrow has the keystore open a record and return its recovery password:
+// the one call that returns a key. The caller zeroes the slice. requestID is
+// the audit request ID the keystore's log keeps, and record the escrow record's
+// ID.
+func (c *Client) ReadEscrow(ctx context.Context, requestID, record, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) ([]byte, error) {
+	r, err := c.do(ctx, Request{Op: OpReadEscrow, ID: requestID, Record: record, WrappedPrivate: wrappedPrivate, Context: &ec,
+		Enc: enc, Ciphertext: ct, Fingerprint: fingerprint}, true)
+	if err != nil {
+		if r != nil {
+			clear(r.Plaintext)
+		}
+		return nil, err
+	}
+	if len(r.Plaintext) == 0 {
+		return nil, fmt.Errorf("%w: unexpected answer", ErrUnavailable)
+	}
+	return r.Plaintext, nil
+}
+
+// LogPage is a stretch of the keystore's log.
+type LogPage struct {
+	// Prev is the hash of the entry before the first one here.
+	Prev    string
+	Entries []LogEntry
+}
+
+// Log reads the keystore's log after seq.
+func (c *Client) Log(ctx context.Context, seq int64, limit int) (LogPage, error) {
+	r, err := c.Do(ctx, Request{Op: OpLog, Since: seq, Limit: limit})
+	if err != nil {
+		return LogPage{}, err
+	}
+	return LogPage{Prev: r.LogPrev, Entries: r.Entries}, nil
 }

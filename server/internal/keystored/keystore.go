@@ -1,6 +1,7 @@
 package keystored
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
@@ -48,6 +49,9 @@ type Options struct {
 	HasTPM func() bool
 	Log    *slog.Logger
 	Now    func() time.Time
+	// Limits override the plaintext-read limits; zero fields use the
+	// keystore package's. Tests shorten them.
+	Limits Limits
 }
 
 // Keystore holds the KEK versions and does every wrap and check. It is safe
@@ -62,6 +66,8 @@ type Keystore struct {
 	// detail says why the keystore is sealed, for the console.
 	detail      string
 	sealedSince time.Time
+	log         *journal
+	reads       *readCounters
 }
 
 // Open loads the state directory. An uninitialized directory is fine; the
@@ -87,6 +93,12 @@ func Open(opts Options) (*Keystore, error) {
 		return nil, err
 	}
 	k := &Keystore{opts: opts, keks: map[int]*Secret{}}
+	j, entries, err := openJournal(opts.Dir, opts.Now)
+	if err != nil {
+		return nil, err
+	}
+	k.log = j
+	k.reads = newReadCounters(opts.Limits, entries, opts.Now())
 	st, err := loadState(opts.Dir)
 	if err != nil {
 		return nil, err
@@ -120,6 +132,7 @@ func (k *Keystore) Close() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.lockAll()
+	k.log.close()
 }
 
 func (k *Keystore) lockAll() {
@@ -534,4 +547,90 @@ func (k *Keystore) VerifyEscrow(wrappedPrivate string, c escrowcrypto.Context, e
 		return keystore.Mismatch, nil
 	}
 	return keystore.Match, nil
+}
+
+// ReadRequest is what ReadEscrow needs: the same as an escrow check, and the
+// IDs for the log.
+type ReadRequest struct {
+	RequestID, Record string
+	Wrapped           string
+	Context           escrowcrypto.Context
+	Enc, Ciphertext   []byte
+	Fingerprint       []byte
+}
+
+// ReadEscrow opens one escrow record and returns its recovery password,
+// normalized, in a slice the caller must zero. It is the only call that
+// returns a key (ADR-0081 sections 6 and 7). Before it opens anything it
+// checks the keystore's own limits (per organization and in total); the log
+// line that says a key left is written before the key is returned, and if
+// that cannot be written the key is zeroed and refused. A record that does not
+// open, or does not carry the fingerprint the server holds for it, is
+// refused: nothing is returned for a record that is not the verified one.
+func (k *Keystore) ReadEscrow(r ReadRequest) ([]byte, error) {
+	c := r.Context
+	if !c.Valid() || len(r.Fingerprint) != escrowcrypto.FingerprintSize || r.RequestID == "" || len(r.RequestID) > 128 || len(r.Record) > 128 {
+		return nil, fail(keystore.CodeBadRequest, "the read request is not valid")
+	}
+	ver, sealed, err := parseWrapped(r.Wrapped)
+	if err != nil {
+		return nil, fail(keystore.CodeBadRequest, "the wrapped key is not in a known format")
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	refuse := func(e *Error) ([]byte, error) {
+		k.note(keystore.LogEntry{Op: keystore.OpReadEscrow, Org: c.Org, Record: r.Record, RequestID: r.RequestID, Result: e.Code})
+		return nil, e
+	}
+	kek, err := k.kekFor(ver)
+	if err != nil {
+		var e *Error
+		if errors.As(err, &e) {
+			return refuse(e)
+		}
+		return nil, err
+	}
+	if e := k.reads.check(c.Org, k.opts.Now()); e != nil {
+		return refuse(e)
+	}
+	priv, err := unwrap(kek, sealed, wrapAAD(c.Org, c.OrgKey, "escrow"))
+	if err != nil {
+		return refuse(fail(keystore.CodeBadRequest, "the wrapped key does not open for this organization"))
+	}
+	defer zero(priv)
+	pt, err := escrowcrypto.Open(priv, c, r.Enc, r.Ciphertext)
+	if err != nil {
+		return refuse(fail(keystore.CodeRefused, "the record does not open"))
+	}
+	defer zero(pt) // norm is a subslice of pt; the caller gets a copy
+	norm, err := escrowcrypto.NormalizeBitLockerBytes(pt)
+	if err != nil {
+		return refuse(fail(keystore.CodeRefused, "the record is not a recovery password"))
+	}
+	fp := escrowcrypto.Fingerprint(c.Protector, norm)
+	if subtle.ConstantTimeCompare(fp[:], r.Fingerprint) != 1 {
+		return refuse(fail(keystore.CodeRefused, "the record is not the verified one"))
+	}
+	if _, err := k.log.append(keystore.LogEntry{Op: keystore.OpReadEscrow, Org: c.Org, Record: r.Record, RequestID: r.RequestID, Result: "ok", Plaintext: true}); err != nil {
+		return nil, fail(keystore.CodeLogBroken, "the keystore cannot write its log, so it returns no key")
+	}
+	k.reads.add(c.Org, k.opts.Now())
+	return bytes.Clone(norm), nil
+}
+
+// note writes a log line for an operation that returns no key; a failure is
+// reported, never fatal.
+func (k *Keystore) note(e keystore.LogEntry) {
+	if _, err := k.log.append(e); err != nil {
+		k.opts.Log.Error("keystore: writing the log failed", "error", err)
+	}
+}
+
+// LogSince returns the log's entries after seq.
+func (k *Keystore) LogSince(seq int64, limit int) (prev string, entries []keystore.LogEntry, err error) {
+	prev, entries, err = k.log.since(seq, limit)
+	if err != nil {
+		return "", nil, fail(keystore.CodeLogBroken, "the keystore's log does not verify or cannot be read")
+	}
+	return prev, entries, nil
 }

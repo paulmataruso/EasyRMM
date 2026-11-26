@@ -1,16 +1,63 @@
-// A device's BitLocker recovery-key escrow, volume by volume (ADR-0081, slice 1). It shows where each volume's
-// recovery key stands and why, never the key: reads come with the next slice.
-import { useApi } from "../../api/hooks";
-import type { DeviceEscrow, EscrowState, KeystoreSummary } from "../../api/types";
-import { Alert, Badge, Card, EmptyState, ErrorState, Mono, Spinner, TableWrap } from "../../components/ui";
+// A device's BitLocker recovery-key escrow, volume by volume (ADR-0081). It shows where each volume's recovery key
+// stands and why. The key itself is never in this list: a person with the read permission reveals it on request, once
+// (RevealRecoveryKey), and the approvers of a two-person organization decide the requests here.
+import { useAuth } from "../../auth/AuthContext";
+import { api } from "../../api/client";
+import { useApi, useApiMutation } from "../../api/hooks";
+import type {
+  DeviceEscrow,
+  EscrowState,
+  KeystoreSummary,
+  RecoveryKeyRequest,
+} from "../../api/types";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  InlineError,
+  Mono,
+  Spinner,
+  TableWrap,
+} from "../../components/ui";
 import { formatRelative } from "../../lib/format";
+import { RevealRecoveryKey } from "./RevealRecoveryKey";
 
-export const ESCROW_STATE_TEXT: Record<EscrowState, { label: string; tone: "ok" | "warn" | "danger" | "neutral" | "info"; help: string }> = {
-  verified: { label: "Verified", tone: "ok", help: "The keystore opened the sealed key and it matches what the device holds." },
-  pending: { label: "Pending", tone: "info", help: "Stored, waiting for the keystore to check it." },
-  missing: { label: "Missing", tone: "warn", help: "No recovery key is escrowed for this volume yet." },
-  stale: { label: "Stale", tone: "danger", help: "The sealed key did not match. The agent sends it again." },
-  conflict: { label: "Conflict", tone: "danger", help: "A different key arrived for a protector that already has a verified one. The verified one is kept." },
+export const ESCROW_STATE_TEXT: Record<
+  EscrowState,
+  {
+    label: string;
+    tone: "ok" | "warn" | "danger" | "neutral" | "info";
+    help: string;
+  }
+> = {
+  verified: {
+    label: "Verified",
+    tone: "ok",
+    help: "The keystore opened the sealed key and it matches what the device holds.",
+  },
+  pending: {
+    label: "Pending",
+    tone: "info",
+    help: "Stored, waiting for the keystore to check it.",
+  },
+  missing: {
+    label: "Missing",
+    tone: "warn",
+    help: "No recovery key is escrowed for this volume yet.",
+  },
+  stale: {
+    label: "Stale",
+    tone: "danger",
+    help: "The sealed key did not match. The agent sends it again.",
+  },
+  conflict: {
+    label: "Conflict",
+    tone: "danger",
+    help: "A different key arrived for a protector that already has a verified one. The verified one is kept.",
+  },
 };
 
 /** Why escrow is not running, in words, or null while the keystore is ready. */
@@ -23,14 +70,79 @@ export function keystoreNotice(k: KeystoreSummary): string | null {
     case "unavailable":
       return "The keystore cannot be reached, so escrow waits.";
     default:
-      return k.recoveryVerified ? null : "The keystore's recovery has not been verified, so it wraps nothing yet. Run easyrmm-keystore verify-recovery.";
+      return k.recoveryVerified
+        ? null
+        : "The keystore's recovery has not been verified, so it wraps nothing yet. Run easyrmm-keystore verify-recovery.";
   }
 }
 
+/** The requests a second person may decide for this device. */
+function Approvals({ deviceId }: { deviceId: string }) {
+  const q = useApi<{ requests: RecoveryKeyRequest[] }>(
+    "/keystore/requests",
+    undefined,
+    { refetchInterval: 15_000, staleTime: 5_000 },
+  );
+  const decide = useApiMutation(
+    (v: { id: string; approve: boolean }) =>
+      api.post<RecoveryKeyRequest>(
+        `/keystore/requests/${v.id}/${v.approve ? "approve" : "deny"}`,
+      ),
+    {
+      invalidate: ["/keystore/requests"],
+    },
+  );
+  const open = (q.data?.requests ?? []).filter(
+    (r) => r.deviceId === deviceId && r.canDecide,
+  );
+  if (open.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 border-t border-line p-4">
+      <h3 className="text-sm font-medium text-fg">Waiting for your decision</h3>
+      <InlineError error={decide.error} />
+      <ul className="flex flex-col gap-2">
+        {open.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center gap-3 text-sm">
+            <span>
+              <strong className="font-medium">{r.requester}</strong> asks for
+              the key of <Mono>{r.volume}</Mono>: “{r.reason}”
+              {r.ticket ? ` (${r.ticket})` : ""}
+            </span>
+            <span className="ml-auto flex gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={decide.isPending}
+                onClick={() => decide.mutate({ id: r.id, approve: false })}
+              >
+                Refuse
+              </Button>
+              <Button
+                size="sm"
+                loading={decide.isPending}
+                onClick={() => decide.mutate({ id: r.id, approve: true })}
+              >
+                Approve
+              </Button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
-  const q = useApi<DeviceEscrow>(`/devices/${deviceId}/escrow`, undefined, { refetchInterval: 60_000, staleTime: 15_000 });
+  const { can } = useAuth();
+  const q = useApi<DeviceEscrow>(`/devices/${deviceId}/escrow`, undefined, {
+    refetchInterval: 60_000,
+    staleTime: 15_000,
+  });
   if (q.isPending) return <Spinner />;
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} compact />;
+  if (q.isError)
+    return (
+      <ErrorState error={q.error} onRetry={() => void q.refetch()} compact />
+    );
   const e = q.data;
   if (!e.applicable) return null;
   const notice = keystoreNotice(e.keystore);
@@ -40,18 +152,32 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
         {notice && <Alert tone="info">{notice}</Alert>}
         {e.keystore.fileMode && (
           <Alert tone="warn" title="Keystore protection: file (stand-in)">
-            The keystore’s key is in a file on the host; a copy of the host’s disk opens it.
+            The keystore’s key is in a file on the host; a copy of the host’s
+            disk opens it.
           </Alert>
         )}
         <p className="text-xs text-muted">
-          The agent seals each BitLocker recovery key to your organization’s key before it leaves the device. The server stores it and has the
-          keystore check it; it cannot open it, and this page never shows it.
+          The agent seals each BitLocker recovery key to your organization’s key
+          before it leaves the device. The server stores it and has the keystore
+          check it; it cannot open it.{" "}
+          {e.canRead
+            ? "You may reveal a key: it asks for your second factor and a reason, is shown once, and your administrators are told."
+            : "Reading a key needs the Recovery Key Reader add-on."}
+          {e.canRead && e.twoPerson
+            ? " Your organization asks for a second person to approve each read."
+            : ""}
+        </p>
+        <p className="text-xs text-muted">
+          Anyone who can run scripts or open a terminal on an online device can
+          read its BitLocker key there without the keystore; the keystore
+          protects the keys of devices that are offline, lost or dead.
         </p>
       </div>
       {e.volumes.length === 0 ? (
         <div className="border-t border-line">
           <EmptyState title="No BitLocker volumes reported" compact>
-            Volumes appear once the agent has the organization’s key and finds BitLocker on a disk.
+            Volumes appear once the agent has the organization’s key and finds
+            BitLocker on a disk.
           </EmptyState>
         </div>
       ) : (
@@ -70,24 +196,50 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
                 return (
                   <tr key={v.id} className="border-b border-line last:border-0">
                     <td className="px-4 py-2 align-top">
-                      <span className="font-medium text-fg">{v.mount || "Volume"}</span>
-                      <span className="ml-2 text-xs text-muted">{v.status}</span>
+                      <span className="font-medium text-fg">
+                        {v.mount || "Volume"}
+                      </span>
+                      <span className="ml-2 text-xs text-muted">
+                        {v.status}
+                      </span>
                     </td>
                     <td className="px-4 py-2 align-top">
                       <Badge tone={t.tone} title={t.help}>
                         {t.label}
                       </Badge>
-                      {v.protectors.length === 0 && <span className="ml-2 text-xs text-muted">No recovery password protector</span>}
+                      {v.protectors.length === 0 && (
+                        <span className="ml-2 text-xs text-muted">
+                          No recovery password protector
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 align-top">
                       <ul className="flex flex-col gap-1">
                         {v.protectors.map((p) => (
-                          <li key={p.id} className="flex flex-wrap items-center gap-2">
+                          <li
+                            key={p.id}
+                            className="flex flex-wrap items-center gap-2"
+                          >
                             <Mono>{p.id}</Mono>
-                            <Badge tone={ESCROW_STATE_TEXT[p.state].tone} title={ESCROW_STATE_TEXT[p.state].help}>
+                            <Badge
+                              tone={ESCROW_STATE_TEXT[p.state].tone}
+                              title={ESCROW_STATE_TEXT[p.state].help}
+                            >
                               {ESCROW_STATE_TEXT[p.state].label}
                             </Badge>
-                            {p.verifiedAt && <span className="text-xs text-muted">verified {formatRelative(p.verifiedAt)}</span>}
+                            {p.verifiedAt && (
+                              <span className="text-xs text-muted">
+                                verified {formatRelative(p.verifiedAt)}
+                              </span>
+                            )}
+                            {e.canRead && p.state === "verified" && (
+                              <RevealRecoveryKey
+                                deviceId={deviceId}
+                                volume={v.id}
+                                protector={p.id}
+                                mount={v.mount}
+                              />
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -99,6 +251,7 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
           </table>
         </TableWrap>
       )}
+      {can("device.recovery_key.approve") && <Approvals deviceId={deviceId} />}
     </Card>
   );
 }

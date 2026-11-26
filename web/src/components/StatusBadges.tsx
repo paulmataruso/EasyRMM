@@ -7,6 +7,8 @@ export const ROLE_NAMES: Record<Role, string> = {
   site_admin: "Site Administrator",
   technician: "Technician",
   read_only: "Read-Only",
+  key_reader: "Recovery Key Reader",
+  key_approver: "Recovery Key Approver",
 };
 
 export function roleName(role: Role): string {
