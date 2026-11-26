@@ -123,6 +123,7 @@ func Facts(version string) agentproto.Facts {
 		Platform:     platform(),
 		Arch:         runtime.GOARCH,
 		AgentVersion: version,
+		Role:         systemRole(),
 	}
 }
 

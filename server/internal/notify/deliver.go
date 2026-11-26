@@ -33,6 +33,11 @@ type Message struct {
 	Subject string      `json:"subject"`
 	Summary string      `json:"summary"`
 	Notice  *NoticeBody `json:"notice,omitempty"`
+	// Alerts, Outage and Digest are what device alert rules queue (ADR-0053,
+	// slice 4): an event's alerts, a site outage, or a digest's sections.
+	Alerts []AlertItem `json:"alerts,omitempty"`
+	Outage *OutageItem `json:"outage,omitempty"`
+	Digest *Digest     `json:"digest,omitempty"`
 }
 
 // NoticeBody is a notice as a webhook receives it.
@@ -211,6 +216,12 @@ func (s *Service) webhookBody(d *delivery, m Message, at time.Time) ([]byte, err
 	if m.Notice != nil {
 		body["notice"] = m.Notice
 	}
+	if len(m.Alerts) > 0 {
+		body["alerts"] = m.Alerts
+	}
+	if m.Outage != nil {
+		body["site"] = m.Outage
+	}
 	return json.Marshal(body)
 }
 
@@ -334,7 +345,11 @@ func (s *Service) sendEmail(ctx context.Context, d *delivery, l *loaded) result 
 		}
 		return res
 	}
-	msg, err := mailer.Letter{Subject: m.Subject, Before: []string{m.Summary}}.Message()
+	letter := mailer.Letter{Subject: m.Subject, Before: []string{m.Summary}}
+	if m.Digest != nil {
+		letter = m.Digest.letter(s.consoleURL)
+	}
+	msg, err := letter.Message()
 	if err != nil {
 		res.err = "The message could not be made."
 		return res

@@ -76,6 +76,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
@@ -97,6 +98,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
+	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
@@ -200,6 +202,9 @@ type Deps struct {
 	// Notify is the one notification sender: channels, the outbox, notices
 	// (ADR-0053).
 	Notify *notify.Service
+	// TLS obtains and renews the certificates of the DNS names in acme mode
+	// (ADR-0055); nil in the other modes.
+	TLS *tlscert.Service
 }
 
 // Build constructs the services over an open database.
@@ -404,6 +409,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Keystore.SetStepUp(sessions)
 	d.Keystore.SetNotifier(mailSvc)
 	d.Notify = newNotify(cfg, db, auditLog, sealer, mailSvc, log)
+	if cfg.TLSMode == config.TLSAcme {
+		d.TLS = newTLS(cfg, db, auditLog, sealer, d.Notify, log)
+	}
 	var files agentfiles.Mesh
 	if mesh != nil {
 		files = mesh
@@ -680,6 +688,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	mailserverapi.New(d.Mail).Register(mux)
+	tlsapi.New(d.TLS, string(cfg.TLSMode)).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
@@ -859,7 +868,19 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.Keystore.Run(ctx) })
 	deps.Notify.SetHeld(hold.Held)
+	deps.Notify.SetSeenFloor(deps.Monitoring.SeenFloor)
 	wg.Go(func() { deps.Notify.Run(ctx) })
+	if deps.TLS != nil {
+		deps.TLS.SetHeld(hold.Held)
+		// A certificate that cannot be loaded never stops the server from
+		// starting: it serves what it has, and the Certificates page and an
+		// alert say what is wrong.
+		if err := deps.TLS.Start(ctx); err != nil {
+			log.Error("tls: the certificate service could not start", "error", err)
+		}
+		wg.Go(func() { deps.TLS.Run(ctx) })
+		defer deps.TLS.Close()
+	}
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.RunAgentPoll(ctx) })
@@ -877,7 +898,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.ListenHealth != "" {
 		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, hold, log) })
 	}
-	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI}
+	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS}
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()

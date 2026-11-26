@@ -11,6 +11,7 @@ import { SectionNav } from "../nav/SectionNav";
 import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
 import { sidebarWidth } from "../nav/width";
 import { ALERT_PARAM } from "../pages/alerts/alertLink";
+import { CertificateBanner } from "./CertificateBanner";
 import { cx } from "./ui";
 
 interface NavItem {
@@ -294,6 +295,7 @@ export function AppLayout() {
             <div className="flex-1" />
             <ThemeToggle />
           </header>
+          <CertificateBanner />
           <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
             <div className="mx-auto max-w-[1440px]">
               <PageFrame>

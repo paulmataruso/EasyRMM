@@ -538,23 +538,6 @@ func ownerFilter(channel, org *uuid.UUID, owner uuid.UUID) uuid.UUID {
 	return owner
 }
 
-// Plan plans the journal's rows (ADR-0053, "Nothing lost or queued twice"),
-// under an advisory lock of its own, at platform scope, in order. It never
-// locks notices: it reads them. Rules, which match the rows to channels,
-// arrive with device alert rules (slice 4): until then a row is marked
-// planned and nothing is queued, so that none waits for ever.
-func (s *Service) Plan(ctx context.Context) error {
-	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		var got bool
-		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, lockPlanner).Scan(&got); err != nil || !got {
-			return err
-		}
-		_, err := tx.Exec(ctx, `UPDATE notification_events SET status = 'planned', planned_at = now()
-			WHERE id IN (SELECT id FROM notification_events WHERE status <> 'planned' ORDER BY id LIMIT 1000)`)
-		return err
-	})
-}
-
 // Purge removes what has ended: deliveries 30 days after they end, planned
 // journal rows after 7 days, resolved notices after 90.
 func (s *Service) Purge(ctx context.Context) error {
@@ -566,7 +549,30 @@ func (s *Service) Purge(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM notification_events WHERE status = 'planned' AND planned_at < $1`, now.Add(-JournalRetention)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM notices WHERE resolved_at < $1`, now.Add(-NoticeRetention))
+		if _, err := tx.Exec(ctx, `DELETE FROM notices WHERE resolved_at < $1`, now.Add(-NoticeRetention)); err != nil {
+			return err
+		}
+		// Incidents resolved a week ago, with what was recorded about them; outages and holds after a month.
+		cut := now.Add(-JournalRetention)
+		if _, err := tx.Exec(ctx, `DELETE FROM alert_notifications WHERE subject_type = 'notice' AND done AND created_at < $1`, cut); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM alert_notifications WHERE subject_type = 'incident' AND subject_id IN (SELECT id FROM alert_incidents WHERE status = 'resolved' AND resolved_at < $1)`, cut); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM alert_incident_alerts WHERE incident_id IN (SELECT id FROM alert_incidents WHERE status = 'resolved' AND resolved_at < $1)`, cut); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM alert_incidents WHERE status = 'resolved' AND resolved_at < $1`, cut); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM alert_notifications WHERE subject_type = 'outage' AND subject_id IN (SELECT id FROM site_outages WHERE ended_at < $1)`, now.Add(-NoticeRetention)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM site_outages WHERE ended_at < $1`, now.Add(-NoticeRetention)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM fleet_silences WHERE ended_at < $1`, now.Add(-NoticeRetention))
 		return err
 	})
 }

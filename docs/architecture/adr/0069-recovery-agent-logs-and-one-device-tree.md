@@ -749,6 +749,15 @@ ADR-0053's slice 3 tables (migration `00074`): `notification_channels`,
 organization (owned). A notice in `notices` was raised to the organization
 of its time and stays with it when a device it names moves.
 
+### Amended 2026-11-26 (decided in review), device alert rules
+
+ADR-0053's slice 4 tables (migration `00077`): `notification_rules` and
+its `notification_rule_orgs`, `notification_rule_sites` and
+`notification_rule_groups`, and `site_maintenance_windows`, belong to
+their organization or site (owned). An incident in `alert_incidents` and a
+site outage in `site_outages` were raised in the organization of their
+time and stay with it when a device they name moves.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,

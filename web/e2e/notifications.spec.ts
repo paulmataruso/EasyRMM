@@ -93,7 +93,7 @@ test("a platform webhook is added, tested, received signed, and its secret shown
   const secret = (await secrets.locator("div:has(> div:text-is('Signing secret')) .font-mono").first().innerText()).trim();
   const [t, v1] = String(req.headers["x-easyrmm-signature"]).split(",").map((p) => p.slice(p.indexOf("=") + 1));
   expect(createHmac("sha256", secret).update(`${t}.${req.body}`).digest("hex")).toBe(v1);
-  await secrets.getByRole("button", { name: "Close" }).click();
+  await secrets.getByRole("button", { name: "Close" }).last().click(); // the footer's, not the corner X
 
   // Tested again at once: the server's own limit of one test every 30 seconds answers, in the engine's words.
   await page.getByRole("button", { name: "Test E2E receiver" }).click();

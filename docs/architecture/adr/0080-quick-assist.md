@@ -668,6 +668,26 @@ not exist yet. Hotspot files (`rbac.go`, `app.go`, `agentproto`,
 
 Everything else is decided in review above.
 
+## Amended 2026-11-26 (owner's request)
+
+Two changes to how a technician makes a link.
+
+* **One click, no name.** The Quick Assist page (its first view, Requests, and the others) has a **New link** button
+  in the header. One click makes a one-time link and shows it at once, with a Copy button and when it expires; no
+  name is asked for. The server names it: *Support link, 26 Nov 2026 14:32 UTC, made by <the maker's display
+  name>*, which is what the user sees on the link page and the technician sees in Links and Requests. (Links have no
+  rename today, so none is added.) A permanent link, available only while `quickassist.link_mode` is `open` and to
+  those with `quickassist.link.permanent`, keeps its own **New permanent link** button; step-up, the link's kind,
+  permissions, audit, dev scope and the `own_test` default are unchanged. The old name dialog is gone; the API still
+  accepts a `name`, and `lifeMinutes`, which the console no longer sends.
+* **An app-wide default expiry.** The platform setting `quickassist.default_life_minutes` (in the existing
+  `settings` table, so no migration) is the life of a new one-time link: 1440 minutes (24 hours) until set, and
+  always within the bounds this ADR gives, **1 minute to 7 days** (10080 minutes). A stored value outside the bounds
+  reads as the 24-hour default. Super administrators set it in **Settings, General** (new; needs
+  `settings.manage`), through `PUT /api/v1/quickassist/settings/default-life`, audited as
+  `quickassist.settings.update`; `GET /api/v1/quickassist/settings` also returns `defaultLifeMinutes`. The default
+  is the only expiry the console offers; a life named in the API call still wins within the same bounds.
+
 ## Amended 2026-11-26 (decided in review)
 
 * EasyPatch runs ad hoc, through a new ad-hoc mode in its agent (*What

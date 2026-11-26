@@ -28,8 +28,11 @@ func TestFacts(t *testing.T) {
 	if f.Hostname == "" || f.AgentVersion != "1.2.3" || f.Arch != runtime.GOARCH || f.OS == "" {
 		t.Errorf("facts = %+v", f)
 	}
-	if runtime.GOOS == "linux" && f.Platform != "linux" {
-		t.Errorf("platform = %s", f.Platform)
+	if runtime.GOOS == "linux" && (f.Platform != "linux" || f.Role != "server") {
+		t.Errorf("platform = %s, role = %s", f.Platform, f.Role)
+	}
+	if runtime.GOOS == "darwin" && f.Role != "workstation" {
+		t.Errorf("role = %s", f.Role)
 	}
 	p := Paths{Root: "/x", OS: "linux"}
 	is := func(got, want string) bool { return got == filepath.FromSlash(want) }

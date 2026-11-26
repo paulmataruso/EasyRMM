@@ -127,6 +127,28 @@ type Service struct {
 
 	cmu     sync.Mutex
 	circuit circuitState
+
+	// ps is the planner's memory; floor is the earliest moment a device
+	// counts as seen (monitoring's serving floor), so that a restart never
+	// starts or ends the fleet-wide hold.
+	ps    planState
+	floor func(time.Time) time.Time
+	// pmu serializes planning in this process; qstamp is the last time a
+	// delivery was queued at, kept increasing so that deliveries keep the
+	// order they were queued in even when the clock has not moved.
+	pmu    sync.Mutex
+	qstamp time.Time
+}
+
+// stamp is the time to queue a delivery at: now, or just after the last.
+// Planning holds pmu.
+func (s *Service) stamp() time.Time {
+	t := s.now()
+	if !t.After(s.qstamp) {
+		t = s.qstamp.Add(time.Microsecond)
+	}
+	s.qstamp = t
+	return t
 }
 
 // New builds the service. env is the address policy's view of the server;
@@ -140,8 +162,12 @@ func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, env *a
 	}
 	return &Service{db: db, audit: auditLog, sealer: sealer, env: env, mail: mail, log: log,
 		held: func() bool { return false }, now: time.Now, wake: make(chan struct{}, 1), testWait: 35 * time.Second,
-		transports: map[uuid.UUID]*transport{}, flight: newFlight()}
+		transports: map[uuid.UUID]*transport{}, flight: newFlight(), floor: func(time.Time) time.Time { return time.Time{} }}
 }
+
+// SetSeenFloor gives the planner the moment before which the server's own
+// start makes devices look silent (monitoring's seenFloor).
+func (s *Service) SetSeenFloor(f func(time.Time) time.Time) { s.floor = f }
 
 // SetHeld gives the sender the hold of ADR-0052: while it reports true,
 // nothing is sent or planned.

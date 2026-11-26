@@ -42,6 +42,9 @@ floors=(
   "server/internal/mailer                  90"
   "server/internal/webui                   95"
   "server/internal/app                     85"
+  # The certificate service (ADR-0055): storage, scheduler, gate, checks, MeshCentral's slot.
+  "server/internal/tlscert                 88"
+  "server/internal/httpapi/tlsapi          80"
   "server/internal/httpapi/authapi         85"
   "server/internal/httpapi/tenancyapi      85"
   "server/internal/httpapi/usersapi        85"
@@ -95,6 +98,9 @@ floors=(
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
+  # The one notification sender and its address policy (ADR-0053).
+  "server/internal/notify                  78"
+  "server/internal/addrpolicy              88"
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"

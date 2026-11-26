@@ -49,8 +49,10 @@ func run(args []string) int {
 		return recoverCommand(args[1:], os.Stdout, os.Stderr)
 	case "mail":
 		return mailCommand(args[1:], os.Stdout, os.Stderr)
+	case "tls":
+		return tlsCommand(args[1:], os.Stdout, os.Stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, tls, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -149,6 +151,34 @@ func mailCommand(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	if err := app.MailCheck(ctx, cfg, log, stdout); err != nil {
 		fmt.Fprintf(stderr, "mail check: %s\n", strings.TrimPrefix(err.Error(), "mailer: "))
+		return 1
+	}
+	return 0
+}
+
+// tlsCommand runs the certificate checks of the Certificates page (ADR-0055)
+// and prints them; it exits 1 when a check failed (a warning does not fail it).
+//
+//	docker compose exec server easyrmm-server tls check
+func tlsCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || args[0] != "check" {
+		fmt.Fprintln(stderr, "usage: easyrmm-server tls check")
+		return 2
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error:\n%v\n", err)
+		return 1
+	}
+	log := app.NewLogger(cfg.LogFormat, "warn")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	if err := app.TLSCheck(ctx, cfg, log, stdout); err != nil {
+		if !errors.Is(err, app.ErrTLSChecksFailed) {
+			fmt.Fprintf(stderr, "tls check: %v\n", err)
+		}
 		return 1
 	}
 	return 0

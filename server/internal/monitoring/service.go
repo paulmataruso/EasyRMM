@@ -96,6 +96,11 @@ func (s *Service) seenFloor(now time.Time) time.Time {
 	return since.Add(AgentGrace)
 }
 
+// SeenFloor is the moment before which a device counts as seen no earlier:
+// the notification planner's fleet-wide hold neither starts nor ends while
+// the server is before it (ADR-0053).
+func (s *Service) SeenFloor(now time.Time) time.Time { return s.seenFloor(now) }
+
 // Run evaluates the policies every minute and removes resolved alerts past
 // retention every hour, until ctx ends.
 func (s *Service) Run(ctx context.Context) {

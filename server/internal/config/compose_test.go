@@ -39,7 +39,7 @@ func TestComposeEnvironment(t *testing.T) {
 				"EASYRMM_ACME_EMAIL": "ops@example.com",
 			},
 			mesh: "https://mesh.rmm.example.com",
-			cert: "https://127.0.0.1:443",
+			cert: "https://127.0.0.1:18444",
 		},
 		{
 			name: "IP address",
@@ -48,7 +48,7 @@ func TestComposeEnvironment(t *testing.T) {
 				"EASYRMM_ACME_EMAIL": "",
 			},
 			mesh: "https://192.0.2.10:4443",
-			cert: "https://127.0.0.1:4443",
+			cert: "https://127.0.0.1:18444",
 		},
 		{
 			name: "an imported EasyPatch's name",
@@ -57,7 +57,7 @@ func TestComposeEnvironment(t *testing.T) {
 				"EASYRMM_ACME_EMAIL": "ops@example.com", "EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com",
 			},
 			mesh:  "https://mesh.rmm.example.com",
-			cert:  "https://127.0.0.1:443",
+			cert:  "https://127.0.0.1:18444",
 			extra: []string{"patch.example.com"},
 		},
 		{
@@ -68,7 +68,7 @@ func TestComposeEnvironment(t *testing.T) {
 				"EASYRMM_AUTHENTIK_ADMIN_EMAIL": "admin@example.com", "EASYRMM_AUTHENTIK_CLIENT_SECRET": strings.Repeat("c", 64),
 			},
 			mesh:  "https://mesh.rmm.example.com",
-			cert:  "https://127.0.0.1:443",
+			cert:  "https://127.0.0.1:18444",
 			extra: []string{"auth.example.com"},
 			ak: Authentik{Hostname: "auth.example.com", AdminEmail: "admin@example.com", ClientSecret: strings.Repeat("c", 64),
 				Upstream: DefaultAuthentikUpstream},
@@ -137,6 +137,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_MESH_CONFIG_DIR":      "the directory the meshcentral service mounts",
 	"EASYRMM_MESH_INTERNAL_URL":    "the port the meshcentral service's configuration names",
 	"EASYRMM_LISTEN_HEALTH":        "the port the image's health check reads",
+	"EASYRMM_LISTEN_MESH_CERT":     "a loopback port, never published, which only MeshCentral reads the certificate from (ADR-0055)",
 	"EASYRMM_LISTEN_OFFLOAD":       "a loopback port, used only behind a reverse proxy on the host",
 	"EASYRMM_AGENT_DIR":            "the agent builds inside the image",
 	"EASYRMM_AGENT_STABLE_DIR":     "the stable agent builds inside the image (development only, with EASYRMM_DEV_SCOPE_ORG)",

@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -585,5 +586,52 @@ func TestHolderRuleOnRemoteToolsAndFloodNotice(t *testing.T) {
 	}
 	if len(told) != 1 || told[0] != "Desk" {
 		t.Fatalf("told %v", told)
+	}
+}
+
+func TestLinkWithoutANameAndTheDefaultExpiry(t *testing.T) {
+	f := newFx(t)
+	tech := f.user(rbac.RoleTechnician, f.acme)
+	admin := f.user(rbac.RoleOrgAdmin, f.acme)
+
+	// No name and no life: a readable name from the time and the maker, and 24 hours.
+	l, err := f.svc.CreateLink(f.ctx, tech, quickassist.CreateInput{OrganizationID: f.acme, Kind: quickassist.KindOneTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(l.Link.Name, "Support link, ") || !strings.Contains(l.Link.Name, "made by ") {
+		t.Fatalf("name %q", l.Link.Name)
+	}
+	if d := time.Until(*l.Link.ExpiresAt); d < 23*time.Hour+55*time.Minute || d > 24*time.Hour {
+		t.Fatalf("default life %v", d)
+	}
+	// The setting needs the platform-wide permission, and stays within 1 minute to 7 days.
+	if err := f.svc.SetDefaultLife(f.ctx, admin, 60); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("org admin set the default life: %v", err)
+	}
+	sys := access.System("test")
+	for _, bad := range []int{0, -5, 7*24*60 + 1} {
+		if err := f.svc.SetDefaultLife(f.ctx, sys, bad); err == nil {
+			t.Fatalf("accepted %d minutes", bad)
+		}
+	}
+	if err := f.svc.SetDefaultLife(f.ctx, sys, 90); err != nil {
+		t.Fatal(err)
+	}
+	l, err = f.svc.CreateLink(f.ctx, tech, quickassist.CreateInput{OrganizationID: f.acme, Kind: quickassist.KindOneTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Until(*l.Link.ExpiresAt); d < 89*time.Minute || d > 90*time.Minute {
+		t.Fatalf("life after the setting %v", d)
+	}
+	// A life asked for in the call still wins, and an unusable stored value is the built-in default.
+	l, _ = f.svc.CreateLink(f.ctx, tech, quickassist.CreateInput{OrganizationID: f.acme, Kind: quickassist.KindOneTime, Life: time.Hour})
+	if d := time.Until(*l.Link.ExpiresAt); d > time.Hour {
+		t.Fatalf("asked-for life %v", d)
+	}
+	f.exec(`UPDATE settings SET value = '999999' WHERE key = 'quickassist.default_life_minutes'`)
+	if d, _ := f.svc.DefaultLife(f.ctx); d != quickassist.DefaultOneTimeLife {
+		t.Fatalf("out-of-bounds stored value gave %v", d)
 	}
 }

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -60,11 +61,23 @@ type Config struct {
 	ListenHTTP    string // ":80", or "" to disable
 	ListenOffload string // "127.0.0.1:18080"
 	// ListenHealth serves liveness and readiness probes on loopback.
-	ListenHealth  string // "127.0.0.1:18081"
-	CertFile      string
-	KeyFile       string
+	ListenHealth string // "127.0.0.1:18081"
+	CertFile     string
+	KeyFile      string
+	// ACMEEmail is the optional contact address of the ACME account; empty
+	// means none (ADR-0055). ACMEDirectory is the CA's directory. ACMECAFile
+	// is the PEM file of roots to trust for that directory's own HTTPS and
+	// for the server's connections to its names (another ACME CA, Pebble).
 	ACMEEmail     string
 	ACMEDirectory string
+	ACMECAFile    string
+	ACMERoots     []byte
+	// ListenMeshCert is the loopback listener MeshCentral reads the
+	// certificate its agents see from (certUrl); never published.
+	ListenMeshCert string
+	// Notes are warnings about the configuration that do not stop the server;
+	// they are logged and shown on the Certificates page.
+	Notes []string
 	// TrustedProxies are the addresses whose X-Forwarded-For header is
 	// believed. Only meaningful in offload mode.
 	TrustedProxies []netip.Prefix
@@ -237,6 +250,8 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		KeyFile:               l.str("EASYRMM_TLS_KEY_FILE", ""),
 		ACMEEmail:             l.str("EASYRMM_ACME_EMAIL", ""),
 		ACMEDirectory:         l.orDefault("EASYRMM_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
+		ACMECAFile:            l.str("EASYRMM_ACME_CA_FILE", ""),
+		ListenMeshCert:        l.orDefault("EASYRMM_LISTEN_MESH_CERT", "127.0.0.1:18444"),
 		DatabaseURL:           l.secret("EASYRMM_DATABASE_URL"),
 		DataDir:               l.str("EASYRMM_DATA_DIR", "/var/lib/easyrmm"),
 		RequireMFA:            l.boolean("EASYRMM_REQUIRE_MFA", true),
@@ -381,6 +396,17 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	}
 
 	c.Mesh.CertURL = l.orDefault("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
+	if c.ACMECAFile != "" {
+		b, err := l.readFile(c.ACMECAFile)
+		switch {
+		case err != nil:
+			l.errs = append(l.errs, fmt.Errorf("EASYRMM_ACME_CA_FILE: %w", err))
+		case !x509.NewCertPool().AppendCertsFromPEM(b):
+			l.errs = append(l.errs, errors.New("EASYRMM_ACME_CA_FILE holds no PEM certificate"))
+		default:
+			c.ACMERoots = b
+		}
+	}
 	// EasyPatch on this server behind the edge (ADR-0035) was retired
 	// (ADR-0046): an .env that still names it is refused, not ignored.
 	if l.str("EASYRMM_EASYPATCH_HOSTNAME", "") != "" {
@@ -405,6 +431,12 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	}
 	c.loadAuthentik(l)
 	c.validate(l)
+	if c.TLSMode != TLSOffload && c.Mesh.CertURL != defaultCertURL(c) {
+		// EasyRMM could not see MeshCentral's reads of any other address, and
+		// they decide when a new certificate may be applied (ADR-0055).
+		c.Notes = append(c.Notes, fmt.Sprintf("EASYRMM_MESH_CERT_URL is ignored unless EASYRMM_TLS_MODE=offload: MeshCentral reads %s", defaultCertURL(c)))
+		c.Mesh.CertURL = defaultCertURL(c)
+	}
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
 	}
@@ -415,9 +447,7 @@ func (c *Config) validate(l *loader) {
 	add := func(format string, args ...any) { l.errs = append(l.errs, fmt.Errorf(format, args...)) }
 	switch c.TLSMode {
 	case TLSAcme:
-		if c.ACMEEmail == "" {
-			add("EASYRMM_ACME_EMAIL is required when EASYRMM_TLS_MODE=acme")
-		}
+		// EASYRMM_ACME_EMAIL is optional: Let's Encrypt sends nothing to it.
 	case TLSManual:
 		if c.CertFile == "" || c.KeyFile == "" {
 			add("EASYRMM_TLS_CERT_FILE and EASYRMM_TLS_KEY_FILE are required when EASYRMM_TLS_MODE=manual")
@@ -438,6 +468,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.ListenHealth != "" {
 		requireLoopback(add, "EASYRMM_LISTEN_HEALTH", c.ListenHealth)
+	}
+	if c.ListenMeshCert != "" {
+		requireLoopback(add, "EASYRMM_LISTEN_MESH_CERT", c.ListenMeshCert)
 	}
 	if !filepath.IsAbs(c.UpdaterStatusDir) {
 		add("EASYRMM_UPDATER_STATUS_DIR must be an absolute path")
@@ -611,11 +644,15 @@ func validHostname(h string) bool {
 	return true
 }
 
-// defaultCertURL is a local address of the listener that serves the
-// MeshCentral origin: our own HTTPS listener (or the one for MeshCentral's
-// port), or in offload mode the reverse proxy, assumed on 443.
+// defaultCertURL is where MeshCentral reads the certificate its agents see:
+// in every mode in which EasyRMM terminates TLS, the dedicated loopback
+// listener (EASYRMM_LISTEN_MESH_CERT), which only MeshCentral uses and which
+// records its reads; in offload mode the reverse proxy, assumed on 443.
 func defaultCertURL(c *Config) string {
 	host, port := "127.0.0.1", "443"
+	if c.TLSMode != TLSOffload && c.ListenMeshCert != "" {
+		return "https://" + c.ListenMeshCert
+	}
 	if c.TLSMode != TLSOffload {
 		if h, p, err := net.SplitHostPort(c.ListenHTTPS); err == nil {
 			if p != "" {

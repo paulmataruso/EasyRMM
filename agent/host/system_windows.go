@@ -31,6 +31,31 @@ func systemDescription() string {
 	return v.Name
 }
 
+// systemRole is the kind of device, from InstallationType: Client is a
+// workstation; Server, Server Core and other server values are servers
+// (ADR-0053). It is empty when the registry does not say.
+func systemRole() string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = k.Close() }()
+	v, _, err := k.GetStringValue("InstallationType")
+	return roleOfInstallationType(v, err)
+}
+
+// roleOfInstallationType maps InstallationType to a role.
+func roleOfInstallationType(v string, err error) string {
+	v = strings.TrimSpace(v)
+	switch {
+	case err != nil || v == "":
+		return ""
+	case strings.EqualFold(v, "Client"):
+		return "workstation"
+	}
+	return "server"
+}
+
 // WindowsInfo is the Windows release, from the registry.
 type WindowsInfo struct {
 	// Name is the release as people know it: Windows 11 Pro 23H2.

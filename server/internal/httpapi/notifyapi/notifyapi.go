@@ -46,6 +46,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("PUT /api/v1/notifications/quotas/{orgId}", a.setQuota)
 	r("GET /api/v1/notices", a.notices)
 	r("POST /api/v1/notices/{id}/acknowledge", a.acknowledge)
+	a.registerRules(mux)
 }
 
 // orgParam reads the optional organizationId query parameter.
@@ -65,6 +66,9 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	out, err := a.svc.List(r.Context(), httpapi.Caller(r), org)
 	if err != nil {
 		return err
+	}
+	if out == nil {
+		out = []notify.Channel{} // an empty list is [], never null: the console reads its length
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"channels": out})
 	return nil

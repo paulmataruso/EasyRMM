@@ -39,7 +39,7 @@ func TestIPOnlyDeployment(t *testing.T) {
 	if c.MeshPublicURL.String() != "https://203.0.113.10:4443" {
 		t.Errorf("mesh URL = %s", c.MeshPublicURL)
 	}
-	if c.Mesh.CertURL != "https://127.0.0.1:4443" {
+	if c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("cert URL = %s", c.Mesh.CertURL)
 	}
 	if got := origins(c); !slices.Equal(got, []string{"https://203.0.113.10 https://203.0.113.10:4443 internal"}) {
@@ -67,7 +67,7 @@ func TestIPOnlyDeployment(t *testing.T) {
 	if c, err = LoadFrom(env(m), noFiles); err != nil {
 		t.Fatal(err)
 	}
-	if c.MeshPublicURL.String() != "https://[2001:db8::10]:9443" || c.Mesh.CertURL != "https://[2001:db8::10]:9443" {
+	if c.MeshPublicURL.String() != "https://[2001:db8::10]:9443" || c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("mesh %s, cert URL %s", c.MeshPublicURL, c.Mesh.CertURL)
 	}
 	if got := c.MeshListeners(); !slices.Equal(got, []string{"[2001:db8::10]:9443"}) {
@@ -111,8 +111,8 @@ func TestIPAccessAlongsideDNS(t *testing.T) {
 	if got := origins(c); !slices.Equal(got, want) {
 		t.Errorf("origins =\n%q\nwant\n%q", got, want)
 	}
-	// MeshCentral keeps reading the DNS certificate from the main listener.
-	if c.Mesh.CertURL != "https://127.0.0.1:443" || !c.NeedsInternalCA() {
+	// MeshCentral reads the DNS certificate from its own loopback listener.
+	if c.Mesh.CertURL != "https://127.0.0.1:18444" || !c.NeedsInternalCA() {
 		t.Errorf("cert URL %s, internal CA %v", c.Mesh.CertURL, c.NeedsInternalCA())
 	}
 	if got := c.MeshListeners(); !slices.Equal(got, []string{":4443"}) {

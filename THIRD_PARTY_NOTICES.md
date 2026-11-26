@@ -33,6 +33,8 @@ is not affiliated with or endorsed by the MeshCentral project.
 | github.com/pquerna/otp | Apache-2.0 |
 | github.com/coder/websocket | ISC |
 | github.com/boombuler/barcode | MIT |
+| github.com/caddyserver/certmagic, github.com/caddyserver/zerossl, github.com/mholt/acmez/v3 | Apache-2.0 |
+| github.com/libdns/libdns, github.com/miekg/dns, go.uber.org/zap | MIT, BSD-3-Clause, MIT |
 | golang.org/x/crypto, golang.org/x/net, golang.org/x/time, golang.org/x/sync, golang.org/x/text | BSD-3-Clause |
 
 Frontend packages are listed in the generated inventory once the web

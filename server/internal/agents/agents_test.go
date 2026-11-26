@@ -28,6 +28,11 @@ func TestCleanFacts(t *testing.T) {
 			t.Errorf("platform %s became %s", p, f.platform)
 		}
 	}
+	for role, want := range map[string]string{"server": "server", "workstation": "workstation", "toaster": "", "": ""} {
+		if f, _ := cleanFacts(agentproto.Facts{Hostname: "h", Role: role}); f.role != want {
+			t.Errorf("role %q became %q", role, f.role)
+		}
+	}
 	if _, err := cleanFacts(agentproto.Facts{Hostname: "\t"}); err == nil {
 		t.Error("blank hostname accepted")
 	}

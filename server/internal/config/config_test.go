@@ -2,8 +2,15 @@ package config
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"slices"
 	"strings"
@@ -115,7 +122,7 @@ func TestMissingRequiredValuesAreAllReported(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty environment accepted")
 	}
-	for _, want := range []string{"EASYRMM_PUBLIC_URL", "EASYRMM_SECRET_KEY", "EASYRMM_DATABASE_URL", "EASYRMM_DATABASE_MIGRATION_URL", "EASYRMM_ACME_EMAIL"} {
+	for _, want := range []string{"EASYRMM_PUBLIC_URL", "EASYRMM_SECRET_KEY", "EASYRMM_DATABASE_URL", "EASYRMM_DATABASE_MIGRATION_URL"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
@@ -226,14 +233,14 @@ func TestRemoteAccessSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := c.Mesh
-	if !m.Enabled || m.InternalURL.String() != "http://127.0.0.1:14430" || m.ConfigDir != "/var/lib/easyrmm-meshcentral" || m.CertURL != "https://127.0.0.1:443" {
+	if !m.Enabled || m.InternalURL.String() != "http://127.0.0.1:14430" || m.ConfigDir != "/var/lib/easyrmm-meshcentral" || m.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("remote access defaults: %+v", m)
 	}
 
-	// The certificate is read from our own HTTPS listener...
+	// The certificate is read from a loopback listener of its own...
 	e := base()
 	e["EASYRMM_LISTEN_HTTPS"] = ":8443"
-	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:8443" {
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("cert URL with a custom HTTPS port: %v %v", c, err)
 	}
 	// ...or, behind a proxy, from the proxy.
@@ -275,7 +282,7 @@ func TestRemoteAccessSettings(t *testing.T) {
 	// Blank, as Compose passes what .env leaves blank: the defaults.
 	e = base()
 	e["EASYRMM_MESH_PUBLIC_URL"], e["EASYRMM_MESH_CERT_URL"] = " ", ""
-	if c, err := LoadFrom(env(e), noFiles); err != nil || c.MeshPublicURL.String() != "https://mesh.rmm.example.com" || c.Mesh.CertURL != "https://127.0.0.1:443" {
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.MeshPublicURL.String() != "https://mesh.rmm.example.com" || c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("blank remote-access URLs: %v", err)
 	}
 	// Without a public URL there is nothing to derive the remote-access URL from.
@@ -606,4 +613,60 @@ func TestDevScope(t *testing.T) {
 			t.Errorf("%q: %v", bad, err)
 		}
 	}
+}
+
+// ADR-0055: the contact address is optional, EASYRMM_ACME_CA_FILE is read and
+// checked, and the mesh certificate's address is ignored outside offload mode.
+func TestACMESettings(t *testing.T) {
+	e := base()
+	delete(e, "EASYRMM_ACME_EMAIL")
+	c, err := LoadFrom(env(e), noFiles)
+	if err != nil || c.TLSMode != TLSAcme || c.ACMEEmail != "" {
+		t.Fatalf("acme without an address: %v %+v", err, c)
+	}
+
+	pemFile := func(string) ([]byte, error) {
+		return []byte("-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n"), nil
+	}
+	e["EASYRMM_ACME_CA_FILE"] = "/etc/easyrmm/tls/ca.pem"
+	if _, err := LoadFrom(env(e), pemFile); err == nil || !strings.Contains(err.Error(), "EASYRMM_ACME_CA_FILE holds no PEM certificate") {
+		t.Fatalf("a file that is not a certificate: %v", err)
+	}
+	if _, err := LoadFrom(env(e), noFiles); err == nil || !strings.Contains(err.Error(), "EASYRMM_ACME_CA_FILE") {
+		t.Fatalf("a missing file: %v", err)
+	}
+	if c, err := LoadFrom(env(e), func(string) ([]byte, error) { return testCA(t), nil }); err != nil || len(c.ACMERoots) == 0 {
+		t.Fatalf("a certificate file: %v", err)
+	}
+
+	e = base()
+	e["EASYRMM_MESH_CERT_URL"] = "https://127.0.0.1:9999"
+	c, err = LoadFrom(env(e), noFiles)
+	if err != nil || c.Mesh.CertURL != "https://127.0.0.1:18444" || len(c.Notes) != 1 || !strings.Contains(c.Notes[0], "EASYRMM_MESH_CERT_URL") {
+		t.Fatalf("an ignored certificate URL: %v %q %v", err, c.Mesh.CertURL, c.Notes)
+	}
+	e["EASYRMM_TLS_MODE"], e["EASYRMM_TRUSTED_PROXIES"] = "offload", "127.0.0.1/32"
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:9999" || len(c.Notes) != 0 {
+		t.Fatalf("offload keeps it: %v %q", err, c.Mesh.CertURL)
+	}
+	e = base()
+	e["EASYRMM_LISTEN_MESH_CERT"] = "0.0.0.0:18444"
+	if _, err := LoadFrom(env(e), noFiles); err == nil || !strings.Contains(err.Error(), "EASYRMM_LISTEN_MESH_CERT") {
+		t.Fatalf("a listener that is not loopback: %v", err)
+	}
+}
+
+func testCA(t *testing.T) []byte {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test ca"}, IsCA: true, BasicConstraintsValid: true,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
