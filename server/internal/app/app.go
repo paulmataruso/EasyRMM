@@ -664,7 +664,6 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
 	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
-	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
 	postureapi.New(d.Posture).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
