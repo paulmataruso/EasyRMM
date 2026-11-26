@@ -47,8 +47,9 @@ func TestPackageInstalledAsEachManagerSaysIt(t *testing.T) {
 
 func TestEnrollmentPathsAndTheCopy(t *testing.T) {
 	l := Paths{Root: "/r", OS: "linux"}
-	if l.EnrollmentFile() != "/r/etc/easyrmm-agent/install.conf" || l.EnrollmentTop() != "/r/etc" ||
-		l.PackageCopy() != "/r/usr/libexec/easyrmm-agent/easyrmm-agent" {
+	is := func(got, want string) bool { return got == filepath.FromSlash(want) } // a test root on any host
+	if !is(l.EnrollmentFile(), "/r/etc/easyrmm-agent/install.conf") || !is(l.EnrollmentTop(), "/r/etc") ||
+		!is(l.PackageCopy(), "/r/usr/libexec/easyrmm-agent/easyrmm-agent") {
 		t.Errorf("linux: %s %s %s", l.EnrollmentFile(), l.EnrollmentTop(), l.PackageCopy())
 	}
 	w := Paths{Root: "/r", OS: "windows"}

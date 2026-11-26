@@ -212,7 +212,10 @@ func allProtectorCount(vol *ole.IDispatch) (int, error) {
 func (SystemManager) AddRecoveryPassword(ctx context.Context, volumeID string) (string, error) {
 	var pid string
 	err := withVolume(volumeID, "", func(vol *ole.IDispatch) error {
-		out, release, err := exec(vol, "ProtectKeyWithNumericalPassword", map[string]any{"FriendlyName": "EasyRMM recovery password", "NumericalPassword": ""})
+		// NumericalPassword is left out (NULL) so that BitLocker makes the
+		// password: an empty string is refused as a malformed password
+		// (0x80310035, FVE_E_INVALID_PASSWORD_FORMAT; CI run 20).
+		out, release, err := exec(vol, "ProtectKeyWithNumericalPassword", map[string]any{"FriendlyName": "EasyRMM recovery password"})
 		if err != nil {
 			return err
 		}
