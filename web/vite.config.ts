@@ -34,6 +34,11 @@ export default defineConfig({
         target: apiTarget,
         headers: { Host: publicHost, Origin: `https://${publicHost}` },
       },
+      // The page a Quick Assist link opens and its download are the server's, not the console's (ADR-0080).
+      "/qa": {
+        target: apiTarget,
+        headers: { Host: publicHost, Origin: `https://${publicHost}` },
+      },
     },
   },
   test: {

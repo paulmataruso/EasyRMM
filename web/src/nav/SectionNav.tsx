@@ -13,6 +13,7 @@ import {
   FolderTree,
   Hourglass,
   Library,
+  LifeBuoy,
   ListChecks,
   LoaderCircle,
   MoreHorizontal,
@@ -62,10 +63,11 @@ const META: Record<SectionId, { title: string; icon: ReactNode }> = {
   scripts: { title: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> },
   jobs: { title: "Jobs", icon: <ListChecks className="size-4" aria-hidden /> },
   patching: { title: "Patching", icon: <ShieldCheck className="size-4" aria-hidden /> },
+  quickassist: { title: "Quick Assist", icon: <LifeBuoy className="size-4" aria-hidden /> },
   settings: { title: "Settings", icon: <Settings className="size-4" aria-hidden /> },
 };
 
-const ALL_LABEL: Record<Exclude<SectionId, "settings">, string> = {
+const ALL_LABEL: Record<Exclude<SectionId, "settings" | "quickassist">, string> = {
   organizations: "All organizations",
   devices: "All devices",
   alerts: "All alerts",
@@ -112,7 +114,7 @@ export function SectionNav({
           Back
         </button>
       </div>
-      {section === "settings" ? <SettingsNav /> : <SectionTree section={section} onWidth={onWidth} />}
+      {section === "settings" ? <SettingsNav /> : section === "quickassist" ? <QuickAssistNav /> : <SectionTree section={section} onWidth={onWidth} />}
     </div>
   );
 }
@@ -203,7 +205,7 @@ function onlineBadge(online: number, total: number): Badge {
   };
 }
 
-function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settings">; onWidth?: (px: number) => void }) {
+function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settings" | "quickassist">; onWidth?: (px: number) => void }) {
   const { can, canGlobal } = useAuth();
   const waiting = useWaitingDevices(section === "devices" && canGlobal("enrollment.manage"));
   const navigate = useNavigate();
@@ -989,6 +991,48 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
   ]
     .filter((p) => p.show)
     .map(({ id, label, icon }) => ({ id, label, icon }));
+}
+
+/** Quick Assist's own tree (ADR-0080): its links, the requests waiting, the sessions running and the ones that ended. */
+export const QUICK_ASSIST_VIEWS = [
+  { id: "requests", label: "Requests" },
+  { id: "active", label: "Active" },
+  { id: "links", label: "Links" },
+  { id: "ended", label: "Ended" },
+] as const;
+
+function QuickAssistNav() {
+  const location = useLocation();
+  const waiting = useApi<{ waiting: number }>("/quickassist/waiting", undefined, { refetchInterval: 5_000 });
+  const requested = new URLSearchParams(location.search).get("view");
+  const current = QUICK_ASSIST_VIEWS.some((v) => v.id === requested) ? requested : "requests";
+  const count = waiting.data?.waiting ?? 0;
+  return (
+    <>
+      <SectionHeader section="quickassist" />
+      <ul className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
+        {QUICK_ASSIST_VIEWS.map((v) => (
+          <li key={v.id}>
+            <Link
+              to={v.id === "requests" ? "/quickassist" : `/quickassist?view=${v.id}`}
+              aria-current={current === v.id ? "page" : undefined}
+              className={cx(
+                "flex items-center justify-between gap-2.5 rounded-md px-3 py-2 text-sm",
+                current === v.id ? "bg-sidebar-active font-medium text-white" : "text-sidebar-fg hover:bg-sidebar-active/60 hover:text-white",
+              )}
+            >
+              {v.label}
+              {v.id === "requests" && count > 0 && (
+                <span className="rounded-full bg-accent px-1.5 text-xs text-white" aria-label={`${count} waiting`}>
+                  {count}
+                </span>
+              )}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 function SettingsNav() {

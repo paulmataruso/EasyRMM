@@ -702,6 +702,14 @@ stay with that organization after a move (listed as stays, like `job_runs`),
 so evidence already shown for it is not rewritten; the device's next scan is
 the new organization's.
 
+### Amended 2026-11-26 (decided in review), Quick Assist tables
+
+ADR-0080's tables (migrations `00063` to `00065`): `quick_assist_links` and
+`quick_assist_orgs` belong to their organization (owned). A session in
+`quick_assist_sessions` is the record of help given under the Quick Assist
+organization and stays with it when the device later moves (installed
+permanently, then placed elsewhere); Quick Assist ends the session itself.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,

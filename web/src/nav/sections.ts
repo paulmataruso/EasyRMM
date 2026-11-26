@@ -6,7 +6,7 @@ import { deviceKey, groupKey, orgKey, siteKey } from "./tree";
  * organizations, sites, device groups and devices that narrows the section's list (ADR-0069), or, for settings, its
  * parts.
  */
-export type SectionId = "organizations" | "devices" | "alerts" | "scripts" | "jobs" | "patching" | "settings";
+export type SectionId = "organizations" | "devices" | "alerts" | "scripts" | "jobs" | "patching" | "quickassist" | "settings";
 
 /** The permission that shows a section in the main menu, and its navigation. */
 export const SECTION_PERMISSION: Record<Exclude<SectionId, "organizations" | "settings">, Permission> = {
@@ -15,6 +15,7 @@ export const SECTION_PERMISSION: Record<Exclude<SectionId, "organizations" | "se
   scripts: "script.view",
   jobs: "job.view",
   patching: "patch.view",
+  quickassist: "quickassist.view",
 };
 
 export function sectionFor(pathname: string): SectionId | null {
@@ -25,6 +26,7 @@ export function sectionFor(pathname: string): SectionId | null {
   if (under("/scripts")) return "scripts";
   if (under("/jobs")) return "jobs";
   if (under("/patching")) return "patching";
+  if (under("/quickassist")) return "quickassist";
   if (under("/settings") || under("/users")) return "settings";
   return null;
 }
@@ -103,6 +105,7 @@ export function selectedKey(section: SectionId, pathname: string, search: string
         const device = one(/^\/patching\/devices\/([^/]+)$/, pathname);
         return device ? deviceKey(device) : null;
       }
+    case "quickassist":
     case "settings":
       return null;
   }

@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { lazyPage, PageFrame } from "../lib/lazyPage";
-import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, LifeBuoy, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -84,6 +84,7 @@ const SECTION_HOME: Record<SectionId, string> = {
   scripts: "/scripts",
   jobs: "/jobs",
   patching: "/patching",
+  quickassist: "/quickassist",
   settings: "/settings",
 };
 
@@ -119,7 +120,7 @@ export function AppLayout() {
   // A section's tree may ask for a wider sidebar (nav/width.ts); the main menu and settings keep the standard width.
   // Moving between trees keeps the last width until the next tree has measured itself.
   const [treeWidth, setTreeWidth] = useState<number | null>(null);
-  const wide = section && section !== "settings" ? treeWidth : null;
+  const wide = section && section !== "settings" && section !== "quickassist" ? treeWidth : null;
 
   useEffect(() => {
     if (focusNext !== "menu" || section !== null || !pageSection) return;
@@ -129,6 +130,8 @@ export function AppLayout() {
 
   const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
   const waiting = useWaitingDevices(canGlobal("enrollment.manage"));
+  const quick = useApi<{ waiting: number }>(can("quickassist.view") ? "/quickassist/waiting" : null, undefined, { refetchInterval: 5_000 });
+  const quickWaiting = quick.data?.waiting ?? 0;
 
   const nav: NavItem[] = [
     { to: "/", label: "Dashboard", icon: <LayoutDashboard className="size-4" aria-hidden />, end: true },
@@ -162,6 +165,14 @@ export function AppLayout() {
   }
   if (can("report.view") && (can("device.view") || can("software.view") || can("alert.view"))) {
     nav.push({ to: "/reports", label: "Reports", icon: <FileBarChart className="size-4" aria-hidden /> });
+  }
+  if (can("quickassist.view")) {
+    nav.push({
+      to: "/quickassist",
+      label: "Quick Assist",
+      icon: <LifeBuoy className="size-4" aria-hidden />,
+      count: quickWaiting > 0 ? { value: quickWaiting, label: `${plural(quickWaiting, "support request")} waiting`, critical: false } : undefined,
+    });
   }
   if (can("user.view") || can("audit.view") || can("settings.manage")) {
     nav.push({ to: "/settings", label: "Settings", icon: <Settings className="size-4" aria-hidden /> });

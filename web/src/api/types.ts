@@ -12,6 +12,12 @@ export type Permission =
   | "device.harden"
   | "device.remote_desktop"
   | "device.rdp_credentials.save"
+  | "quickassist.view"
+  | "quickassist.link.create"
+  | "quickassist.link.permanent"
+  | "quickassist.session"
+  | "quickassist.session.takeover"
+  | "quickassist.install"
   | "device.terminal"
   | "device.files"
   | "script.view"
@@ -3853,4 +3859,54 @@ export interface BackupFleet {
     noData: number;
   };
   devices: BackupFleetDevice[];
+}
+
+/** Quick Assist (ADR-0080): a link a technician gives a user. The token is shown once, when the link is made. */
+export interface QuickAssistLink {
+  id: string;
+  organizationId: string;
+  siteId: string | null;
+  kind: "one_time" | "permanent";
+  name: string;
+  note: string;
+  state: "active" | "used" | "expired" | "revoked";
+  paused: boolean;
+  /** Made while only test links were allowed: only its maker accepts a session from it. */
+  test: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+  usedAt: string | null;
+  lastUsedAt: string | null;
+  downloadCount: number;
+}
+
+export interface NewQuickAssistLink {
+  link: QuickAssistLink;
+  token: string;
+  path: string;
+}
+
+export type QuickAssistState = "requested" | "active" | "declined" | "ended" | "lost";
+
+/** One run of the runner on one computer. The session code is never part of it. */
+export interface QuickAssistSession {
+  id: string;
+  linkId: string;
+  linkName: string;
+  organizationId: string;
+  deviceId: string | null;
+  deviceName: string;
+  platform: string;
+  state: QuickAssistState;
+  elevated: boolean;
+  test: boolean;
+  requestedAt: string;
+  acceptedBy: string | null;
+  acceptedAt: string | null;
+  endedAt: string | null;
+  endReason: string;
+  lastSeenAt: string;
+  cleanup: "none" | "verified" | "residue" | "unconfirmed";
+  sourceIp: string;
+  disconnected: boolean;
 }

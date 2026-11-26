@@ -458,7 +458,8 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	out := []*Device{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+columns+from+`
-			WHERE ($1::uuid IS NULL OR d.organization_id = $1)
+			WHERE NOT d.quick_assist -- Quick Assist devices live in their own section (ADR-0080)
+			  AND ($1::uuid IS NULL OR d.organization_id = $1)
 			  AND ($2::uuid IS NULL OR d.site_id = $2)
 			  AND ($9::uuid IS NULL OR d.device_group_id = $9)
 			  AND (NOT $10 OR d.device_group_id IS NULL)

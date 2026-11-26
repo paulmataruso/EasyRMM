@@ -24,6 +24,8 @@ enforce that higher roles are strict supersets of lower ones.
 | `defender.view`, `ad.view`, `ad.helpdesk`, `dhcp.view`, `print.view`, `backup.view`, `defender.manage`, `print.manage`, `backup.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `ca.view`, `dns.view`, `shares.view`, `ad.view_sensitive`, `dns.manage`, `dhcp.manage`, `shares.manage` | | | ✓ | ✓ | ✓ |
 | `ca.manage`, `ad.manage`, `ad.reset_password` | | | | ✓ | ✓ |
+| `quickassist.view`, `quickassist.link.create`, `quickassist.session` (Quick Assist, [ADR-0080](../architecture/adr/0080-quick-assist.md)) | | ✓ | ✓ | ✓ | ✓ |
+| `quickassist.link.permanent`, `quickassist.session.takeover`, `quickassist.install` | | | | ✓ | ✓ |
 
 `job.view_sensitive` opens what a run printed and a job's argument values,
 which can hold secrets; `job.view` shows the jobs and runs without them.

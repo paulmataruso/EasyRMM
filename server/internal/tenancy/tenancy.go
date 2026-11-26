@@ -505,7 +505,7 @@ func (s *Service) ListSites(ctx context.Context, c access.Caller, orgID uuid.UUI
 	out := []Site{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+siteColumns+` FROM sites s JOIN organizations o ON o.id = s.organization_id
-			WHERE ($1::uuid IS NULL OR s.organization_id = $1)
+			WHERE s.kind = 'normal' AND ($1::uuid IS NULL OR s.organization_id = $1)
 			  AND ($2 = '' OR strpos(lower(s.name), lower($2)) > 0)
 			ORDER BY lower(o.name), lower(s.name), s.id LIMIT 10000`, nullUUID(orgID), strings.TrimSpace(query))
 		if err != nil {

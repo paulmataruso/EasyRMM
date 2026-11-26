@@ -77,6 +77,9 @@ commands:
             put this agent back in place on an enrolled machine: program,
             service and start; the enrollment is kept (run from the
             recovery copy by the EasyPatch agent)
+  quick-assist [--clean]
+            one support session for a user, from a Quick Assist link: asks
+            first, installs nothing, removes itself when it ends
   run       run the agent in the foreground (what the service does)
   status    show the enrollment and the last heartbeat
   uninstall stop and remove the agent and MeshAgent from this machine
@@ -167,6 +170,8 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.enroll(ctx, rest, true)
 	case "enroll":
 		return e.enroll(ctx, rest, false)
+	case "quick-assist":
+		return e.quickAssist(ctx, rest)
 	case "repair-install":
 		return e.repairInstall(ctx)
 	case "run":

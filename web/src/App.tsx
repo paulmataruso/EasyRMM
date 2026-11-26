@@ -34,6 +34,7 @@ const OrganizationsPage = page(() => import("./pages/organizations/Organizations
 const OrganizationDetailPage = page(() => import("./pages/organizations/OrganizationDetailPage").then((m) => m.OrganizationDetailPage));
 const GroupDetailPage = page(() => import("./pages/organizations/GroupDetailPage").then((m) => m.GroupDetailPage));
 const SiteDetailPage = page(() => import("./pages/organizations/SiteDetailPage").then((m) => m.SiteDetailPage));
+const QuickAssistPage = page(() => import("./pages/quickassist/QuickAssistPage").then((m) => m.QuickAssistPage));
 const SettingsPage = page(() => import("./pages/settings/SettingsPage").then((m) => m.SettingsPage));
 const UserDetailPage = page(() => import("./pages/settings/UserDetailPage").then((m) => m.UserDetailPage));
 const AccountPage = page(() => import("./pages/account/AccountPage").then((m) => m.AccountPage));
@@ -183,6 +184,7 @@ export function App() {
         <Route path="patching/devices/:id" element={<PatchingDevicePage />} />
         <Route path="patching/updates/:guid" element={<UpdatePage />} />
         <Route path="go/from-easypatch/:kind/:id" element={<FromEasyPatchPage />} />
+        <Route path="quickassist" element={<QuickAssistPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />

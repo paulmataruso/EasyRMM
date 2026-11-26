@@ -65,6 +65,7 @@ type API struct {
 	ep      EasyPatchInstalls
 	repairs Repairs
 	channel *agentchannel.Hub
+	qa      QuickAssist
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
@@ -270,6 +271,7 @@ func (a *API) Handler() http.Handler {
 	if a.channel.Enabled() {
 		mux.Handle("GET "+agentproto.PathChannel, httpapi.Handle(a.signedWith(1024, a.upgrades, a.channelUpgrade)))
 	}
+	a.registerQuickAssist(mux)
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
 	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))

@@ -59,7 +59,7 @@ func (s *Service) Tree(ctx context.Context, c access.Caller) (*Tree, error) {
 		}
 		counts, err := tx.Query(ctx, `SELECT d.organization_id, d.site_id, d.device_group_id, count(*)::int,
 				(count(*) FILTER (WHERE d.remote_online OR `+agentOnline+`))::int
-			FROM devices d GROUP BY d.organization_id, d.site_id, d.device_group_id`)
+			FROM devices d WHERE NOT d.quick_assist GROUP BY d.organization_id, d.site_id, d.device_group_id`)
 		if err != nil {
 			return err
 		}

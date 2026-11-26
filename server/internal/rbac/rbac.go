@@ -109,6 +109,18 @@ const (
 	PermRDPCredentialsSave Permission = "device.rdp_credentials.save" //nolint:gosec // a permission name, not a credential
 )
 
+// Quick Assist (ADR-0080), all at the organization. Permanent links, taking a
+// session over and installing permanently start at Organization
+// Administrator.
+const (
+	PermQAView          Permission = "quickassist.view"
+	PermQALinkCreate    Permission = "quickassist.link.create"
+	PermQALinkPermanent Permission = "quickassist.link.permanent"
+	PermQASession       Permission = "quickassist.session"
+	PermQATakeover      Permission = "quickassist.session.takeover"
+	PermQAInstall       Permission = "quickassist.install"
+)
+
 // ADR-0074's two added Defender permissions: PermDefenderViewSensitive reads
 // file paths, user names and the exclusions an administrator added;
 // PermDefenderWeaken does what lowers protection or restores a threat. Both
@@ -150,6 +162,7 @@ var AllPermissions = []Permission{
 	PermBackupViewSensitive, PermBackupDestroy, PermPrintViewSensitive, PermPrintDestroy,
 	PermComplianceView, PermComplianceScan, PermComplianceFix, PermComplianceFixHigh, PermComplianceFixApprove,
 	PermComplianceEdit, PermComplianceAttest, PermComplianceApprove, PermComplianceExport, PermComplianceAdmin,
+	PermQAView, PermQALinkCreate, PermQALinkPermanent, PermQASession, PermQATakeover, PermQAInstall,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -235,6 +248,7 @@ var technicianPerms = union(viewPerms, []Permission{
 	PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
 	// Compliance (ADR-0078): view, scan and the fixes that need no step-up.
 	PermComplianceView, PermComplianceScan, PermComplianceFix,
+	PermQAView, PermQALinkCreate, PermQASession,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
@@ -249,7 +263,8 @@ var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserMa
 	PermCAManage, PermADManage, PermADResetPassword,
 	// Every compliance permission but compliance.admin, which is server-wide.
 	PermComplianceFixHigh, PermComplianceFixApprove, PermComplianceEdit, PermComplianceAttest, PermComplianceApprove,
-	PermComplianceExport})
+	PermComplianceExport,
+	PermQALinkPermanent, PermQATakeover, PermQAInstall})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{
