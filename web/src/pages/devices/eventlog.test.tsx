@@ -5,6 +5,7 @@ import type { EventlogEvent, EventlogRequest, EventlogResult, EventlogRun } from
 import { baseRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { device, history, inventory, metrics } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
+import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequests, matchKeyEvent, problemsRequest } from "./eventlog/overview";
 import { endText, eventAsText, eventTime, groupChannels, parseIds, posText } from "./eventlog/eventlogText";
 
 const AGENT = { version: "1.5.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-26T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
@@ -95,6 +96,20 @@ function routes(session: ReturnType<typeof sessionView>, dev = PC, results: Reco
   } as Parameters<typeof installFakeApi>[0];
 }
 
+type User = ReturnType<typeof userEvent.setup>;
+/** The tab opens in the overview; "All events" is one click away, and its search runs by itself. */
+async function openAll(user: User) {
+  await user.click(screen.getByRole("radio", { name: "All events" }));
+}
+/** Waits until a query matching is sent, and answers it. */
+const sent = (server: ReturnType<typeof installFakeApi>, pick: (b: EventlogRequest) => boolean) =>
+  waitFor(() => {
+    const q = queries(server).find(pick);
+    expect(q).toBeDefined();
+    return q!;
+  });
+const queries = (server: ReturnType<typeof installFakeApi>) => server.callsTo("POST /devices/:id/eventlog").map((c) => c.body as EventlogRequest).filter((b) => b.op === "query");
+
 describe("the Event logs tab", () => {
   it("is for a Windows device and a holder of eventlog.view", async () => {
     installFakeApi(routes(READ_ONLY));
@@ -125,7 +140,7 @@ describe("the Event logs tab", () => {
     // Other logs are grouped by provider, and analytic logs hide.
     expect(within(logs).getByText("Microsoft-Windows-PowerShell")).toBeInTheDocument();
     expect(within(logs).queryByText("Microsoft-Windows-X")).not.toBeInTheDocument();
-    expect(server.callsTo("POST /devices/:id/eventlog").map((c) => (c.body as EventlogRequest).op)).toEqual(["channels"]);
+    await waitFor(() => expect(server.callsTo("POST /devices/:id/eventlog").map((c) => (c.body as EventlogRequest).op).sort()).toEqual(["channels", "query", "query", "query", "query"]));
   });
 
   it("searches with the filters as typed, and lists the events newest first with their fields", async () => {
@@ -133,13 +148,13 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(routes(TECH));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("checkbox", { name: "Error" }));
+    await openAll(user);
     await user.type(screen.getByLabelText("Event IDs"), "41, 100-200, -7036");
     await user.type(screen.getByLabelText("Provider"), "Kernel-Power");
     await user.selectOptions(screen.getByLabelText("Time range"), "7d");
     await user.type(screen.getByLabelText("Text"), "spooler");
-    await user.click(screen.getByRole("button", { name: "Search" }));
-    const q = (await waitFor(() => server.callsTo("POST /devices/:id/eventlog").filter((c) => (c.body as EventlogRequest).op === "query")[0]!)).body as EventlogRequest;
+    await user.click(screen.getByRole("checkbox", { name: "Error" }));
+    const q = await sent(server, (b) => b.text === "spooler");
     expect(q).toEqual({
       op: "query",
       channels: ["System", "Application"],
@@ -167,10 +182,11 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(routes(TECH));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
+    await openAll(user);
     await user.type(screen.getByLabelText("Event IDs"), "12x");
     expect(await screen.findByText(/"12x" is not an event ID/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
-    expect(server.callsTo("POST /devices/:id/eventlog").filter((c) => (c.body as EventlogRequest).op === "query")).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 700));
+    expect(queries(server).filter((b) => b.ids?.some((i) => i.from === 12))).toHaveLength(0);
   });
 
   it("shows an event's message, its fields and its XML, and copies it", async () => {
@@ -178,7 +194,7 @@ describe("the Event logs tab", () => {
     installFakeApi(routes(TECH));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     const table = await screen.findByRole("table", { name: "Events" });
     await user.click(within(table).getAllByRole("row")[1]!);
     expect(await screen.findByText("The Print Spooler service terminated unexpectedly.")).toBeInTheDocument();
@@ -201,7 +217,7 @@ describe("the Event logs tab", () => {
     installFakeApi(routes(TECH, PC, { "r-query": page([hidden]) }));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     const table = await screen.findByRole("table", { name: "Events" });
     await user.click(within(table).getAllByRole("row")[1]!);
     expect(await screen.findByText(/needs permission to see command lines and scripts/)).toBeInTheDocument();
@@ -218,7 +234,7 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(routes(TECH, PC, { "r-query": first, "r-page2": second }));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     await screen.findByRole("table", { name: "Events" });
     await user.click(screen.getByRole("button", { name: "More" }));
     await waitFor(() => expect(within(screen.getByRole("table", { name: "Events" })).getAllByRole("row")).toHaveLength(4));
@@ -233,7 +249,7 @@ describe("the Event logs tab", () => {
     installFakeApi(routes(TECH, PC, { "r-query": bounded }));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     expect(await screen.findByText(/Searched 100,000 events back to/)).toBeInTheDocument();
     expect(screen.getByText(/more may match/)).toBeInTheDocument();
   });
@@ -250,7 +266,7 @@ describe("the Event logs tab", () => {
     installFakeApi(routes(TECH, PC, { "r-query": odd }));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     expect(await screen.findByText("No log named Nope on this computer.")).toBeInTheDocument();
     expect(screen.getByText(/this log was cleared since the first page/)).toBeInTheDocument();
     expect(screen.getByText("Access denied to Locked.")).toBeInTheDocument();
@@ -268,7 +284,7 @@ describe("the Event logs tab", () => {
     } as Parameters<typeof installFakeApi>[0]);
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("group", { name: "Event log header" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     expect(await screen.findByText(/Refused by EasyRMM/)).toBeInTheDocument();
   });
 
@@ -283,22 +299,24 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(routes(ADMIN));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
+    await waitFor(() => expect(queries(server).length).toBeGreaterThan(0));
     const security = await screen.findByRole("checkbox", { name: "Security" });
     expect(security).toBeEnabled();
-    await user.click(security);
+    await openAll(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Security" }));
     expect(screen.getByLabelText(/Show command lines and scripts/)).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Search" }));
-    const q = (await waitFor(() => server.callsTo("POST /devices/:id/eventlog").filter((c) => (c.body as EventlogRequest).op === "query")[0]!)).body as EventlogRequest;
+    const q = await sent(server, (b) => !b.ids && !b.levels && b.channels?.includes("Security") === true);
     expect(q.sensitive).toBe(true);
     expect(q.channels).toEqual(["System", "Application", "Security"]);
+    // The overview asked for the Security key events with the same permission.
+    expect(queries(server).find((b) => b.channels?.[0] === "Security" && b.ids)).toMatchObject({ sensitive: true, ids: [{ from: 4625 }, { from: 4740 }] });
   });
 
   it("sends nothing while the device is offline", async () => {
     const server = installFakeApi(routes(TECH, OFFLINE));
     renderApp("/devices/d3?tab=eventlog");
     expect(await screen.findByText("This device is offline")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Search" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Search|Refresh|Read now/ })).not.toBeInTheDocument();
     expect(server.callsTo("POST /devices/:id/eventlog")).toHaveLength(0);
   });
 
@@ -310,7 +328,7 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(r);
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     const table = await screen.findByRole("table", { name: "Events" });
     await user.click(within(table).getAllByRole("row")[1]!);
     await user.click(await screen.findByRole("button", { name: "Open it" }));
@@ -327,10 +345,96 @@ describe("the Event logs tab", () => {
     } as Parameters<typeof installFakeApi>[0]);
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
-    await user.click(screen.getByRole("button", { name: "Search" }));
+    await openAll(user);
     await waitFor(() => expect(server.callsTo("POST /devices/:id/eventlog").filter((c) => (c.body as EventlogRequest).op === "query")).toHaveLength(1));
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await waitFor(() => expect(server.callsTo("POST /job-runs/:id/cancel").length).toBeGreaterThan(0));
+  });
+});
+
+describe("the admin overview", () => {
+  const T = (min: number) => new Date(Date.UTC(2026, 10, 26, 9, min)).toISOString();
+  const kp = (record: number, min: number) => ev(record, { provider: "Microsoft-Windows-Kernel-Power", id: 41, level: 1, time: T(min) });
+  const scm = (record: number, min: number) => ev(record, { time: T(min) });
+
+  it("opens by itself with the key events pinned above the problems, and no button that only starts a read", async () => {
+    const server = installFakeApi(
+      routes(TECH, PC, { "r-query": page([kp(5, 14), kp(4, 20), kp(3, 30), scm(2, 40), ev(1, { provider: "Chatty", id: 9, level: 3, log: "Application", channel: "Application" })]) }),
+    );
+    renderApp("/devices/d1?tab=eventlog");
+    const keyCard = await screen.findByRole("table", { name: "Unexpected shutdowns and restarts" });
+    expect(within(keyCard).getByText(/×3 since/)).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: "Service crashes and failures" })).toBeInTheDocument();
+    const problems = await screen.findByRole("table", { name: "Problems" });
+    // An Application warning is not a problem; Critical and Error are.
+    expect(within(problems).queryByText(/Chatty/)).not.toBeInTheDocument();
+    expect(within(problems).getAllByRole("row")).toHaveLength(3);
+    // The Security key events are not asked for without the permission.
+    const qs = queries(server);
+    expect(qs.map((q) => q.channels)).toEqual([["System"], ["System"], ["Application"], ["System", "Application"]]);
+    expect(qs.every((q) => q.sensitive === undefined)).toBe(true);
+    expect(qs.at(-1)).toEqual({ op: "query", channels: ["System", "Application"], levels: [1, 2, 3], time: { last: "24h" } });
+    for (const name of [/^Search$/, /Read now/, /^Run$/, /Refresh/]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  });
+
+  it("loads a log at once when it is picked in the tree, replacing the overview, with no other click", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(routes(TECH));
+    renderApp("/devices/d1?tab=eventlog");
+    await screen.findByRole("table", { name: "Problems" });
+    await user.click(screen.getByRole("checkbox", { name: "Application" }));
+    const q = await sent(server, (b) => b.channels?.length === 1 && b.channels[0] === "Application" && !b.ids);
+    expect(q).toEqual({ op: "query", channels: ["Application"], time: { last: "24h" } });
+    expect(await screen.findByRole("table", { name: "Events" })).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Problems" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Search$/ })).not.toBeInTheDocument();
+  });
+
+  it("opens an event from its row, and a count links to the full filtered search", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(routes(TECH, PC, { "r-query": page([kp(5, 14), kp(4, 20)]) }));
+    renderApp("/devices/d1?tab=eventlog");
+    const t = await screen.findByRole("table", { name: "Unexpected shutdowns and restarts" });
+    await user.click(within(t).getAllByRole("row")[1]!);
+    expect(await screen.findByRole("heading", { name: /Event 41, Microsoft-Windows-Kernel-Power/ })).toBeInTheDocument();
+    await user.click(within(t).getByRole("button", { name: "Show all 2 events" }));
+    const q = await sent(server, (b) => b.ids?.length === 1 && b.providers?.[0] === "Microsoft-Windows-Kernel-Power");
+    expect(q).toMatchObject({ channels: ["System"], ids: [{ from: 41 }], providers: ["Microsoft-Windows-Kernel-Power"], time: { last: "24h" } });
+    expect(await screen.findByRole("table", { name: "Events" })).toBeInTheDocument();
+  });
+
+  it("asks for the Security key events only with the sensitive permission, and no query holds more IDs than Windows takes", () => {
+    const plain = keyEventsRequests(false);
+    expect(plain.flatMap((r) => r.channels!)).not.toContain("Security");
+    expect(plain.flatMap((r) => r.ids!.map((i) => i.from))).not.toContain(4625);
+    const all = keyEventsRequests(true);
+    expect(all.filter((r) => r.channels![0] === "Security").every((r) => r.sensitive === true)).toBe(true);
+    expect(all.filter((r) => r.sensitive).length).toBe(1);
+    expect(all.flatMap((r) => r.ids!.map((i) => i.from))).toEqual(
+      expect.arrayContaining([6008, 41, 1074, 7031, 7034, 7000, 7009, 7023, 7, 11, 51, 153, 55, 98, 1000, 1002, 1001, 20, 1129, 1053, 1055, 36, 47, 129, 5719, 5722, 5805, 4625, 4740]),
+    );
+    for (const r of all) {
+      expect(r.channels).toHaveLength(1);
+      expect(r.ids!.length).toBeLessThanOrEqual(12);
+      expect(r.providers).toBeUndefined();
+    }
+    expect(problemsRequest().levels).toEqual([1, 2, 3]);
+  });
+
+  it("matches a key event only by its log, source and ID, and groups repeats with their first time", () => {
+    expect(matchKeyEvent(ev(1, { provider: "disk", id: 7 }))).toBeDefined();
+    expect(matchKeyEvent(ev(1, { provider: "Other", id: 7 }))).toBeUndefined();
+    expect(matchKeyEvent(ev(1, { provider: "NETLOGON", id: 5719 }))).toBeDefined();
+    const events = [kp(3, 30), kp(2, 20), kp(1, 14), scm(4, 40)];
+    const groups = groupKeyEvents(events, false);
+    expect(groups.map((g) => [g.category, g.total])).toEqual([["Unexpected shutdowns and restarts", 3], ["Service crashes and failures", 1]]);
+    expect(groups[0]!.groups[0]).toMatchObject({ count: 3, since: T(14), label: "Restarted without a clean shutdown" });
+    expect(groupKeyEvents([ev(1, { log: "Security", channel: "Security", provider: "Microsoft-Windows-Security-Auditing", id: 4625 })], false)).toEqual([]);
+    expect(groupKeyEvents([ev(1, { log: "Security", channel: "Security", provider: "Microsoft-Windows-Security-Auditing", id: 4625 })], true)).toHaveLength(1);
+    // Repeats at different levels stay apart in the problems list.
+    expect(groupRepeats([ev(1, { level: 2 }), ev(2, { level: 3 })], true)).toHaveLength(2);
+    expect(isProblem(ev(1, { level: 3, log: "Application" }))).toBe(false);
+    expect(isProblem(ev(1, { level: 3 }))).toBe(true);
   });
 });
 

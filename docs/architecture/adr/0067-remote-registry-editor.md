@@ -1652,3 +1652,13 @@ above; where the code showed a better shape, this is what was built.
   https://support.microsoft.com/help/310516
 * MITRE ATT&CK T1027.004, Compile After Delivery:
   https://attack.mitre.org/techniques/T1027/004/
+
+## Amendments
+
+* Amended 2026-11-26 (decided in review): a `REG_SZ` stored without its
+  terminator cannot be seen. `RegQueryValueEx` appends the missing NUL
+  itself, so the agent reads a terminated string and sends it as `text`.
+  Real Windows runners showed this; the unterminated case stays covered by
+  the engine's unit test with a fake backend. A binary value is sent once,
+  as `base64`, never again as `raw`, so that a 1 MiB value fits in the result
+  file.

@@ -52,6 +52,19 @@ type QueryOptions struct {
 	Now time.Time
 }
 
+// xpathText escapes a selection for the text of a Select element: &, < and >
+// and control characters, but not the quotes. Windows' query parser does not
+// read the numeric references an escaped quote becomes and answers "the
+// specified query is invalid"; a quote is plain text outside an attribute,
+// and an XPath string's own quote ends only at its twin.
+func xpathText(s string) (string, error) {
+	var b bytes.Buffer
+	if err := xml.EscapeText(&b, []byte(s)); err != nil {
+		return "", err
+	}
+	return strings.NewReplacer("&#34;", `"`, "&#39;", "'").Replace(b.String()), nil
+}
+
 // BuildQuery writes the structured query of one channel: a QueryList with
 // one Select and, for the IDs to exclude, one Suppress. Within a filter the
 // values are alternatives; between filters every one must hold. Values are
@@ -136,22 +149,22 @@ func BuildQuery(in Input, channel string, o QueryOptions) (string, error) {
 	}
 	// The whole selection is escaped once, as XML text: the XPath reads it
 	// back as written, quotes and comparison signs included.
-	var selEsc bytes.Buffer
-	if err := xml.EscapeText(&selEsc, []byte(sel)); err != nil {
+	selEsc, err := xpathText(sel)
+	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString(`<QueryList><Query Id="0" Path="` + path.String() + `"><Select Path="` + path.String() + `">` + selEsc.String() + `</Select>`)
+	b.WriteString(`<QueryList><Query Id="0" Path="` + path.String() + `"><Select Path="` + path.String() + `">` + selEsc + `</Select>`)
 	if in.Op == OpQuery && len(in.ExcludeIDs) > 0 {
 		var ids []string
 		for _, r := range in.ExcludeIDs {
 			ids = append(ids, idTest(r))
 		}
-		var sup bytes.Buffer
-		if err := xml.EscapeText(&sup, []byte("*[System["+or(ids)+"]]")); err != nil {
+		sup, err := xpathText("*[System[" + or(ids) + "]]")
+		if err != nil {
 			return "", err
 		}
-		b.WriteString(`<Suppress Path="` + path.String() + `">` + sup.String() + `</Suppress>`)
+		b.WriteString(`<Suppress Path="` + path.String() + `">` + sup + `</Suppress>`)
 	}
 	b.WriteString(`</Query></QueryList>`)
 	return b.String(), nil

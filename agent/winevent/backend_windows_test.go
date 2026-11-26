@@ -43,7 +43,7 @@ func runReal(t *testing.T, be Backend, in eventrules.Input) (*eventrules.Result,
 	in.V, in.Rules = 1, eventrules.Version
 	var b bytes.Buffer
 	start := time.Now()
-	if err := Run(context.Background(), in, be, &b, Options{AgentVersion: "test"}); err != nil {
+	if err := Run(context.Background(), in, be, &b, Options{AgentVersion: "test", Arch: archName()}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	took := time.Since(start)
@@ -122,7 +122,7 @@ func TestQueryFindsWhatWasWrittenAsSystem(t *testing.T) {
 		t.Fatalf("%d events\n%s", len(res.Events), raw)
 	}
 	e := res.Events[0]
-	if e.Provider != "EasyRMMEventTest" || e.Record == 0 || e.Channel != "Application" || e.User == "" || e.Offset == nil || e.LevelName == "" ||
+	if e.Provider != "EasyRMMEventTest" || e.Record == 0 || e.Channel != "Application" || e.Offset == nil || e.LevelName != "Information" ||
 		!strings.Contains(e.XML, marker) || !strings.HasPrefix(e.Keywords, "0x") {
 		t.Fatalf("%+v", e)
 	}
@@ -287,5 +287,37 @@ func TestBuiltinFilesAsSystem(t *testing.T) {
 	res, err := eventrules.ParseLines(splitLines(raw))
 	if err != nil || res.End == nil || len(res.Channels) < 50 {
 		t.Fatalf("%v %d", err, len(res.Channels))
+	}
+}
+
+// TestAdminOverviewQueriesAsSystem runs the two queries the console's admin
+// overview sends (web/src/pages/devices/eventlog/overview.ts) against the
+// real log: the key events by source and ID, and the last day's Critical,
+// Error and Warning events. Both must be accepted by Windows.
+func TestAdminOverviewQueriesAsSystem(t *testing.T) {
+	needSystem(t)
+	be := realBackend(t)
+	// The key events are read a log at a time, a few IDs per query: Windows
+	// refuses one of more than about 22 expressions (KEY_IDS_PER_QUERY).
+	chunk := func(log string, ids ...int) eventrules.Input {
+		var ranges []eventrules.IDRange
+		for _, id := range ids {
+			ranges = append(ranges, eventrules.IDRange{From: id})
+		}
+		return eventrules.Input{Op: eventrules.OpQuery, Channels: []string{log}, IDs: ranges, Sensitive: log == "Security", Time: &eventrules.TimeFilter{Last: "24h"}}
+	}
+	problems := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application"}, Levels: []int{1, 2, 3}, Time: &eventrules.TimeFilter{Last: "24h"}}
+	for name, in := range map[string]eventrules.Input{
+		"key events, System 1":    chunk("System", 7, 11, 20, 36, 41, 47, 51, 55, 98, 129, 153, 1053),
+		"key events, System 2":    chunk("System", 1055, 1074, 1129, 5719, 5722, 5805, 6008, 7000, 7009, 7023, 7031, 7034),
+		"key events, Application": chunk("Application", 1000, 1001, 1002),
+		"key events, Security":    chunk("Security", 4625, 4740),
+		"problems":                problems,
+	} {
+		res, raw, took := runReal(t, be, in)
+		t.Logf("%s: %d events in %s", name, len(res.Events), took)
+		if len(res.Errors) != 0 || res.End == nil || !res.End.Complete {
+			t.Errorf("%s: %s", name, raw)
+		}
 	}
 }

@@ -14,6 +14,7 @@ const READER = { name: "Sam Ortiz", email: "sam@example.com", password: "willow 
 
 let admin: Page;
 let agent: Agent;
+const overviewIds: string[] = [];
 test.describe.configure({ mode: "serial" });
 test.beforeAll(async ({ browser }) => {
   admin = await (await browser.newContext()).newPage();
@@ -92,36 +93,90 @@ test("a Windows computer enrolls with an agent that has the event viewer, and it
   await page.getByRole("tab", { name: "Event logs" }).click();
   await expect(page.getByRole("tab", { name: "Event logs" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("group", { name: "Event log header" })).toContainText("On the computer");
-  // The tab lists the logs: the agent answers the channel list it was asked for.
-  const job = await nextJob();
-  expect(job.builtin).toBe("eventlog");
-  expect(job.executor).toBe("builtin");
-  expect(job.lane).toBe("quick");
-  expect(inputOf(job)).toMatchObject({ v: 1, op: "channels", sensitive: false });
-  expect(await agent.start(job.runId)).toBe(true);
-  await agent.resulted(job.runId, [
-    begin("channels"),
-    { t: "crash", value: 1, set: true },
-    { t: "channel", name: "Application", type: "admin", enabled: true, count: 10, size: 2048 },
-    { t: "channel", name: "Security", type: "admin", enabled: true, count: 99 },
-    { t: "channel", name: "System", type: "admin", enabled: true, count: 30, size: 4096 },
-    { t: "channel", name: "Microsoft-Windows-PowerShell/Operational", type: "operational", enabled: true },
-    endLine({ returned: 4 }),
-  ]);
+  // Opening the tab starts the channel list and the overview's reads, one after the other; the agent answers each as it comes:
+  // the channel list, the key events a log at a time (Windows takes few IDs in one query), then the problems.
+  for (let i = 0; i < 6; i++) {
+    const job = await nextJob();
+    expect(job.builtin).toBe("eventlog");
+    expect(job.executor).toBe("builtin");
+    expect(job.lane).toBe("quick");
+    const input = inputOf(job) as unknown as { op: string; channels?: string[]; ids?: { from: number }[]; levels?: number[]; sensitive: boolean; time?: { last: string } };
+    expect(await agent.start(job.runId)).toBe(true);
+    if (input.op === "channels") {
+      expect(input).toMatchObject({ v: 1, op: "channels", sensitive: false });
+      await agent.resulted(job.runId, [
+        begin("channels"),
+        { t: "crash", value: 1, set: true },
+        { t: "channel", name: "Application", type: "admin", enabled: true, count: 10, size: 2048 },
+        { t: "channel", name: "Security", type: "admin", enabled: true, count: 99 },
+        { t: "channel", name: "System", type: "admin", enabled: true, count: 30, size: 4096 },
+        { t: "channel", name: "Microsoft-Windows-PowerShell/Operational", type: "operational", enabled: true },
+        endLine({ returned: 4 }),
+      ]);
+      continue;
+    }
+    expect(input).toMatchObject({ op: "query", time: { last: "24h" } });
+    const spooler = (record: number) => event(record, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly.");
+    if (input.levels) {
+      expect(input).toMatchObject({ channels: ["System", "Application"], levels: [1, 2, 3] });
+      await agent.resulted(job.runId, [begin("query"), { t: "pos", channel: "System", state: "ok" }, { t: "pos", channel: "Application", state: "ok" }, spooler(21), endLine({ returned: 1, read: 40 })]);
+      continue;
+    }
+    expect(input.channels).toHaveLength(1);
+    expect(input.sensitive).toBe(input.channels![0] === "Security");
+    overviewIds.push(...input.ids!.map((x) => `${input.channels![0]}:${x.from}`));
+    const hits = input.ids!.some((x) => x.from === 7034) ? [spooler(21), spooler(20)] : [];
+    await agent.resulted(job.runId, [begin("query"), { t: "pos", channel: input.channels![0]!, state: "ok" }, ...hits, endLine({ returned: hits.length, read: 40 })]);
+  }
   const logs = page.getByRole("group", { name: "Logs to search" });
   await expect(logs.getByRole("checkbox", { name: "System" })).toBeChecked({ timeout: 20_000 });
   // The administrator of the suite holds log.view_sensitive; the Security log is theirs to choose.
   await expect(logs.getByRole("checkbox", { name: "Security" })).toBeEnabled();
 });
 
+test("the tab opens into the admin overview by itself: the key events, then the last day's problems, with no click", async () => {
+  const page = admin;
+  // Nobody pressed anything: the reads above came from opening the tab, key events asked by ID a log at a time.
+  expect(overviewIds).toEqual(expect.arrayContaining(["System:6008", "System:41", "System:1074", "System:7031", "System:7034", "Application:1000", "Security:4625", "Security:4740"]));
+  await expect(page.getByRole("table", { name: "Service crashes and failures" })).toContainText("×2 since", { timeout: 20_000 });
+  await expect(page.getByRole("table", { name: "Problems" }).getByRole("row")).toHaveCount(2);
+  for (const name of [/^Search$/, /Read now/, /^Run$/, /Refresh/]) await expect(page.getByRole("button", { name })).toHaveCount(0);
+});
+
+test("picking a log in the tree shows its events at once, with no other click", async () => {
+  const page = admin;
+  await page.getByRole("group", { name: "Logs to search" }).getByRole("checkbox", { name: "Application" }).click();
+  const job = await jobWhere((i) => Array.isArray(i.channels) && i.channels.length === 1 && i.channels[0] === "Application");
+  expect(inputOf(job)).toMatchObject({ op: "query", channels: ["Application"], time: { last: "24h" } });
+  expect(await agent.start(job.runId)).toBe(true);
+  const app = event(31, 1000, 2, [{ name: "param1", value: "app.exe" }], "Faulting application app.exe");
+  app.log = "Application";
+  app.channel = "Application";
+  app.xml = app.xml.replace("<Channel>System</Channel>", "<Channel>Application</Channel>");
+  await agent.resulted(job.runId, [begin("query"), { t: "pos", channel: "Application", state: "ok" }, app, endLine({ returned: 1, read: 1 })]);
+  await expect(page.getByRole("table", { name: "Events" }).getByRole("row")).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: /^Search$/ })).toHaveCount(0);
+});
+
+/** The next job whose input satisfies the test; a job a newer search replaced is skipped. */
+async function jobWhere(pick: (input: Record<string, unknown>) => boolean): Promise<JobPayload> {
+  for (let i = 0; i < 10; i++) {
+    const job = await nextJob();
+    if (pick(inputOf(job) as unknown as Record<string, unknown>)) return job;
+  }
+  throw new Error("no job with that input came");
+}
+
 test("a search is a job: its input is the typed filters, its events are listed newest first, a hidden command line drops its event from a text search", async () => {
   const page = admin;
+  await page.getByRole("radio", { name: "All events" }).click();
+  await page.getByRole("checkbox", { name: "System" }).check();
   await page.getByRole("checkbox", { name: "Application" }).uncheck();
   await page.getByRole("checkbox", { name: "Error" }).check();
   await page.getByLabel("Event IDs").fill("7034, 7031");
   await page.getByLabel("Text").fill("e2e-text-marker");
-  await page.getByRole("button", { name: "Search" }).click();
-  const job = await nextJob();
+  // The search runs by itself a moment after the last change.
+  const job = await jobWhere((i) => i.text === "e2e-text-marker");
   expect(inputOf(job)).toMatchObject({ op: "query", channels: ["System"], levels: [2], ids: [{ from: 7034 }, { from: 7031 }], text: "e2e-text-marker", sensitive: false });
   expect(await agent.start(job.runId)).toBe(true);
   await agent.resulted(job.runId, [
@@ -164,8 +219,8 @@ test("the next page names the run, and the server builds the rest", async () => 
 
 test("a result that breaks a rule is not kept, and the page says so", async () => {
   const page = admin;
-  await page.getByRole("button", { name: "Search" }).click();
-  const job = await nextJob();
+  await page.getByRole("checkbox", { name: "Warning" }).check();
+  const job = await jobWhere((i) => Array.isArray(i.levels) && i.levels.includes(3));
   expect(await agent.start(job.runId)).toBe(true);
   // A Security event in a result for a query that did not ask for sensitive data.
   const sec = event(5, 4624, 4, [], "An account was logged on.");
@@ -203,10 +258,10 @@ test("the audit log records each first page and holds neither the text nor any e
   const audit = async (action: string) =>
     ((await (await page.request.get(`/api/v1/audit?action=${action}&limit=100`)).json()) as { items: { details?: Record<string, unknown> }[] }).items;
   const queries = await audit("eventlog.query");
-  // The channel list, the first page, the refresh that failed its check; the next page is covered by the first.
+  // The channel list, the overview's two queries, the search and the one that failed its check; the next page is covered by the first.
   const searches = queries.filter((r) => r.details?.operation === "query");
-  expect(searches).toHaveLength(2);
-  expect(searches[0]!.details).toMatchObject({ channels: ["System"], sensitive: false });
+  expect(searches.length).toBeGreaterThanOrEqual(4);
+  expect(searches.some((r) => r.details?.sensitive === false && Array.isArray(r.details?.channels) && r.details.channels.length === 1)).toBe(true);
   expect(queries.filter((r) => r.details?.operation === "channels")).toHaveLength(1);
   expect(searches.some((r) => r.details?.textLength === 15)).toBe(true);
   const everything = JSON.stringify(await (await page.request.get("/api/v1/audit?limit=500")).json());

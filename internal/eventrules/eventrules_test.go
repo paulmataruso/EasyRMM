@@ -2,6 +2,7 @@ package eventrules
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"strings"
 	"testing"
 	"time"
@@ -156,7 +157,7 @@ func TestBuildQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, w := range []string{`<Query Id="0" Path="System">`, `Level=2 or Level=4 or Level=0`, `EventID=41`, `EventID&gt;=100 and EventID&lt;=200`,
-		`Provider[@Name=&#39;Service Control Manager&#39;]`, `band(Keywords,9232379236109516800)`, `timediff(@SystemTime) &lt;= 86400000`,
+		`Provider[@Name='Service Control Manager']`, `band(Keywords,9232379236109516800)`, `timediff(@SystemTime) &lt;= 86400000`,
 		`EventRecordID&lt;500`, `<Suppress Path="System">`, `EventID=7036`} {
 		if !strings.Contains(q, w) {
 			t.Errorf("missing %q in %s", w, q)
@@ -174,7 +175,18 @@ func TestBuildQuery(t *testing.T) {
 	// A value cannot become XPath or XML.
 	evil := `x' or 1=1 or Provider[@Name='`
 	q, err = BuildQuery(Input{V: 1, Op: OpQuery, Providers: []string{evil}}, "System", QueryOptions{})
-	if err != nil || !strings.Contains(q, `Provider[@Name=&#34;x&#39; or 1=1`) {
+	if err != nil || !strings.Contains(q, `Provider[@Name="x' or 1=1`) {
+		t.Fatalf("%v %s", err, q)
+	}
+	// The query is well-formed XML whose Select text is the XPath as built:
+	// the value stays inside its one string, whatever it holds.
+	var doc struct {
+		Select string `xml:"Query>Select"`
+	}
+	if err := xml.Unmarshal([]byte(q), &doc); err != nil || !strings.Contains(doc.Select, `Provider[@Name="x' or 1=1 or Provider[@Name='"]`) {
+		t.Fatalf("%v %q", err, doc.Select)
+	}
+	if q, err = BuildQuery(Input{V: 1, Op: OpQuery, Providers: []string{"a</Select><Select>&<>"}}, "System", QueryOptions{}); err != nil || strings.Count(q, "<Select") != 1 {
 		t.Fatalf("%v %s", err, q)
 	}
 	if _, err = BuildQuery(Input{V: 1, Op: OpQuery, Providers: []string{`a'b"c`}}, "System", QueryOptions{}); err == nil {

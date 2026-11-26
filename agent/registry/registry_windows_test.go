@@ -173,7 +173,12 @@ func TestRegistryTypesAsSystem(t *testing.T) {
 	if v := by["Qword"]; v.Decimal != "9223372036854775807" {
 		t.Errorf("qword: %+v", v)
 	}
-	for _, name := range []string{"NoTerm", "NulInside", "LoneSurrogate", "Odd", "ShortDword"} {
+	// NoTerm: RegQueryValueEx itself appends the NUL a REG_SZ was stored
+	// without (ADR-0067, amended), so Windows hands over a terminated string.
+	if v := by["NoTerm"]; v.Text == nil || *v.Text != "abc" {
+		t.Errorf("NoTerm: Windows terminates it: %+v", v)
+	}
+	for _, name := range []string{"NulInside", "LoneSurrogate", "Odd", "ShortDword"} {
 		if v := by[name]; !v.Odd || v.Raw == "" {
 			t.Errorf("%s is sent raw: %+v", name, v)
 		}
@@ -212,7 +217,7 @@ func TestRegistryViewsAsSystem(t *testing.T) {
 	// A key made under the 32-bit node is the 32-bit view's SOFTWARE\<name>.
 	wintest.Plant(t, `SOFTWARE\WOW6432Node\`+name, map[string]any{"View": "x86"})
 	r32 := read(t, be, agentproto.RegistryInput{Op: "list", View: "32", Path: []string{"SOFTWARE", name}})
-	if len(r32.Values) != 1 || !strings.Contains(r32.Key.Kernel, `\SOFTWARE\WOW6432Node\`+name) {
+	if len(r32.Values) != 1 || !strings.Contains(strings.ToLower(r32.Key.Kernel), strings.ToLower(`\SOFTWARE\WOW6432Node\`+name)) {
 		t.Errorf("32-bit view: %+v %+v", r32.Key, r32.Values)
 	}
 	r64 := read(t, be, agentproto.RegistryInput{Op: "list", View: "64", Path: []string{"SOFTWARE", name}})
@@ -418,7 +423,7 @@ func TestRegistryExportMatchesRegExeAsSystem(t *testing.T) {
 	}
 	var sub agentproto.RegXKey
 	for _, x := range res.XKeys {
-		if len(x.Path) == 4 {
+		if len(x.Path) == 3 {
 			sub = x
 		}
 	}

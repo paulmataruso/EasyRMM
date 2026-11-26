@@ -1742,3 +1742,13 @@ it ships:
   https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_logging_windows?view=powershell-7.5
 * Sysmon:
   https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon
+
+## Amendments
+
+* Amended 2026-11-26 (decided in review): the Select text of a structured
+  query is escaped for `&`, `<` and `>` only. Windows' query parser rejects
+  the numeric references an escaped quote becomes ("The specified query is
+  invalid"). A quote is plain text outside an attribute, so a value still
+  cannot leave its XPath string or the element. An unregistered provider
+  makes `EvtOpenPublisherMetadata` fail with `ERROR_FILE_NOT_FOUND`, which is
+  "not found".
