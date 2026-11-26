@@ -24,9 +24,10 @@ export function PatchingOverview() {
   const { can } = useAuth();
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
   const fleet = useApi<PatchFleet>(
     "/patching/devices",
-    { organizationId: organizationId || undefined, siteId: siteId || undefined },
+    { organizationId: organizationId || undefined, siteId: siteId || undefined, groupId: groupId || undefined },
     { keepPrevious: true, refetchInterval: 60_000 },
   );
   // Jobs and alerts are counted by organization; the patching engine does not list them by site.

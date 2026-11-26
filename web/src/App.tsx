@@ -49,6 +49,7 @@ const JobsPage = page(() => import("./pages/jobs/JobsPage").then((m) => m.JobsPa
 const AlertsPage = page(() => import("./pages/alerts/AlertsPage").then((m) => m.AlertsPage));
 const FromEasyPatchPage = page(() => import("./pages/patching/FromEasyPatch").then((m) => m.FromEasyPatchPage));
 const PatchingPage = page(() => import("./pages/patching/PatchingPage").then((m) => m.PatchingPage));
+const PatchingDevicePage = page(() => import("./pages/patching/PatchingDevicePage").then((m) => m.PatchingDevicePage));
 const UpdatePage = page(() => import("./pages/patching/UpdatePage").then((m) => m.UpdatePage));
 const ReportsPage = page(() => import("./pages/reports/ReportsPage").then((m) => m.ReportsPage));
 const JobDetailPage = page(() => import("./pages/jobs/JobDetailPage").then((m) => m.JobDetailPage));
@@ -119,6 +120,14 @@ function Gate({ stage: required, children }: { stage: AuthStage; children: React
   return <Navigate to={target} replace />;
 }
 
+/** Old links and bookmarks to /patching?deviceId= open the device's own patching page (ADR-0072). */
+function PatchingRoute() {
+  const [params] = useSearchParams();
+  const deviceId = params.get("deviceId");
+  // The Alerts tab's own device filter stays a filter of that tab.
+  return deviceId && params.get("tab") !== "alerts" ? <Navigate to={`/patching/devices/${encodeURIComponent(deviceId)}`} replace /> : <PatchingPage />;
+}
+
 export function App() {
   useReloadWhenOutdated();
   return (
@@ -154,7 +163,8 @@ export function App() {
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id" element={<JobDetailPage />} />
         <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
-        <Route path="patching" element={<PatchingPage />} />
+        <Route path="patching" element={<PatchingRoute />} />
+        <Route path="patching/devices/:id" element={<PatchingDevicePage />} />
         <Route path="patching/updates/:guid" element={<UpdatePage />} />
         <Route path="go/from-easypatch/:kind/:id" element={<FromEasyPatchPage />} />
         <Route path="reports" element={<ReportsPage />} />

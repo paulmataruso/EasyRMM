@@ -216,6 +216,15 @@ a new one later adds to this tab.
   "Send invitation" when it is, with a line saying which will happen. The
   link is still shown after either.
 
+## Amendments
+
+* Amended 2026-11-26 (decided in review): S1 and S2 as built. The `?deviceId=`
+  redirect leaves `?tab=alerts&deviceId=` alone, because the Alerts tab filters
+  by device on its own (a bookmarked filter, not a device page). The mail status
+  the invite dialog reads is `passwordResetAvailable` of `GET /auth/options`
+  (the server's `mailer.Available`), which any signed-in user may read; the
+  Notifications tab's `/settings/mail-server` needs `settings.manage`.
+
 ## Slices
 
 Hotspots: `DeviceDetailPage.tsx` (every module that adds a device tab edits

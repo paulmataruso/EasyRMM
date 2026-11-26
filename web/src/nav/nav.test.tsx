@@ -255,6 +255,33 @@ describe("section navigation", () => {
     await waitFor(() => expect(location()).toBe("/patching?tab=updates&q=kb&organizationId=o1&siteId=s2"));
   });
 
+  it("opens a device's own patching page from the patching tree, which stays on Patching", async () => {
+    const user = userEvent.setup();
+    installFakeApi({
+      ...routes({ ...ADMIN, permissions: [...ADMIN.permissions, "patch.view"] }),
+      "GET /patching": ok({ configured: false }),
+      "GET /patching/devices/:id": ok({ link: "none", canManage: false }),
+    });
+    renderApp("/patching?tab=updates");
+    const tree = await screen.findByRole("tree", { name: "Patching: organizations, sites, groups and devices" });
+    await user.click(within(tree).getByRole("treeitem", { name: /^DB-01/ }));
+    await waitFor(() => expect(location()).toBe("/patching/devices/d1"));
+    expect(await screen.findByRole("heading", { name: "Patching · DB-01", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("tree", { name: "Patching: organizations, sites, groups and devices" })).toBeInTheDocument();
+    expect(within(screen.getByRole("tree")).getByRole("treeitem", { name: /^DB-01/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("sends the old patching?deviceId= link to the device's patching page", async () => {
+    installFakeApi({
+      ...routes({ ...ADMIN, permissions: [...ADMIN.permissions, "patch.view"] }),
+      "GET /patching": ok({ configured: false }),
+      "GET /patching/devices/:id": ok({ link: "none", canManage: false }),
+    });
+    renderApp("/patching?deviceId=d1");
+    await waitFor(() => expect(location()).toBe("/patching/devices/d1"));
+    expect(await screen.findByRole("heading", { name: "Patching · DB-01", level: 1 })).toBeInTheDocument();
+  });
+
   it("leads organizations and sites to their pages", async () => {
     const user = userEvent.setup();
     installFakeApi({
