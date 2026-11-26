@@ -12,3 +12,9 @@ Implementation status rows:
   agent beside ours pending; Diagnostic Agent residual awaits a decision.
 
 Privacy: none (nothing is collected).
+
+Added: migration 90011 (retired_devices.platform, mesh_may_remain); MeshCentral's
+uninstallagent is no longer sent to Windows devices; docs/operations/removing-our-meshagent.md.
+Console display of mesh_may_remain and the script: not built.
+Changelog: "Removing a Windows device never asks MeshCentral to uninstall its MeshAgent, so
+another MeshAgent's Diagnostic Agent is never removed."

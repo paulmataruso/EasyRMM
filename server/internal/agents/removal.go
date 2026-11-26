@@ -138,7 +138,7 @@ func (s *Service) retire(ctx context.Context, c access.Caller, id uuid.UUID, for
 		if !forced {
 			key = nil
 		}
-		if err := r.remember(ctx, tx, key, s.now()); err != nil {
+		if err := r.remember(ctx, tx, key, forced, s.now()); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, id); err != nil {
@@ -167,14 +167,15 @@ type doomed struct {
 	name          string
 	key           []byte
 	node          string
+	platform      string
 	removal       *time.Time
 }
 
 func lockDevice(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*doomed, error) {
 	r := doomed{id: id}
-	err := tx.QueryRow(ctx, `SELECT d.organization_id, d.site_id, d.name, d.agent_public_key, coalesce(d.mesh_node_id, ''), m.requested_at
+	err := tx.QueryRow(ctx, `SELECT d.organization_id, d.site_id, d.name, d.agent_public_key, coalesce(d.mesh_node_id, ''), d.platform, m.requested_at
 		FROM devices d LEFT JOIN device_removals m ON m.device_id = d.id
-		WHERE d.id = $1 FOR UPDATE OF d`, id).Scan(&r.org, &r.site, &r.name, &r.key, &r.node, &r.removal)
+		WHERE d.id = $1 FOR UPDATE OF d`, id).Scan(&r.org, &r.site, &r.name, &r.key, &r.node, &r.platform, &r.removal)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound()
 	}
@@ -184,7 +185,7 @@ func lockDevice(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*doomed, error) {
 // remember keeps what may still run on the computer of a device being
 // deleted: the agent holding key (nil when there is none to wait for) and
 // the MeshAgent node. Nothing is kept when there is neither.
-func (r *doomed) remember(ctx context.Context, tx pgx.Tx, key []byte, now time.Time) error {
+func (r *doomed) remember(ctx context.Context, tx pgx.Tx, key []byte, mayRemain bool, now time.Time) error {
 	if key == nil && r.node == "" {
 		return nil
 	}
@@ -192,9 +193,9 @@ func (r *doomed) remember(ctx context.Context, tx pgx.Tx, key []byte, now time.T
 	if r.node != "" {
 		node = &r.node
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO retired_devices (device_id, organization_id, site_id, name, agent_public_key, mesh_node_id, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		r.id, r.org, r.site, r.name, key, node, now.Add(RetiredFor))
+	_, err := tx.Exec(ctx, `INSERT INTO retired_devices (device_id, organization_id, site_id, name, agent_public_key, mesh_node_id, expires_at, platform, mesh_may_remain)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		r.id, r.org, r.site, r.name, key, node, now.Add(RetiredFor), r.platform, mayRemain && r.platform == "windows" && node != nil)
 	return err
 }
 
@@ -310,7 +311,7 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 			ev.Action, ev.Outcome = "device.removal_failed", audit.Failure
 			return s.audit.Write(ctx, tx, ev)
 		}
-		if err := r.remember(ctx, tx, nil, s.now()); err != nil {
+		if err := r.remember(ctx, tx, nil, rep.Error != "", s.now()); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, d.ID); err != nil {

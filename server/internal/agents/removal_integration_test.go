@@ -151,6 +151,8 @@ func TestDeviceRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	p3 := f.uninstallOf(d)
+	// The heartbeat set the platform; this device is a Windows one.
+	f.exec(`UPDATE devices SET platform = 'windows' WHERE id = $1`, d.ID)
 	linked := f.mesh.linked
 	if err := f.svc.Removed(f.ctx, d, agentIP, agentproto.RemovedReport{ID: p3.ID, Removed: true, Error: "MeshAgent was not removed: busy"}); err != nil {
 		t.Fatal(err)
@@ -161,6 +163,12 @@ func TestDeviceRemoval(t *testing.T) {
 	if n := f.count(`SELECT count(*) FROM retired_devices WHERE device_id = $1 AND mesh_node_id = $2 AND agent_public_key IS NULL
 			AND expires_at > now() + interval '89 days'`, d.ID, node); n != 1 {
 		t.Errorf("retired rows %d", n)
+	}
+	// ADR-0071: a Windows device whose agent could not remove MeshAgent is
+	// marked, so that it is never sent uninstallagent and the console can
+	// offer the script that removes only ours.
+	if n := f.count(`SELECT count(*) FROM retired_devices WHERE device_id = $1 AND platform = 'windows' AND mesh_may_remain`, d.ID); n != 1 {
+		t.Errorf("windows retired row not marked: %d", n)
 	}
 	if f.mesh.linked == linked {
 		t.Error("MeshCentral's sync not asked to run")

@@ -13,7 +13,8 @@
   [ADR-0069](0069-recovery-agent-logs-and-one-device-tree.md) (repair; its
   force-stop, #122, matches by exact image path),
   [ADR-0070](0070-defender-exclusions-at-install.md) (exclusions by full
-  path). Amends ADR-0050 (see *Residual: the Diagnostic Agent*).
+  path). Amends ADR-0050 (see *The Diagnostic Agent*): MeshCentral's `uninstallagent`
+  is no longer sent to Windows devices.
 
 ## Context
 
@@ -115,32 +116,43 @@ than systemd (`agentcore.c:6573-6596`), and `install.sh` requires systemd.
   reads, writes or deletes it, and its removal does not.
 * **UDP 16990** is shared with `SO_REUSEPORT` by design.
 
-### Residual: the Diagnostic Agent (open, needs the owner's decision)
+### The Diagnostic Agent (decided in review, 2026-11-26)
 
-MeshCentral's Diagnostic Agent is one fixed name per computer:
-service, scheduled task and folder are all `meshagentDiagnostic`, whatever
-the main agent is called (`meshcore.js:694-800`). It is installed only by the
-console command `diagnostic install`, which EasyRMM never issues. But
-`uninstallagent` runs `diagnosticAgent_uninstall()` first, always
-(`meshcore.js:2105`, `:6116`): it stops and deletes the service
-`meshagentDiagnostic`, its task, its certificates and, on Windows, its
-folder. So if a client's stock MeshAgent has the Diagnostic Agent installed,
-and EasyRMM asks **our** Windows MeshAgent to uninstall itself (the first
-step of removing a force-removed device whose MeshAgent is still
-connected, ADR-0050; Linux ignores the request), the client's diagnostic
-service is deleted too. The code is MeshCentral's `meshcore.js`; we do not
-patch it. **Not changed in code**, decided in review, because the only
-alternative, never sending `uninstallagent`, also stops the uninstall of
-MeshCentral-only devices that ADR-0050 promises, and the retired-device row
-cannot tell the two apart without a migration. What limits it: it needs
-the opt-in Diagnostic Agent on the client's agent, a Windows device, a
-forced removal and a still-connected MeshAgent. The owner can overturn
-this: the fix is a `retired_devices` flag recording that the device had an
-EasyRMM agent, and skipping `uninstallagent` for those nodes (the EasyRMM
-agent removes its own MeshAgent). Until then, the removal of a device whose
-computer has a client MeshAgent with a Diagnostic Agent should be done with
-**Remove** while the EasyRMM agent is online, which uninstalls our MeshAgent
-from outside MeshCentral and never sends `uninstallagent`.
+MeshCentral's Diagnostic Agent is one fixed name per computer: service,
+scheduled task and folder are all `meshagentDiagnostic`, whatever the main
+agent is called (`meshcore.js:694-800`). `uninstallagent` runs
+`diagnosticAgent_uninstall()` first, always (`meshcore.js:2105`, `:6116`):
+it stops and deletes that service, its task, its certificates and, on
+Windows, its folder, which on a computer with a client's MeshAgent may be
+the client's. The owner's rule is absolute, so:
+
+1. **EasyRMM never sends `uninstallagent` to a Windows device.** Our
+   MeshAgent is removed only by our own EasyRMM agent: service
+   `EasyRMMMeshAgent`, folder `%ProgramFiles%\EasyRMM\MeshAgent`, and our
+   registry keys. `removeRetired` skips the request when
+   `retired_devices.platform = 'windows'` (`server/internal/remote/service.go`)
+   and goes straight to removing the node. Linux is unchanged (the request
+   is ignored there anyway).
+2. **Agent offline at retire time.** The retire completes as before.
+   Migration `90011_retired_mesh_left_behind.sql` adds `platform` and
+   `mesh_may_remain` to `retired_devices`; the flag is set for a Windows
+   device with a MeshAgent node whose agent was removed by force or reported
+   a failure (`server/internal/agents/removal.go`). The copy-able script that
+   removes only our service, folder and keys, by exact name and path, is in
+   [removing-our-meshagent.md](../../operations/removing-our-meshagent.md).
+   **Not built: showing the flag and the script in the console.** The data
+   and the script exist; the page is a follow-up.
+3. **MeshCentral configuration.** EasyRMM's `config.json`
+   (`server/internal/meshcentral/config.go`) sets no option about the
+   Diagnostic Agent, and MeshCentral has none: the agent is installed only
+   by the console command `diagnostic install` typed on a device
+   (`meshcore.js:6496-6525`); the server side only records links
+   (`meshagent.js:1449-1501`). EasyRMM never sends that command, nothing in
+   `server/` mentions it, `selfUpdate` is off and `lockAgentDownload` is on.
+   So our MeshCentral installs nothing under a shared name on a client
+   device. Anyone who types `diagnostic install` in a MeshCentral console
+   for one of our devices would install a `meshagentDiagnostic` service that
+   a client's own MeshAgent shares: operators must not.
 
 ## Rules
 
@@ -155,7 +167,8 @@ from outside MeshCentral and never sends `uninstallagent`.
    key of its own name, and never runs MeshAgent's installer, which is the
    only code that manipulates other agents' services (`-fullinstall`
    replaces a previous install of the same name only).
-4. Nothing here uses MeshCentral's `diagnostic` command.
+4. Nothing here uses MeshCentral's `diagnostic` command, and
+   `uninstallagent` is never sent to a Windows device.
 
 ## Tests
 
@@ -167,6 +180,10 @@ from outside MeshCentral and never sends `uninstallagent`.
   (#122) starts a same-named program in another folder and asserts it
   survives; `TestRemoveRegistryTouchesOnlyItsKey` asserts that our two keys
   go and a neighbouring key whose name starts with ours stays.
+* Integration (real PostgreSQL): `TestDeviceRemoval` asserts a Windows device whose
+  agent reported a failure is retired with `platform = 'windows'` and
+  `mesh_may_remain`. The `removeRetired` skip is covered only by
+  `TestRemovedDeviceNode`'s setup (needs the MeshCentral container); not run here.
 * Both are built here with `GOOS=windows go vet`; the Windows-only tests were
   not run on Windows.
 
@@ -192,9 +209,17 @@ the stock `meshagent.exe -fullinstall`): service `Mesh Agent`, folder
    folder, `Open Source\EasyRMMMeshAgent`, `Uninstall\EasyRMMMeshAgent`,
    certificate subject if left); the stock agent, its service, folder,
    registry key and node are intact and still online.
-6. Repeat 1 and 5 once more with the stock agent installed under a custom
-   name (`--meshServiceName="Client Agent"`), and once with the stock
-   agent's Diagnostic Agent installed (`diagnostic install` in its console),
-   removing the device with the EasyRMM agent **stopped** while ours is
-   connected, to observe the residual above (expected: `meshagentDiagnostic`
-   is deleted; record it).
+6. Repeat 1 and 5 with the stock agent installed under a custom name
+   (`--meshServiceName="Client Agent"`).
+7. Install the stock agent's Diagnostic Agent (`diagnostic install` in its
+   own MeshCentral's console). Remove the device with **Remove anyway**
+   while the EasyRMM agent is **stopped** and ours is still connected.
+   Expected: no `uninstallagent` is sent (the server log has no "asked the
+   MeshAgent of a removed device to uninstall itself"); the node is removed;
+   the service `meshagentDiagnostic`, its scheduled task and folder are
+   untouched; our MeshAgent is still installed. Then run the script in
+   `docs/operations/removing-our-meshagent.md`: ours goes, the stock agent
+   and its Diagnostic Agent stay.
+8. Start the EasyRMM agent again after step 7 (within 90 days): it gets the
+   uninstall instruction and removes itself and our MeshAgent; the stock
+   agent is untouched.
