@@ -4,8 +4,11 @@ import type { KeystoreNotice, KeystoreOrgSettings } from "../../../api/types";
 import { useAuth } from "../../../auth/AuthContext";
 import { KeystoreAlerts } from "../../../components/KeystoreAlerts";
 import { useToast } from "../../../components/Toast";
+import { useState } from "react";
+import { ConfirmDialog } from "../../../components/Dialog";
 import {
   Alert,
+  Button,
   Card,
   EmptyState,
   ErrorState,
@@ -26,6 +29,7 @@ export function RecoveryKeysTab({ level, id }: LevelTabProps) {
   return (
     <div className="flex flex-col gap-4">
       <SettingsCard id={id} />
+      <EscrowKeyCard id={id} />
       <Card title="Keystore alerts">
         <KeystoreAlerts organizationId={id} canResolve />
       </Card>
@@ -110,6 +114,81 @@ function SettingsCard({ id }: { id: string }) {
         )}
         <InlineError error={set.error} />
       </div>
+    </Card>
+  );
+}
+
+/**
+ * The organization's escrow key and its rotation (ADR-0081 section 10). A new key is made, agents get it at their next
+ * heartbeat, and the keystore re-seals every record to it inside itself; the old key is kept until every record has
+ * moved. It asks for your second factor.
+ */
+function EscrowKeyCard({ id }: { id: string }) {
+  const toast = useToast();
+  const path = `/organizations/${id}/keystore-settings`;
+  const q = useApi<KeystoreOrgSettings>(path, undefined, { refetchInterval: 15_000 });
+  const [asking, setAsking] = useState(false);
+  const rotate = useApiMutation(
+    () => api.post<KeystoreOrgSettings>(`/organizations/${id}/keystore/rotate-key`),
+    {
+      invalidate: [path, "/audit"],
+      onSuccess: () => {
+        setAsking(false);
+        toast.success("A new escrow key was made. The records are moving to it.");
+      },
+    },
+  );
+  const key = q.data?.key;
+  return (
+    <Card title="Escrow key">
+      <div className="flex max-w-2xl flex-col gap-3 text-sm">
+        <p className="text-muted">
+          Each device seals its recovery keys to this organization&apos;s escrow
+          key before they leave it. Rotating makes a new one; nothing is lost,
+          and the old key is kept, wrapped, until every record has moved to the
+          new one.
+        </p>
+        {q.isPending ? (
+          <Spinner />
+        ) : q.isError ? (
+          <ErrorState error={q.error} onRetry={() => void q.refetch()} compact />
+        ) : !key ? (
+          <p className="text-muted">
+            The key is made when the first device here escrows a key.
+          </p>
+        ) : (
+          <>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              <dt className="text-muted">Version</dt>
+              <dd>v{key.version}</dd>
+              <dt className="text-muted">Protected by</dt>
+              <dd>keystore key v{key.kekVersion}</dd>
+              <dt className="text-muted">Older keys kept</dt>
+              <dd>{key.retired}</dd>
+              <dt className="text-muted">Records still to move</dt>
+              <dd>{key.toMove}</dd>
+            </dl>
+            <div>
+              <Button variant="secondary" onClick={() => setAsking(true)}>
+                Rotate the escrow key
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+      <ConfirmDialog
+        open={asking}
+        onClose={() => setAsking(false)}
+        onConfirm={() => rotate.mutate()}
+        title="Rotate the escrow key?"
+        confirmLabel="Rotate"
+        loading={rotate.isPending}
+        error={rotate.error}
+      >
+        A new key is made and the devices of this organization get it at their
+        next check-in. The keystore re-seals the existing recovery keys to it;
+        no key is shown to anyone. This asks for your second factor.
+      </ConfirmDialog>
     </Card>
   );
 }

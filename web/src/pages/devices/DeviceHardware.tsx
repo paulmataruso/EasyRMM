@@ -14,7 +14,7 @@ const none = <span className="text-muted">Not reported</span>;
 const or = (v: string | number | null | undefined): ReactNode => (v === "" || v === 0 || v === null || v === undefined ? none : v);
 
 /** What the agent last reported about the machine: hardware, storage with each disk's health, filesystems and network. */
-export function HardwarePanel({ data, device }: { data: DeviceInventory; device: Pick<Device, "id" | "agent"> }) {
+export function HardwarePanel({ data, device }: { data: DeviceInventory; device: Pick<Device, "id" | "agent" | "name"> }) {
   const inv = data.inventory;
   if (!inv) {
     return (
@@ -54,7 +54,7 @@ export function HardwarePanel({ data, device }: { data: DeviceInventory; device:
       </div>
       {inv.os.id === "windows" && <PowerShellCard installs={inv.powerShell} />}
       <DisksCard device={device} disks={inv.disks} />
-      {inv.os.id === "windows" && <RecoveryKeysCard deviceId={device.id} />}
+      {inv.os.id === "windows" && <RecoveryKeysCard deviceId={device.id} deviceName={device.name} />}
       {inv.os.id !== "windows" && (
         <RecoveryKeysCard deviceId={device.id} hideWhenEmpty />
       )}

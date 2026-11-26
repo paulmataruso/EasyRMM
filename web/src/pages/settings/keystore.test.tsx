@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   KeystoreAlert,
@@ -43,6 +43,7 @@ const STATUS: KeystoreStatus = {
   mode: "tpm",
   primary: 1,
   recoveryVerified: true,
+  kekUsage: [{ version: 1, keys: 3 }],
   versions: [
     { version: 1, mode: "tpm", state: "active", open: true, createdAt: "2026-10-01T09:00:00Z", recoveryVerifiedAt: "2026-10-01T09:05:00Z" },
     { version: 2, mode: "tpm", state: "pending", open: true, createdAt: "2026-11-20T09:00:00Z" },
@@ -87,6 +88,9 @@ describe("Settings > Keystore", () => {
     expect(main.getByText("protected by tpm")).toBeInTheDocument();
     expect(main.getByText("v1")).toBeInTheDocument();
     expect(main.getByText("not verified")).toBeInTheDocument();
+    // How many organization keys each version still wraps (slice 4's re-wrap shows here).
+    expect(main.getByText("Keys it wraps")).toBeInTheDocument();
+    expect(main.getByText("3")).toBeInTheDocument();
     expect(main.getByText("The keystore's key is in a file")).toBeInTheDocument();
     expect(main.getAllByRole("button", { name: /^Resolve:/ })).toHaveLength(3);
   });
@@ -110,6 +114,33 @@ describe("Settings > Keystore", () => {
 });
 
 describe("an organization's Recovery keys tab", () => {
+  it("shows the escrow key and rotates it after a confirmation", async () => {
+    const user = userEvent.setup();
+    const key = { version: 1, kekVersion: 2, createdAt: "2026-11-01T10:00:00Z", retired: 0, toMove: 0 };
+    const server = installFakeApi(
+      routes(ORG_ADMIN, {
+        "GET /organizations/:id/keystore-settings": ok({ twoPerson: false, luksEscrow: false, approvers: 1, key } satisfies KeystoreOrgSettings),
+        "POST /organizations/:id/keystore/rotate-key": ok({ twoPerson: false, luksEscrow: false, approvers: 1, key: { ...key, version: 2, retired: 1, toMove: 4 } }),
+      }),
+    );
+    renderApp("/organizations/o1?tab=recovery-keys");
+    const main = within(await screen.findByRole("main"));
+    expect(await main.findByText("keystore key v2")).toBeInTheDocument();
+    await user.click(main.getByRole("button", { name: "Rotate the escrow key" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate the escrow key?" });
+    expect(server.callsTo("POST /organizations/:id/keystore/rotate-key")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Rotate" }));
+    await waitFor(() => expect(server.call("POST /organizations/:id/keystore/rotate-key").path).toBe("/organizations/o1/keystore/rotate-key"));
+  });
+
+  it("says the key is made at the first escrow when there is none yet", async () => {
+    installFakeApi(routes(ORG_ADMIN));
+    renderApp("/organizations/o1?tab=recovery-keys");
+    const main = within(await screen.findByRole("main"));
+    expect(await main.findByText(/The key is made when the first device here escrows a key/)).toBeInTheDocument();
+    expect(main.queryByRole("button", { name: "Rotate the escrow key" })).not.toBeInTheDocument();
+  });
+
   it("shows only this organization's reads and alerts", async () => {
     installFakeApi(routes(ORG_ADMIN));
     renderApp("/organizations/o1?tab=recovery-keys");
