@@ -261,7 +261,12 @@ try {
     Ensure-Folder $dataRoot $true
     Ensure-Folder $stateDir $true
     Ensure-Folder $installDir $true
-    New-Item -ItemType Directory -Force -Path $filesRoot -ErrorAction SilentlyContinue | Out-Null
+    # Program Files keeps its inherited list; the folder is ours to undo only
+    # if this run made it.
+    if (-not (Test-Path -LiteralPath $filesRoot)) {
+        New-Item -ItemType Directory -Path $filesRoot -ErrorAction Stop | Out-Null
+        [void]$created.Add($filesRoot)
+    }
     Ensure-Folder $agentDir $false
     Ensure-Folder $meshDir $false
 

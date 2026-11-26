@@ -46,13 +46,13 @@ func TestStepUpMigrationGoesDownAndUp(t *testing.T) {
 	if got := columns(); got != 8 {
 		t.Fatalf("after up: %d columns, want 8", got)
 	}
-	if _, err := provider.Down(ctx); err != nil {
+	if _, err := provider.DownTo(ctx, 50); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	if got := columns(); got != 0 {
 		t.Fatalf("after down: %d columns, want 0", got)
 	}
-	if _, err := provider.UpByOne(ctx); err != nil {
+	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
 	if got := columns(); got != 8 {

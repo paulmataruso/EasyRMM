@@ -39,7 +39,7 @@ func TestHardeningGuardMigrationDownUp(t *testing.T) {
 	if !has() {
 		t.Fatal("the table is not there after the migrations")
 	}
-	if _, err := provider.DownTo(ctx, 90140); err != nil {
+	if _, err := provider.DownTo(ctx, 48); err != nil {
 		t.Fatal(err)
 	}
 	if has() {

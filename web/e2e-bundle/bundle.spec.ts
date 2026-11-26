@@ -340,11 +340,11 @@ test("an organization's policy, a tag's and the device's own reach the device, e
   };
 
   // The organization scans every 12 hours; its site inherits that from it.
-  await page.goto(`/organizations/${org.id}?tab=patch-policy`);
+  await page.goto(`/organizations/${org.id}?tab=patching`);
   await override("Scans");
   await main.getByRole("spinbutton", { name: "Scans" }).fill("720");
   await save();
-  await page.goto(`/sites/${device.siteId}?tab=patch-policy`);
+  await page.goto(`/sites/${device.siteId}?tab=patching`);
   await expect(main.getByRole("radiogroup", { name: "Scans: where its value comes from" }).locator("..")).toContainText(
     "Every 12 hours · from the organization",
   );
@@ -433,7 +433,9 @@ test("Reports list the device's compliance and the install; a monthly report is 
   await expect(main.getByText("No monthly reports yet")).toBeVisible();
 
   // A schedule: the 5th of each month.
-  await page.goto("/settings?tab=patching&view=reports");
+  // (ADR-0072: schedules are each organization's own, on its Patching tab.)
+  const reportOrgs = await api<{ items: { id: string; name: string }[] }>("GET", "/api/v1/organizations");
+  await page.goto(`/organizations/${reportOrgs.items.find((o) => o.name === ORG)!.id}?tab=patching`);
   const schedules = main.getByRole("table", { name: "Monthly report schedules" });
   await schedules.getByRole("button", { name: `Change ${ORG}'s schedule` }).click();
   const schedule = page.getByRole("dialog", { name: `${ORG}'s monthly report` });

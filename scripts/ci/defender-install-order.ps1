@@ -3,7 +3,8 @@
 # (create, lock down, verify, exclude, and only then download), that nothing
 # is downloaded before the exclusion, and that a forced failure at each of
 # the first four steps downloads nothing and leaves no folder or exclusion
-# the script made. The agent it "downloads" cannot enroll (the stand-in has
+# the script made, and that a failed reinstall over an existing install leaves
+# that install alone. The agent it "downloads" cannot enroll (the stand-in has
 # no enrollment), so the script's own failure path is the one that runs last.
 #
 #   defender-install-order.ps1 -Script install.ps1 -Agent easyrmm-agent-windows-amd64.exe
@@ -110,6 +111,22 @@ try {
         Assert-Clean "after a failure at $step"
         Write-Output "failure at ${step}: nothing downloaded, nothing left behind"
     }
+
+    # A reinstall over an existing install: a failure leaves the existing
+    # install alone (ADR-0070); only what this run made is undone.
+    $marker = Join-Path (Join-Path $filesRoot 'Agent') 'existing-install.txt'
+    New-Item -ItemType Directory -Path (Join-Path $filesRoot 'Agent') -Force | Out-Null
+    Set-Content -LiteralPath $marker -Value 'existing'
+    $r = Invoke-Install ''
+    if ($r.Code -eq 0) { throw 'the stand-in cannot enroll an agent, yet the reinstall succeeded' }
+    if (-not (Test-Path -LiteralPath $marker)) { throw 'after a failed reinstall: the existing install was removed' }
+    if ($active) {
+        $pref = Get-MpPreference
+        foreach ($e in @($pref.ExclusionPath)) { if ($e -like "*\EasyRMM\*" -or $e -like "*\EasyRMM") { throw "after a failed reinstall: the exclusion $e was left behind" } }
+    }
+    Write-Output 'failed reinstall: the existing install was left alone'
+    Remove-Item -LiteralPath $filesRoot -Recurse -Force
+    if (Test-Path -LiteralPath $dataRoot) { Remove-Item -LiteralPath $dataRoot -Recurse -Force }
 } finally {
     Stop-Job $job -ErrorAction SilentlyContinue
     Remove-Job $job -Force -ErrorAction SilentlyContinue

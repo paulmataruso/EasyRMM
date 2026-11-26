@@ -677,6 +677,19 @@ The owner confirmed (2026-11-23):
   tail needs, since a late batch can hold records older than the newest shown.
   A download is in time order, oldest first. Migration `00046` adds the index.
 
+### Amended 2026-11-26 (decided in review), hardening guards
+
+`hardening_guards` (migration `00049`, ADR-0054 W2) holds a device's id and no
+organization or site, so a move leaves its rows alone: they follow the device,
+like `device_hardening` and `device_hardening_checks`. An armed guard describes
+the computer's own rollback timer, which a move does not touch; ending it or
+the confirm job on a move would leave the timer to undo a change nobody saw.
+The disposition test lists it as "follows the device". The other tables added
+by migrations `00045` to `00053` (`agent_file_hashes`, `windows_module_settings`)
+need no new row: the first holds no device, organization or site id, and the
+second is already listed as owned. `device_roles` (columns on `devices`) and `step_up` (columns on `sessions`) add no
+table.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,
