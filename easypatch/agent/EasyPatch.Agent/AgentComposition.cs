@@ -142,7 +142,7 @@ internal sealed class AgentInstanceLock : IDisposable
     public static AgentInstanceLock? TryAcquire(string dataDirectory, TimeSpan wait)
     {
         Directory.CreateDirectory(dataDirectory);
-        var path = Path.Combine(dataDirectory, "agent.lock");
+        var path = Path.Combine(dataDirectory, AdHocMode.Active ? AdHocMode.LockName : "agent.lock");
         var deadline = DateTime.UtcNow + wait;
         while (true)
         {

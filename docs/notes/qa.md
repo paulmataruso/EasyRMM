@@ -24,7 +24,9 @@ Branch `ws/qa`, migrations 00063 to 00065.
 | Quick Assist sessions and acceptance (QA2) | Built; tested with the real runner on Linux |
 | Quick Assist console (QA4) | Built; vitest and a browser e2e spec |
 | Quick Assist Linux runner (QA7, no MeshAgent) | Built |
-| Quick Assist Windows runner, MeshAgent, install permanently, EasyPatch ad hoc (QA3, QA5, QA6) | Not built; never run on Windows |
+| Quick Assist install permanently (QA5) | Built; tested with the real runner flow on Linux |
+| Quick Assist Windows runner and ad-hoc MeshAgent (QA3) | Built, compiles for Windows; never run on Windows or MeshCentral |
+| EasyPatch ad-hoc mode (QA6) | Agent flag built and compiles; runner side, token and device removal not built |
 
 ## Privacy
 

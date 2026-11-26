@@ -15,7 +15,7 @@ internal static class SecureStorage
     private static readonly SecurityIdentifier LocalSystem = new(WellKnownSidType.LocalSystemSid, null);
     private static readonly SecurityIdentifier Administrators = new(WellKnownSidType.BuiltinAdministratorsSid, null);
 
-    public static string DefaultDataDirectory =>
+    public static string DefaultDataDirectory => AdHocMode.Active ? AdHocMode.DataDirectory :
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData, Environment.SpecialFolderOption.DoNotVerify), "EasyPatch");
 
     private static readonly SecurityIdentifier Users = new(WellKnownSidType.BuiltinUsersSid, null);

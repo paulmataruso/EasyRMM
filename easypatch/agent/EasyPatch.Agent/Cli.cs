@@ -31,6 +31,9 @@ internal static class Cli
     public const int ExitDeferred = 6;
     public const int ExitBusy = 7;
 
+    /// <summary>The ad-hoc mode refused because an EasyPatch agent is installed on this computer.</summary>
+    public const int ExitExistingInstall = 8;
+
     private const string TokenEnvironmentVariable = "EASYPATCH_ENROLLMENT_TOKEN";
     private static readonly TimeSpan ServiceTimeout = TimeSpan.FromSeconds(90);
     private static readonly JsonSerializerOptions IndentedJson = new(ContractJson.Options) { WriteIndented = true };
