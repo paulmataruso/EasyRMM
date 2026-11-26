@@ -340,8 +340,10 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"retired_agent_nonces": follows,
 		// recovery (R1-R3): the machine's own state and repair history
 		"agent_conditions": follows, "agent_repairs": ends,
+		// the keystore (ADR-0081): the volume rows follow within an organization and end with a move out of it
+		"device_encrypted_volumes": ends,
 		// ends
-		"remote_grants": ends, "alerts": ends, "device_rdp_credentials": ends,
+		"remote_grants": ends, "alerts": ends, "device_rdp_credentials": ends, "recovery_key_escrows": ends,
 		"agent_log_records": ends, "agent_log_days": ends, "agent_log_follow": ends,
 		// a device's verbose setting ends with any move to another site; a
 		// group's is owned by the group.
@@ -349,7 +351,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// stays
 		"job_runs": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays,
 		// owned
-		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned,
+		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned,
 		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned,
 		// engine
 		"easypatch_devices": engine, "easypatch_install_restarts": engine, "easypatch_installs": engine, "easypatch_opt_outs": engine,
@@ -459,4 +461,47 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 			t.Errorf("the old site's log has %d move-out records", n)
 		}
 	})
+}
+
+// The keystore's rows (ADR-0081): within an organization the volume and escrow
+// rows follow the device to its new site; a move to another organization
+// deletes them, with one audit event to the old organization that counts them.
+func TestMoveDeviceEscrowRows(t *testing.T) {
+	f := newMoveFixture(t)
+	x := f.device(t, "esc-01", f.acme, f.hq, nil)
+	exec(t, f.h, `INSERT INTO keystore_org_keys (organization_id, purpose, version, public_key, wrapped_private, kek_version)
+		VALUES ($1, 'escrow', 1, decode(repeat('01', 32), 'hex'), 'ks1.1.AAAA', 1)`, f.acme)
+	exec(t, f.h, `INSERT INTO device_encrypted_volumes (device_id, volume_id, organization_id, site_id, protectors)
+		VALUES ($1, 'v1', $2, $3, '[{"id":"p1"}]')`, x, f.acme, f.hq)
+	exec(t, f.h, `INSERT INTO recovery_key_escrows (organization_id, site_id, device_id, volume_id, kind, protector_id, org_key_id, enc, ciphertext, fingerprint, state)
+		SELECT $1, $2, $3, 'v1', 'bitlocker', 'p1', id, decode(repeat('00', 32), 'hex'), decode('00', 'hex'), decode(repeat('00', 16), 'hex'), 'verified'
+		FROM keystore_org_keys LIMIT 1`, f.acme, f.hq, x)
+
+	var res struct{ Moved, OtherOrganization int }
+	f.admin.expect(http.StatusOK, "POST", "/api/v1/devices/move", move([]string{x}, f.branch, nil), &res)
+	for _, table := range []string{"device_encrypted_volumes", "recovery_key_escrows"} {
+		if n := f.count(t, `SELECT count(*) FROM `+table+` WHERE device_id = $1 AND site_id = $2`, x, f.branch); n != 1 {
+			t.Errorf("%s did not follow the device to its new site: %d", table, n)
+		}
+	}
+	if f.count(t, `SELECT count(*) FROM audit_log WHERE action = 'recovery_key.destroyed'`) != 0 {
+		t.Error("a move within the organization destroyed records")
+	}
+
+	f.admin.expect(http.StatusOK, "POST", "/api/v1/devices/move", move([]string{x}, f.main, nil), &res)
+	if res.OtherOrganization != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	for _, table := range []string{"device_encrypted_volumes", "recovery_key_escrows"} {
+		if n := f.count(t, `SELECT count(*) FROM `+table+` WHERE device_id = $1`, x); n != 0 {
+			t.Errorf("%s kept %d rows after a move to another organization", table, n)
+		}
+	}
+	if n := f.count(t, `SELECT count(*) FROM audit_log WHERE action = 'recovery_key.destroyed' AND organization_id = $1
+		AND details->>'records' = '1' AND details->>'volumes' = '1'`, f.acme); n != 1 {
+		t.Errorf("the old organization has %d audit events with the counts", n)
+	}
+	if n := f.count(t, `SELECT count(*) FROM keystore_org_keys WHERE organization_id = $1`, f.acme); n != 1 {
+		t.Error("the organization's key went with the device")
+	}
 }

@@ -710,6 +710,17 @@ ADR-0080's tables (migrations `00063` to `00065`): `quick_assist_links` and
 organization and stays with it when the device later moves (installed
 permanently, then placed elsewhere); Quick Assist ends the session itself.
 
+### Amended 2026-11-26 (decided in review), keystore tables
+
+ADR-0081's tables: `keystore_org_keys` belongs to its organization (owned).
+`device_encrypted_volumes` and `recovery_key_escrows` follow the device within
+one organization (`moveOne` updates their `site_id`, which row-level security
+reads) and end with a move to another organization: `leaveOrganization`
+deletes them, with one `recovery_key.destroyed` audit event to the old
+organization giving the counts and no key data. The records are sealed to the
+old organization's key, and its people lose the device; the agent escrows
+again to the new organization's key.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,

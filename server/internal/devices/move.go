@@ -221,6 +221,14 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 		if _, err := tx.Exec(ctx, `DELETE FROM agent_log_verbose WHERE device_id = $1`, m.id); err != nil {
 			return err
 		}
+		// The escrow rows follow the device, and row-level security reads
+		// their site (ADR-0081); a move to another organization deletes them
+		// below.
+		for _, table := range []string{"device_encrypted_volumes", "recovery_key_escrows"} {
+			if _, err := tx.Exec(ctx, `UPDATE `+table+` SET site_id = $2 WHERE device_id = $1`, m.id, in.SiteID); err != nil {
+				return err
+			}
+		}
 	}
 	details := map[string]any{
 		"device": m.name, "fromOrganization": m.orgName, "fromSite": m.siteName, "fromGroup": m.groupName,
@@ -307,6 +315,29 @@ func (s *Service) leaveOrganization(ctx context.Context, tx pgx.Tx, c access.Cal
 	// never carried over: all of them go, each audited (ADR-0079).
 	if err := rdpcreds.PurgeDevice(ctx, tx, s.audit, c.Actor, m.id, m.org, m.site, m.name, "device moved to another organization"); err != nil {
 		return 0, err
+	}
+	// Recovery keys are sealed to the old organization's key and its people
+	// lose the device, so the records and volume rows end; the agent escrows
+	// again to the new organization's key. One audit event gives the count,
+	// never key data (ADR-0081).
+	var records, volumes int64
+	tag, err := tx.Exec(ctx, `DELETE FROM recovery_key_escrows WHERE device_id = $1`, m.id)
+	if err != nil {
+		return 0, err
+	}
+	records = tag.RowsAffected()
+	if tag, err = tx.Exec(ctx, `DELETE FROM device_encrypted_volumes WHERE device_id = $1`, m.id); err != nil {
+		return 0, err
+	}
+	volumes = tag.RowsAffected()
+	if records+volumes > 0 {
+		if err := s.audit.Write(ctx, tx, audit.Event{
+			Actor: c.Actor, Action: "recovery_key.destroyed", Outcome: audit.Success,
+			OrganizationID: m.org, SiteID: m.site, DeviceID: m.id, TargetType: "device", TargetID: m.id.String(),
+			Details: map[string]any{"device": m.name, "records": records, "volumes": volumes, "reason": "device moved to another organization"},
+		}); err != nil {
+			return 0, err
+		}
 	}
 	return len(done), nil
 }

@@ -343,3 +343,19 @@ func TestCapsAndSystemReaderOffWindows(t *testing.T) {
 	}
 	f.a.Answered(nil) // no instruction: nothing
 }
+
+// A device moved to another organization takes that organization's key, even
+// at a lower version; rollback protection holds within one organization.
+func TestEscrowKeyOfAnotherOrganizationResetsTheRecord(t *testing.T) {
+	f := newFx(t)
+	f.a.Answered(f.signed(5, "key-5", nil))
+	f.a.Answered(f.signed(1, "new-1", func(p *agentproto.EscrowKeyPayload) { p.OrgID = "org-2" }))
+	if k := f.store.LoadEscrowKey(); k.OrgID != "org-2" || k.Version != 1 || k.KeyID != "new-1" {
+		t.Fatalf("the new organization's key was refused: %+v", k)
+	}
+	// Within the new organization, no going back.
+	f.a.Answered(f.signed(1, "other", func(p *agentproto.EscrowKeyPayload) { p.OrgID = "org-2" }))
+	if k := f.store.LoadEscrowKey(); k.KeyID != "new-1" {
+		t.Fatalf("went back: %+v", k)
+	}
+}

@@ -395,6 +395,10 @@ func (s Store) LoadStatus() (Status, error) {
 // hand it a key the organization has left. It is a public key and holds no
 // secret.
 type EscrowKey struct {
+	// OrgID is the organization the key belongs to: rollback protection holds
+	// within one organization, and a key of another resets the record (a
+	// device moved).
+	OrgID   string `json:"orgId,omitempty"`
 	KeyID   string `json:"keyId"`
 	Version int    `json:"version"`
 }
