@@ -82,6 +82,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
 )
 
 // Version is set at build time with -ldflags.
@@ -249,7 +250,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetRoleStore(d.Modules)
 	// The winmod job kind runs the catalog's actions where the module is
 	// on (ADR-0073, slice 5).
-	catalog, err := winmod.NewCatalog(defender.Actions()...)
+	catalog, err := winmod.NewCatalog(append(defender.Actions(), roles.Actions()...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +260,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	// goes clears the module's snapshots and resolves its alerts; a module
 	// turned on gets its default policies.
 	if err := monitoring.RegisterModuleAlerts(defender.AlertKinds()); err != nil {
+		return nil, err
+	}
+	if err := roles.Register(); err != nil {
 		return nil, err
 	}
 	d.ModSnap = modsnap.New(db, catalog, d.Modules, d.Modules, d.Jobs, log)

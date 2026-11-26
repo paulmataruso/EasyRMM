@@ -96,6 +96,12 @@ type Action struct {
 	Credential  bool
 	// Subject names the parameter that is the confirmation's subject.
 	Subject string
+	// Guard, when set, runs after the parameters are validated, on their
+	// canonical values (text, int64 or bool by name). It enforces what a
+	// schema cannot (an address parses, a name is not on a module's
+	// protected list) and returns an apperr error to refuse the request
+	// before any job exists.
+	Guard func(params map[string]any) error
 	// Timeout is the script's time limit in seconds.
 	Timeout int
 	// Keep is how long the job, its params and its result are kept: an hour

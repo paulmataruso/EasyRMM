@@ -3489,3 +3489,115 @@ export interface DefenderStatus {
   quickScanAgeDays: number | null;
   fullScanAgeDays: number | null;
 }
+
+// Server roles (ADR-0076): the DNS Server and DHCP Server modules' typed results.
+
+/** `dns.status`'s data; only `serviceState` is filled in where the DNS service is not running. */
+export interface DnsStatus {
+  serviceState: string;
+  zoneCount: number;
+  adIntegratedCount: number;
+  recursionEnabled: boolean | null;
+  forwarders: string[];
+  listenAddresses: string[];
+  scavengingHours: number | null;
+  /** Zones found transferring to any server, which gives anyone the whole zone. */
+  transferAnyZones: string[];
+}
+
+export interface DnsZone {
+  name: string;
+  type: string;
+  adIntegrated: boolean;
+  replicationScope: string;
+  dynamicUpdate: string;
+  reverse: boolean;
+  paused: boolean;
+  shutdown: boolean;
+  signed: boolean;
+  agingEnabled: boolean;
+}
+
+export interface DnsZoneList {
+  zones: DnsZone[];
+  truncated: boolean;
+}
+
+export interface DnsRecord {
+  name: string;
+  type: string;
+  ttl: number;
+  /** The canonical data text the change actions take back: "preference host" for MX, "priority weight port host" for SRV. */
+  data: string;
+  timestamp: string | null;
+  static: boolean;
+}
+
+export interface DnsRecordList {
+  total: number;
+  offset: number;
+  next: number | null;
+  records: DnsRecord[];
+}
+
+/** What a module change answers: how many objects it changed. */
+export interface WinmodDone {
+  count: number;
+}
+
+export interface DhcpStatus {
+  serviceState: string;
+  domainJoined: boolean | null;
+  authorized: boolean | null;
+  conflictDetectionAttempts: number | null;
+  bindings: { interface: string; address: string; enabled: boolean }[];
+  scopeCount: number;
+  activeScopeCount: number;
+}
+
+export interface DhcpScope {
+  scopeId: string;
+  name: string;
+  description: string;
+  state: string;
+  startRange: string;
+  endRange: string;
+  subnetMask: string;
+  leaseDurationSeconds: number;
+  free: number;
+  inUse: number;
+  percentageInUse: number;
+}
+
+export interface DhcpScopeList {
+  scopes: DhcpScope[];
+  truncated: boolean;
+}
+
+export interface DhcpReservation {
+  ipAddress: string;
+  clientId: string;
+  name: string;
+  description: string;
+}
+
+export interface DhcpOption {
+  optionId: number;
+  name: string;
+  value: string[];
+}
+
+export interface DhcpLease {
+  ipAddress: string;
+  clientId: string;
+  hostName: string;
+  state: string;
+  expires: string | null;
+}
+
+export interface DhcpLeaseList {
+  total: number;
+  offset: number;
+  next: number | null;
+  leases: DhcpLease[];
+}
