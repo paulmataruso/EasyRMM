@@ -33,8 +33,12 @@ func systemRoot() string { return cmp.Or(os.Getenv("SystemRoot"), `C:\Windows`) 
 
 // Accepts lists the job capabilities this build takes, for its polls
 // (agentproto.PollRequest.Accepts): pwsh jobs, their fallback and the
-// program a result reports.
-func Accepts() []string { return []string{agentproto.CapJobPwsh, agentproto.CapJobParams} }
+// program a result reports, job params, and structured jobs with the
+// registry builtin (ADR-0067).
+func Accepts() []string {
+	return []string{agentproto.CapJobPwsh, agentproto.CapJobParams, agentproto.CapJobStructured,
+		agentproto.CapBuiltin(agentproto.BuiltinRegistry, agentproto.RegistryInputVersion)}
+}
 
 // pwshRoots are where a pwsh run looks for PowerShell 7: Program Files and
 // Program Files (x86). Tests point them at folders of their own, since the
@@ -184,7 +188,15 @@ type group struct {
 	job windows.Handle
 }
 
-func start(cmd *exec.Cmd) (*group, error) {
+func start(cmd *exec.Cmd) (*group, error) { return startLimited(cmd, 0) }
+
+// startLimited is start with a limit on the memory the job object's
+// processes may use together, where memLimit is not zero (a builtin's, so
+// that a runaway allocation ends the child and not the agent).
+func startLimited(cmd *exec.Cmd, memLimit uint64) (*group, error) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -193,6 +205,16 @@ func start(cmd *exec.Cmd) (*group, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return g, nil //nolint:nilerr // see above
+	}
+	if memLimit > 0 {
+		var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+		info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+		info.JobMemoryLimit = uintptr(memLimit)
+		if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+			_ = windows.CloseHandle(job)
+			return g, nil //nolint:nilerr // see above
+		}
 	}
 	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid)) //nolint:gosec // a process id
 	if err != nil {

@@ -22,6 +22,7 @@ import { PatchesPanel } from "./DevicePatches";
 import { HardeningPanel } from "./DeviceHardening";
 import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
+import { RegistryPanel } from "./registry/RegistryTab";
 import { DefenderPanel } from "./DeviceDefender";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
@@ -93,6 +94,8 @@ export function DeviceDetailPage() {
     { id: "hardening", label: "Hardening", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") },
     // Agent logs (ADR-0069) need log.view: Technicians and above.
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
+    // The registry editor (ADR-0067): Windows devices with the agent, for holders of registry.view at the device's site.
+    { id: "registry", label: "Registry", hidden: !hasAgent || d.platform !== "windows" || !atDevice("registry.view") },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
   ];
   const requested = url.get("tab");
@@ -208,6 +211,12 @@ export function DeviceDetailPage() {
       {tab === "logs" && (
         <div role="tabpanel" aria-labelledby="tab-logs">
           <AgentLogsPanel device={d} />
+        </div>
+      )}
+
+      {tab === "registry" && (
+        <div role="tabpanel" aria-labelledby="tab-registry">
+          <RegistryPanel device={d} />
         </div>
       )}
 

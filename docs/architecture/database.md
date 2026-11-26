@@ -359,6 +359,26 @@ The functions check the scopes and the caller that the server passes them,
 so they guard against mistakes in the server's code, not against a
 compromised server, which holds the owner's credentials anyway.
 
+## Structured jobs: inputs and results (migrations 90371 and 90372, ADR-0067)
+
+A job may run a builtin of the agent instead of a script (`jobs.executor`,
+`jobs.builtin`, `jobs.lane`), and its kind (`registry_query`,
+`registry_change`) is tied to it by constraints; such a job holds no script
+(`shell` and `body` empty) and is hidden from the Jobs list without its
+filter. Its input is in `job_inputs` (one row per job, `input` emptied with
+the results) and its result in `job_runs.result`, a `jsonb` array of the
+lines the builtin wrote. The runtime role cannot select either, nor
+`registry_masked_values.data`; it reads them through
+`easyrmm_job_run_result` and `easyrmm_job_input`, which check
+`job.view_sensitive`, the kind's permission and, for a query, that the
+caller asked, and which run as their owner with a fixed `search_path`. The
+poll reads inputs through `easyrmm_job_delivery_inputs`, and the result path
+checks a result against its input through `easyrmm_job_run_input_system`,
+both only under the system scope. `jobs.signed_bytes` is the size of the
+signed job, bounded at creation; `job_runs` keeps the version and build that
+ran it. The retention sweep empties a kind's input, results and masked
+values together, after the kind's time counted from its last run's end.
+
 ## Functions that run as their owner (migration 00029)
 
 Every `SECURITY DEFINER` function sets `search_path = pg_catalog, public,
