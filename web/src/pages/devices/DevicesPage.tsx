@@ -16,6 +16,7 @@ import { DiskHealthCell } from "./DeviceDisks";
 import { deviceDiskHealth, DISK_FILTERS } from "./diskHealthText";
 import { HardeningCell } from "./hardeningParts";
 import { FILTERS } from "./hardeningText";
+import { LeftBehindNotice } from "./leftBehind";
 import { platformName } from "./platform";
 
 /** The server's cap on one list response (devices.MaxList). */
@@ -92,6 +93,7 @@ export function DevicesPage() {
         actions={canEnroll ? addLink : undefined}
       />
       <RemoteAccessWarning />
+      <LeftBehindNotice />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
         <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, groupId: null })} />

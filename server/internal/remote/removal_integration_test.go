@@ -189,3 +189,93 @@ func TestRemovedDeviceNode(t *testing.T) {
 		t.Error("the returned node became a device")
 	}
 }
+
+// TestRemovedWindowsDeviceIsNeverAskedToUninstall removes a device the
+// retired row calls a Windows one, with its MeshAgent connected: MeshCentral
+// is not asked to uninstall it (that also deletes a client's Diagnostic Agent
+// on a computer with another MeshAgent), and its node is removed on the first
+// sync (ADR-0071). TestRemovedDeviceNode is the same for any other device,
+// which is asked three times.
+func TestRemovedWindowsDeviceIsNeverAskedToUninstall(t *testing.T) {
+	image := os.Getenv("EASYRMM_TEST_AGENT_IMAGE")
+	if image == "" {
+		t.Fatal("EASYRMM_TEST_AGENT_IMAGE is not set (a glibc Linux image for the test agent; see the Makefile)")
+	}
+	r := newRig(t)
+	acme := r.org("Acme")
+	hq := r.site(acme.ID, "HQ")
+	_, tech := r.user("Tess Tech", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: acme.ID, SiteID: hq.ID})
+	r.reconcile()
+	upstream, _ := url.Parse(r.env.URL)
+	g, err := NewGateway(r.svc, GatewayConfig{Upstream: upstream, Secure: true, CacheTTL: 200 * time.Millisecond}, r.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.serveGateway(g)
+
+	// The device sync runs when the test says, on a clock it moves.
+	svc := New(r.db, r.audit, r.mesh, r.svc.cfg, r.log)
+	clock := time.Now()
+	svc.now = func() time.Time { return clock }
+	syncNow := func() {
+		t.Helper()
+		if err := svc.SyncDevices(r.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed := func() []*devices.Device {
+		t.Helper()
+		list, err := r.dev.List(r.ctx, tech, devices.Query{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list
+	}
+
+	dir := r.agentFiles(r.meshOfSite(hq.ID))
+	name := "easyrmm-testremovedwin-" + uuid.NewString()[:8]
+	docker(t, "run", "-d", "--name", name, "--network", "host",
+		"--add-host", r.env.Hostname+":127.0.0.1",
+		"--user", "65534:65534", "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges", "-v", dir+":/agent", "-w", "/agent",
+		image, "./meshagent", "connect")
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("agent output:\n%s", docker(t, "logs", "--tail", "50", name))
+		}
+		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
+	})
+
+	// The MeshAgent connects and is listed as a device with no EasyRMM agent.
+	var dev *devices.Device
+	deadline := time.Now().Add(2 * time.Minute)
+	for dev == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the MeshAgent's device")
+		}
+		time.Sleep(2 * time.Second)
+		syncNow()
+		if list := listed(); len(list) == 1 && list[0].RemoteOnline {
+			dev = list[0]
+		}
+	}
+
+	// Removed from the console: at once, as it has no EasyRMM agent.
+	as := agents.New(r.db, r.audit, NewMeshAgents(svc, nil), r.log)
+	if st, err := as.RequestRemoval(r.ctx, r.sys, dev.ID); err != nil || st != agents.RemovalDone {
+		t.Fatalf("removal: %q %v", st, err)
+	}
+	if len(listed()) != 0 {
+		t.Fatal("device still listed")
+	}
+
+	// The retired row says Windows: no uninstall request, the node goes.
+	r.exec(`UPDATE retired_devices SET platform = 'windows' WHERE device_id = $1`, dev.ID)
+	syncNow()
+	if st := r.retired(dev.ID); st.uninstalls != 0 || st.err != "" || !st.removed {
+		t.Fatalf("after the first sync: %+v", st)
+	}
+	if r.hasNode(dev.MeshNodeID) {
+		t.Error("MeshCentral still has the node")
+	}
+}

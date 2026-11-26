@@ -616,12 +616,14 @@ type retiredNode struct {
 	connected  bool
 	// returned says MeshCentral removed the node once already.
 	returned bool
+	// windows: never sent uninstallagent (ADR-0071).
+	windows bool
 }
 
 // retiredNodes returns the nodes among nodes that belong to devices removed
 // in the last RetiredFor, and that no device holds since.
 func retiredNodes(ctx context.Context, tx pgx.Tx, nodes []string) (map[string]retiredNode, error) {
-	rows, err := tx.Query(ctx, `SELECT r.mesh_node_id, r.device_id, r.mesh_attempt_at, r.mesh_uninstalls, r.mesh_removed_at IS NOT NULL FROM retired_devices r
+	rows, err := tx.Query(ctx, `SELECT r.mesh_node_id, r.device_id, r.mesh_attempt_at, r.mesh_uninstalls, r.mesh_removed_at IS NOT NULL, r.platform = 'windows' FROM retired_devices r
 		WHERE r.mesh_node_id = ANY ($1) AND r.expires_at > now()
 		  AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.mesh_node_id = r.mesh_node_id)`, nodes)
 	if err != nil {
@@ -631,7 +633,7 @@ func retiredNodes(ctx context.Context, tx pgx.Tx, nodes []string) (map[string]re
 	out := map[string]retiredNode{}
 	for rows.Next() {
 		var r retiredNode
-		if err := rows.Scan(&r.node, &r.device, &r.attemptAt, &r.uninstalls, &r.returned); err != nil {
+		if err := rows.Scan(&r.node, &r.device, &r.attemptAt, &r.uninstalls, &r.returned, &r.windows); err != nil {
 			return nil, err
 		}
 		out[r.node] = r
@@ -663,7 +665,10 @@ func (s *Service) removeRetired(ctx context.Context, nodes []retiredNode) time.D
 			err    error
 			update string
 		)
-		uninstall := r.connected && !r.returned && r.uninstalls < RetiredUninstalls
+		// Never to Windows: MeshCentral's uninstallagent also deletes the
+		// Diagnostic Agent, whose name every MeshAgent on the computer shares
+		// (ADR-0071). Our MeshAgent is removed by our own agent.
+		uninstall := r.connected && !r.returned && !r.windows && r.uninstalls < RetiredUninstalls
 		if uninstall {
 			err = s.mesh.UninstallAgent(ctx, r.node)
 			update = `UPDATE retired_devices SET mesh_attempt_at = $3, mesh_uninstalls = mesh_uninstalls + 1, mesh_error = $2 WHERE device_id = $1`

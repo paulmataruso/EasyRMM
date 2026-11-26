@@ -523,3 +523,26 @@ func TestReplaceBinaryOnWindowsRetriesThenMovesAside(t *testing.T) {
 		t.Errorf("left %v", left)
 	}
 }
+
+// ADR-0071: nothing of ours is named like a stock MeshAgent's service, folder
+// or files, so that a client's MeshAgent beside ours shares none of it.
+func TestOurNamesAreNeverTheStockOnes(t *testing.T) {
+	m := newManager(t, ModeService, nil)
+	for _, win := range []bool{false, true} {
+		m.Windows = win
+		name := m.service().Name
+		for _, stock := range []string{"meshagent", "meshagent.service", "Mesh Agent", "MeshAgent"} {
+			if strings.EqualFold(name, stock) {
+				t.Errorf("windows=%v: the service is named %q, a stock MeshAgent's", win, name)
+			}
+		}
+		if m.Windows && !strings.HasPrefix(name, "EasyRMM") || !m.Windows && !strings.HasPrefix(name, "easyrmm-") {
+			t.Errorf("windows=%v: service %q is not in EasyRMM's namespace", win, name)
+		}
+	}
+	for _, p := range []string{host.Paths{OS: "windows"}.MeshAgent(), host.Paths{OS: "linux"}.MeshAgent()} {
+		if !strings.Contains(strings.ToLower(p), "easyrmm") {
+			t.Errorf("install folder %q is not under EasyRMM's own", p)
+		}
+	}
+}
