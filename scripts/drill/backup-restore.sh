@@ -66,6 +66,10 @@ drill_workdir "${1:?usage: backup-restore.sh [--authentik] [--in-place] WORKDIR}
 device_image=${DRILL_DEVICE_IMAGE:-debian:13}
 device="$COMPOSE_PROJECT_NAME-device"
 backups="$work/backups"
+# .env holds the key that seals the database's secrets, so it is backed up apart
+# from the dumps (the guide's /var/backups/easyrmm-keys).
+keys="$work/backup-keys"
+mkdir -p "$keys"
 mkdir -p "$backups"
 chmod 700 "$backups"
 cleanup_device() { docker rm -f "$device" >/dev/null 2>&1 || true; }
@@ -283,7 +287,7 @@ compose exec -T -u postgres postgres pg_dump -p 15432 \
   --format=custom easyrmm >"$backups/db-$ts.dump" || fail "pg_dump failed"
 compose exec -T -u postgres postgres pg_dump -p 15432 \
   --format=custom easypatch >"$backups/easypatch-db-$ts.dump" || fail "pg_dump of the engine's database failed"
-tar -C "$work/host-a/deploy" -czf "$backups/env-$ts.tgz" .env
+tar -C "$work/host-a/deploy" -czf "$keys/env-$ts.tgz" .env
 tar -C "$data" -czf "$backups/server-$ts.tgz" server
 tar -C "$data" -czf "$backups/easypatch-keys-$ts.tgz" easypatch/keys
 if [[ -d "$data/authentik" ]]; then
@@ -318,7 +322,7 @@ restore() {
   # 1. Restore deploy/.env, the server directory, MeshCentral's data, the
   #    engine's keys and, with Authentik, its directory, keeping owners by
   #    number.
-  tar -C "$1" -xzf "$backups/env-$ts.tgz"
+  tar -C "$1" -xzf "$keys/env-$ts.tgz"
   mkdir -p "$data"
   tar --numeric-owner -C "$data" -xzf "$backups/server-$ts.tgz"
   tar --numeric-owner -C "$data" -xzf "$backups/meshcentral-$ts.tgz"

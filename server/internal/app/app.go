@@ -56,6 +56,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/hardwareapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/keystoreapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/rdpcredsapi"
@@ -68,6 +69,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
+	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
@@ -166,6 +168,9 @@ type Deps struct {
 	MeshSecrets *remote.Secrets
 	// RDPCreds keeps the RDP credentials people save per device (ADR-0079).
 	RDPCreds *rdpcreds.Service
+	// Keystore stores the recovery keys agents escrow and has the keystore
+	// process check them (ADR-0081); it holds no key.
+	Keystore *keystore.Service
 }
 
 // Build constructs the services over an open database.
@@ -346,6 +351,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	// timer (ADR-0070). Where the development scope takes effect: see
 	// agents.DefenderScope.
 	d.Agents.SetDefenderScope(agents.ScopeFunc(devscope.Allowed))
+	var ks keystore.Verifier
+	if cfg.KeystoreSocket != "" {
+		ks = &keystore.Client{Path: cfg.KeystoreSocket}
+	}
+	d.Keystore = keystore.New(db, auditLog, ks, jobKey, log)
 	var files agentfiles.Mesh
 	if mesh != nil {
 		files = mesh
@@ -637,6 +647,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, fmt.Errorf("web interface: %w", err)
 	}
+	keystoreapi.New(d.Keystore).Register(mux)
 	mux.Handle("/", webui.Handler(files))
 
 	trusted := cfg.TrustedProxies
@@ -653,7 +664,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithEscrow(d.Keystore)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -784,6 +795,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })
+	wg.Go(func() { deps.Keystore.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.RunAgentPoll(ctx) })

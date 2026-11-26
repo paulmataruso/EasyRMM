@@ -34,6 +34,13 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -ldflags "-s -w -X github.com/paulmataruso/easyrmm/server/internal/app.Version=${VERSION}" \
       -o /out/easyrmm-server ./server/cmd/easyrmm-server \
  && setcap cap_net_bind_service=+ep /out/easyrmm-server
+# The keystore (ADR-0081) is this image's second program: the compose file runs
+# it as its own container with no network, so it is pulled and verified with
+# the server and needs no image of its own.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+      -ldflags "-s -w -X main.Version=${VERSION}" \
+      -o /out/easyrmm-keystore ./server/cmd/easyrmm-keystore
 
 # --- Agents ------------------------------------------------------------------
 # The EasyRMM agent for every platform the installers support. The server
@@ -72,6 +79,7 @@ LABEL org.opencontainers.image.title="EasyRMM server" \
       org.opencontainers.image.licenses="FSL-1.1-ALv2" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=server /out/easyrmm-server /usr/local/bin/easyrmm-server
+COPY --from=server /out/easyrmm-keystore /usr/local/bin/easyrmm-keystore
 COPY --from=agents /out/agents/ /usr/share/easyrmm/agents/
 USER 65532:65532
 ENV EASYRMM_DATA_DIR=/var/lib/easyrmm

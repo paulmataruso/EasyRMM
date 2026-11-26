@@ -46,6 +46,7 @@ const (
 	configFile  = "agent.json"
 	keyFile     = "device.key"
 	statusFile  = "status.json"
+	escrowFile  = "escrow.json"
 	caFile      = "ca.pem"
 )
 
@@ -61,6 +62,7 @@ const (
 var layout = [][]string{
 	{configFile, keyFile, pendingFile, caFile},
 	{statusFile},
+	{escrowFile},
 	{".tmp-*"},                         // writeFile's
 	{"removal.json"},                   // removal.File
 	{"update.json", "update.json.tmp"}, // the update's probation marker
@@ -386,6 +388,39 @@ func (s Store) LoadStatus() (Status, error) {
 		return st, err
 	}
 	return st, json.Unmarshal(b, &st)
+}
+
+// EscrowKey is the newest escrow key (ADR-0081) the agent has verified. The
+// agent never goes back to an older version, so a replayed instruction cannot
+// hand it a key the organization has left. It is a public key and holds no
+// secret.
+type EscrowKey struct {
+	KeyID   string `json:"keyId"`
+	Version int    `json:"version"`
+}
+
+// LoadEscrowKey reads the newest escrow key version the agent verified; the
+// zero value when there is none.
+func (s Store) LoadEscrowKey() EscrowKey {
+	var k EscrowKey
+	path, err := s.path(escrowFile)
+	if err != nil {
+		return k
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if err != nil || json.Unmarshal(b, &k) != nil {
+		return EscrowKey{}
+	}
+	return k
+}
+
+// SaveEscrowKey records the newest escrow key version verified.
+func (s Store) SaveEscrowKey(k EscrowKey) error {
+	b, err := json.Marshal(k)
+	if err != nil {
+		return err
+	}
+	return s.write(escrowFile, append(b, '\n'))
 }
 
 // Remove deletes the agent's files. RemoveAll follows no link or junction

@@ -101,8 +101,16 @@ type Action struct {
 	Version int
 	// Script is the embedded PowerShell, ScriptSHA256 its hex SHA-256
 	// written in the catalog and checked when it is built and by a test.
+	// A native action has neither.
 	Script       string
 	ScriptSHA256 string
+	// Native, when set, makes the action's executor native (ADR-0073,
+	// amended by ADR-0081): agent Go code of this name does the work, and no
+	// script exists. It is for an action that handles a secret a script's
+	// output, a transcript or a pipe could leak (BitLocker's recovery
+	// password). The catalog entry, permission, audit and lint are the
+	// same as a script action's; only what runs differs.
+	Native string
 	// Shell is the script's shell; empty is Windows PowerShell.
 	Shell  string
 	Params []Param
@@ -156,6 +164,9 @@ type Action struct {
 	Changes bool
 }
 
+// IsNative says the action's executor is agent Go code, not a script.
+func (a Action) IsNative() bool { return a.Native != "" }
+
 // Shell returns the action's shell.
 func (a Action) shell() string {
 	if a.Shell == "" {
@@ -201,15 +212,19 @@ func NewCatalog(actions ...Action) (*Catalog, error) {
 	return c, nil
 }
 
+var nativeName = regexp.MustCompile(`^[a-z][a-z0-9_.]{2,63}$`)
+
 var actionName = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
 
 func (a Action) check() error {
 	switch {
 	case !actionName.MatchString(a.Name) || !strings.HasPrefix(a.Name, string(a.Module)+"."):
 		return errors.New("the name must be <module>.<action>")
-	case a.Version < 1 || a.Script == "" || a.Decode == nil || a.Permission == "" || a.Timeout < 1 || a.Keep <= 0:
+	case a.IsNative() && (a.Script != "" || a.ScriptSHA256 != "" || a.Shell != "" || !nativeName.MatchString(a.Native)):
+		return errors.New("a native action names its handler and has no script, pin or shell")
+	case a.Version < 1 || (a.Script == "" && !a.IsNative()) || a.Decode == nil || a.Permission == "" || a.Timeout < 1 || a.Keep <= 0:
 		return errors.New("version, script, decoder, permission, timeout and retention are required")
-	case a.ScriptSHA256 != agentproto.HashScript(a.Script):
+	case !a.IsNative() && a.ScriptSHA256 != agentproto.HashScript(a.Script):
 		return ErrScriptPin
 	case a.Sensitive && a.SensitivePermission == "":
 		return errors.New("a sensitive action names the permission that opens its result")

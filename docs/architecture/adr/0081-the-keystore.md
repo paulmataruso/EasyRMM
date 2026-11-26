@@ -592,6 +592,71 @@ recommended below and can be changed by the owner; none blocks slice 1.
   the feature plan says; that is an amendment for ADR-0054's owner, not made
   here.
 
+## Amendments
+
+Amended 2026-11-26 (decided in review, while building slice 1):
+
+* **HPKE is the standard library's.** `crypto/hpke` ships in Go 1.26 and later
+  and this repository builds with Go 1.27, so `filippo.io/hpke` is not added.
+  The suite is the one in section 1; `internal/escrowcrypto` is the one place
+  that names it, for the agent (seal) and the keystore (open).
+* **Dependencies (ADR-0037).** `github.com/google/go-tpm` (Apache-2.0, already
+  in the module graph through Sigstore) for TPM mode; `github.com/go-ole/go-ole`
+  (MIT) for the agent's WMI reader, with our own thin use of its dispatch calls
+  (no `yusufpapurcu/wmi`, which reads properties into structs and cannot call
+  methods with out-parameters); `github.com/google/go-tpm-tools` (Apache-2.0)
+  only through go-tpm's simulator package, in tests built with cgo, so no
+  shipped binary links it.
+* **Two sockets.** The service socket (`/run/easyrmm-keystore/keystore.sock`,
+  mode 0660) carries `status`, `create_org_key` and `verify_escrow` and admits
+  only the server's user ID (`SO_PEERCRED`). `init`, `unseal`,
+  `verify-recovery` and `new-version` are on a second socket inside the
+  keystore container (`/run/keystore-admin/admin.sock`, mode 0600, admits only
+  the keystore's own user ID) that is not mounted anywhere else, so the only
+  way to it is `docker compose exec` at the host. This is how "unseal only
+  from the host CLI" is enforced rather than promised. A peer that is not
+  admitted gets no answer at all.
+* **The host command is the keystore binary.** `easyrmm-keystore serve` is the
+  process; `init`, `status`, `unseal`, `verify-recovery` and `new-version` are
+  commands of the same binary, run in the container by
+  `deploy/scripts/easyrmm-keystore`. Secrets are read from the terminal
+  without echo, never from arguments or the environment. Init shows the
+  recovery code once, asks for it typed again and verifies the version-1 bundle
+  before it ends; a keystore whose recovery is not verified wraps nothing
+  (`recovery_not_verified`). The generated six-word passphrase is not built; a
+  passphrase of at least 16 characters is typed twice.
+* **KEK versions are mirrored.** The keystore has no database, so the server
+  copies each version's metadata (`keystore_kek_versions`: check value, mode,
+  state, verified-at; no key) from its status, to show recovery state and for
+  the overdue-verification alert later.
+* **Escrow states, as built.** The unique index admits one `pending` or one
+  `verified` record per protector. A `stale` record never displaces a verified
+  one: with a verified record standing, a mismatching record is stored `stale`
+  beside it, and a matching record of another secret is stored `conflict`. The
+  console shows a conflict over the verified record it sits beside. A
+  `pending` record (stored while the keystore was sealed or away) is checked by
+  a 30-second server job when the keystore is ready, behind `devscope.Allowed`.
+  Uploads are limited by counting rows (one per volume in five minutes, twenty
+  per device per hour), so the limit survives a restart.
+* **Capability.** An agent announces `escrow.v1` in `HeartbeatRequest.Caps`
+  (sent only to a server of level 2 or higher, like the channel list). The
+  server sends the escrow key only to a Windows device whose agent announced it,
+  in an organization `devscope.Allowed`, once the keystore is unsealed with its
+  recovery verified; a heartbeat without the key tells the agent to stop. The
+  agent has no dev-scope setting of its own: it escrows only with a key the
+  server signed, which is the server's gate.
+* **Not in slice 1, as the slice list says:** reads and their permission,
+  step-up, reason, limits, the keystore's hash-chained log, reconciliation and
+  the alerts of section 7; LUKS; rotation of any key; restore tooling
+  (`easyrmm-keystore restore` is slice 5). A KEK version made with
+  `new-version` stays pending until `verify-recovery`, and the re-wrap of
+  organization keys that follows a rotation is slice 4.
+* **Honest limits found in the code.** The sealing command carries the KEK to
+  the TPM through the kernel's device without a parameter-encryption session.
+  WMI returns the recovery password as a BSTR that the agent overwrites in
+  place, but the Go string the COM layer makes of it cannot be erased, so the
+  agent's zeroing is best-effort, as the server's is.
+
 ## References
 
 ADR-0007, 0009, 0023, 0037, 0047, 0052, 0053, 0054, 0055 (step-up), 0057, 0066,

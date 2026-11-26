@@ -228,6 +228,10 @@ func (d Docker) plan(ctx context.Context, dir string) (running, leaves []string,
 const (
 	statusMount = "/run/easyrmm-updater"
 	tlsMount    = "/etc/easyrmm/tls"
+	// The keystore's state and its socket folder (ADR-0081): the keystore's
+	// own mounts, and the server's read-only mount of the socket folder.
+	keystoreStateMount = "/var/lib/easyrmm-keystore"
+	keystoreRunMount   = "/run/easyrmm-keystore"
 )
 
 // composeMount is one of a service's volumes, as docker compose config
@@ -326,6 +330,15 @@ func checkMounts(mounts []composeMount, dataRoot, deployDir string) error {
 			return fmt.Errorf("the service %s mounts a %s volume at %s: a backup holds the data root and the deployment's directory only, and a rollback would not restore it", m.Service, m.Type, m.Target)
 		case m.Service == "server" && m.Target == tlsMount && m.ReadOnly, slices.Contains(systemPaths, src):
 			continue
+		case isKeystoreMount(m):
+			// Kept out of backups on purpose (ADR-0081): the sealed key must
+			// not travel with the database it protects. So the opposite of
+			// the rule for everything else holds: it must lie outside what a
+			// backup copies, which is checked here.
+			if err := checkKeystoreMount(m, root, tree); err != nil {
+				return err
+			}
+			continue
 		}
 		to, err := realPath(src)
 		if err != nil {
@@ -341,6 +354,34 @@ func checkMounts(mounts []composeMount, dataRoot, deployDir string) error {
 		default:
 			return fmt.Errorf("the service %s mounts %s at %s, outside the data root %s and the deployment's directory %s: a backup would not hold it, and a rollback would not restore it. Move it into the data root (docs/operations/updater.md#the-data-root)", m.Service, src, m.Target, dataRoot, filepath.Dir(deployDir))
 		}
+	}
+	return nil
+}
+
+// isKeystoreMount says whether m is one of the mounts the keystore's state
+// directory takes part in: the keystore's state and socket folder, and the
+// server's read-only view of the socket folder.
+func isKeystoreMount(m composeMount) bool {
+	switch m.Service {
+	case "keystore":
+		return m.Type == "bind" && (m.Target == keystoreStateMount || m.Target == keystoreRunMount)
+	case "server":
+		return m.Type == "bind" && m.Target == keystoreRunMount && m.ReadOnly
+	}
+	return false
+}
+
+// checkKeystoreMount refuses a keystore mount whose source is in the data
+// root or in the deployment's tree, where a backup would copy the sealed key,
+// or is a link, where Docker would follow it somewhere unchecked.
+func checkKeystoreMount(m composeMount, dataRoot, tree string) error {
+	src := filepath.Clean(m.Source)
+	to, err := realPath(src)
+	if err != nil {
+		return fmt.Errorf("the service %s mounts %s: %w", m.Service, src, err)
+	}
+	if inDir(to, dataRoot) || inDir(to, tree) || inDir(dataRoot, to) || inDir(tree, to) {
+		return fmt.Errorf("the service %s mounts %s at %s, which is in or around the data root %s or the deployment's directory %s: a backup would copy the keystore's sealed key beside the database it protects. Keep it apart (EASYRMM_KEYSTORE_DIR, docs/operations/keystore.md)", m.Service, src, m.Target, dataRoot, tree)
 	}
 	return nil
 }

@@ -969,3 +969,54 @@ func (h *testHost) appendEnv(lines string) {
 	env := filepath.Join(h.deploy("v1.0.0"), ".env")
 	writeFile(h.t, env, readFile(h.t, env)+lines, 0o600)
 }
+
+// The keystore's state is kept out of backups on purpose (ADR-0081): the
+// updater accepts it outside the data root and the deployment's tree, and
+// refuses it where a backup would copy the sealed key beside the database.
+func TestKeystoreMountsLieApartFromBackups(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "srv")
+	apart := filepath.Join(t.TempDir(), "keystore")
+	for _, d := range []string{filepath.Join(root, "server"), filepath.Join(apart, "run")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tree := t.TempDir()
+	deploy := filepath.Join(tree, "easyrmm-v1.0.0", "deploy")
+	if err := os.MkdirAll(deploy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mounts := func(state, run string) []composeMount {
+		return []composeMount{
+			{Service: "keystore", Type: "bind", Source: state, Target: "/var/lib/easyrmm-keystore"},
+			{Service: "keystore", Type: "bind", Source: run, Target: "/run/easyrmm-keystore"},
+			{Service: "server", Type: "bind", Source: run, Target: "/run/easyrmm-keystore", ReadOnly: true},
+			{Service: "keystore", Type: "tmpfs", Target: "/run/keystore-admin"},
+		}
+	}
+	if err := checkMounts(mounts(apart, filepath.Join(apart, "run")), root, deploy); err != nil {
+		t.Fatalf("a state directory kept apart: %v", err)
+	}
+	for name, state := range map[string]string{
+		"in the data root":    filepath.Join(root, "server"),
+		"in the deployment":   deploy,
+		"above the data root": filepath.Dir(root),
+	} {
+		err := checkMounts(mounts(state, state), root, deploy)
+		if err == nil || !strings.Contains(err.Error(), "keystore's sealed key") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// The server may mount only the socket folder, and only read-only; any
+	// other keystore mount is held to the general rule.
+	rw := mounts(apart, filepath.Join(apart, "run"))
+	rw[2].ReadOnly = false
+	if err := checkMounts(rw, root, deploy); err == nil {
+		t.Error("a writable view of the socket folder was accepted")
+	}
+	other := mounts(apart, filepath.Join(apart, "run"))
+	other[0].Target = "/somewhere/else"
+	if err := checkMounts(other, root, deploy); err == nil {
+		t.Error("another keystore mount outside the data root was accepted")
+	}
+}

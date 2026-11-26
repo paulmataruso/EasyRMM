@@ -102,11 +102,14 @@ type Config struct {
 	// AgentConnectionsMax the most connections it holds (ADR-0059).
 	AgentChannel        bool
 	AgentConnectionsMax int
-	PasswordResetTTL    time.Duration
-	LogLevel            string
-	LogFormat           string // "json" or "text"
-	ArgonMaxParallel    int
-	WebDir              string // optional override of the embedded UI
+	// KeystoreSocket is the keystore's Unix socket (EASYRMM_KEYSTORE_SOCKET,
+	// ADR-0081); empty means no keystore, and escrow is off.
+	KeystoreSocket   string
+	PasswordResetTTL time.Duration
+	LogLevel         string
+	LogFormat        string // "json" or "text"
+	ArgonMaxParallel int
+	WebDir           string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
 	AgentDir string
 	// DevScopeOrg limits test builds and automatic actions to one
@@ -247,6 +250,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		AgentLogRetentionDays: l.integer("EASYRMM_AGENT_LOG_RETENTION_DAYS", 14),
 		AgentChannel:          l.onOff("EASYRMM_AGENT_CHANNEL", false),
 		AgentConnectionsMax:   l.integer("EASYRMM_AGENT_CONNECTIONS_MAX", 10_000),
+		KeystoreSocket:        l.str("EASYRMM_KEYSTORE_SOCKET", ""),
 		PasswordResetTTL:      l.duration("EASYRMM_PASSWORD_RESET_TTL", 30*time.Minute),
 		LogLevel:              l.str("EASYRMM_LOG_LEVEL", "info"),
 		LogFormat:             l.str("EASYRMM_LOG_FORMAT", "json"),

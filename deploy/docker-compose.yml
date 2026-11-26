@@ -183,6 +183,7 @@ services:
       EASYRMM_SMTP_CLIENT_CERT_FILE: ${EASYRMM_SMTP_CLIENT_CERT_FILE:-}
       EASYRMM_SMTP_CLIENT_KEY_FILE: ${EASYRMM_SMTP_CLIENT_KEY_FILE:-}
       EASYRMM_LOG_LEVEL: ${EASYRMM_LOG_LEVEL:-info}
+      EASYRMM_KEYSTORE_SOCKET: /run/easyrmm-keystore/keystore.sock
       EASYRMM_MESH_ENABLED: ${EASYRMM_MESH_ENABLED:-true}
       EASYRMM_MESH_CERT_URL: ${EASYRMM_MESH_CERT_URL:-}
       EASYRMM_IP_ACCESS: ${EASYRMM_IP_ACCESS:-true}
@@ -214,6 +215,9 @@ services:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/updater/status:/run/easyrmm-updater:ro
       # Secrets setup.sh keeps out of .env (root:65532, 0750, files 0440).
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/secrets:/run/secrets/easyrmm:ro
+      # The keystore's service socket (ADR-0081), nothing else of it: the
+      # server holds no key and reaches the keystore only through this.
+      - ${EASYRMM_KEYSTORE_DIR:-/var/lib/easyrmm-keystore}/run:/run/easyrmm-keystore:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -223,6 +227,60 @@ services:
     # cap_net_bind_service file capability from taking effect. The image has
     # no setuid binaries and the container keeps no other capability.
     stop_grace_period: 30s
+    logging: *logging
+
+  # The keystore (ADR-0081): holds the key-encryption key for BitLocker and LUKS
+  # recovery keys and does every wrap and check. It is the one service with
+  # NO network at all (not bridge, not host): it is reached only through the
+  # Unix socket in the state directory's run/ folder. The state directory is
+  # outside the data root and the deployment directory, so no backup and no
+  # updater copy holds it (docs/operations/keystore.md). It runs the server
+  # image's second binary, so it is pulled and verified with the server.
+  # No depends_on in either direction: a sealed keystore is a normal state,
+  # and the server runs without it.
+  keystore:
+    image: ${EASYRMM_IMAGE:-ghcr.io/paulmataruso/easyrmm-server}:${EASYRMM_VERSION:-latest}
+    network_mode: none
+    restart: unless-stopped
+    user: "65531:65532"
+    entrypoint: ["/usr/local/bin/easyrmm-keystore"]
+    command: ["serve"]
+    environment:
+      # Empty: a TPM where the host has one, else a passphrase typed at the
+      # host. "file" is the named stand-in, on only when set here on purpose.
+      EASYRMM_KEYSTORE_MODE: ${EASYRMM_KEYSTORE_MODE:-}
+    volumes:
+      - ${EASYRMM_KEYSTORE_DIR:-/var/lib/easyrmm-keystore}:/var/lib/easyrmm-keystore
+      - ${EASYRMM_KEYSTORE_DIR:-/var/lib/easyrmm-keystore}/run:/run/easyrmm-keystore
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+      # The admin socket (init, unseal, verify-recovery): inside this
+      # container only, so only `docker compose exec` at the host reaches it.
+      - /run/keystore-admin:size=64k,mode=0700,uid=65531,gid=65532
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # The host's TPM, when setup.sh found one: its resource-managed device
+    # (never /dev/tpm0), opened by the group that owns it. Without one both
+    # are harmless (/dev/null onto itself, and the server's own group).
+    devices:
+      - ${EASYRMM_TPM_DEVICE:-/dev/null}:${EASYRMM_TPM_DEVICE:-/dev/null}
+    group_add: ["${EASYRMM_TPM_GID:-65532}"]
+    # The key is held in locked memory, never swapped, never dumped.
+    ulimits:
+      memlock: {soft: -1, hard: -1}
+      core: {soft: 0, hard: 0}
+    mem_limit: 256m
+    memswap_limit: 256m
+    stop_grace_period: 10s
+    healthcheck:
+      # Passes when the keystore answers, sealed or not: it never waits for
+      # an unseal (ADR-0052).
+      test: ["CMD", "/usr/local/bin/easyrmm-keystore", "status", "--quiet"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
     logging: *logging
 
   # Remote desktop, terminal and file access (ADR-0004, ADR-0005). It listens

@@ -33,6 +33,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/channel"
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/easypatch"
+	"github.com/paulmataruso/easyrmm/agent/escrow"
 	"github.com/paulmataruso/easyrmm/agent/hardware"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
@@ -463,6 +464,9 @@ func (e *env) run(ctx context.Context) error {
 	}
 	if runtime.GOOS == "windows" {
 		r.Roles = &roles.Scanner{Read: roles.Read}
+		// BitLocker recovery keys are escrowed only with the escrow key the
+		// server's heartbeat answer carries (ADR-0081).
+		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, Server: c, Store: e.store, Log: e.log}
 	}
 	var mesh *meshagent.Manager
 	var ship *logship.Shipper

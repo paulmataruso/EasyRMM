@@ -65,6 +65,7 @@ type API struct {
 	ep      EasyPatchInstalls
 	repairs Repairs
 	channel *agentchannel.Hub
+	escrow  Escrow
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
@@ -73,6 +74,7 @@ type API struct {
 	hardware    *auth.KeyedLimiter
 	logLimit    *auth.KeyedLimiter
 	upgrades    *auth.KeyedLimiter
+	escrowLimit *auth.KeyedLimiter
 	pollMu      sync.Mutex
 	polls       map[uuid.UUID]int
 }
@@ -266,6 +268,10 @@ func (a *API) Handler() http.Handler {
 	}
 	if a.logs != nil {
 		mux.Handle("POST "+agentproto.PathAgentLogs, httpapi.Handle(a.signedWith(agentproto.MaxLogBody, a.logLimit, a.agentLogs)))
+	}
+	if a.escrow != nil {
+		mux.Handle("POST "+agentproto.PathEscrowVolumes, httpapi.Handle(a.signedWith(agentproto.MaxEscrowVolumesBody, a.escrowLimit, a.escrowVolumes)))
+		mux.Handle("POST "+agentproto.PathEscrow, httpapi.Handle(a.signedWith(agentproto.MaxEscrowBody, a.escrowLimit, a.escrowUpload)))
 	}
 	if a.channel.Enabled() {
 		mux.Handle("GET "+agentproto.PathChannel, httpapi.Handle(a.signedWith(1024, a.upgrades, a.channelUpgrade)))
@@ -605,6 +611,11 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	}
 	if a.repairs != nil && out.Uninstall == nil {
 		out.Repair = a.repairs.AgentHeartbeat(r.Context(), d.ID, in.Repair)
+	}
+	if a.escrow != nil && out.Uninstall == nil {
+		// The organization's escrow key, to an agent that announced it
+		// (ADR-0081); never a reason to fail the heartbeat.
+		out.Escrow = a.escrow.Instruction(r.Context(), escrowDevice(d), in.Facts.Platform, in.Caps)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

@@ -312,3 +312,26 @@ func TestRecoveryCopy(t *testing.T) {
 		t.Errorf("unchecked store: %v", err)
 	}
 }
+
+func TestEscrowKeyVersionIsKept(t *testing.T) {
+	s := open(t)
+	if err := s.protect(); err != nil {
+		t.Fatal(err)
+	}
+	if k := s.LoadEscrowKey(); k != (EscrowKey{}) {
+		t.Fatalf("empty store: %+v", k)
+	}
+	if err := s.SaveEscrowKey(EscrowKey{KeyID: "k1", Version: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if k := s.LoadEscrowKey(); k.KeyID != "k1" || k.Version != 3 {
+		t.Fatalf("loaded: %+v", k)
+	}
+	// A damaged file is no version, not a crash.
+	if err := os.WriteFile(filepath.Join(s.Dir(), escrowFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if k := s.LoadEscrowKey(); k != (EscrowKey{}) {
+		t.Fatalf("damaged file: %+v", k)
+	}
+}

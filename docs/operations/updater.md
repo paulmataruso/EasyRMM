@@ -438,11 +438,26 @@ or mount otherwise than a backup covers:
   the data root (not its `updater/`, nor a failed data root); the
   deployment's own `deploy/` and `docker/`; the updater's status
   directory, read-only; the server's certificates (`EASYRMM_TLS_DIR`),
-  read-only; or one of `/etc/localtime`, `/etc/timezone`,
-  `/run/docker.sock` and `/var/run/docker.sock`, which hold no state.
+  read-only; the keystore's state directory and socket folder
+  (`EASYRMM_KEYSTORE_DIR`, [The keystore](keystore.md)) and the server's
+  read-only view of the socket folder, which are the one exception the other
+  way: they must lie **outside** the data root and the deployment's tree, so
+  that no backup holds the sealed key beside the database it protects; or
+  one of `/etc/localtime`, `/etc/timezone`, `/run/docker.sock` and
+  `/var/run/docker.sock`, which hold no state.
   A mount is taken where Docker finds it, its links followed: one whose
   way, through a link, leads out of the data root and the deployment
   directory is refused, with where it leads.
+
+The updater does not copy the keystore's state and a rollback does not
+restore it (ADR-0081): KEK versions are only ever added, so a database rolled
+back to an older state needs no older keystore state. It starts the `keystore`
+service with the rest and waits for it to answer its health check, which it
+does sealed or unsealed, and never waits for a person to unseal it: after the
+restart of a keystore in passphrase mode, key reads wait until someone runs
+`easyrmm-keystore unseal` at the host. A deployment that upgrades to the first
+release with the keystore gets the service but not an init: the console says
+the keystore is not initialised and escrow is off.
 
 The updater runs Compose with an environment of its own (`PATH`, `HOME`,
 `LANG`), so a `COMPOSE_` variable in root's environment changes nothing.

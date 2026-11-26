@@ -64,6 +64,8 @@ type server struct {
 	settingsSHA string
 	// rescan makes the heartbeat answer ask for a roles rescan (ADR-0073).
 	rescan bool
+	// escrow is its signed escrow key, JSON (ADR-0081).
+	escrow string
 }
 
 // download serves a signed download, as the server does.
@@ -121,6 +123,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.rescan {
 			update += `,"rescanRoles":true`
+		}
+		if s.escrow != "" {
+			update += `,"escrow":` + s.escrow
 		}
 		announce := ""
 		if s.settingsSHA != "" {

@@ -417,6 +417,29 @@ func (c *Client) AgentLogs(ctx context.Context, b agentproto.LogBatch) (agentpro
 	return out, err
 }
 
+// EscrowVolumes reports the BitLocker volumes and their recovery-password
+// protectors' IDs and learns which need escrow (ADR-0081). Never a password.
+func (c *Client) EscrowVolumes(ctx context.Context, rep agentproto.EscrowVolumesReport) (agentproto.EscrowVolumesAnswer, error) {
+	body, err := json.Marshal(rep)
+	if err != nil {
+		return agentproto.EscrowVolumesAnswer{}, err
+	}
+	var out agentproto.EscrowVolumesAnswer
+	err = c.call(ctx, http.MethodPost, agentproto.PathEscrowVolumes, body, true, &out)
+	return out, err
+}
+
+// EscrowUpload sends one sealed recovery key (ADR-0081).
+func (c *Client) EscrowUpload(ctx context.Context, rec agentproto.EscrowRecord) (agentproto.EscrowAnswer, error) {
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return agentproto.EscrowAnswer{}, err
+	}
+	var out agentproto.EscrowAnswer
+	err = c.call(ctx, http.MethodPost, agentproto.PathEscrow, body, true, &out)
+	return out, err
+}
+
 // Removed reports how uninstalling the agent on the server's instruction
 // went (ADR-0050).
 func (c *Client) Removed(ctx context.Context, r agentproto.RemovedReport) error {

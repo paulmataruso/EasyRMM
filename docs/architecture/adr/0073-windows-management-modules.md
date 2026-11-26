@@ -669,6 +669,24 @@ Amended 2026-11-26 (decided in review, while building slices 6 and 7):
 * Refreshing a default policy on upgrade where the user has not changed it is
   not built yet.
 
+Amended 2026-11-26 (decided in review, ADR-0081 slice 1): a catalogue action
+may have a **native executor**. `winmod.Action.Native` names agent Go code that
+does the work, and the action has no script, no `ScriptSHA256` and no shell
+(`NewCatalog` refuses a native action that has any of them, and a script
+action that has no script). Everything else is the same: the `<module>.<action>`
+name, the permission, the parameter schema and `Validate`, confirmation and
+step-up, the audit record, retention and the lint. It exists for an action that
+handles a secret that a script's output, a PowerShell transcript or a pipe
+could leak: ADR-0081's BitLocker `enable` reads and escrows a recovery password
+inside the agent process. A native action's job carries the action's name and
+its `params` (and secrets, as for any action) and no script; the agent runs the
+handler it has under that name and refuses an unknown one. **What is built:**
+the catalogue accepts native actions and the server refuses to run one
+(`winmod_native_unavailable`) until the agent's native dispatch and the first
+handler ship (ADR-0081 slice 4); the AST lint has nothing to check for one, and
+the hostile-value test covers a native action's parameters through `Validate`
+like any other.
+
 ## References
 
 * `agent/jobs/worker.go`, `server/internal/jobs/hardening.go` and `key.go`.
