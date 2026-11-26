@@ -1,6 +1,6 @@
 # ADR-0078: The compliance engine
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review; two owner questions stay open, below). Design only; no code is changed by this ADR.
 * Asked for by the owner on 2026-11-24
   ([requirements](../requirements/2026-11-24-compliance-engine.md), verbatim
   and binding) and again on 2026-11-26 (the end goal, below). Everything
