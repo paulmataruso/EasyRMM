@@ -35,13 +35,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	settings("GET /api/v1/settings/easypatch", a.connection)
 	settings("POST /api/v1/settings/easypatch/check", a.checkConnection)
 	settings("GET /api/v1/settings/easypatch/organizations", a.organizations)
-	settings("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
 	settings("GET /api/v1/settings/easypatch/devices", a.deviceLinks)
 	settings("GET /api/v1/settings/easypatch/sync", a.sync)
 
 	r := func(pattern string, h httpapi.HandlerFunc) {
 		mux.Handle(pattern, httpapi.RequireActive(httpapi.Handle(h)))
 	}
+	// An organization's automatic agent install is its own setting (ADR-0072): whoever configures its patching changes it.
+	r("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
+	r("GET /api/v1/patching/organizations/{id}/agent-install", a.agentInstall)
 	r("GET /api/v1/patching", a.status)
 	r("GET /api/v1/patching/devices", a.fleet)
 	r("GET /api/v1/patching/devices/{id}", a.device)
@@ -111,10 +113,25 @@ func (a *API) organizations(w http.ResponseWriter, r *http.Request) error {
 	return ok(w, o, err)
 }
 
+func (a *API) agentInstall(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	if !httpapi.Can(r, rbac.PermPatchConfigure, rbac.Org(id)) {
+		return apperr.Forbidden()
+	}
+	l, err := a.svc.OrganizationLinkOf(r.Context(), id)
+	return ok(w, l, err)
+}
+
 func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
 		return err
+	}
+	if !httpapi.Can(r, rbac.PermSettingsManage, rbac.Resource{}) && !httpapi.Can(r, rbac.PermPatchConfigure, rbac.Org(id)) {
+		return apperr.Forbidden()
 	}
 	var in struct {
 		AutoInstall *bool `json:"autoInstall"`

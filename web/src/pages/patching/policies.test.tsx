@@ -164,6 +164,7 @@ function orgRoutes(session = ORG_ADMIN, extra: Record<string, FakeHandler | Fake
     "GET /organizations/:id/sites": ok({ items: [] }),
     "GET /patching": ok(READY),
     "GET /patching/tags/of/organization/:id": ok({ tags: [], canAssign: false }),
+    "GET /patching/organizations/:id/agent-install": ok({ organizationId: "o1", organizationName: "Northwind Traders", autoInstall: false, devices: { linked: 0, unlinked: 0, pending: 0 } }),
     ...NO_PATCH_ALL,
     ...policyRoutes("organization", view("organization", "Northwind Traders")),
     ...extra,
@@ -178,7 +179,7 @@ describe("policy editor", () => {
     const user = userEvent.setup();
     const server = installFakeApi(orgRoutes());
     await open("/organizations/o1");
-    await user.click(await main().findByRole("tab", { name: "Patch policy" }));
+    await user.click(await main().findByRole("tab", { name: "Patching" }));
     await screen.findByRole("form", { name: "Northwind Traders patch policy" });
     expect(column("Maintenance window")).toHaveTextContent("Saturday at 02:00 for 3 hours · from the default policy");
     expect(column("Scans")).toHaveTextContent("Every 6 hours · built-in default");
@@ -408,7 +409,7 @@ describe("policy editor", () => {
     installFakeApi(orgRoutes(ORG_ADMIN, { "GET /patching": ok({ ...READY, configured: false }) }));
     await open("/organizations/o1?tab=patch-policy");
     expect(await main().findByRole("heading", { name: "Sites" })).toBeInTheDocument();
-    expect(main().queryByRole("tab", { name: "Patch policy" })).not.toBeInTheDocument();
+    expect(main().queryByRole("tab", { name: "Patching" })).not.toBeInTheDocument();
   });
 
   it("edits a site's policy, and says when EasyPatch has no site yet", async () => {
@@ -431,7 +432,7 @@ describe("policy editor", () => {
     };
     const server = installFakeApi(routes);
     await open("/sites/s1");
-    await user.click(await main().findByRole("tab", { name: "Patch policy" }));
+    await user.click(await main().findByRole("tab", { name: "Patching" }));
     await screen.findByRole("form", { name: "Head office patch policy" });
     expect(main().getByText(/Times are in Europe\/Paris/)).toBeInTheDocument();
     expect(main().getByTitle("Servers")).toBeInTheDocument();

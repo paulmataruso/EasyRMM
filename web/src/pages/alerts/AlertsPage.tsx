@@ -1,8 +1,8 @@
-import { useId, useMemo, useState } from "react";
-import { Link } from "react-router";
-import { BellRing, CheckCircle2, OctagonAlert, Plus } from "lucide-react";
-import { useDeviceAlertCounts, useList } from "../../api/hooks";
-import type { AlertEntry, AlertPolicy } from "../../api/types";
+import { useId, useMemo } from "react";
+import { Link, Navigate } from "react-router";
+import { BellRing, CheckCircle2, OctagonAlert } from "lucide-react";
+import { useApi, useDeviceAlertCounts, useList } from "../../api/hooks";
+import type { AlertEntry, Device, DeviceGroup } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { DeviceScope, GroupSelect, OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { Badge, Button, cx, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
@@ -11,57 +11,56 @@ import { useUrlState } from "../../lib/urlState";
 import { AlertActions, useAlertAction } from "./AlertActions";
 import { AlertLink } from "./alertLink";
 import { AlertFlashToggle, conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
-import { PolicyDialog, useCanWritePolicies } from "./PolicyDialog";
+
+/** The policies of an alert scope (ADR-0072): a site's or organization's own page, a group's or device's site, otherwise Settings. */
+function usePoliciesHref(): string {
+  const url = useUrlState();
+  const siteParam = url.get("siteId");
+  const groupId = url.get("groupId");
+  const deviceId = url.get("deviceId");
+  const group = useApi<DeviceGroup>(!siteParam && groupId ? `/device-groups/${groupId}` : null);
+  const device = useApi<Device>(!siteParam && !groupId && deviceId ? `/devices/${deviceId}` : null);
+  const siteId = siteParam || group.data?.siteId || device.data?.siteId;
+  const organizationId = url.get("organizationId");
+  if (siteId) return `/sites/${siteId}?tab=alert-policies`;
+  if (organizationId) return `/organizations/${organizationId}?tab=alert-policies`;
+  return "/settings?tab=alert-policies";
+}
 
 export function AlertsPage() {
   const url = useUrlState();
   const { can } = useAuth();
-  const canWrite = useCanWritePolicies();
-  const showPolicies = can("monitoring.view");
-  const tab = url.get("tab") === "policies" && showPolicies ? "policies" : "alerts";
-  const [editing, setEditing] = useState<AlertPolicy | "new" | null>(null);
+  const policiesHref = usePoliciesHref();
+  // The old Policies tab: `/alerts?tab=policies[&organizationId=]` goes to the policies of its scope.
+  if (url.get("tab") === "policies") {
+    const id = url.get("organizationId");
+    return <Navigate to={id ? `/organizations/${id}?tab=alert-policies` : "/settings?tab=alert-policies"} replace />;
+  }
 
   return (
     <>
       <PageHeader
         title="Alerts"
-        subtitle={
-          tab === "alerts"
-            ? "What needs attention on the devices you support. Policies are checked every minute."
-            : "Policies decide what raises an alert. Shared policies cover every device; organization and site policies cover only theirs."
-        }
+        subtitle="What needs attention on the devices you support. Policies are checked every minute."
         actions={
-          tab === "policies" ? (
-            canWrite ? (
-              <Button variant="primary" onClick={() => setEditing("new")}>
-                <Plus className="size-4" aria-hidden />
-                New policy
-              </Button>
-            ) : undefined
-          ) : (
+          <>
+            {can("monitoring.view") && (
+              <Link to={policiesHref} className="text-sm font-medium text-accent hover:underline">
+                Policies
+              </Link>
+            )}
             <AlertFlashToggle />
-          )
+          </>
         }
       />
-      <Tabs
-        tabs={[
-          { id: "alerts", label: "Alerts" },
-          { id: "policies", label: "Policies", hidden: !showPolicies },
-        ]}
-        active={tab}
-        onChange={(id) => url.set({ tab: id === "alerts" ? null : id, before: null })}
-      />
-      <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
-        {tab === "alerts" ? <AlertList /> : <PolicyList onEdit={setEditing} />}
-      </div>
-      <PolicyDialog open={editing !== null} onClose={() => setEditing(null)} policy={editing === "new" || editing === null ? undefined : editing} />
+      <AlertList policiesHref={policiesHref} />
     </>
   );
 }
 
 type Show = "active" | "resolved" | "all";
 
-function AlertList() {
+function AlertList({ policiesHref }: { policiesHref: string }) {
   const url = useUrlState();
   const { can } = useAuth();
   const severityId = useId();
@@ -132,7 +131,7 @@ function AlertList() {
           <EmptyState
             title="No active alerts"
             icon={<CheckCircle2 className="size-8 text-ok" aria-hidden />}
-            action={can("monitoring.view") ? <Button onClick={() => url.set({ tab: "policies" })}>Review policies</Button> : undefined}
+            action={can("monitoring.view") ? <Link to={policiesHref} className="text-sm font-medium text-accent hover:underline">Review policies</Link> : undefined}
           >
             Every device you support is within its alert policies.
           </EmptyState>
@@ -257,103 +256,5 @@ function StatusText({ alert: a }: { alert: AlertEntry }) {
     <span className="text-muted" title={a.resolvedAt ? formatDateTime(a.resolvedAt) : undefined}>
       {resolutionText(a)}, {formatRelative(a.resolvedAt)}
     </span>
-  );
-}
-
-function PolicyList({ onEdit }: { onEdit: (p: AlertPolicy | "new") => void }) {
-  const url = useUrlState();
-  const canWrite = useCanWritePolicies();
-  const organizationId = url.get("organizationId");
-  const list = useList<AlertPolicy>("/alert-policies", { organizationId: organizationId || undefined }, { keepPrevious: true });
-  const anyEditable = list.items.some((p) => p.canEdit);
-
-  return (
-    <>
-      <Toolbar>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} allLabel="Every policy" />
-      </Toolbar>
-      {list.isPending ? (
-        <Spinner />
-      ) : list.isError ? (
-        <ErrorState error={list.error} onRetry={() => void list.refetch()} />
-      ) : list.items.length === 0 ? (
-        <EmptyState
-          title="No alert policies"
-          icon={<BellRing className="size-8" aria-hidden />}
-          action={
-            canWrite ? (
-              <Button variant="primary" onClick={() => onEdit("new")}>
-                <Plus className="size-4" aria-hidden />
-                New policy
-              </Button>
-            ) : undefined
-          }
-        >
-          {canWrite
-            ? "Add a policy to be alerted when devices go offline or run short of processor, memory or disk."
-            : "Without policies, nothing raises an alert. An administrator adds them."}
-        </EmptyState>
-      ) : (
-        <>
-          <TableWrap>
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th>Policy</th>
-                  <th className="hidden md:table-cell">Condition</th>
-                  <th className="hidden lg:table-cell">Applies to</th>
-                  <th className="hidden sm:table-cell">Severity</th>
-                  <th className="hidden text-right sm:table-cell">Active alerts</th>
-                  <th>State</th>
-                  {anyEditable && (
-                    <th>
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {list.items.map((p) => (
-                  <tr key={p.id}>
-                    <td className="min-w-44">
-                      <p className="font-medium">{p.name}</p>
-                      <div className="my-1 sm:hidden">
-                        <SeverityBadge severity={p.severity} />
-                      </div>
-                      <p className="text-xs text-muted md:hidden">{conditionText(p)}</p>
-                      <p className="text-xs text-muted lg:hidden">{policyScope(p)}</p>
-                      {p.description && <p className="max-w-md text-xs text-muted">{p.description}</p>}
-                    </td>
-                    <td className="hidden md:table-cell">{conditionText(p)}</td>
-                    <td className="hidden max-w-60 break-words lg:table-cell">
-                      {p.level === "shared" ? <span className="text-muted">Every device</span> : policyScope(p)}
-                    </td>
-                    <td className="hidden sm:table-cell">
-                      <SeverityBadge severity={p.severity} />
-                    </td>
-                    <td className="hidden text-right tabular-nums sm:table-cell">
-                      {p.activeAlerts > 0 ? formatNumber(p.activeAlerts) : <span className="text-subtle">0</span>}
-                    </td>
-                    <td>{p.enabled ? <Badge tone="ok">On</Badge> : <Badge>Off</Badge>}</td>
-                    {anyEditable && (
-                      <td className="w-px text-right">
-                        {p.canEdit && (
-                          <Button size="sm" variant="ghost" onClick={() => onEdit(p)} aria-label={`Edit ${p.name}`}>
-                            Edit
-                          </Button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
-          <p className="mt-2 text-xs text-muted">
-            {plural(list.items.length, "policy", "policies")}, {plural(list.items.filter((p) => p.enabled).length, "turned on", "turned on")}.
-          </p>
-        </>
-      )}
-    </>
   );
 }

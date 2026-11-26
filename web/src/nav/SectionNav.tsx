@@ -983,7 +983,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "agent-files", label: "Agent files", icon: <Fingerprint className="size-4" aria-hidden />, show: can("org.view") },
     { id: "notifications", label: "Notifications", icon: <Mail className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },
-    { id: "easypatch", label: "Patching engine", icon: <ShieldCheck className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "alert-policies", label: "Alert policies", icon: <Bell className="size-4" aria-hidden />, show: can("monitoring.view") },
     { id: "patching", label: "Patching", icon: <SlidersHorizontal className="size-4" aria-hidden />, show: can("patch.configure") },
     { id: "sso", label: "Single sign-on", icon: <LogIn className="size-4" aria-hidden />, show: can("settings.manage") },
   ]

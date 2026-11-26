@@ -119,6 +119,15 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("Acme's link: %+v", l)
 	}
 
+	// The organization's own page reads its link without the engine, and whoever configures its patching changes it (ADR-0072).
+	var one link
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/organizations/"+acme+"/agent-install", nil, &one)
+	if one.OrganizationName != "Acme" || one.EasyPatchName != "Acme" {
+		t.Fatalf("Acme's own link: %+v", one)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/patching/organizations/00000000-0000-4000-8000-000000000000/agent-install", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, h.client().do("GET", "/api/v1/patching/organizations/"+acme+"/agent-install", nil), http.StatusUnauthorized, "")
+
 	// The agent reports its EasyPatch agent; the link is checked.
 	body, _ := json.Marshal(agentproto.Inventory{
 		System: agentproto.SystemInfo{Serial: "S-1"},
@@ -652,6 +661,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/messages", nil, &presets)
 	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch/organizations", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/organizations/"+acme+"/agent-install", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, h.client().do("GET", "/api/v1/patching", nil), http.StatusUnauthorized, "")
 
 	// Links from EasyPatch: its ids, resolved against EasyRMM's link tables and the caller's permissions.

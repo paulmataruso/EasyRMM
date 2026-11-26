@@ -1,6 +1,6 @@
 // ADR-0072 slice S4, in the browser, against the server console.spec.ts leaves behind: the organization's and the
 // site's tab strips from the shared registry, in order, with ?tab= round-tripping, hidden tabs falling back to Overview,
-// and the old tab URLs still working. The patching engine's stand-in may or may not be set up by now, so Patch policy
+// and the old tab URLs still working. The patching engine's stand-in may or may not be set up by now, so Patching
 // is asserted wherever it shows.
 
 import { expect, test, type Page } from "@playwright/test";
@@ -43,6 +43,7 @@ test("the organization's strip lists its tabs in order and ?tab= round-trips", a
   await expect(page.getByRole("tab", { name: "Contacts" })).toBeVisible();
   const list = await names();
   expect(list.slice(0, 2)).toEqual(["Overview", "Contacts"]);
+  expect(list).toContain("Alert policies");
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -62,11 +63,13 @@ test("the organization's strip lists its tabs in order and ?tab= round-trips", a
   await page.getByRole("tab", { name: "Overview" }).click();
   await expect(page).toHaveURL(orgUrl);
 
-  if (list.includes("Patch policy")) {
+  if (list.includes("Patching")) {
+    // The old tab id still opens it (ADR-0072, S8).
     await page.goto(`${orgUrl}?tab=patch-policy`);
-    await expect(
-      page.getByRole("tab", { name: "Patch policy" }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Patching" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   }
   // An unknown tab falls back to Overview.
   await page.goto(`${orgUrl}?tab=nope`);
@@ -94,13 +97,15 @@ test("the site's strip has no Contacts tab; a hidden ?tab= falls back to Overvie
     n.trim(),
   );
   expect(list[0]).toBe("Overview");
-  if (list.includes("Patch policy")) {
-    await page.getByRole("tab", { name: "Patch policy" }).click();
-    await expect(page).toHaveURL(/\?tab=patch-policy$/);
+  expect(list).toContain("Alert policies");
+  if (list.includes("Patching")) {
+    await page.getByRole("tab", { name: "Patching" }).click();
+    await expect(page).toHaveURL(/\?tab=patching$/);
     await page.reload();
-    await expect(
-      page.getByRole("tab", { name: "Patch policy" }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Patching" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   }
   await page.goto(`${siteUrl}?tab=contacts`);
   await expect(
