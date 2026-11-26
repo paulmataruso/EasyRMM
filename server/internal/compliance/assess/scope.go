@@ -66,7 +66,7 @@ func (s *Service) GetScope(ctx context.Context, c access.Caller, org, id uuid.UU
 
 func readScope(ctx context.Context, tx pgx.Tx, a *Assessment) (*Scope, error) {
 	rows, err := tx.Query(ctx, `SELECT s.id, s.device_id, s.group_id, coalesce(d.name, g.name, ''), CASE WHEN s.device_id IS NOT NULL THEN 'computer' ELSE 'group' END, s.category, s.reason
-		FROM compliance_scope_assets s LEFT JOIN devices d ON d.id = s.device_id LEFT JOIN device_groups g ON g.id = s.group_id
+		FROM compliance_scope_assets s LEFT JOIN devices d ON d.id = s.device_id AND d.organization_id = s.organization_id LEFT JOIN device_groups g ON g.id = s.group_id
 		WHERE s.assessment_id = $1 ORDER BY 5, 4`, a.ID)
 	if err != nil {
 		return nil, err

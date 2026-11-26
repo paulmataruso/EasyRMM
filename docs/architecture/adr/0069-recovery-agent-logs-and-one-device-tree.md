@@ -702,6 +702,12 @@ stay with that organization after a move (listed as stays, like `job_runs`),
 so evidence already shown for it is not rewritten; the device's next scan is
 the new organization's.
 
+The assessment workspace (ADR-0078 C5, migration `90391`): every table an assessment holds (`compliance_assessments`,
+`_implementations`, `_objective_results`, `_attestations`, `_evidence`, `_evidence_links`, `_org_keys`, `_poam_items`,
+`_poam_milestones`, `_documents`, `_document_sections`, `_score_snapshots`) is the organization's own record and is listed as
+owned: a device move leaves it alone. `compliance_scope_assets` names computers: its rows stay with the assessment
+(listed as stays), and a computer that has moved to another organization drops out of that organization's scope reading.
+
 ### Amended 2026-11-26 (decided in review), Quick Assist tables
 
 ADR-0080's tables (migrations `00063` to `00065`): `quick_assist_links` and
