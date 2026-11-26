@@ -43,9 +43,10 @@ test("the organization's strip lists its tabs in order and ?tab= round-trips", a
   await expect(page.getByRole("tab", { name: "Contacts" })).toBeVisible();
   const list = await names();
   expect(list.slice(0, 2)).toEqual(["Overview", "Contacts"]);
-  expect(["Overview,Contacts", "Overview,Contacts,Patch policy"]).toContain(
-    list.join(","),
-  );
+  expect([
+    "Overview,Contacts,Windows modules",
+    "Overview,Contacts,Patch policy,Windows modules",
+  ]).toContain(list.join(","));
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -96,8 +97,11 @@ test("the site's strip has no Contacts tab; a hidden ?tab= falls back to Overvie
   const list = (await page.getByRole("tab").allInnerTexts()).map((n) =>
     n.trim(),
   );
-  expect(["", "Overview,Patch policy"]).toContain(list.join(","));
-  if (list.length > 0) {
+  expect([
+    "Overview,Windows modules",
+    "Overview,Patch policy,Windows modules",
+  ]).toContain(list.join(","));
+  if (list.includes("Patch policy")) {
     await page.getByRole("tab", { name: "Patch policy" }).click();
     await expect(page).toHaveURL(/\?tab=patch-policy$/);
     await page.reload();
