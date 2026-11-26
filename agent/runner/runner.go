@@ -115,6 +115,17 @@ type RoleScanner interface {
 	Rescan()
 }
 
+// EscrowAgent escrows recovery keys (agent/escrow.Agent).
+type EscrowAgent interface {
+	// Caps is what the agent announces in its heartbeat.
+	Caps() []string
+	// Answered takes the signed escrow key of a heartbeat answer, nil when it
+	// carried none.
+	Answered(*agentproto.SignedEscrowKey)
+	// Start works in the background and never blocks the heartbeat.
+	Start(ctx context.Context)
+}
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -193,6 +204,9 @@ type Runner struct {
 	// Roles detects the Windows roles reported with each heartbeat
 	// (ADR-0073); nil reports none.
 	Roles RoleScanner
+	// Escrow escrows BitLocker recovery keys (ADR-0081); nil escrows none.
+	// It works only with the escrow key the server's last answer carried.
+	Escrow EscrowAgent
 
 	status      state.Status
 	failures    int
@@ -342,6 +356,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		req.Channel = []string{agentproto.ChannelCapability}
 		req.Transport = r.Channel.Report()
 	}
+	if r.Escrow != nil && r.Client.Level() >= 2 {
+		req.Caps = r.Escrow.Caps()
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -390,6 +407,10 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	if r.OnLogs != nil {
 		r.OnLogs(resp.Logs)
+	}
+	if r.Escrow != nil {
+		r.Escrow.Answered(resp.Escrow)
+		r.Escrow.Start(ctx)
 	}
 	if r.Inventory != nil {
 		r.syncInventory(ctx, resp.InventoryHash)

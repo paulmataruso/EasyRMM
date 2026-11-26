@@ -3910,3 +3910,38 @@ export interface QuickAssistSession {
   sourceIp: string;
   disconnected: boolean;
 }
+
+/** The state of one volume's recovery-key escrow (ADR-0081). No key, ciphertext or fingerprint is ever shown. */
+export type EscrowState = "missing" | "pending" | "verified" | "stale" | "conflict";
+
+export interface EscrowProtector {
+  id: string;
+  state: EscrowState;
+  verifiedAt?: string;
+  updatedAt?: string;
+}
+
+export interface EscrowVolume {
+  id: string;
+  mount: string;
+  status: string;
+  state: EscrowState;
+  protectors: EscrowProtector[];
+  reportedAt: string;
+}
+
+/** What the console shows of the keystore itself. */
+export interface KeystoreSummary {
+  state: "uninitialised" | "sealed" | "unsealed" | "unavailable";
+  mode?: "tpm" | "passphrase" | "file";
+  recoveryVerified: boolean;
+  detail?: string;
+  fileMode: boolean;
+}
+
+export interface DeviceEscrow {
+  /** False where the device cannot escrow here: not a Windows device, or outside the dev scope. */
+  applicable: boolean;
+  keystore: KeystoreSummary;
+  volumes: EscrowVolume[];
+}

@@ -105,6 +105,12 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 	if !ok {
 		return nil, apperr.NotFound()
 	}
+	if a.IsNative() {
+		// The catalog accepts native actions (ADR-0073 as amended by
+		// ADR-0081); the agent's native dispatch comes with the first one
+		// (BitLocker enable, ADR-0081 slice 4). Until then none runs.
+		return nil, apperr.Unavailable("winmod_native_unavailable", "This action needs an agent that runs native actions, which this server does not offer yet.")
+	}
 	chk, err := a.Validate(in.Params)
 	if err != nil {
 		return nil, err

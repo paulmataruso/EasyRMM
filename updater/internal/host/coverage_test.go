@@ -60,6 +60,7 @@ func composeVolumes(t *testing.T, path string) []string {
 // else would be state the updater neither backs up nor restores.
 func TestBackupCoversEveryVolume(t *testing.T) {
 	const dataRootVar = "${EASYRMM_DATA_ROOT:-/srv/easyrmm}/"
+	const keystoreDirVar = "${EASYRMM_KEYSTORE_DIR:-/var/lib/easyrmm-keystore}"
 	var dataRoot []string
 	for _, src := range composeVolumes(t, composeFile) {
 		switch {
@@ -72,6 +73,11 @@ func TestBackupCoversEveryVolume(t *testing.T) {
 			}
 		case strings.HasPrefix(src, "../docker/"):
 		case src == "${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}":
+		// The keystore's state and socket folder are kept out of every backup
+		// on purpose (ADR-0081): the sealed key must not travel with the
+		// database it protects. checkMounts refuses them anywhere a backup
+		// copies (TestKeystoreMountsLieApartFromBackups).
+		case src == keystoreDirVar, src == keystoreDirVar+"/run":
 		default:
 			t.Errorf("%s mounts %s, which a backup does not hold", composeFile, src)
 		}

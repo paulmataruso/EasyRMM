@@ -251,3 +251,40 @@ func TestCheckHookAndConfirm(t *testing.T) {
 		t.Errorf("confirm %v, step-up %v", a.NeedsConfirm(), a.NeedsStepUp())
 	}
 }
+
+// A native action (ADR-0073 as amended by ADR-0081) has agent Go code of its
+// own name instead of a script: the same entry, permission and audit, and no
+// script, pin or shell.
+func TestNativeActionsHaveNoScript(t *testing.T) {
+	native := func() Action {
+		a := sample()
+		a.Script, a.ScriptSHA256, a.Native = "", "", "bitlocker.enable"
+		return a
+	}
+	c, err := NewCatalog(native())
+	if err != nil {
+		t.Fatalf("a native action was refused: %v", err)
+	}
+	a, _ := c.Lookup("defender.sample")
+	if !a.IsNative() {
+		t.Fatal("not native")
+	}
+	for name, mut := range map[string]func(*Action){
+		"with a script":   func(a *Action) { a.Script = "x" },
+		"with a pin":      func(a *Action) { a.ScriptSHA256 = strings.Repeat("0", 64) },
+		"with a shell":    func(a *Action) { a.Shell = "pwsh" },
+		"unnamed handler": func(a *Action) { a.Native = "Bad Name" },
+	} {
+		b := native()
+		mut(&b)
+		if _, err := NewCatalog(b); err == nil {
+			t.Errorf("a native action %s was accepted", name)
+		}
+	}
+	// A script action still needs its script.
+	s := sample()
+	s.Script, s.ScriptSHA256 = "", ""
+	if _, err := NewCatalog(s); err == nil {
+		t.Error("an action with neither a script nor a native handler was accepted")
+	}
+}

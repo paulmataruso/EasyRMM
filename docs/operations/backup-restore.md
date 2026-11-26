@@ -13,6 +13,7 @@ Authentik (`setup.sh --with-authentik`). All are needed to restore.
 | `/srv/easyrmm/tls` (`EASYRMM_TLS_DIR`) | `manual` TLS only | Your certificate and key. Back them up wherever you manage certificates, or include the directory here |
 | `/srv/easyrmm/secrets` | With a Microsoft 365 application in `.env` only | **The application's client secret, or its certificate and private key** (`setup.sh --smtp-*`, [Mail](mail.md#microsoft-365)), which `.env` names by path and never holds. Without them the server does not start until they are given again (a new secret or certificate from Entra). Owned `root:65532`: the directory mode 750, the files 440. Protect the backup as you protect `.env` |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
+| The keystore's recovery bundle and recovery code | Not a file in any backup above: `easyrmm-keystore init` shows the code once and writes `recovery/kek-v<N>.bundle` in the keystore's state directory (`/var/lib/easyrmm-keystore`, outside the data root and the deployment, so no backup or updater copy holds it). See [The keystore](keystore.md) | **BitLocker and LUKS recovery keys.** The database holds them only sealed to a key it cannot open; the keystore's key lives in the keystore, sealed to the host's TPM or a passphrase. If the host and its TPM are lost, the bundle and the code are the only way back to that key. Keep the code, the bundle and the database dump in **three different places**: the dump alone opens nothing, the bundle alone opens nothing, and the bundle with the code opens everything |
 | Authentik's database | `authentik`, in the same PostgreSQL, with Authentik only | **Everyone's sign-in**: Authentik's users with their passwords and second factors, its flows, the provider EasyRMM signs in through, and the key pair that signs EasyRMM's ID tokens |
 | `/srv/easyrmm/authentik` | With Authentik only | The password of Authentik's own administrator, `akadmin` (`secrets/`), the files uploaded to Authentik, such as icons (`data/`), and `setup.sh`'s record that it issued the first invitation (`invitation-issued`) |
 
@@ -35,7 +36,11 @@ has no other files to back up.
 
 Store backups encrypted and off the host. The `.env` file and the database
 dump together give full control of every managed device: protect them
-accordingly.
+accordingly, and **do not keep them in the same place**. `.env` holds the key
+that seals the database's secrets, so a dump kept beside it is a dump anyone
+who finds the folder can open; the commands below write `.env` and the
+secrets directory to their own folder for that reason, and each of the two
+folders belongs on different storage when you copy them off the host.
 
 The database dump grows with what the database keeps. At the defaults, the
 largest shares are the measurements kept for charts, about 1 GiB for 1,000
@@ -49,7 +54,8 @@ compressed, so it is usually smaller than the database.
 ```bash
 cd /path/to/easyrmm/deploy
 ts=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p /var/backups/easyrmm && chmod 700 /var/backups/easyrmm
+mkdir -p /var/backups/easyrmm /var/backups/easyrmm-keys
+chmod 700 /var/backups/easyrmm /var/backups/easyrmm-keys
 
 # Database: consistent online dump in PostgreSQL's custom format, keeping
 # object ownership (easyrmm_owner) and grants (easyrmm_app). As the
@@ -60,14 +66,15 @@ docker compose exec -T -u postgres postgres pg_dump -p 15432 \
 docker compose exec -T -u postgres postgres pg_dump -p 15432 \
     --format=custom easypatch > /var/backups/easyrmm/easypatch-db-$ts.dump
 
-# Configuration, data directory and the engine's keys.
-tar -C /path/to/easyrmm/deploy -czf /var/backups/easyrmm/env-$ts.tgz .env
+# Configuration, data directory and the engine's keys. .env and the secrets
+# directory hold keys, so they go to easyrmm-keys, never beside the dumps.
+tar -C /path/to/easyrmm/deploy -czf /var/backups/easyrmm-keys/env-$ts.tgz .env
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/server-$ts.tgz server
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/easypatch-keys-$ts.tgz easypatch/keys
 # With manual TLS, unless your certificates are backed up elsewhere:
 # tar -C /srv/easyrmm -czf /var/backups/easyrmm/tls-$ts.tgz tls
 # The mail server's Microsoft 365 secret or key, from .env's setup.sh --smtp-*:
-tar -C /srv/easyrmm -czf /var/backups/easyrmm/secrets-$ts.tgz secrets
+tar -C /srv/easyrmm -czf /var/backups/easyrmm-keys/secrets-$ts.tgz secrets
 
 # With Authentik (setup.sh --with-authentik made its directory): its
 # database, the same way, and its directory. Skipped without Authentik.
@@ -83,6 +90,11 @@ docker compose stop meshcentral
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/meshcentral-$ts.tgz meshcentral
 docker compose start meshcentral
 ```
+
+The keystore's recovery bundle is not in these commands: copy
+`/var/lib/easyrmm-keystore/recovery/kek-v*.bundle` to offline storage once,
+when it is made (and again for each new KEK version), apart from the recovery
+code and from both folders above ([The keystore](keystore.md#the-three-things-to-keep-apart)).
 
 Run it from cron or a systemd timer, and copy the files off the host. Test a
 restore regularly; an untested backup is a hope, not a backup.
@@ -139,13 +151,15 @@ that still has the deployment, set it aside first, as in
    uid 1000's, another number:
 
    ```bash
-   sudo tar -C /path/to/easyrmm/deploy -xzf /var/backups/easyrmm/env-<timestamp>.tgz
+   sudo tar -C /path/to/easyrmm/deploy -xzf /var/backups/easyrmm-keys/env-<timestamp>.tgz
    sudo mkdir -p /srv/easyrmm
    # Without Authentik, leave out authentik.
-   for part in server meshcentral easypatch-keys secrets authentik; do
+   for part in server meshcentral easypatch-keys authentik; do
        sudo tar --numeric-owner -C /srv/easyrmm \
            -xzf /var/backups/easyrmm/$part-<timestamp>.tgz
    done
+   sudo tar --numeric-owner -C /srv/easyrmm \
+       -xzf /var/backups/easyrmm-keys/secrets-<timestamp>.tgz
    ```
 
 2. Create the data directories: `sudo ./scripts/setup.sh ...` with the same

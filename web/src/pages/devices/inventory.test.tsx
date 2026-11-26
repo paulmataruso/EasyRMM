@@ -28,6 +28,7 @@ function routes(extra: Record<string, unknown> = {}) {
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/software": ok({ items: PACKAGES }),
     "GET /devices/:id/disks": ok({ items: [] }),
+    "GET /devices/:id/escrow": ok({ applicable: false, keystore: { state: "unavailable", recoveryVerified: false, fileMode: false }, volumes: [] }),
     ...extra,
   } as Parameters<typeof installFakeApi>[0];
 }

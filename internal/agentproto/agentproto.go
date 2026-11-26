@@ -162,6 +162,9 @@ type HeartbeatRequest struct {
 	// Transport names the connection the agent holds, which confirms it
 	// (ADR-0059). An agent without one sends none.
 	Transport *ChannelReport `json:"transport,omitempty"`
+	// Caps lists what the agent can do beyond its protocol level, such as
+	// CapEscrow (ADR-0081); sent only to servers of level 2 or higher.
+	Caps []string `json:"caps,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -225,6 +228,9 @@ type HeartbeatResponse struct {
 	// RescanRoles asks the agent to detect its roles again at once
 	// (ADR-0073).
 	RescanRoles bool `json:"rescanRoles,omitempty"`
+	// Escrow gives the agent its organization's recovery-key escrow public
+	// key (ADR-0081), only to an agent that announced CapEscrow.
+	Escrow *SignedEscrowKey `json:"escrow,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

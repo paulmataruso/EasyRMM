@@ -6,6 +6,7 @@ import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/fo
 import { installName, NOT_REPORTED } from "../scripts/scriptText";
 import { DisksCard } from "./DeviceDisks";
 import { byFullness, percentOf } from "./DeviceHealth";
+import { RecoveryKeysCard } from "./DeviceRecoveryKeys";
 
 const VIRTUALIZATION: Record<string, string> = { container: "Container", vm: "Virtual machine" };
 
@@ -53,6 +54,7 @@ export function HardwarePanel({ data, device }: { data: DeviceInventory; device:
       </div>
       {inv.os.id === "windows" && <PowerShellCard installs={inv.powerShell} />}
       <DisksCard device={device} disks={inv.disks} />
+      {inv.os.id === "windows" && <RecoveryKeysCard deviceId={device.id} />}
       {data.metrics && data.metrics.filesystems.length > 0 && <FilesystemsCard data={data} />}
       <NetworkCard inv={inv} />
     </div>

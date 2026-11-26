@@ -113,7 +113,7 @@ die() { echo "error: $*" >&2; exit 1; }
 # comment after them. check_env refuses what Compose would read otherwise,
 # and, in the settings setup.sh reads (env_read), a backslash, a $ or a
 # quote, which env_value does not read as Compose does.
-env_read=" EASYRMM_PUBLIC_URL EASYRMM_MESH_PUBLIC_URL EASYRMM_TLS_MODE EASYRMM_ACME_EMAIL EASYRMM_TRUSTED_PROXIES EASYRMM_TLS_CERT_FILE EASYRMM_TLS_KEY_FILE EASYRMM_DATA_ROOT EASYRMM_IP_ACCESS EASYRMM_IP_ADDRESSES COMPOSE_PROFILES EASYRMM_AUTHENTIK_HOSTNAME EASYRMM_AUTHENTIK_ADMIN_EMAIL EASYRMM_EASYPATCH_HOSTNAME EASYRMM_VERSION "
+env_read=" EASYRMM_PUBLIC_URL EASYRMM_MESH_PUBLIC_URL EASYRMM_TLS_MODE EASYRMM_ACME_EMAIL EASYRMM_TRUSTED_PROXIES EASYRMM_TLS_CERT_FILE EASYRMM_TLS_KEY_FILE EASYRMM_DATA_ROOT EASYRMM_KEYSTORE_DIR EASYRMM_TPM_DEVICE EASYRMM_TPM_GID EASYRMM_IP_ACCESS EASYRMM_IP_ADDRESSES COMPOSE_PROFILES EASYRMM_AUTHENTIK_HOSTNAME EASYRMM_AUTHENTIK_ADMIN_EMAIL EASYRMM_EASYPATCH_HOSTNAME EASYRMM_VERSION "
 check_env() {
   local LC_ALL=C file=$1 n=0 line key value
   local control=$'[\001-\010\013-\037\177]'
@@ -547,6 +547,32 @@ if [[ "$with_authentik" == true ]]; then
 fi
 [[ $mail_args -eq 0 ]] || mail_env
 
+# --- The keystore (ADR-0081; docs/operations/keystore.md) ---------------------
+# Its state directory is outside the data root and outside the deployment's
+# tree, so that no backup and no updater copy holds the sealed key-encryption
+# key: it is the one place the keystore keeps what it needs to unseal.
+keystore_dir=$(env_value EASYRMM_KEYSTORE_DIR)
+keystore_dir=${keystore_dir:-/var/lib/easyrmm-keystore}
+[[ "$keystore_dir" =~ ^/[A-Za-z0-9_./-]+$ && "$keystore_dir" != *..* ]] ||
+  die "EASYRMM_KEYSTORE_DIR must be an absolute path (letters, digits, _ . / - only, no ..)"
+deploy_tree=$(dirname "$(pwd -P)")
+for tree in "$data_root" "$deploy_tree"; do
+  case "${keystore_dir%/}/" in
+    "${tree%/}"/*) die "EASYRMM_KEYSTORE_DIR (${keystore_dir}) is inside ${tree}, which backups copy: the keystore's state must be kept apart from them" ;;
+  esac
+  case "${tree%/}/" in
+    "${keystore_dir%/}"/*) die "EASYRMM_KEYSTORE_DIR (${keystore_dir}) holds ${tree}, which backups copy: the keystore's state must be kept apart from them" ;;
+  esac
+done
+# A host TPM 2.0 is offered to the keystore container, by its resource-managed
+# device and the group that may open it. Without one the keystore asks for a
+# passphrase at the host (or, only if EASYRMM_KEYSTORE_MODE=file, uses a file).
+if [[ -c /dev/tpmrm0 && -z "$(env_value EASYRMM_TPM_DEVICE)" ]]; then
+  set_setting EASYRMM_TPM_DEVICE /dev/tpmrm0
+  set_setting EASYRMM_TPM_GID "$(stat -c %g /dev/tpmrm0)"
+  echo "Found a TPM (/dev/tpmrm0): the keystore will seal its key to it."
+fi
+
 if [[ "$upgrade" == true ]]; then
   # A release's bundle names its server image in .env.example; a clone's
   # says latest, and the version is the operator's to set.
@@ -654,6 +680,7 @@ if [[ $(id -u) -ne 0 ]]; then
   echo "  ${data_root}/easypatch/{keys,winget} (owner 1654:1654, mode 700)" >&2
   echo "  ${data_root}/updater/status (owner root, mode 755)" >&2
   echo "  ${data_root}/secrets (owner root:65532, mode 750)" >&2
+  echo "  ${keystore_dir} (owner 65531:65531, mode 700) and ${keystore_dir}/run (owner 65531:65532, mode 750)" >&2
   exit 0
 fi
 install -d -m 0755 "$data_root"
@@ -678,6 +705,10 @@ done
 # worker mount it read-only; while its hold file exists the server answers
 # its health check and nothing else.
 install -d -m 0755 -o root -g root "$data_root/updater" "$data_root/updater/status"
+# The keystore's state (ADR-0081): its own user, 65531, and nobody else.
+# run/ holds the service socket the server container mounts (read-only).
+install -d -m 0700 -o 65531 -g 65531 "$keystore_dir"
+install -d -m 0750 -o 65531 -g 65532 "$keystore_dir/run"
 # Secrets kept out of .env (ADR-0053), as tls/ is: the server only reads them.
 mail_secrets_dir
 echo "Data directories ready under ${data_root}."
@@ -693,6 +724,7 @@ fi
 if [[ "$upgrade" == true ]]; then
   echo
   echo "Ready. Next: sudo docker compose pull && sudo docker compose up -d"
+  echo "A keystore that is not initialised keeps recovery-key escrow off: see docs/operations/keystore.md."
   exit 0
 fi
 echo
@@ -703,3 +735,7 @@ echo "     github.com for MeshCentral's first-start agent download."
 echo "  3. docker compose up -d"
 echo "  4. Open https://${hostname}/ and enter the setup token from:"
 echo "       ${data_root}/server/setup-token"
+echo "  5. Initialise the keystore, which holds BitLocker and LUKS recovery keys (ADR-0081):"
+echo "       ./scripts/easyrmm-keystore init"
+echo "     It shows a recovery code once. Keep the code, the recovery bundle it writes under"
+echo "     ${keystore_dir}/recovery and the database backups in three different places."

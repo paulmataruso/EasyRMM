@@ -1,6 +1,6 @@
 # Network architecture
 
-All containers use `network_mode: host`. Defaults below are configurable.
+All containers use `network_mode: host`, except the keystore (ADR-0081), which uses `network_mode: none`: it has no network at all and is reached only through a Unix socket. Defaults below are configurable.
 
 | Port | Bind | Service | Exposed? | Why |
 |---|---|---|---|---|
