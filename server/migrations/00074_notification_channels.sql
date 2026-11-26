@@ -198,7 +198,7 @@ CREATE INDEX notification_events_planned ON notification_events (planned_at) WHE
 
 -- +goose StatementBegin
 CREATE FUNCTION easyrmm_notice_journal() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         INSERT INTO notification_events (subject_type, subject_id, event, new_row)
