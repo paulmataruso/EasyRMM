@@ -87,15 +87,15 @@ test("Add devices names the show-again button, and the invitation dialog says a 
   await page.getByRole("button", { name: "Create token" }).click();
   await page.getByRole("button", { name: "Create another token" }).click();
   const row = page.getByRole("row", { name: /Labels check/ });
-  const show = row.getByRole("button", { name: "Show install command for Labels check" });
+  const show = row.getByRole("button", { name: "Show install commands for Labels check" });
   await expect(show).toBeVisible();
-  await expect(show).toHaveText("Show install command");
+  await expect(show).toHaveText("Show install commands");
   await expect(show).toBeEnabled();
 
   // This server has no mail server, so the invitation is a link.
   await page.goto("/settings?invite=1");
   const invite = page.getByRole("dialog", { name: "Invite user" });
-  await expect(invite.getByRole("button", { name: "Create invitation link" })).toBeVisible();
-  await expect(invite.getByText(/No mail server is set up, so nothing is emailed. A link is shown next/)).toBeVisible();
+  await expect(invite.getByRole("button", { name: "Create user" })).toBeVisible();
+  await expect(invite.getByText(/No mail server is set up, so nothing is emailed. A sign-up link is shown next/)).toBeVisible();
   await expect(invite.getByRole("button", { name: "Send invitation" })).toHaveCount(0);
 });

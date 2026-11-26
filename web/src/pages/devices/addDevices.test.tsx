@@ -264,13 +264,13 @@ describe("add devices", () => {
     const row = await screen.findByRole("row", { name: /Head office rollout/ });
     // A token made before secrets were kept says so, and offers nothing to show.
     const oldRow = screen.getByRole("row", { name: /Before the upgrade/ });
-    expect(within(oldRow).getByText("Made before EasyRMM kept tokens; make a new one.")).toBeInTheDocument();
-    expect(within(oldRow).getByRole("button", { name: "Show install command for Before the upgrade" })).toBeDisabled();
-    expect(screen.getByText(/their install commands cannot be shown again/)).toBeInTheDocument();
+    expect(within(oldRow).getByText("This token was made before EasyRMM kept tokens, so its install commands cannot be shown. Replace it: make a new token, then revoke this one.")).toBeInTheDocument();
+    expect(within(oldRow).getByRole("button", { name: "Show install commands for Before the upgrade" })).toBeDisabled();
+    expect(screen.getByText(/their install commands cannot be shown/)).toBeInTheDocument();
     // The button carries a visible label, not only an icon.
-    expect(within(row).getByRole("button", { name: "Show install command for Head office rollout" })).toHaveTextContent("Show install command");
+    expect(within(row).getByRole("button", { name: "Show install commands for Head office rollout" })).toHaveTextContent("Show install commands");
 
-    await user.click(within(row).getByRole("button", { name: "Show install command for Head office rollout" }));
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
     expect(await screen.findByRole("heading", { name: "Install the agent" })).toBeInTheDocument();
     expect(server.call("POST /enrollment-tokens/:id/reveal").params.id).toBe("t1");
     expect(screen.getByText(/Until then, Deployment tokens below shows it again/)).toBeInTheDocument();
@@ -289,7 +289,7 @@ describe("add devices", () => {
     );
     renderApp("/devices/add");
     const row = await screen.findByRole("row", { name: /Head office rollout/ });
-    await user.click(within(row).getByRole("button", { name: "Show install command for Head office rollout" }));
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
     expect(await screen.findByText(/can no longer add devices, so there is nothing to show/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Install the agent" })).not.toBeInTheDocument();
   });
