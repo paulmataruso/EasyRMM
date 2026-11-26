@@ -1,0 +1,39 @@
+{
+ "id": "procedure-v1",
+ "kind": "procedure",
+ "title": "Procedure",
+ "author": "EasyRMM",
+ "licence_class": "ORIGINAL",
+ "sections": [
+  {
+   "id": "purpose",
+   "heading": "What this procedure does",
+   "generate": "",
+   "body": "Say which policy rule this procedure carries out."
+  },
+  {
+   "id": "when",
+   "heading": "When it is used",
+   "generate": "",
+   "body": "Say what triggers it and who starts it."
+  },
+  {
+   "id": "steps",
+   "heading": "Steps",
+   "generate": "",
+   "body": "List the steps in order, each one an action a person can take.\nName the tool or system used at each step."
+  },
+  {
+   "id": "records",
+   "heading": "Records kept",
+   "generate": "",
+   "body": "Say what is written down, where, and for how long."
+  },
+  {
+   "id": "review",
+   "heading": "Review",
+   "generate": "",
+   "body": "Say how often the procedure is tested and updated."
+  }
+ ]
+}

@@ -4132,3 +4132,199 @@ export interface DeviceComplianceResult {
   checkedAt: string;
   scanId: string;
 }
+
+// The CMMC assessment workspace (ADR-0078, slice C5).
+export type AssessmentState = "draft" | "in_review" | "approved" | "archived";
+export type Determination = "met" | "not_met" | "not_applicable" | "not_assessed";
+
+export interface Assessment {
+  id: string;
+  organizationId: string;
+  framework: string;
+  frameworkVersion: string;
+  title: string;
+  assessor: string;
+  state: AssessmentState;
+  approvedAt: string | null;
+  supersedes: string | null;
+  scanId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  frozen: boolean;
+}
+
+export interface ScoreRange {
+  low: number;
+  high: number;
+  number: number | null;
+  notMet: number;
+  unassessed: number;
+  met: number;
+  sspMissing: boolean;
+  l1Met: number;
+  l1Of: number;
+}
+
+export interface GateSide {
+  score: number;
+  scoreOk: boolean;
+  blockers: { reqId: string; reason: string }[];
+  within: boolean;
+}
+
+export interface Gate {
+  minScore: number;
+  low: GateSide;
+  high: GateSide;
+  overdue: string[];
+  outcome: "within" | "possible" | "outside";
+}
+
+export interface AssessmentDetail extends Assessment {
+  score: ScoreRange;
+  gate: Gate;
+  counts: Record<string, number>;
+  disclaimer: string;
+  note: string;
+}
+
+export interface ScopeItem {
+  id: string;
+  deviceId: string | null;
+  groupId: string | null;
+  name: string;
+  kind: "computer" | "group";
+  category: string;
+  reason: string;
+}
+
+export interface ScopeState {
+  items: ScopeItem[];
+  unlisted: number;
+}
+
+export interface RequirementRow {
+  reqId: string;
+  nistId: string;
+  title: string;
+  family: string;
+  class: string;
+  weight: number;
+  status: Determination;
+  origin: string;
+  partial: boolean;
+  hasPartial: boolean;
+  responsibility: "customer" | "msp" | "inherited" | "shared";
+  ownerUser: string | null;
+  nextReview: string | null;
+  statement: string;
+  objectives: number;
+  objectivesMet: number;
+  evidence: number;
+}
+
+export interface ObjectiveView {
+  id: string;
+  text: string;
+  methods: string[];
+  controls: string[];
+  whole: boolean;
+  determination: Determination;
+  source: string;
+  method: string;
+  note: string;
+  decidedAt: string | null;
+  expired: boolean;
+}
+
+export interface AttestationView {
+  id: string;
+  objectives: string[];
+  statement: string;
+  signer: string;
+  signedAt: string;
+  expiresAt: string;
+  expired: boolean;
+}
+
+export interface EvidenceView {
+  id: string;
+  kind: string;
+  title: string;
+  mediaType: string;
+  fileName: string;
+  size: number | null;
+  url: string;
+  sha256: string;
+  collectedAt: string;
+  collector: string | null;
+  expiresAt: string | null;
+  supersededBy: string | null;
+  expired: boolean;
+}
+
+export interface RequirementDetail extends RequirementRow {
+  text: string;
+  objectiveList: ObjectiveView[];
+  attestations: AttestationView[];
+  evidenceList: EvidenceView[];
+}
+
+export interface PoamMilestone {
+  id: string;
+  title: string;
+  due: string | null;
+  status: "open" | "done";
+  done: boolean;
+}
+
+export interface PoamItem {
+  id: string;
+  reqId: string;
+  nistId: string;
+  title: string;
+  weakness: string;
+  points: number;
+  eligible: boolean;
+  eligibilityReason: string;
+  status: "draft" | "open" | "in_progress" | "closed" | "accepted";
+  openedOn: string;
+  closesBy: string;
+  overdue: boolean;
+  resources: string;
+  scheduledCompletion: string | null;
+  milestones: PoamMilestone[];
+  requirementStatus: Determination;
+}
+
+export interface PoamBoard {
+  items: PoamItem[];
+  note: string;
+}
+
+export interface SspSection {
+  position: number;
+  sectionId: string;
+  heading: string;
+  body: string;
+  generated: boolean;
+  hint: string;
+}
+
+export interface SspDocument {
+  id: string | null;
+  kind: string;
+  templateId: string;
+  title: string;
+  version: number;
+  sections: SspSection[];
+  exists: boolean;
+}
+
+export interface RefreshResult {
+  scanId: string | null;
+  updated: number;
+  keptStated: number;
+  inScope: number;
+  notes: string[];
+}

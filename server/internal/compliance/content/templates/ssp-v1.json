@@ -1,0 +1,69 @@
+{
+ "id": "ssp-v1",
+ "kind": "ssp",
+ "title": "System security plan",
+ "author": "EasyRMM",
+ "licence_class": "ORIGINAL",
+ "sections": [
+  {
+   "id": "identification",
+   "heading": "System identification",
+   "generate": "",
+   "body": "Name the system or systems this plan covers and give each a short identifier.\nSay who owns the system and who runs it day to day.\nSay what contract work or kind of information the system supports, in a sentence."
+  },
+  {
+   "id": "scope",
+   "heading": "Scope and boundary",
+   "generate": "scope",
+   "body": ""
+  },
+  {
+   "id": "environment",
+   "heading": "Operating environment",
+   "generate": "",
+   "body": "Describe where the systems run: offices, data centres, cloud services, remote workers.\nList the main kinds of equipment and software, and the networks that join them.\nSay how the environment is protected from the outside."
+  },
+  {
+   "id": "data-flow",
+   "heading": "Where the information moves",
+   "generate": "",
+   "body": "Describe how controlled information enters, is stored, is processed and leaves the systems.\nName the services and people that handle it at each step."
+  },
+  {
+   "id": "roles",
+   "heading": "Roles and responsibilities",
+   "generate": "",
+   "body": "List the roles that run and protect the systems and the people who hold them.\nSay which duties belong to the organization, which to a service provider, and which are shared."
+  },
+  {
+   "id": "connections",
+   "heading": "Connections to other systems",
+   "generate": "",
+   "body": "List each connection to a system outside the boundary: what it is, what passes over it, and how it is controlled.\nWrite 'none' if there are none."
+  },
+  {
+   "id": "requirements",
+   "heading": "How each requirement is implemented",
+   "generate": "requirements",
+   "body": ""
+  },
+  {
+   "id": "score",
+   "heading": "Score range",
+   "generate": "score",
+   "body": ""
+  },
+  {
+   "id": "poam",
+   "heading": "Plan of action and milestones",
+   "generate": "poam",
+   "body": ""
+  },
+  {
+   "id": "review",
+   "heading": "Review and approval",
+   "generate": "",
+   "body": "Record who reviewed this plan, on what date, and what changed.\nSay when it is next due for review."
+  }
+ ]
+}

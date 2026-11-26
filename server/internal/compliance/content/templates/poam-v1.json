@@ -1,0 +1,15 @@
+{
+ "id": "poam-v1",
+ "kind": "plan",
+ "title": "Plan of action and milestones, field guide",
+ "author": "EasyRMM",
+ "licence_class": "ORIGINAL",
+ "sections": [
+  {
+   "id": "fields",
+   "heading": "What each item records",
+   "generate": "",
+   "body": "The requirement that is not met.\nWhat is wrong, in plain words.\nThe points the requirement is worth.\nWho owns the fix and what it needs.\nThe steps, each with a date.\nThe date by which the item must be closed, 180 days after it is opened."
+  }
+ ]
+}

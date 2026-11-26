@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/assess"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/content"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/fix"
@@ -141,6 +142,8 @@ type Deps struct {
 	Compliance *engine.Service
 	// ComplianceFix is the compliance fix queue (ADR-0078, slice C2).
 	ComplianceFix *fix.Service
+	// ComplianceAssess is the assessment workspace (ADR-0078, slice C5).
+	ComplianceAssess *assess.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
 	// Modules is the Windows management framework: roles and toggles
@@ -271,6 +274,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	d.ComplianceFix.SetStepUp(sessions)
+	d.ComplianceAssess = assess.New(db, auditLog, sealer, log)
+	d.ComplianceAssess.SetStepUp(sessions)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
 		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
@@ -649,7 +654,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
-	complianceapi.New(d.Compliance, d.ComplianceFix).Register(mux)
+	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
