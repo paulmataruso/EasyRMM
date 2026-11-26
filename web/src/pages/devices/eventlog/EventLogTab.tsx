@@ -50,14 +50,14 @@ export function EventLogPanel({ device }: { device: Device }) {
   const [clockSkew, setClockSkew] = useState<number | null>(null);
 
   const abort = useRef<AbortController | null>(null);
-  const openRun = useRef<string | null>(null);
+  const openRuns = useRef(new Set<string>());
   const request = useRef<EventlogRequest | null>(null);
 
   // Leaving the tab cancels the run still open: the agent closes the child's input and Windows is told to stop.
   useEffect(
     () => () => {
       abort.current?.abort();
-      if (openRun.current) void cancelRun(openRun.current);
+      for (const id of openRuns.current) void cancelRun(id);
     },
     [],
   );
@@ -67,9 +67,9 @@ export function EventLogPanel({ device }: { device: Device }) {
     setChannelsError(null);
     try {
       const { run, result } = await startOp(device.id, { op: "channels" });
-      openRun.current = run.runId;
+      openRuns.current.add(run.runId);
       const r = await result;
-      openRun.current = null;
+      openRuns.current.delete(run.runId);
       if (r.state !== "reported") setChannelsError(r.reason || STATE_TEXT[r.state]);
       else setChannels(r);
     } catch (e) {
@@ -80,6 +80,60 @@ export function EventLogPanel({ device }: { device: Device }) {
     if (!offline) void loadChannels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.id, offline]);
+
+  /** The overview reads on its own: the key events, then the problems, one query after the other (a newer query replaces an open one). */
+  const loadOverview = useCallback(async () => {
+    abort.current?.abort();
+    const ac = new AbortController();
+    abort.current = ac;
+    setBusy(false);
+    setOverviewBusy(true);
+    setError(null);
+    const notes: string[] = [];
+    const read = async (req: EventlogRequest): Promise<EventlogEvent[]> => {
+      const started = await startOp(device.id, req, ac.signal);
+      openRuns.current.add(started.run.runId);
+      const r = await started.result;
+      openRuns.current.delete(started.run.runId);
+      if (r.state !== "reported" && r.state !== "unknown") throw new Error(r.reason || STATE_TEXT[r.state]);
+      if (r.clock) setClockSkew(Math.round((new Date(r.clock).getTime() - Date.now()) / 1000));
+      for (const n of (r.pos ?? []).map(posText)) if (n) notes.push(n);
+      const e = endText(r.end, "local");
+      if (e) notes.push(e);
+      setLast({ runId: started.run.runId, result: r });
+      return r.events ?? [];
+    };
+    try {
+      const key = await read(keyEventsRequest(holdsSensitive));
+      setOverview((o) => ({ key, problems: o?.problems ?? [], notes: [...notes] }));
+      const problems = (await read(problemsRequest())).filter(isProblem);
+      setOverview({ key, problems, notes, at: new Date().toISOString() });
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) setError(errorMessage(e));
+    } finally {
+      if (abort.current === ac) setOverviewBusy(false);
+    }
+  }, [device.id, holdsSensitive]);
+
+  // The overview opens by itself and keeps itself current.
+  useEffect(() => {
+    if (view !== "overview" || offline) return;
+    void loadOverview();
+    const t = setInterval(() => void loadOverview(), 5 * 60_000);
+    return () => clearInterval(t);
+  }, [view, offline, loadOverview]);
+
+  /** A count's link: the search that finds exactly those events, run at once. */
+  const openFilter = (f: EventGroup["filter"]) => {
+    abort.current?.abort();
+    setPicked([f.log]);
+    setLevels(f.level === undefined ? [] : [f.level]);
+    setIdsText(String(f.id));
+    setProvider(f.provider);
+    setRange("24h");
+    setText("");
+    setView("search");
+  };
 
   const wantsSecurity = picked.some(isSecurityChannel);
   const sensitive = holdsSensitive && (showSensitive || wantsSecurity);
@@ -111,15 +165,16 @@ export function EventLogPanel({ device }: { device: Device }) {
     abort.current?.abort();
     const ac = new AbortController();
     abort.current = ac;
+    setOverviewBusy(false);
     setBusy(true);
     setError(null);
     try {
       const req = next ? ({ op: "query", previousRunId: last?.runId } as EventlogRequest) : build();
       if (!next) request.current = req;
       const started = await startOp(device.id, req, ac.signal);
-      openRun.current = started.run.runId;
+      openRuns.current.add(started.run.runId);
       const r = await started.result;
-      openRun.current = null;
+      openRuns.current.delete(started.run.runId);
       setSearched(true);
       if (r.state === "reported" || r.state === "unknown") {
         take(r, next);
@@ -135,6 +190,14 @@ export function EventLogPanel({ device }: { device: Device }) {
       if (abort.current === ac) setBusy(false);
     }
   };
+
+  // A search runs as the filters change, after a short pause; there is no button that only starts a read.
+  useEffect(() => {
+    if (view !== "search" || offline || !picked.length || idError) return;
+    const t = setTimeout(() => void run(false), 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, offline, picked, levels, idsText, provider, range, text, sensitive]);
 
   const search = (e?: FormEvent) => {
     e?.preventDefault();
@@ -200,9 +263,15 @@ export function EventLogPanel({ device }: { device: Device }) {
                 { value: "utc", label: "UTC" },
               ]}
             />
-            <Button onClick={() => search()} disabled={offline || busy || !picked.length || !!idError} icon={<RefreshCw className="size-4" aria-hidden />}>
-              Refresh
-            </Button>
+            <Segmented<"overview" | "search">
+              label="View"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: "overview", label: "Admin overview" },
+                { value: "search", label: "All events" },
+              ]}
+            />
           </div>
           {offline && (
             <Alert tone="warn" title="This device is offline">
@@ -217,7 +286,26 @@ export function EventLogPanel({ device }: { device: Device }) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+      {view === "overview" && (
+        <>
+          <Overview
+            data={overview}
+            busy={overviewBusy}
+            offline={offline}
+            holdsSensitive={holdsSensitive}
+            zone={zone}
+            selected={selectedEv}
+            onSelect={(e) => {
+              setSelectedEv(e);
+              setDetail("general");
+            }}
+            onFilter={openFilter}
+          />
+          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
+        </>
+      )}
+
+      <div className={cx("grid grid-cols-1 gap-4 lg:grid-cols-4", view !== "search" && "hidden")}>
         <Card title="Logs" padded={false} className="lg:col-span-1">
           <div className="flex flex-col gap-2 p-2 text-sm">
             <label className="flex items-center gap-2 text-xs text-muted">
@@ -269,9 +357,6 @@ export function EventLogPanel({ device }: { device: Device }) {
                 <Input aria-label="Event IDs" className="w-56" placeholder="Event IDs: 41, 100-200, -7036" value={idsText} onChange={(e) => setIdsText(e.target.value)} aria-invalid={idError ? true : undefined} />
                 <Input aria-label="Provider" className="w-56" placeholder="Provider (source)" value={provider} onChange={(e) => setProvider(e.target.value)} maxLength={255} />
                 <Input aria-label="Text" className="min-w-0 flex-1" placeholder="Text in the message or a value" maxLength={256} value={text} onChange={(e) => setText(e.target.value)} />
-                <Button type="submit" variant="primary" disabled={offline || busy || !picked.length || !!idError} icon={<Search className="size-4" aria-hidden />}>
-                  Search
-                </Button>
               </div>
               {idError && <p className="text-xs text-danger">{idError}</p>}
               {holdsSensitive && (
@@ -287,7 +372,7 @@ export function EventLogPanel({ device }: { device: Device }) {
 
           <Card title={`Events${events.length ? ` (${events.length})` : ""}`} padded={false}>
             <Results
-              events={events}
+              events={view === "search" ? events : []}
               pos={pos}
               end={end}
               picked={picked}
@@ -305,9 +390,122 @@ export function EventLogPanel({ device }: { device: Device }) {
             />
           </Card>
 
-          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
+          {view === "search" && current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Skeleton({ rows }: { rows: number }) {
+  return (
+    <div role="status" aria-label="Reading the logs" className="flex flex-col gap-2 p-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="h-6 animate-pulse rounded bg-raised" />
+      ))}
+    </div>
+  );
+}
+
+/** The admin overview: key events pinned above the last day's Critical and Error events and System warnings. */
+function Overview({ data, busy, offline, holdsSensitive, zone, selected, onSelect, onFilter }: {
+  data: { key: EventlogEvent[]; problems: EventlogEvent[]; notes: string[]; at?: string } | null;
+  busy: boolean;
+  offline: boolean;
+  holdsSensitive: boolean;
+  zone: Zone;
+  selected: EventlogEvent | null;
+  onSelect: (e: EventlogEvent) => void;
+  onFilter: (f: EventGroup["filter"]) => void;
+}) {
+  const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const keys = useMemo(() => (data ? groupKeyEvents(data.key, holdsSensitive) : []), [data, holdsSensitive]);
+  const problems = useMemo(() => (data ? groupRepeats(data.problems, true) : []), [data]);
+  const row = (g: EventGroup, label?: string) => (
+    <tr key={g.key} aria-selected={selected?.log === g.newest.log && selected?.record === g.newest.record} className="cursor-pointer border-t border-line hover:bg-hover" onClick={() => onSelect(g.newest)}>
+      <td className="px-2 py-1.5">
+        <Badge tone={levelTone(g.newest.level)}>{levelName(g.newest)}</Badge>
+      </td>
+      <td className="px-2 py-1.5">
+        <button type="button" className="text-left underline-offset-2 hover:underline" onClick={() => onSelect(g.newest)}>
+          {label ?? g.newest.provider} <span className="text-muted">({g.newest.provider}, {g.newest.id}, {g.newest.log})</span>
+        </button>
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5">{eventTime(g.newest, zone)}</td>
+      <td className="whitespace-nowrap px-2 py-1.5">
+        {g.count > 1 ? (
+          <button type="button" className="underline" aria-label={`Show all ${g.count} events`} onClick={() => onFilter(g.filter)}>
+            {repeatText(g, clock)}
+          </button>
+        ) : (
+          <button type="button" className="underline-offset-2 hover:underline" aria-label="Show the events like this" onClick={() => onFilter(g.filter)}>
+            {repeatText(g, clock)}
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+  const head = (
+    <thead className="bg-raised text-muted">
+      <tr>
+        <th className="px-2 py-1.5 font-medium">Level</th>
+        <th className="px-2 py-1.5 font-medium">Event</th>
+        <th className="px-2 py-1.5 font-medium">Latest</th>
+        <th className="px-2 py-1.5 font-medium">Repeats</th>
+      </tr>
+    </thead>
+  );
+  if (offline) return null;
+  return (
+    <div className="flex flex-col gap-4" aria-label="Admin overview">
+      <Card title="Key events, last 24 hours" padded={false}>
+        {!data && <Skeleton rows={4} />}
+        {data && keys.length === 0 && (
+          <div className="p-3">
+            <EmptyState compact title="No key events" icon={<ScrollText className="size-5" aria-hidden />}>
+              No unexpected shutdowns, service or disk failures, crashes, update, policy, time or domain problems in the last 24 hours.
+              {!holdsSensitive && " Failed sign-ins and lockouts need permission to see the Security log."}
+            </EmptyState>
+          </div>
+        )}
+        {keys.map((k) => (
+          <div key={k.category} className="px-3 pb-2 pt-3">
+            <h3 className="mb-1 text-xs font-medium">
+              {k.category} <span className="text-muted">({k.total})</span>
+            </h3>
+            <TableWrap>
+              <table className="w-full text-left text-xs" aria-label={k.category}>
+                {head}
+                <tbody>{k.groups.map((g) => row(g, g.label))}</tbody>
+              </table>
+            </TableWrap>
+          </div>
+        ))}
+      </Card>
+      <Card title="Critical and Error events, and System warnings, last 24 hours" padded={false}>
+        {!data || (busy && data.problems.length === 0 && !data.at) ? (
+          <Skeleton rows={6} />
+        ) : problems.length === 0 ? (
+          <div className="p-3">
+            <EmptyState compact title="Nothing to report">No Critical or Error events in System or Application, and no System warnings, in the last 24 hours.</EmptyState>
+          </div>
+        ) : (
+          <div className="p-3">
+            <TableWrap>
+              <table className="w-full text-left text-xs" aria-label="Problems">
+                {head}
+                <tbody>{problems.map((g) => row(g))}</tbody>
+              </table>
+            </TableWrap>
+          </div>
+        )}
+      </Card>
+      {data?.notes.map((n) => (
+        <p key={n} className="text-xs text-muted">
+          {n}
+        </p>
+      ))}
+      {data?.at && <p className="text-xs text-muted">Read at {new Date(data.at).toLocaleTimeString("en-GB")}; it reads again by itself every 5 minutes.</p>}
     </div>
   );
 }
@@ -383,8 +581,8 @@ function Results({ events, pos, end, picked, zone, selected, onSelect, busy, sea
           )}
         </Alert>
       ))}
-      {!searched && !busy && <EmptyState compact title="Choose logs and search" icon={<ScrollText className="size-5" aria-hidden />}>Pick one or more logs on the left, set a filter, and search.</EmptyState>}
-      {busy && events.length === 0 && <Spinner label="Reading the logs…" className="py-6" />}
+      {!searched && !busy && <EmptyState compact title="Choose a log" icon={<ScrollText className="size-5" aria-hidden />}>Pick one or more logs on the left and set a filter; the events appear by themselves.</EmptyState>}
+      {busy && events.length === 0 && <Skeleton rows={5} />}
       {searched && !busy && events.length === 0 && notes.length === 0 && (
         <EmptyState compact title="No events match">
           {end?.stoppedBy === "end" || end?.stoppedBy === "page" ? "The whole range was searched." : (stopped ?? "")}

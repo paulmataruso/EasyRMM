@@ -289,3 +289,30 @@ func TestBuiltinFilesAsSystem(t *testing.T) {
 		t.Fatalf("%v %d", err, len(res.Channels))
 	}
 }
+
+// TestAdminOverviewQueriesAsSystem runs the two queries the console's admin
+// overview sends (web/src/pages/devices/eventlog/overview.ts) against the
+// real log: the key events by source and ID, and the last day's Critical,
+// Error and Warning events. Both must be accepted by Windows.
+func TestAdminOverviewQueriesAsSystem(t *testing.T) {
+	needSystem(t)
+	be := realBackend(t)
+	ids := []int{6008, 41, 1074, 7031, 7034, 7000, 7009, 7023, 7, 11, 51, 153, 55, 98, 1000, 1002, 1001, 20, 1129, 1053, 1055, 36, 47, 129, 5719, 5722, 5805, 4625, 4740}
+	var ranges []eventrules.IDRange
+	for _, id := range ids {
+		ranges = append(ranges, eventrules.IDRange{From: id})
+	}
+	key := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application", "Security"}, IDs: ranges, Sensitive: true,
+		Providers: []string{"EventLog", "Microsoft-Windows-Kernel-Power", "User32", "Service Control Manager", "disk", "Ntfs", "Microsoft-Windows-Ntfs",
+			"Application Error", "Application Hang", "Windows Error Reporting", "Microsoft-Windows-WindowsUpdateClient", "Microsoft-Windows-GroupPolicy",
+			"Microsoft-Windows-Time-Service", "NETLOGON", "Microsoft-Windows-Security-Auditing"},
+		Time: &eventrules.TimeFilter{Last: "24h"}}
+	problems := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application"}, Levels: []int{1, 2, 3}, Time: &eventrules.TimeFilter{Last: "24h"}}
+	for name, in := range map[string]eventrules.Input{"key events": key, "problems": problems} {
+		res, raw, took := runReal(t, be, in)
+		t.Logf("%s: %d events in %s", name, len(res.Events), took)
+		if len(res.Errors) != 0 || res.End == nil || !res.End.Complete {
+			t.Errorf("%s: %s", name, raw)
+		}
+	}
+}

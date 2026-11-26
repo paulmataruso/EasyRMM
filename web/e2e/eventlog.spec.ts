@@ -114,14 +114,56 @@ test("a Windows computer enrolls with an agent that has the event viewer, and it
   await expect(logs.getByRole("checkbox", { name: "Security" })).toBeEnabled();
 });
 
+test("the tab opens into the admin overview by itself: the key events, then the last day's problems, with no click", async () => {
+  const page = admin;
+  // Nobody pressed anything since the tab opened; the page asks for the key events, then the problems, one after the other.
+  const keyJob = await nextJob();
+  expect(inputOf(keyJob)).toMatchObject({ op: "query", channels: ["System", "Application", "Security"], time: { last: "24h" }, sensitive: true });
+  const keyIds = ((inputOf(keyJob) as unknown as { ids: { from: number }[] }).ids ?? []).map((i) => i.from);
+  expect(keyIds).toEqual(expect.arrayContaining([6008, 41, 1074, 7031, 7034, 4625, 4740]));
+  expect(await agent.start(keyJob.runId)).toBe(true);
+  await agent.resulted(keyJob.runId, [
+    begin("query"),
+    { t: "pos", channel: "System", state: "ok" },
+    { t: "pos", channel: "Application", state: "ok" },
+    { t: "pos", channel: "Security", state: "ok" },
+    event(21, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
+    event(20, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
+    endLine({ returned: 2, read: 40 }),
+  ]);
+  const problemsJob = await nextJob();
+  expect(inputOf(problemsJob)).toMatchObject({ op: "query", channels: ["System", "Application"], levels: [1, 2, 3], time: { last: "24h" } });
+  expect(await agent.start(problemsJob.runId)).toBe(true);
+  await agent.resulted(problemsJob.runId, [
+    begin("query"),
+    { t: "pos", channel: "System", state: "ok" },
+    { t: "pos", channel: "Application", state: "ok" },
+    event(21, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
+    endLine({ returned: 1, read: 40 }),
+  ]);
+  await expect(page.getByRole("table", { name: "Service crashes and failures" })).toContainText("×2 since", { timeout: 20_000 });
+  await expect(page.getByRole("table", { name: "Problems" }).getByRole("row")).toHaveCount(2);
+  for (const name of [/^Search$/, /Read now/, /^Run$/, /Refresh/]) await expect(page.getByRole("button", { name })).toHaveCount(0);
+});
+
+/** The next job whose input satisfies the test; a job a newer search replaced is skipped. */
+async function jobWhere(pick: (input: Record<string, unknown>) => boolean): Promise<JobPayload> {
+  for (let i = 0; i < 10; i++) {
+    const job = await nextJob();
+    if (pick(inputOf(job) as unknown as Record<string, unknown>)) return job;
+  }
+  throw new Error("no job with that input came");
+}
+
 test("a search is a job: its input is the typed filters, its events are listed newest first, a hidden command line drops its event from a text search", async () => {
   const page = admin;
+  await page.getByRole("radio", { name: "All events" }).click();
   await page.getByRole("checkbox", { name: "Application" }).uncheck();
   await page.getByRole("checkbox", { name: "Error" }).check();
   await page.getByLabel("Event IDs").fill("7034, 7031");
   await page.getByLabel("Text").fill("e2e-text-marker");
-  await page.getByRole("button", { name: "Search" }).click();
-  const job = await nextJob();
+  // The search runs by itself a moment after the last change.
+  const job = await jobWhere((i) => i.text === "e2e-text-marker");
   expect(inputOf(job)).toMatchObject({ op: "query", channels: ["System"], levels: [2], ids: [{ from: 7034 }, { from: 7031 }], text: "e2e-text-marker", sensitive: false });
   expect(await agent.start(job.runId)).toBe(true);
   await agent.resulted(job.runId, [
@@ -164,8 +206,8 @@ test("the next page names the run, and the server builds the rest", async () => 
 
 test("a result that breaks a rule is not kept, and the page says so", async () => {
   const page = admin;
-  await page.getByRole("button", { name: "Search" }).click();
-  const job = await nextJob();
+  await page.getByRole("checkbox", { name: "Warning" }).check();
+  const job = await jobWhere((i) => Array.isArray(i.levels) && i.levels.includes(3));
   expect(await agent.start(job.runId)).toBe(true);
   // A Security event in a result for a query that did not ask for sensitive data.
   const sec = event(5, 4624, 4, [], "An account was logged on.");
@@ -203,10 +245,10 @@ test("the audit log records each first page and holds neither the text nor any e
   const audit = async (action: string) =>
     ((await (await page.request.get(`/api/v1/audit?action=${action}&limit=100`)).json()) as { items: { details?: Record<string, unknown> }[] }).items;
   const queries = await audit("eventlog.query");
-  // The channel list, the first page, the refresh that failed its check; the next page is covered by the first.
+  // The channel list, the overview's two queries, the search and the one that failed its check; the next page is covered by the first.
   const searches = queries.filter((r) => r.details?.operation === "query");
-  expect(searches).toHaveLength(2);
-  expect(searches[0]!.details).toMatchObject({ channels: ["System"], sensitive: false });
+  expect(searches.length).toBeGreaterThanOrEqual(4);
+  expect(searches.some((r) => r.details?.sensitive === false && Array.isArray(r.details?.channels) && r.details.channels.length === 1)).toBe(true);
   expect(queries.filter((r) => r.details?.operation === "channels")).toHaveLength(1);
   expect(searches.some((r) => r.details?.textLength === 15)).toBe(true);
   const everything = JSON.stringify(await (await page.request.get("/api/v1/audit?limit=500")).json());
