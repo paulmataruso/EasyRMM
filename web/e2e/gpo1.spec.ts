@@ -34,6 +34,7 @@ test.beforeAll(async ({ browser }) => {
   await expect(admin).toHaveURL(/\/$/);
 });
 test.afterAll(async () => {
+  stopped = true;
   await admin.context().close();
 });
 
@@ -58,23 +59,38 @@ const results: Record<string, unknown> = {
   wmi_filters: { filters: [] },
 };
 
-/** Answers the module jobs that arrive until `want` has been answered; the other reads are answered from `results`. */
-async function serve(want: string, reply?: (job: JobPayload) => unknown) {
-  for (let i = 0; i < 120; i++) {
-    for (const job of (await agent.poll(ACCEPTS)).filter((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))) {
+/** The agent answers every module job that arrives, in the background, from `results` unless a test set `override` for its kind
+ * (a change that must carry the data its script would print). The reads a change refreshes are answered too: the dialog of
+ * a change stays busy until the page has read again. */
+const override: Record<string, (job: JobPayload) => unknown> = {};
+const seen: { kind: string; job: JobPayload }[] = [];
+let stopped = false;
+async function answerLoop() {
+  while (!stopped) {
+    let jobs: JobPayload[] = [];
+    try {
+      jobs = await agent.poll(ACCEPTS);
+    } catch {
+      return;
+    }
+    for (const job of jobs.filter((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))) {
       const kind = kindOf(job.script);
-      const data = kind === want && reply ? reply(job) : results[kind] ?? { summary: "done" };
+      const data = override[kind] ? override[kind]!(job) : (results[kind] ?? { summary: "done" });
       expect(await agent.start(job.runId)).toBe(true);
       await agent.succeeded(job.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");
-      if (kind === want) return job;
+      seen.push({ kind, job });
     }
   }
-  throw new Error(`no ${want} job arrived`);
+}
+/** The first job of a kind the agent has answered (waits for it). */
+async function answered(kind: string): Promise<JobPayload> {
+  await expect.poll(() => seen.some((x) => x.kind === kind), { timeout: 30_000 }).toBe(true);
+  return seen.find((x) => x.kind === kind)!.job;
 }
 
 async function stepUp(page: Page) {
   const dialog = page.getByRole("dialog", { name: "Confirm it is you" });
-  if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
+  if (await dialog.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false)) {
     await dialog.getByLabel(/Code from your authenticator app/).fill(await nextCode(page, ADMIN.email));
     await dialog.getByRole("button", { name: "Confirm" }).click();
   }
@@ -95,13 +111,12 @@ test("a domain controller with the Group Policy role shows its GPOs by itself, w
   const enroll = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: key.publicKey, facts } });
   expect(enroll.status(), await enroll.text()).toBe(201);
   agent = new Agent(page.request, ((await enroll.json()) as { deviceId: string }).deviceId, key.privateKey);
-  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "ad_ds", state: "present" }, { name: "gpmc", state: "present" }] } });
-  await agent.poll(ACCEPTS);
+  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "gpmc", state: "present" }] } });
+  void answerLoop();
 
   await page.goto(`/devices/${agent.deviceId}?tab=roles`);
   await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Read now/ })).toHaveCount(0);
-  await serve("gpo_list");
   await expect(page.getByRole("row", { name: /Workstation baseline/ })).toBeVisible();
   await expect(page.getByText("Not linked anywhere")).toBeVisible();
 });
@@ -110,6 +125,7 @@ test("a rename needs a reason and a step-up, runs on the controller, and its aut
   const page = admin;
   await page.getByRole("row", { name: /Workstation baseline/ }).getByRole("button", { name: "Details" }).click();
   const detail = page.getByRole("dialog", { name: "Workstation baseline" });
+  // The dialog reads the GPO by itself; its actions show once the controller has answered.
   await detail.getByRole("button", { name: "Rename" }).click();
   const dialog = page.getByRole("dialog", { name: /Rename Workstation baseline/ });
   await dialog.getByLabel(/New name/).fill("Workstation baseline 2");
@@ -120,12 +136,13 @@ test("a rename needs a reason and a step-up, runs on the controller, and its aut
 
   const zip = Buffer.from("PK-e2e-backup-of-the-gpo".repeat(20));
   const backupId = "33333333-3333-3333-3333-333333333333";
-  const job = await serve("gpo_rename", () => ({
+  override.gpo_rename = () => ({
     summary: "Renamed the GPO Workstation baseline to Workstation baseline 2.", before: { name: "Workstation baseline" }, after: { name: "Workstation baseline 2" },
     gpoId: GPO, gpoName: "Workstation baseline 2",
     backup: { backupId, domain: "corp.test", gpoId: GPO, gpoName: "Workstation baseline", size: zip.length, sha256: createHash("sha256").update(zip).digest("hex"), computer: ver(3), user: ver(0), zip: zip.toString("base64") },
     versionBefore: { computer: ver(3), user: ver(0) }, versionAfter: { computer: ver(3), user: ver(0) },
-  }));
+  });
+  const job = await answered("gpo_rename");
   expect(job.params).toMatchObject({ id: GPO, newName: "Workstation baseline 2", reason: "Align the name with the policy", expectComputerVersion: 3, expectUserVersion: 0 });
   // The dialog closes on success; the Backups list shows the backup the server kept, and its bytes are the controller's.
   await expect(page.getByRole("dialog", { name: /Rename/ })).toHaveCount(0, { timeout: 20_000 });
@@ -170,13 +187,13 @@ test("a link at the domain root is held for a second person, and the person who 
 test("every setting of a GPO is shown read-only from its report", async () => {
   const page = admin;
   await page.getByRole("radio", { name: "GPOs" }).click();
-  await page.getByRole("row", { name: /Workstation baseline/ }).getByRole("button", { name: "Settings" }).click();
-  await serve("gpo_report", () => {
+  override.gpo_report = () => {
     // What decodeReport reads: the report's XML, gzipped, in base64.
     const xml = `<GPO xmlns="http://www.microsoft.com/GroupPolicy/Settings" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><Name>Workstation baseline 2</Name><Computer><VersionDirectory>3</VersionDirectory><VersionSysvol>3</VersionSysvol><Enabled>true</Enabled><ExtensionData><Extension xmlns:q1="http://www.microsoft.com/GroupPolicy/Settings/Registry" xsi:type="q1:RegistrySettings"><q1:Policy><q1:Name>Turn off Windows Defender Antivirus</q1:Name><q1:State>Disabled</q1:State></q1:Policy></Extension><Name>Registry</Name></ExtensionData></Computer><User><Enabled>true</Enabled></User></GPO>`;
     const gz = gzipSync(Buffer.from(xml)).toString("base64");
     return { id: GPO, name: "Workstation baseline 2", xmlGzip: gz };
-  });
+  };
+  await page.getByRole("row", { name: /Workstation baseline/ }).getByRole("button", { name: "Settings" }).click();
   await expect(page.getByText("Turn off Windows Defender Antivirus")).toBeVisible();
   await expect(page.getByText("Read-only", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /^(Edit|Save)/ })).toHaveCount(0);
