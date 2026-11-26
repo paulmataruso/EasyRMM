@@ -1,6 +1,6 @@
 # ADR-0076: Managing the Windows server roles from the console (certificate authority, DNS, DHCP, file sharing, print)
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-26): "In addiitnal to AD, I would like
   modules for AD Cert Authority, DNS, DHCP, File Shareing and Print Server
   as well. These modules can be toggled off if the user does not want them.
@@ -101,7 +101,7 @@ The owner expects "full management from the GUI". Honestly, per role:
    Anonymous full share rights, no NTFS change that removes SYSTEM or
    Administrators, no Point and Print weakening.
 6. Alerts are read from Facts, snapshots and Microsoft-documented events,
-   with quiet defaults: 16 kinds and 17 default policies, 11 of them on.
+   with quiet defaults: 17 kinds and 19 default policies, 12 of them on.
 
 ### 1. Identity, permissions and where it is offered
 
@@ -189,7 +189,9 @@ serials are hexadecimal; addresses are parsed (`[ipaddress]`) not matched.
 
 #### What the tools allow (honest, and what needs `certutil`)
 
-`ADCSAdministration` has cmdlets to install and uninstall the CA, read and
+CA install and uninstall are in the separate **`ADCSDeployment`** module
+(`Install-AdcsCertificationAuthority` and kin), which this ADR never calls.
+`ADCSAdministration` has cmdlets to read and
 change CRL distribution points and AIA (`Get/Add/Remove-CACrlDistributionPoint`,
 `Get/Add/Remove-CAAuthorityInformationAccess`) and to read, publish and
 unpublish templates on the CA (`Get-CATemplate`, `Add-CATemplate`,
@@ -236,6 +238,7 @@ they are only listed, published and unpublished.
 | `crl_status` | base and delta CRL: this and next update, size, period, overlap, publication points reachable (`certutil -URL` is interactive and not used; HTTP points are fetched with a bounded `Invoke-WebRequest` to the CDP URL read from the CA, from the server, 10 s) | none | 0 | 60 s |
 | `template_list` | published templates on this CA, with, for each, the name, version and the **risk flags read from the template**: enrollee supplies subject, client-authentication or any-purpose EKU, who may enroll | none | 0 | 60 s |
 | `template_available` | templates in the directory not yet published here (`certutil -ADTemplate` read; the "Add-CATemplate" candidates) | none | 0 | 60 s |
+| `ca_findings` | **read-only misconfiguration detection, ESC1 to ESC8** (the AD CS escalation classes): template name flags, EKUs and enrollment ACLs read **from the directory** (the `CN=Certificate Templates` objects through ADSI; `Get-CATemplate` returns only the name and OID), the CA's `EditFlags` (ESC6: `EDITF_ATTRIBUTESUBJECTALTNAME2`, by `certutil -getreg policy\EditFlags`), the CA's own permissions (ESC7: ManageCA and ManageCertificates held by low-privilege principals) and **HTTP web enrollment** (ESC8: the `/certsrv` endpoint over HTTP or without extended protection). Returns findings `{id, class, subject, evidence}`; changes nothing and offers no fix button | none | 0 | 120 s |
 | `template_publish` | `Add-CATemplate -Name` | template name (from `template_available`, validated against the last read) | 2; **3 when `template_list` flags the template as enrollee-supplies-subject with a client-authentication or any-purpose EKU** (dynamic rule) | 60 s |
 | `template_unpublish` | `Remove-CATemplate -Name` (certificates already issued stay valid) | template name from `template_list` | 2 | 60 s |
 | `requests_pending` | pending requests: id, requester, template, submitted | optional page cursor | 0, Sensitive | 60 s |
@@ -288,6 +291,7 @@ others feed the `activity` view.
 | `ca_certificate_expiring` (named by ADR-0073) | hourly `ca_certificate` read | days before *not after* | unused | the CA certificate expires within `threshold` days | a renewed certificate, or manually |
 | `ca_crl_expiring` | hourly `crl_status` read | unused | minutes before `NextUpdate` | the base CRL's `NextUpdate` is within `minutes` or past | a new CRL |
 | `ca_service_stopped` | role `state` from Facts | unused | how long | `CertSvc` stopped for `minutes` | running again |
+| `ca_findings_new` | weekly `ca_findings` read | unused | unused | a **finding not in the previous read** (the first read is the baseline and opens nothing) | the finding no longer appears |
 | `ca_certificate_revoked` | event 4870 | unused | unused | any revocation **made outside the console** (the module's own revoke is excluded by serial and time) | manually |
 
 Alerts name the CA and the count, never a subject or requester (alerts are
@@ -320,12 +324,15 @@ will receive this". The module changes the zone **through this server**
 #### Protected records (decided in review)
 
 On a domain, DNS carries the records that let computers find domain
-controllers. The module **refuses to edit or delete**: any record whose
-name starts with `_` in a zone that is AD-integrated (the locator records:
-`_msdcs`, `_ldap._tcp`, `_kerberos`, `_gc`, `_sites`, and the `_tcp`,
-`_udp`, `_sites` and `_domainkeys` trees), the `@` SOA and NS records, the
-A and AAAA records of this server's own name, and the delegation to
-`_msdcs`. These are changed by Active Directory itself (netlogon). A change
+controllers. The module **refuses to edit or delete** this explicit set, and
+nothing else (amended after review; the earlier "any name starting with `_`"
+rule is withdrawn): every record under `_msdcs.<forest root>` (including the
+`gc` and `<guid>` CNAMEs); the `_ldap`, `_kerberos`, `_kpasswd` and `_gc`
+SRV records under `_tcp`, `_udp` and `_sites` of an AD-integrated zone; the
+zone apex A, AAAA, NS and SOA records that point at domain controllers; and
+the `DomainDnsZones` and `ForestDnsZones` trees. Non-AD underscore records
+(`_dmarc`, `_acme-challenge`, `_domainkey`, `_spf`, SRV for other services)
+**are editable**. These are changed by Active Directory itself (netlogon). A change
 is refused with `protected_record`; the server's own denylist also refuses
 by name, and the guard runs twice as ADR-0073 does for AD. Everything else
 can be edited.
@@ -342,8 +349,8 @@ can be edited.
 | `record_set` | change a record by its old value and new value (`Set-DnsServerResourceRecord` needs both) | zone, old record, new record | 2 | 30 s |
 | `record_remove` | one record by name, type and data | zone, name, type, data | 2; **3 for removing every record of a name** (`-RemoveAll`-style) | 30 s |
 | `zone_create` | primary zone, file-backed or AD-integrated (scope enum), forward or reverse | name, kind, scope, dynamic update setting (never `NonsecureAndSecure` by default) | 2 | 60 s |
-| `zone_set_update` | dynamic update: `None`, `Secure` (AD only), or `NonsecureAndSecure` | zone, enum | 2; **3 for `NonsecureAndSecure`** (allows unauthenticated updates; the dialog says so) | 30 s |
-| `zone_remove` | `Remove-DnsServerZone` | zone | **3** | 60 s |
+| `zone_set_update` | dynamic update: `None`, `Secure` (AD only), or `NonsecureAndSecure`; **`None` on an AD-integrated zone is refused** (domain computers could no longer register) | zone, enum | 2; **3 for `NonsecureAndSecure`** (allows unauthenticated updates; the dialog says so) | 30 s |
+| `zone_remove` | `Remove-DnsServerZone`; **refuses outright** (not a tier, `protected_zone`) the AD domain zone, `_msdcs.<forest>`, `DomainDnsZones` and `ForestDnsZones` | zone | **3** | 60 s |
 | `zone_set_replication` | AD-integrated replication scope, or convert file-backed to AD-integrated | zone, scope enum | **3** | 120 s |
 | `forwarders_set` | `Set-DnsServerForwarder`: the list and timeout | up to 10 addresses (parsed), timeout | 2 | 30 s |
 | `scavenging_set` | server interval and per zone aging, refresh and no-refresh intervals | zone or server, hours | 2 | 30 s |
@@ -351,10 +358,10 @@ can be edited.
 | `transfer_set` | zone transfer: none, to named servers, or to servers listed as NS; notify list | zone, mode enum (`None`, `ListedNameServers`, `NamedServers`), servers | 2 | 30 s |
 | `cache_clear` | `Clear-DnsServerCache` | none | 1 | 30 s |
 | `zone_reload` | `Restart`/reload of a file zone, or force an AD zone to reread from the directory | zone | 1 | 60 s |
-| `service_restart` | restart the DNS service (drops in-flight queries) | none | 2 | 90 s |
+| `service_restart` | restart the DNS service (drops in-flight queries; clients lose name resolution) | none | **3** | 90 s |
 
 **Zone transfers: "to any server" is not an option** (decided in review). The
-enumeration has no member for it; a zone found with `TransferToAnyServer`
+enumeration has no member for it; a zone found transferring to any server (the `SecureSecondaries` value `TransferAnyServer` in the `Set-DnsServerPrimaryZone` reference on Learn, read 2026-11-26; the spelling `TransferToAnyServer` used earlier in this draft is withdrawn)
 is shown with a warning and a one-click "restrict to listed name servers"
 (`transfer_set`, tier 2). An unrestricted transfer gives anyone the whole
 zone.
@@ -376,10 +383,12 @@ Microsoft, Windows, DNS-Server, Audit*; enabled by default, Microsoft,
 | 513 | the zone was deleted |
 | 514 | the zone was updated (a zone setting changed) |
 | 515 / 516 | a resource record was created / deleted |
+| 517 / 518 | all records of a type and name / all records at a node were deleted |
 | 521 | a resource record was scavenged |
 | 537 | the forwarder list was reset |
 | 541 | a server setting was set |
 | 548 | a request to restart the DNS service was received |
+| 552 | **to confirm on the test server (T1)**, with 517 and 518: not read from Learn on the day; used only in the activity view until confirmed |
 
 #### Alert kinds
 
@@ -435,26 +444,29 @@ offered (it needs two servers and a shared secret).
 | `failover_get` | relationship and state | none | 0 | 30 s |
 | `scope_create` | `Add-DhcpServerv4Scope`: name, start, end, mask, lease duration, state **Inactive by default** | name, range, mask, duration | 2 | 60 s |
 | `scope_set` | name, lease duration, description; not the range | scope id, fields | 2 | 30 s |
-| `scope_activate` / `scope_deactivate` | state Active or Inactive; **deactivating stops leasing to every client of the scope** | scope id | 2 | 30 s |
-| `scope_remove` | `Remove-DhcpServerv4Scope`: also removes its leases, reservations and options | scope id | **3** | 60 s |
+| `scope_activate` | state Active | scope id | 2 | 30 s |
+| `scope_deactivate` | state Inactive: **stops leasing to every client of the scope** | scope id | **3** | 30 s |
+| `scope_remove` | `Remove-DhcpServerv4Scope`: also removes its leases, reservations and options; **in a failover relationship the dialog shows the partner and the relationship and that the partner's copy is affected by replication** | scope id | **3** | 60 s |
 | `exclusion_add` / `exclusion_remove` | exclusion ranges (the add refuses a range outside the scope) | scope id, start, end | 2 | 30 s |
 | `reservation_add` / `reservation_set` | reservation by client ID (MAC) and address | scope id, address, client id, name | 2 | 30 s |
 | `reservation_remove` | removes a reservation (an active client keeps its lease until it expires) | scope id, address | 2 | 30 s |
-| `option_set` | scope or server **options by a fixed list**: 3 router, 6 DNS servers, 15 domain name, 42 NTP, 51 lease time, 66 and 67 boot server and file (parsed as addresses or bounded strings) | scope id or server, option id from the list, value | 2; **3 for a change to 3 or 6 on a scope with more than 50 active leases** (dynamic rule: the new gateway or DNS server reaches that many clients) | 30 s |
+| `option_set` | scope or server **options by a fixed list**: 3 router, 6 DNS servers, 15 domain name, 42 NTP, 51 lease time, 66 and 67 boot server and file (parsed as addresses or bounded strings) | scope id or server, option id from the list, value | 2; **3 for any change to 3 or 6 at server level, and on a scope with more than 50 active leases** (dynamic rule: the new gateway or DNS server reaches that many clients) | 30 s |
 | `lease_remove` | `Remove-DhcpServerv4Lease`: frees an address; the client renegotiates | scope id, address | 2 | 30 s |
 | `lease_to_reservation` | `Add-DhcpServerv4Reservation` from a lease | scope id, address | 2 | 30 s |
 | `failover_replicate` | `Invoke-DhcpServerv4FailoverReplication` | optional scope | 2 | 120 s |
-| `service_restart` | restart the DHCP service | none | 2 | 90 s |
+| `service_restart` | restart the DHCP service (clients cannot renew meanwhile) | none | **3** | 90 s |
 
 A new scope is created **Inactive** and the console shows an activate step,
 so a scope never begins serving by accident (decided in review). Options
 outside the list (vendor classes, policies) are read only.
 
-**Events.** The DHCP Server service's own System-log events for an
-unauthorized server and a full scope have not been verified on Microsoft
-Learn on the day, so **no DHCP event ID is used** (decided in review).
-Both conditions are read: authorization from `status`, fullness from scope
-statistics.
+**Events (to confirm at the R-step).** The writer's recollection of the DHCP
+Server System-log events, **not verified on Learn on the day**: 1046 (not
+authorized, to confirm), 1020 (scope range full or nearly so, to confirm) and
+1063 (authorization state, to confirm). They are the **only** DHCP event
+sources an alert may use, and only after slice H1 confirms ID, log, source and
+text on the test server (tested in T1 and T2). Until then the alerts read
+authorization from `status` and fullness from scope statistics.
 
 #### Alert kinds
 
@@ -527,6 +539,13 @@ and are limited as follows (decided in review):
 share. An administrator who needs them uses ADR-0064's script runner under
 `script.run`, audited as a script.
 
+**Protected shares (amended after review).** `SYSVOL`, `NETLOGON`, `print$`,
+`IPC$`, `ADMIN$` and every share whose name ends in `$` are protected:
+**no remove, no access change, no NTFS edit**, refused with `protected_share`
+(the server's denylist refuses by name as well). **A domain controller also
+reports `file_server`** (it has SYSVOL and NETLOGON), so these rules apply
+there and the module is offered there like on any server.
+
 **Share permission guards.** Granting `Full` or `Change` to **Everyone**,
 **Anonymous Logon** or **Authenticated Users**, or `Full` to **Users**, is
 refused with `weakens_access` (reading is allowed). Blocking and unblocking
@@ -544,10 +563,10 @@ refused with `weakens_access` (reading is allowed). Blocking and unblocking
 | `session_list` | `Get-SmbSession`, paged | cursor | 0, Sensitive | 60 s |
 | `openfile_list` | `Get-SmbOpenFile`, paged, optional share | share, cursor | 0, Sensitive | 60 s |
 | `quota_list` | FSRM quotas and templates | none | 0 | 60 s |
-| `share_create` | `New-SmbShare`: path must exist on a local fixed volume, not a system path, name not special; defaults: encryption off, access `Read` for Administrators and the creator account only | name, path, description, enumeration, caching enum | 2 | 60 s |
+| `share_create` | `New-SmbShare`: path must exist on a local fixed volume; **refused (`protected_path`) when the path is a drive root, `%SystemRoot%` or below, or SYSVOL**; name not special; defaults: encryption off, access `Read` for Administrators and the creator account only | name, path, description, enumeration, caching enum | 2 | 60 s |
 | `share_set` | description, caching, enumeration mode, concurrent limit, encrypt data (cannot set `-Special`) | name, fields | 2 | 30 s |
 | `share_access_grant` / `share_access_revoke` | `Grant-/Revoke-SmbShareAccess`, `Block-/Unblock-` | share, account, right enum (`Read`, `Change`, `Full`), guards above | 2 | 30 s |
-| `share_remove` | `Remove-SmbShare` **removes the share, not the files**; users lose access at once and open files are dropped | name | **3** | 60 s |
+| `share_remove` | (**refused for protected shares**) `Remove-SmbShare` **removes the share, not the files**; users lose access at once and open files are dropped | name | **3** | 60 s |
 | `ntfs_ace_set` / `ntfs_ace_remove` | the typed entry edits above | path, account, right, type, flags | **3** | 2 h |
 | `session_close` | `Close-SmbSession`: the user reconnects at once; open files can lose unsaved changes | session id | 2 | 30 s |
 | `openfile_close` | `Close-SmbOpenFile`: **unsaved changes in the file can be lost**; the dialog names the user and file | file id | 2 | 30 s |
@@ -640,7 +659,7 @@ Microsoft's CVE and KB pages and are **to confirm on the test server**
 | `printer_add` | `Add-Printer` with a driver **already installed** and an existing port | name, driver name, port name | 2 | 60 s |
 | `port_add` | `Add-PrinterPort` TCP/IP: a parsed address and port number | name, address, port | 2 | 30 s |
 | `port_remove` | `Remove-PrinterPort` of a port **no printer uses** | name | 2 | 30 s |
-| `spooler_restart` | restart the Print Spooler (queued jobs persist; jobs in transit retry) | none | 2 | 90 s |
+| `spooler_restart` | restart the Print Spooler (queued jobs persist; all printing stops meanwhile) | none | **3** | 90 s |
 | `point_and_print_restrict` | the strengthening write above | none | 2 | 30 s |
 | `queue_clear` | cancel **all** jobs of a printer | printer | **3** | 120 s |
 | `printer_remove` | `Remove-Printer`: removes the queue **and its share** | printer | **3** | 60 s |
@@ -648,7 +667,7 @@ Microsoft's CVE and KB pages and are **to confirm on the test server**
 | `driver_remove` | `Remove-PrinterDriver` (not `-RemoveFromDriverStore`), refused while a printer uses it | driver name | **3** | 60 s |
 
 Tier 3 needs `print.destroy` (Site Administrator and above) plus the
-step-up; a Technician manages jobs, queues and sharing through tiers 1 and 2.
+step-up (so a Technician cannot restart the spooler); a Technician manages jobs, queues and sharing through tiers 1 and 2.
 
 #### Alert kinds
 
@@ -658,8 +677,11 @@ step-up; a Technician manages jobs, queues and sharing through tiers 1 and 2.
 | `print_point_and_print_weakened` | `hardening_status`, hourly | unused | unused | `RestrictDriverInstallationToAdministrators` not 1, or either suppression value set | corrected |
 | `print_service_stopped` | role `state` | unused | how long | Spooler stopped for `minutes` on a computer reporting `print_server` | running |
 
-**Events.** The PrintService operational and admin event IDs have not been
-verified on Microsoft Learn on the day, so none is used (decided in review).
+**Events (to confirm at the R-step).** PrintService 808 and 316 (the
+writer's recollection of Admin-log events about a failed spooler plug-in load
+and a driver added; **not verified on Learn on the day**) are the only print
+event sources an alert may use, after slice P1 confirms them on the test
+server. Until then the alerts read the registry and the queues.
 
 ### 8. Where it sits (ADR-0072, ADR-0073 section 7)
 
@@ -684,14 +706,14 @@ Server Core has no GUI and the modules run all the same; Windows desktops
 never report these roles (ADR-0073). A role the agent has not yet reported
 shows "not detected yet".
 
-### 9. Alerts: all sixteen kinds and the quiet defaults
+### 9. Alerts: all kinds and the quiet defaults
 
 Registered with the monitoring package as ADR-0073 section 6 describes. All
 obey `modules.Allowed` (so `devscope.Allowed(org)`): nothing evaluates for an
 organization that is not allowed, a module that is off or a role not
 detected, and open alerts resolve with `module off` or `role removed`.
 
-Scheduled reads (`ca_certificate`, `crl_status`, `scope_list`, `status` for
+Scheduled reads (`ca_certificate`, `crl_status`, `ca_findings` (weekly), `scope_list`, `status` for
 DHCP, `printer_list`, `hardening_status`, `quota_list`) run **at most hourly
 per device**, only for enabled modules, never when the computer is offline
 (ADR-0073 section 5). Events reach the server through ADR-0068's reader (the
@@ -711,6 +733,7 @@ healthy server opens none in a normal week.
 | Certificate authority: CA certificate expires within 14 days | `ca_certificate_expiring` | 14 days | - | critical | on |
 | Certificate authority: CRL about to lapse | `ca_crl_expiring` | - | 240 | critical | on |
 | Certificate authority: service stopped | `ca_service_stopped` | - | 15 | critical | on |
+| Certificate authority: new misconfiguration finding | `ca_findings_new` | - | - | warning | on |
 | Certificate authority: certificate revoked outside the console | `ca_certificate_revoked` | - | - | warning | **off** |
 | DNS: service stopped | `dns_service_stopped` | - | 10 | critical | on |
 | DNS: zone deleted | `dns_zone_deleted` | - | - | warning | on |
@@ -725,8 +748,8 @@ healthy server opens none in a normal week.
 | Print: Point and Print weakened | `print_point_and_print_weakened` | - | - | critical | on |
 | Print: service stopped | `print_service_stopped` | - | 15 | warning | **off** |
 
-Sixteen kinds (4 CA, 3 DNS, 3 DHCP, 3 files, 3 print) and seventeen policies
-(the CA certificate kind has two thresholds), eleven on and six off.
+Seventeen kinds (5 CA, 3 DNS, 3 DHCP, 3 files, 3 print) and nineteen policies
+(the CA certificate kind has two thresholds), twelve on and seven off.
 
 Why these: a stopped CA, DNS or DHCP service for ten or fifteen minutes is an
 outage and a reboot is shorter; a CA certificate 90 days from its end is
@@ -745,7 +768,7 @@ opens an alert.
 
 Every automatic behaviour here goes through `modules.Allowed`, which wraps
 `devscope.Allowed(orgID)` (ADR-0073's framework gate): the hourly reads, the
-evaluation of the sixteen kinds, the default-policy creation, and the role
+evaluation of the alert kinds, the default-policy creation, and the role
 rescans that feed them. Operator requests are gated by the toggle and the
 permissions as every call is. Until the guard has landed everywhere,
 `modules.Allowed` calls `devscope.Allowed` and the toggle only.
@@ -808,7 +831,7 @@ the owner's notes, not here.)
   * *DHCP*: scope create (inactive), activate, lease from a second test VM,
     reservation, exclusion, options, lease remove, scope remove; deactivate
     with active leases; the authorization state on T1 and T2; the dynamic
-    tier-3 rule for options 3 and 6 on a scope with leases.
+    tier-3 rule for options 3 and 6 (always at server level; on a scope with leases).
   * *Files*: share create, access grant and the refused weakening, the
     open-file close (hold a file open from a second VM), session close;
     **NTFS entry add and remove on a generated tree of 150,000 files** to
@@ -839,7 +862,7 @@ dynamic tiers (template publish, DNS update setting, DNS record-remove-all,
 DHCP options 3 and 6, NTFS bound) over a table; the protected-record and
 protected-path denylists (the DNS name set, the path set, the paths outside
 a share); the weakening refusals (everyone, anonymous, authenticated users,
-`TransferToAnyServer`, Point and Print values); the NTFS entry builder
+`TransferAnyServer`, Point and Print values); the NTFS entry builder
 (rights enumeration, `would_lock_out` over a table of ACLs, SYSTEM and
 Administrators kept); the 100,000 bound logic; the catalogue lint
 (every tier 3 needs step-up, confirmation, `print.destroy` where print).
@@ -895,7 +918,7 @@ R0): file sharing and print (testable on the runner and on any test server),
 then DNS and DHCP (a domain for the AD-integrated and authorization steps),
 then the certificate authority (most sensitive, needs the Enterprise CA).
 
-* **File sharing.** **F1** reads (`status`, `share_list`, `share_access_get`,
+* **File sharing.** **F1** reads and **the protected-share list and refusals (SYSVOL, NETLOGON, `print$`, `IPC$`, `ADMIN$`, every `X$`, protected create paths)** (`status`, `share_list`, `share_access_get`,
   sessions, open files) and the view, runner tests. **F2** share create, set,
   remove, share access grant and revoke with the weakening guards. **F3**
   open-file and session close. **F4** NTFS: `ntfs_acl_get`, `ntfs_preview`,
@@ -908,7 +931,7 @@ then the certificate authority (most sensitive, needs the Enterprise CA).
   ports, sharing, spooler restart. **P4** tier 3: queue clear, printer
   remove, driver add and remove. **P5** `point_and_print_restrict` and the
   Security panel. **P6** alerts and default policies.
-* **DNS.** **D1** reads and **the gate** (what SYSTEM can do against an
+* **DNS.** **D1** reads, **the protected-zone and protected-record lists and the `protected_zone` refusals**, and **the gate** (what SYSTEM can do against an
   AD-integrated zone). **D2** record add, set, remove with the protected-record
   guard. **D3** zone create, remove, update setting, replication scope.
   **D4** forwarders, scavenging, transfers (no "any server"), cache and
@@ -922,7 +945,7 @@ then the certificate authority (most sensitive, needs the Enterprise CA).
 * **Certificate authority.** **C1** reads (`status`, `ca_certificate`,
   `crl_status`, `activity`) and **the gate** (which cmdlets and `certutil`
   verbs exist and work as SYSTEM). **C2** templates (list, available, publish,
-  unpublish with the dynamic tier). **C3** requests and certificates lists,
+  unpublish with the dynamic tier) and **`ca_findings` (ESC1 to ESC8) with `ca_findings_new`**. **C3** requests and certificates lists,
   `request_get`, the restriction builder and its lint. **C4** approve, deny,
   revoke, unrevoke (tier 3 and 2). **C5** `crl_publish` and the CRL alerts.
   **C6** the remaining alerts and default policies. The `certutil` verb
