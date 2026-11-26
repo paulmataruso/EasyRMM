@@ -93,7 +93,7 @@ func ShellRequires(shell string) []string {
 	case ShellPwsh:
 		return []string{CapJobPwsh}
 	case ShellNative:
-		return []string{CapJobNative, CapJobParams}
+		return []string{CapJobNative}
 	}
 	return []string{}
 }

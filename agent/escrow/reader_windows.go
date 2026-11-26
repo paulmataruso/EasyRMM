@@ -224,8 +224,8 @@ func (SystemReader) Volumes(ctx context.Context) ([]Volume, error) {
 		if err != nil {
 			return false, err
 		}
-		if status == 0 && len(ids) == 0 {
-			return false, nil // BitLocker is not on this volume
+		if status == 0 && len(ids) == 0 && letter == "" {
+			return false, nil // BitLocker is not on this volume, and it is not one a person turns it on for
 		}
 		out = append(out, Volume{ID: id, Mount: letter, Status: conversionStatus[status], Protectors: ids})
 		return false, nil

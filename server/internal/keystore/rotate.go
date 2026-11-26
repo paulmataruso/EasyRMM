@@ -467,7 +467,7 @@ func (s *Service) WatchRotations(ctx context.Context) error {
 		prot string
 	}
 	var overdue []due
-	var open []string
+	open := []string{}
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT e.device_id, e.organization_id, e.site_id, coalesce(d.hostname, ''), e.volume_id, e.protector_id
 			FROM recovery_key_escrows e JOIN devices d ON d.id = e.device_id

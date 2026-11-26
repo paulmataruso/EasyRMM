@@ -150,6 +150,7 @@ func (a *Agent) rotateBitLocker(ctx context.Context, key *agentproto.EscrowKeyPa
 		}
 		a.Log.Warn("a rotation did not verify; the new recovery password was removed and the old one stays", "why", why, "volume", n.VolumeID)
 	}
+	a.reportFresh(ctx)
 	pw, err := a.Reader.RecoveryPassword(ctx, n.VolumeID, newID)
 	if err != nil {
 		rollback("reading it failed")
@@ -158,6 +159,7 @@ func (a *Agent) rotateBitLocker(ctx context.Context, key *agentproto.EscrowKeyPa
 	defer escrowcrypto.Zero(pw)
 	ans, err := a.uploadSecret(ctx, key, pub, n.VolumeID, newID, pw)
 	escrowcrypto.Zero(pw)
+	a.dropProtector(n.VolumeID, newID)
 	switch {
 	case err != nil:
 		rollback("sending it failed")
@@ -217,6 +219,30 @@ func (a *Agent) volumeByID(ctx context.Context, id string) (*VolumeInfo, error) 
 		}
 	}
 	return nil, nil
+}
+
+// reportFresh reads the volumes and reports them now, so that a protector the
+// agent just added is one the server knows before the record for it arrives.
+// The needs the answer carries are dropped for that protector by the caller:
+// it is being escrowed here.
+func (a *Agent) reportFresh(ctx context.Context) {
+	vols, err := a.Reader.Volumes(ctx)
+	if err != nil {
+		a.Log.Debug("reading BitLocker volumes failed", "error", err)
+		return
+	}
+	a.mu.Lock()
+	a.sent = nil
+	a.mu.Unlock()
+	a.report(ctx, vols, a.now(), 0)
+}
+
+// dropProtector forgets any need that names a protector the agent has escrowed
+// itself.
+func (a *Agent) dropProtector(volume, protector string) {
+	a.needs = slices.DeleteFunc(a.needs, func(x agentproto.EscrowNeed) bool {
+		return x.VolumeID == volume && x.ProtectorID == protector
+	})
 }
 
 // forceReport has the next sync read and report the volumes again.
@@ -332,7 +358,9 @@ func (a *Agent) EnableBitLocker(ctx context.Context, p agentproto.BitLockerEnabl
 			a.Log.Warn("removing a recovery password that was not escrowed failed", "error", err)
 		}
 	}
-	// (c) escrow it and wait for verified.
+	// (c) escrow it and wait for verified. The server must know the protector
+	// before it takes a record for it.
+	a.reportFresh(ctx)
 	pw, err := a.Reader.RecoveryPassword(ctx, vol.ID, pid)
 	if err != nil {
 		removeIt()
@@ -341,6 +369,7 @@ func (a *Agent) EnableBitLocker(ctx context.Context, p agentproto.BitLockerEnabl
 	defer escrowcrypto.Zero(pw)
 	ans, err := a.uploadSecret(ctx, key, pub, vol.ID, pid, pw)
 	escrowcrypto.Zero(pw)
+	a.dropProtector(vol.ID, pid)
 	if err != nil {
 		removeIt()
 		return fail(codeUnverified, "The recovery password could not be escrowed. Encryption was not started.")
