@@ -224,6 +224,21 @@ a new one later adds to this tab.
   the invite dialog reads is `passwordResetAvailable` of `GET /auth/options`
   (the server's `mailer.Available`), which any signed-in user may read; the
   Notifications tab's `/settings/mail-server` needs `settings.manage`.
+* Amended 2026-11-26 (decided in review): S7 and S8 as built.
+  * Alert policies: Settings > Alert policies shows with `monitoring.view` and lists only the shared policies (a super
+    administrator adds them); the organization and site tabs list only their own level, so a site's tab does not repeat
+    its organization's. The policy dialog no longer has a level picker, because every page that opens it fixes the scope.
+    The Alerts "Policies" link follows the page's filter (a group or a device goes to its site).
+  * Patching tab: the tab id is `patching` and needs `patch.configure` (it was `patch-policy` with `patch.view`);
+    `?tab=patch-policy` still opens it. Tag definitions (names, colours, priorities, policies) are shared by every
+    organization, so they stay in Settings > Patching beside the default policy; the organization's tab carries what is
+    per organization: its tags (assignment), policy, monthly report schedule and automatic agent install. Settings >
+    Patching gains an "Engine" view (the old Patching engine entry, now without the per-organization rows), and
+    `?tab=easypatch` redirects to it. `?tab=patching&view=reports` redirects to the organization's Patching tab, or to
+    the list of organizations when none is named.
+  * Server: the automatic agent install needed `settings.manage` anywhere. `PATCH /settings/easypatch/organizations/{id}`
+    now also accepts `patch.configure` on that organization, and `GET /patching/organizations/{id}/agent-install` (the
+    organization's own link, `patch.configure` on it, no call to the engine) feeds the tab.
 
 ## Slices
 

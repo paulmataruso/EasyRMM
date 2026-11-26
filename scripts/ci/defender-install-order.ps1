@@ -73,12 +73,12 @@ function Invoke-Install([string]$FailAt) {
 
 function Assert-Clean([string]$When) {
     foreach ($p in @($dataRoot, $filesRoot)) {
-        if (Test-Path -LiteralPath $p) { throw "$When: the script left $p behind" }
+        if (Test-Path -LiteralPath $p) { throw "${When}: the script left $p behind" }
     }
     if ($active) {
         $pref = Get-MpPreference
         foreach ($l in @($pref.ExclusionPath, $pref.ExclusionProcess, $pref.AttackSurfaceReductionOnlyExclusions, $pref.ControlledFolderAccessAllowedApplications)) {
-            foreach ($e in @($l)) { if ($e -like "*\EasyRMM\*" -or $e -like "*\EasyRMM") { throw "$When: the script left the exclusion $e behind" } }
+            foreach ($e in @($l)) { if ($e -like "*\EasyRMM\*" -or $e -like "*\EasyRMM") { throw "${When}: the script left the exclusion $e behind" } }
         }
     }
 }

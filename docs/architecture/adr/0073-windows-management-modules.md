@@ -331,11 +331,13 @@ Custom roles, if they exist by then, see them in the same list.
   subject's name and the effect and the request carries
   `confirm: "<action>:<subject>"` that the server compares, so a stray
   request or script cannot do it by omission. Password resets, account
-  disabling and every destructive action need a **step-up**: a sign-in
-  re-check within the last 10 minutes. It is **not built**
-  (`auth/service.go` only records the AMR and `AuthenticatedAt`), so it is
-  its own slice below (or F5, if that lands first; whichever is first builds
-  it and the other uses it). The confirmation is part of the action's catalogue
+  disabling and every destructive action need a **step-up**: a second
+  factor confirmed within the last 5 minutes, as
+  [ADR-0055](0055-lets-encrypt-in-one-step.md#step-up-authentication)
+  defines it. *Amended 2026-11-26 (decided in review):* it said "a sign-in
+  re-check within the last 10 minutes"; ADR-0055 is the one definition.
+  Step-up is built by F5 (`RequireStepUp`); slice 4 below only attaches it
+  by name. The confirmation is part of the action's catalogue
   entry, not of each handler, so no action forgets it.
 * **The job kind in the server (new).** `jobs.go` allows only `script`,
   `software` and `hardening` (the insert at line 579 and the kind filter at
@@ -522,8 +524,10 @@ it has, the function calls `devscope.Allowed` and the toggle only.
 3. **Agent protocol: `params`.** The `params` field, signature over the
    script and params hashes, stdin delivery, the protocol level; the agent
    refuses a job whose hash it cannot verify.
-4. **Step-up.** Re-authentication within 10 minutes for destructive and
-   credential actions (or F5, by name, if it lands first).
+4. **Step-up.** ADR-0055's step-up (a second factor within the last 5
+   minutes; *amended 2026-11-26, decided in review*, from "re-authentication
+   within 10 minutes") for destructive and credential actions, attached by
+   name from F5's `RequireStepUp`.
 5. **The `winmod` kind.** The migration, catalogue type, pinned script
    hashes, validation, typed results, secret rows, confirmation, audit,
    retention, Jobs-list exclusion; one real action (`defender.status`) as

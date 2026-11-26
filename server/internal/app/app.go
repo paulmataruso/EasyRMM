@@ -226,6 +226,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, cfg.JobOutputRetention, log)
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
+	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
+	d.Jobs.SetStepUp(sessions)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
 		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,

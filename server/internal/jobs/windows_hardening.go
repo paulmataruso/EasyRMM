@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -103,6 +104,7 @@ func (h *Hardening) validate(f apperr.Fields) {
 	switch h.Platform {
 	case "", HardeningLinux:
 		h.Platform = ""
+		f.Check(len(h.Settings) == 0, "settings", "Setting IDs are for Windows.")
 		h.check(f)
 		f.Check(!h.Options.anyWindows(), "options", "These options are for Windows.")
 	case HardeningWindows:
@@ -122,7 +124,22 @@ func (o WindowsHardeningOptions) anyWindows() bool {
 // checkWindows validates a Windows request and puts its modules and
 // options in their canonical form.
 func (h *Hardening) checkWindows(f apperr.Fields) {
-	f.Check(h.Mode == HardeningCheck, "mode", "Choose check.")
+	_, known := hardeningModes[h.Mode]
+	f.Check(known, "mode", "Choose check, apply or undo.")
+	if len(h.Settings) > 0 {
+		if len(h.Modules) > 0 {
+			f.Add("settings", "Name modules or settings, not both.")
+			return
+		}
+		ids, modules, bad := windowsSettingModules(h.Settings)
+		if bad != "" {
+			f.Add("settings", fmt.Sprintf("There is no Windows hardening setting %q.", truncateRunes(bad, 40)))
+			return
+		}
+		h.Settings, h.Modules = ids, modules
+	} else {
+		h.Settings = nil
+	}
 	chosen := map[string]bool{}
 	for _, m := range h.Modules {
 		if !slices.Contains(WindowsHardeningModules, m) {
@@ -150,6 +167,13 @@ func (h *Hardening) checkWindows(f apperr.Fields) {
 	}
 	needs := func(set bool, field, module string) {
 		f.Check(!set || chosen[module], field, "This option applies to "+module+"; choose that module too.")
+	}
+	// Undo reverses what the record says, whatever the options were; only
+	// the domain controller's choice, which apply and undo both need.
+	if h.Mode == HardeningUndo {
+		rest := *o
+		rest.DomainController = false
+		f.Check(len(rest.AllowTCP) == 0 && len(rest.AllowUDP) == 0 && !rest.anyWindows(), "options", "Undo takes no options but domainController.")
 	}
 	needs(len(o.AllowTCP) > 0, "options.allowTcp", "firewall")
 	needs(len(o.AllowUDP) > 0, "options.allowUdp", "firewall")
@@ -195,10 +219,41 @@ func asrRules(in []string) (out []string, bad bool) {
 	return out, false
 }
 
-// windowsArgs are the Windows script's arguments: the mode, the modules,
-// the lists, then each switch.
+// windowsSettingModules checks setting IDs and gives them in the settings
+// file's order, with the modules they belong to in the script's order; bad
+// is the first ID that is not a setting.
+func windowsSettingModules(in []string) (ids, modules []string, bad string) {
+	if len(in) > len(windowsSettings) {
+		return nil, nil, in[0]
+	}
+	chosen := map[string]bool{}
+	for _, id := range in {
+		if !slices.ContainsFunc(windowsSettings, func(s windowsSetting) bool { return s.ID == id }) {
+			return nil, nil, id
+		}
+		chosen[id] = true
+	}
+	mods := map[string]bool{}
+	for _, s := range windowsSettings {
+		if chosen[s.ID] {
+			ids = append(ids, s.ID)
+			mods[s.Module] = true
+		}
+	}
+	modules = slices.DeleteFunc(slices.Clone(WindowsHardeningModules), func(m string) bool { return !mods[m] })
+	return ids, modules, ""
+}
+
+// windowsArgs are the Windows script's arguments: the mode, the modules or
+// --settings and the IDs, the lists, each switch, and for apply the guard.
 func (h Hardening) windowsArgs() []string {
+	if h.Mode == HardeningConfirm {
+		return []string{HardeningConfirm}
+	}
 	a := []string{h.Mode, strings.Join(h.Modules, ",")}
+	if h.Settings != nil {
+		a = []string{h.Mode, "--settings", strings.Join(h.Settings, ",")}
+	}
 	for _, l := range []struct {
 		name string
 		v    []string
@@ -212,15 +267,24 @@ func (h Hardening) windowsArgs() []string {
 			a = append(a, s.arg)
 		}
 	}
+	if h.Mode == HardeningApply {
+		a = append(a, "guard-minutes="+strconv.Itoa(GuardMinutes))
+	}
 	return a
 }
 
 // windowsLabel names a Windows job for job lists.
 func (h Hardening) windowsLabel() string {
-	if len(h.Modules) == len(WindowsHardeningModules) {
-		return "Check Windows hardening (every module)"
+	l := map[string]string{HardeningCheck: "Check", HardeningApply: "Apply", HardeningUndo: "Undo", HardeningConfirm: "Confirm"}[h.Mode] + " Windows hardening"
+	switch {
+	case h.Mode == HardeningConfirm:
+		return l + " change"
+	case h.Settings != nil:
+		return l + ": " + strconv.Itoa(len(h.Settings)) + pick(len(h.Settings), " setting", " settings") + " of " + strings.Join(h.Modules, ", ")
+	case len(h.Modules) == len(WindowsHardeningModules):
+		return l + " (every module)"
 	}
-	return "Check Windows hardening: " + strings.Join(h.Modules, ", ")
+	return l + ": " + strings.Join(h.Modules, ", ")
 }
 
 //go:embed hardening/windows.ps1
@@ -447,8 +511,10 @@ type WindowsFinding struct {
 	Notes   []string           `json:"notes,omitempty"`
 	// SettingsOmitted is in_place or all when the result had to leave
 	// settings out to stay within its limit.
-	SettingsOmitted string             `json:"settingsOmitted,omitempty"`
-	Exposure        *HardeningExposure `json:"exposure,omitempty"`
+	SettingsOmitted string `json:"settingsOmitted,omitempty"`
+	// Restart: a change this apply made waits for a restart.
+	Restart  bool               `json:"restart,omitempty"`
+	Exposure *HardeningExposure `json:"exposure,omitempty"`
 }
 
 // HardeningSetting is one setting as the check found it.
@@ -465,6 +531,14 @@ type HardeningSetting struct {
 	Note    string        `json:"note,omitempty"`
 	Reasons []string      `json:"reasons,omitempty"`
 	MDM     *HardeningMDM `json:"mdm,omitempty"`
+	// Outcome is what an apply or undo did to the setting (applied,
+	// unchanged, skipped, failed, restored or left), Before the value it
+	// found, and ChangedAt when it changed it (ADR-0054: each change with
+	// its time, which log collection and the fix queue read). State is
+	// read again after the change.
+	Outcome   string `json:"outcome,omitempty"`
+	Before    string `json:"before,omitempty"`
+	ChangedAt string `json:"changedAt,omitempty"`
 }
 
 // HardeningMDM is what the MDM reader found for a setting's CSP policy.
@@ -613,6 +687,7 @@ func (r *hardeningResult) tidyWindows() {
 		for j := range m.Settings {
 			st := &m.Settings[j]
 			st.Value = tidyText(st.Value, maxSettingText)
+			st.Before = tidyText(st.Before, maxSettingText)
 			st.Note = tidyText(st.Note, maxFindingText)
 			if d := st.MDM; d != nil {
 				d.Config, d.Current, d.Provider = tidyText(d.Config, 80), tidyText(d.Current, 80), tidyText(d.Provider, 80)
@@ -646,6 +721,12 @@ func (f WindowsFinding) validWindows(module string) bool {
 		return i >= 0 && windowsSettings[i].Module == module
 	}
 	for _, s := range f.Settings {
+		if s.Outcome != "" && !slices.Contains(settingOutcomes, s.Outcome) || !shortText(s.Before, maxSettingText) {
+			return false
+		}
+		if _, err := time.Parse(time.RFC3339, s.ChangedAt); s.ChangedAt != "" && err != nil {
+			return false
+		}
 		if !known(s.ID) || !slices.Contains(settingStates, s.State) || !shortText(s.Item, 64) ||
 			!shortText(s.Want, maxSettingText) || len(s.Reasons) > len(winpolicy.Reasons) ||
 			(s.MDM != nil && !shortText(s.MDM.CSP, maxSettingText)) {
@@ -678,4 +759,10 @@ func (f WindowsFinding) validWindows(module string) bool {
 		}
 	}
 	return true
+}
+
+// onlySettings reports whether every setting listed is one of ids: a job
+// for single settings reports no others.
+func (f WindowsFinding) onlySettings(ids []string) bool {
+	return !slices.ContainsFunc(f.Settings, func(s HardeningSetting) bool { return !slices.Contains(ids, s.ID) })
 }

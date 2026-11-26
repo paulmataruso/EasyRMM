@@ -1,0 +1,56 @@
+apply1 outcome: applied
+apply1 state: in_place
+apply1 changed: autoplay-non-volume,autoplay-autorun,autoplay-all-drives
+apply1 NoAutorun: 1
+apply1 NoDriveTypeAutoRun: 255
+apply1 setting outcome: applied
+apply1 before: 0
+apply1 recorded: True
+manifest done: True
+apply2 outcome: unchanged
+apply2 changed: 0
+undo1 outcome: undone
+undo1 NoAutorun: 0
+undo1 NoDriveTypeAutoRun: absent
+undo1 NoAutoplayfornonVolume: absent
+undo1 record left: 0
+undo2 outcome: nothing_to_undo
+undo3 outcome: partly_undone
+undo3 NoAutorun: 7
+undo3 NoDriveTypeAutoRun: absent
+undo3 left: left
+fail outcome: applied
+fail setting: failed
+fail other: applied
+fail changed: autoplay-non-volume,autoplay-all-drives
+fail NoAutorun: absent
+readback outcome: failed
+readback record: False
+one changed: autoplay-autorun
+one NoDriveTypeAutoRun: absent
+one undo: undone
+one NoAutorun: absent
+kind outcome: skipped
+report outcome: skipped
+bits value: 537395201
+cannot outcome: partly_undone
+cannot NoAutorun: 1
+sec outcome: applied
+sec changed: accounts-min-length,accounts-complexity,accounts-lockout-threshold
+sec length: 14
+sec lockout: 10
+sec undo: undone
+sec length undone: 7
+sec lockout undone: 0
+smb outcome: applied
+smb value: False
+smb undo: undone
+smb undone: True
+tls outcome: applied
+tls restart: True
+tls value: 0
+tls undone: absent
+dsc outcome: undone
+dsc note: Restored; dsc may set it again.
+prefs outcome: partly_undone
+record-off policy key: partly_undone

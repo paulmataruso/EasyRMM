@@ -12,8 +12,7 @@ import { LinkBadge, NoPatchingEngine } from "../patching/patchText";
 const KEYS = ["/settings/easypatch", "/patching", "/audit"];
 
 /**
- * Platform settings: the patching engine in this deployment (ADR-0038), each organization's automatic installs of its
- * agent (ADR-0031) and the devices it cannot match. The deployment sets the engine up; there is nothing to connect (ADR-0046).
+ * Platform settings: the patching engine in this deployment (ADR-0038), the devices it cannot match. It is the Engine view of Settings → Patching (ADR-0072). The deployment sets the engine up; there is nothing to connect (ADR-0046).
  */
 export function EasyPatchTab() {
   const conn = useApi<EasyPatchConnection>("/settings/easypatch", undefined, { refetchInterval: 30_000 });
@@ -27,7 +26,7 @@ export function EasyPatchTab() {
         <EngineCard conn={c} className="xl:col-span-2" />
         <ServerStatus conn={c} />
       </div>
-      <OrganizationLinks />
+      <SyncStatus />
       <DeviceProblems />
     </div>
   );
@@ -125,134 +124,20 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
   );
 }
 
-/** Each organization's own in the patching engine, which EasyRMM keeps in step (ADR-0040), and its automatic installs. */
-function OrganizationLinks() {
-  const toast = useToast();
-  const orgs = useOrganizations();
-  const links = useApi<EasyPatchOrganizations>("/settings/easypatch/organizations", undefined, { refetchInterval: 60_000 });
+/** How keeping the engine's organizations in step with EasyRMM's goes (ADR-0040). Each organization's automatic agent install is on its own page. */
+function SyncStatus() {
   const sync = useApi<PatchingSync>("/settings/easypatch/sync", undefined, { refetchInterval: 60_000 });
-  const auto = useApiMutation(
-    ({ id, on }: { id: string; on: boolean; name: string }) => api.patch(`/settings/easypatch/organizations/${id}`, { autoInstall: on }),
-    {
-      invalidate: KEYS,
-      onSuccess: (_, v) =>
-        toast.success(
-          v.on
-            ? `EasyRMM installs the EasyPatch agent on devices in ${v.name} that have none, within a few minutes.`
-            : `EasyRMM no longer installs the EasyPatch agent in ${v.name} by itself.`,
-        ),
-    },
-  );
-
-  if (links.isPending || orgs.isPending) return <Spinner />;
-  if (links.isError) return <ErrorState error={links.error} onRetry={() => void links.refetch()} />;
-  if (orgs.isError) return <ErrorState error={orgs.error} onRetry={() => void orgs.refetch()} />;
-  const byOrg = new Map(links.data.links.map((l) => [l.organizationId, l]));
-
+  if (!sync.data) return null;
   return (
-    <Card title="Organizations" padded={false}>
-      <div className="border-b border-line px-4 py-3 text-sm text-muted">
+    <Card title="Keeping the engine in step">
+      <div className="text-sm text-muted">
         <p>
-          Every organization and site has its own in the patching engine. EasyRMM creates, renames and archives them as you change yours, so there is nothing
-          to link. With <span className="font-medium text-fg">Install automatically</span>, on for new organizations, EasyRMM's agent installs and enrolls the
-          EasyPatch agent on the organization's Windows and Linux devices that have none. To keep one device unpatched, stop patching on its Patches tab.
+          EasyRMM creates, renames and archives each organization and site in the patching engine as you change yours, so there is nothing to link. Whether it
+          installs the EasyPatch agent by itself is set on each organization&apos;s page, under Patching.
         </p>
-        {sync.data && <SyncLine sync={sync.data} />}
+        <SyncLine sync={sync.data} />
       </div>
-      {links.data.error && (
-        <Alert tone="danger" className="m-4" title="The patching engine's organizations could not be read">
-          {links.data.error}
-        </Alert>
-      )}
-      <InlineError error={auto.error} />
-      {orgs.items.length === 0 ? (
-        <EmptyState title="No organizations" compact />
-      ) : (
-        <TableWrap className="rounded-none border-0">
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>EasyRMM organization</th>
-                <th>Patching engine organization</th>
-                <th className="hidden md:table-cell">Devices</th>
-                <th>EasyPatch agent</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orgs.items.map((o) => {
-                const l = byOrg.get(o.id);
-                return (
-                  <OrgRow
-                    key={o.id}
-                    name={o.name}
-                    engineName={l?.easyPatchName}
-                    devices={l?.devices}
-                    autoInstall={l?.autoInstall}
-                    autoBusy={auto.isPending && auto.variables?.id === o.id}
-                    onAutoInstall={(on) => auto.mutate({ id: o.id, on, name: o.name })}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
-        </TableWrap>
-      )}
     </Card>
-  );
-}
-
-function OrgRow({
-  name,
-  engineName,
-  devices,
-  autoInstall,
-  autoBusy,
-  onAutoInstall,
-}: {
-  name: string;
-  /** The organization's own in the engine; undefined until EasyRMM has created it. */
-  engineName?: string;
-  devices?: { linked: number; unlinked: number; pending: number };
-  /** Undefined until the engine has the organization. */
-  autoInstall?: boolean;
-  autoBusy: boolean;
-  onAutoInstall: (on: boolean) => void;
-}) {
-  const autoId = useId();
-  return (
-    <tr>
-      <td className="font-medium">{name}</td>
-      <td>{engineName === undefined ? <span className="text-muted">Being created</span> : <span>{engineName}</span>}</td>
-      <td className="hidden text-muted md:table-cell">
-        {devices ? (
-          <>
-            {plural(devices.linked, "device")} patched
-            {devices.unlinked > 0 && <span className="text-warn">, {devices.unlinked.toLocaleString()} not linked</span>}
-            {devices.pending > 0 && <>, {devices.pending.toLocaleString()} being checked</>}
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td>
-        {autoInstall === undefined ? (
-          <span className="text-subtle">—</span>
-        ) : (
-          <label htmlFor={autoId} className="flex items-center gap-2 text-sm whitespace-nowrap">
-            <input
-              id={autoId}
-              type="checkbox"
-              checked={autoInstall}
-              disabled={autoBusy}
-              onChange={(e) => onAutoInstall(e.target.checked)}
-              className="size-4 accent-accent"
-              aria-label={`Install the EasyPatch agent automatically in ${name}`}
-            />
-            Install automatically
-          </label>
-        )}
-      </td>
-    </tr>
   );
 }
 

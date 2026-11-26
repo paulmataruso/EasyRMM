@@ -57,6 +57,7 @@ const ACTIONS: Record<string, string> = {
   "auth.password_reset_request": "Requested password reset",
   "auth.recovery_codes_regenerate": "Replaced recovery codes",
   "auth.session_revoke": "Ended a session",
+  "auth.step_up": "Confirmed a second factor again",
   "auth.webauthn_add": "Added a security key",
   "auth.webauthn_remove": "Removed a security key",
   "auth.sso_link": "Linked a single sign-on account",

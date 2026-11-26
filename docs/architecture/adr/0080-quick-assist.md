@@ -19,7 +19,7 @@
   ours alone), [ADR-0031](0031-easypatch-agent-install.md) (EasyPatch
   install), [ADR-0072](0072-what-each-page-shows.md) (what a nav section
   shows), [ADR-0055](0055-lets-encrypt-in-one-step.md) section Step-up
-  (5 minutes), [ADR-0007](0007-audit-log.md) (audit),
+  (5 minutes), [ADR-0007](0007-hash-chained-audit-log.md) (audit),
   `server/internal/devscope`.
 
 ## Context

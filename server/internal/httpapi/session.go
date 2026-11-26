@@ -198,6 +198,50 @@ func RequireActive(next http.Handler) http.Handler {
 	return RequireState(auth.StateActive)(next)
 }
 
+// ErrStepUpRequired is what a request answers when its action needs a
+// step-up (ADR-0055) the session has not made within the last 5 minutes. The
+// console recognizes the code, asks for the second factor and sends the
+// request again.
+var ErrStepUpRequired = &Error{Status: http.StatusUnauthorized, Code: "step_up_required",
+	Message: "Confirm it is you with your authenticator app or security key to continue."}
+
+type stepUpChecker interface{ CheckStepUp(*auth.Session) error }
+
+// StepUp reports the error a request must answer with when the caller's
+// session is not stepped up: nil when it is. A resolver that cannot check
+// refuses, so a missing check never opens an action.
+func (s *Sessions) StepUp(r *http.Request) error {
+	return s.VerifyStepUp(r.Context())
+}
+
+// VerifyStepUp is StepUp for a service that holds only the request's
+// context, such as a hardening change of tier 3 (jobs.StepUpVerifier).
+func (s *Sessions) VerifyStepUp(ctx context.Context) error {
+	id := IdentityFrom(ctx)
+	if id == nil {
+		return ErrUnauthenticated
+	}
+	c, ok := s.resolver.(stepUpChecker)
+	if !ok || c.CheckStepUp(id.Session) != nil {
+		return ErrStepUpRequired
+	}
+	return nil
+}
+
+// RequireStepUp is the one way an action asks for step-up authentication:
+// wrap the handler (after RequireActive and the permission check) with
+// `sessions.RequireStepUp(handler)`, or call StepUp inside a handler that
+// needs it only for some requests.
+func (s *Sessions) RequireStepUp(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.StepUp(r); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Can reports whether the caller holds perm for the resource.
 func Can(r *http.Request, perm rbac.Permission, res rbac.Resource) bool {
 	id := IdentityFrom(r.Context())

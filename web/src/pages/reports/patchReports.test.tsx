@@ -123,6 +123,13 @@ function routes(session = MANAGER, extra: Record<string, unknown> = {}) {
     "GET /patching/reports/monthly": ok({ items: [monthly()], capped: false, canGenerate: ["o1"] } satisfies PatchMonthlyReportList),
     "GET /patching/report-schedules": ok([schedule()]),
     "GET /patching/reports/mail": ok({}),
+    // An organization's page, where its schedule is (ADR-0072); its policy is not what these tests are about.
+    "GET /organizations/:id": ok(ACME),
+    "GET /organizations/:id/sites": ok({ items: [] }),
+    "GET /patching/policies/organization/:id": fail(409, "easypatch_not_linked", "This organization is not in the patching engine yet."),
+    "GET /patching/tags/of/organization/:id": ok({ tags: [], canAssign: false }),
+    "GET /patching/organizations/:id/agent-install": ok({ organizationId: "o1", organizationName: "Acme", autoInstall: false, devices: { linked: 0, unlinked: 0, pending: 0 } }),
+    "GET /patching/scope": ok({ organizationId: "o1", organizationName: "Acme", siteId: null, siteName: "", devices: 0, byPlatform: [], skipped: [], canManage: false }),
     ...extra,
   } as Parameters<typeof installFakeApi>[0];
 }
@@ -345,7 +352,7 @@ describe("report schedules", () => {
         },
       }),
     );
-    renderApp("/settings?tab=patching&view=reports");
+    renderApp("/organizations/o1?tab=patching");
     const table = await screen.findByRole("table", { name: "Monthly report schedules" });
     expect(within(table).getByText("Off")).toBeInTheDocument();
     expect(screen.getByText(/emailed through EasyRMM's mail server/)).toBeInTheDocument();
@@ -376,7 +383,7 @@ describe("report schedules", () => {
         ]),
       }),
     );
-    renderApp("/settings?tab=patching&view=reports");
+    renderApp("/organizations/o1?tab=patching");
     const table = await screen.findByRole("table", { name: "Monthly report schedules" });
     expect(within(table).getByText("On the 3rd of each month")).toBeInTheDocument();
     expect(within(table).getByText("Summary only")).toBeInTheDocument();
@@ -388,16 +395,25 @@ describe("report schedules", () => {
 
   it("says why scheduled reports are not emailed while a Microsoft 365 application signs in", async () => {
     installFakeApi(routes(MANAGER, { "GET /patching/reports/mail": ok({ withheld: WITHHELD }) }));
-    renderApp("/settings?tab=patching&view=reports");
+    renderApp("/organizations/o1?tab=patching");
     await screen.findByRole("table", { name: "Monthly report schedules" });
     const alert = (await screen.findByText("Reports are not emailed: the patching engine has no mail server")).closest(".rounded-md")!;
     expect(within(alert as HTMLElement).getByText(WITHHELD)).toBeInTheDocument();
   });
 
-  it("says when there is no organization to schedule", async () => {
+  it("says when the organization has no schedule", async () => {
     installFakeApi(routes(MANAGER, { "GET /patching/report-schedules": ok([]) }));
-    renderApp("/settings?tab=patching&view=reports");
-    expect(await screen.findByText("No organizations to schedule")).toBeInTheDocument();
+    renderApp("/organizations/o1?tab=patching");
+    expect(await screen.findByText("No schedule for this organization")).toBeInTheDocument();
+  });
+});
+
+describe("report schedules, old place", () => {
+  it("sends Settings → Patching → Report schedules to the organization's page, or the list of organizations", async () => {
+    installFakeApi(routes(MANAGER));
+    renderApp("/settings?tab=patching&view=reports&organizationId=o1");
+    expect(await screen.findByRole("table", { name: "Monthly report schedules" })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/organizations/o1?tab=patching");
   });
 });
 

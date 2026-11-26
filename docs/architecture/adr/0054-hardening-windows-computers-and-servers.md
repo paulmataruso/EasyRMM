@@ -2005,6 +2005,77 @@ remote PowerShell's slice 1, and before notifications.
   with `defender` (extending what F2 built, if F2 came first: see The
   job); one change at a time on the server; each change and its time in
   the result, for log collection.
+  **Amended 2026-11-26 (decided in review): what W2 built, on `ws/w2`.**
+  Apply and undo of every setting whose value is in the registry, in the
+  security policy (through `secedit /configure`, one System Access key at a
+  time) or in SMB's configuration (`Set-SmbServerConfiguration` and
+  `Set-SmbClientConfiguration`): about 60 of the library's 128, in
+  `autoplay`, `wdigest`, `anonymous`, `name-resolution`, `ntlm`, `uac`,
+  `printing`, `winrm`, `rdp`, `smb`, `smb-signing`, `tls` and `accounts`;
+  with the manifest, intent and done marks, read-back, undo that leaves
+  what was changed since and leaves what an owner the reader cannot read
+  may write (per owner: Group Policy's preference items any registry value;
+  its record turned off, policy keys and the security policy; an MDM,
+  OSConfig or an unreadable owner, everything; DSC, Azure machine
+  configuration and Configuration Manager's baselines restore, with a
+  note that the owner may set the value again), one change at a time on the
+  server, the guard and its confirm job, tiers, agreement, audit,
+  `devscope.Allowed`, and the daily check. Decisions:
+  * **Kept check-only, because each needs the machine test this slice
+    promises before it is written, and cannot be undone safely without
+    one:** the firewall (two-step, tier 3, and an undo that must put back
+    "not configured", which W2 has still to settle for the local store),
+    Defender, attack surface reduction and SmartScreen (audit first, block
+    only after the harvest and per-rule exclusions, with Tamper Protection
+    deciding what can be written), features and the PowerShell 2 removal
+    (they need the pending-restart and component-based-servicing tests of
+    this ADR), and the custom settings (UAC's `EnableLUA`, RDP's NLA and
+    encryption, LSA protection, the Print Spooler, account rights and the
+    audit subcategories: each is its own mechanism). They report *skipped*
+    with that reason. **The harvest** serves these two-step modules, so it
+    stays unbuilt with them. When one is built it needs no change to the
+    manifest, the guard or the server.
+  * **Settings by ID.** `apply`, `undo` and `check` take `--settings id,id`
+    (ADR-0078, C2) instead of module names, never both; the server derives
+    the modules from the IDs. A job for single settings never updates a
+    module's stored state.
+  * **The guard** (ADR-0078, the access guard) is on every apply that
+    changes something, not only on firewall and RDP changes (decided in
+    review): the script registers a scheduled task (SYSTEM, from the
+    Hardening folder's copy) that undoes exactly the settings it changed in
+    `guard-minutes` (10). The server queues a `confirm` job when it records
+    the apply, expiring after 8 minutes; the job runs only where the agent
+    is reachable and removes the task. A cut-off agent therefore loses the
+    change by itself. An apply or undo waits for an unconfirmed guard, and
+    so do EasyPatch's installs. `hardening_guards` records `armed`,
+    `confirmed` or `timed_out`; the next check shows whether the computer's
+    undo ran (`last-rollback.json`). Outside the development scope no
+    confirm is queued, so the timer undoes the change.
+  * **Tiers and agreement** (ADR-0078, section 6). Every apply and undo
+    needs the dialog's agreement and is audited with its tier. Tier 3
+    (firewall, RDP's NLA, account lockout and the Guest account) needs one
+    computer, its name typed and a step-up (ADR-0055); step-up is not
+    built, so tier 3 is refused with `step_up_required` until
+    `Service.SetStepUp` is wired. Account lockout is also not set on a
+    computer where failed sign-ins from public addresses were seen, without
+    `lockout-exposed`.
+  * **One change at a time** is in `claim`: an apply or undo is delivered
+    only when no other hardening or software run of the device is sent,
+    running or queued before it, and those wait behind it.
+  * **The daily check** (migration `00050`): a check job per Windows device
+    with a record of EasyRMM's changes, at a time of day taken from the
+    device's ID, created within an hour of it, never beside an apply, undo
+    or confirm, expiring after 24 hours, with a batch id shared by an
+    organization's checks of the day, kept for seven days, audited once per
+    organization per batch (system actor), and canceled by an undo
+    (`canceled` with no user, audited as the system). The amendment to
+    ADR-0017 this ADR names is thereby made.
+  * **Pending restart.** The restart-bound modules written here (`tls`)
+    report `restart`; the refusal of a feature removal while a restart is
+    pending waits for `features`.
+  * Nothing here has run on a real Windows; the runner job
+    `TestWindowsHardeningApplyUndoAsSystem` is written and not yet run.
+
 * **W3, the console.** Linux hardening's H3 (a device's **Hardening** tab,
   the fleet column and filter, apply and undo from **Jobs**) with Windows'
   modules: their risks and options, the owner of each setting managed

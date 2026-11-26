@@ -89,6 +89,11 @@ type Hardening struct {
 	Mode     string           `json:"mode"`
 	Modules  []string         `json:"modules"`
 	Options  HardeningOptions `json:"options"`
+	// Settings are setting IDs from windows-settings.json, for a Windows
+	// job that reads, changes or puts back single settings (ADR-0078): the
+	// job carries modules or settings, never both, and the modules are
+	// then those the settings belong to.
+	Settings []string `json:"settings,omitempty"`
 }
 
 // HardeningOptions change what a module does. Each applies to one module.
@@ -118,6 +123,10 @@ type HardeningInput struct {
 	// WaitHours is how long to wait for an offline device; zero is the
 	// default.
 	WaitHours int `json:"waitHours"`
+	// Confirm is what a Windows apply or undo needs besides its request
+	// (ADR-0054, ADR-0078): the dialog's agreement, and for a change that
+	// can cut access the computer's name typed and a step-up proof.
+	Confirm HardeningConfirmation `json:"confirm"`
 }
 
 // check validates the input and puts its modules and options in their
@@ -276,6 +285,7 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 		timeout: h.timeout(), auditAction: "device.hardening",
 		details: map[string]any{"platform": h.platform(), "mode": h.Mode, "modules": h.Modules, "options": h.Options},
 	}
+	var change *windowsChange
 	r := rule{perm: rbac.PermDeviceHarden, verb: hardeningModes[h.Mode].verb, platforms: []string{"linux"}, runsOn: "Hardening runs on"}
 	if h.Mode == HardeningCheck {
 		r.perm = rbac.PermScriptRun
@@ -283,10 +293,36 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 	if h.platform() == HardeningWindows {
 		sp.name, sp.shell, sp.body, sp.args = h.windowsLabel(), agentproto.ShellPowerShell, windowsHardeningScript, h.windowsArgs()
 		r.platforms, r.runsOn = []string{"windows"}, "Windows hardening runs on"
+		if h.Settings != nil {
+			sp.details["settings"] = h.Settings
+		}
+		if h.Mode != HardeningCheck {
+			var err error
+			if change, err = s.windowsChangeGuard(c, ids, h, in.Confirm); err != nil {
+				return nil, err
+			}
+			sp.details["tier"], sp.details["confirmed"], sp.details["typedConfirmation"] = change.tier, true, change.tier == tierDangerous
+			sp.details["guardMinutes"] = change.guard
+		}
 	}
-	return s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
-		return s.targets(ctx, tx, c, ids, r)
+	job, err := s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
+		ts, err := s.targets(ctx, tx, c, ids, r)
+		if err != nil {
+			return nil, err
+		}
+		if change != nil {
+			return ts, change.check(ctx, c, ts)
+		}
+		return ts, nil
 	})
+	if err == nil && h.platform() == HardeningWindows && h.Mode == HardeningUndo {
+		// An undo comes first: the device's daily check that has not
+		// started is canceled.
+		if cerr := s.cancelDailyChecks(ctx, ids); cerr != nil {
+			s.log.Warn("jobs: canceling daily checks for an undo failed", "error", cerr)
+		}
+	}
+	return job, err
 }
 
 // States a module can be in.
@@ -500,7 +536,8 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 		case !slices.Contains(hardeningOutcomes[r.Mode], m.Outcome):
 			return fail("module " + m.Module + " has no outcome of " + r.Mode)
 		case !m.valid(!windows && m.Module == "firewall"),
-			windows && !m.validWindows(m.Module), !windows && !m.validLinuxSettings(m.Module):
+			windows && !m.validWindows(m.Module), !windows && !m.validLinuxSettings(m.Module),
+			windows && len(h.Settings) > 0 && !m.onlySettings(h.Settings):
 			return fail("module " + m.Module + "'s findings are not within their limits")
 		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
 			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):
@@ -590,6 +627,9 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 	if kind != KindHardening {
 		return nil
 	}
+	if h.Mode == HardeningConfirm {
+		return s.confirmGuard(ctx, tx, device, job)
+	}
 	r, err := parseHardeningResult(stdout, *h)
 	if err != nil {
 		s.log.Warn("jobs: a hardening run's result was refused", "run", run, "device", device, "error", err)
@@ -606,8 +646,10 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 		return err
 	}
 	for _, m := range r.Modules {
-		// Not run: not checked either, so what the device had stands.
-		if m.Outcome == HardeningNotRun {
+		// Not run: not checked either, so what the device had stands. A job
+		// for single settings read only some of the module's: they say
+		// nothing of the module's state.
+		if m.Outcome == HardeningNotRun || len(h.Settings) > 0 {
 			continue
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_hardening (device_id, module, state, detail, job_id, checked_at)
@@ -617,6 +659,13 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 				WHERE device_hardening.checked_at <= EXCLUDED.checked_at`,
 			device, m.Module, m.State, m.HardeningFinding, job, started); err != nil {
 			return err
+		}
+	}
+	if h.platform() == HardeningWindows && h.Mode == HardeningApply {
+		if ids := r.armedSettings(); len(ids) > 0 {
+			if err := s.queueGuardConfirm(ctx, tx, device, job, s.now(), ids); err != nil {
+				return err
+			}
 		}
 	}
 	return s.auditPackageRecovery(ctx, tx, device, run, job, r)

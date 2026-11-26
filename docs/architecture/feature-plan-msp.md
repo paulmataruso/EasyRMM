@@ -275,10 +275,10 @@ Who uses which part:
   and ADR-0061 cite it). In short: a second factor confirmed within the
   last 5 minutes, recorded on the session as `stepped_up_at`; never a
   recovery code or a password alone; for an account that signs in through
-  a provider trusted to enforce MFA, a fresh sign-in there. ADR-0055's
-  slice 5b2 builds it. It is not on `main`: today there is only
-  `reauthenticate`, a password check before an account's own security
-  changes (`server/internal/auth/service.go:891-925`).
+  a provider trusted to enforce MFA, a fresh sign-in there. *Amended
+  2026-11-26 (decided in review):* F5 builds it ahead of ADR-0055's slice
+  5b2 (`Sessions.RequireStepUp`; see ADR-0055's amendment). `reauthenticate`
+  stays, a password check before an account's own security changes.
 * **Approvals do not exist** in EasyRMM or its ADRs as a general
   mechanism: only enrolment approval (ADR-0024) and ADR-0053's approval of
   private destinations, each for its own purpose. **One general mechanism

@@ -122,6 +122,28 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 	return out, err
 }
 
+// OrganizationLinkOf is one organization's link with the engine, as its own page shows it: no call to the engine, so it
+// answers when the engine does not. NotFound until EasyRMM has created the organization there.
+func (s *Service) OrganizationLinkOf(ctx context.Context, organizationID uuid.UUID) (OrganizationLink, error) {
+	var l OrganizationLink
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, l.auto_install,
+				count(*) FILTER (WHERE e.state = 'linked'), count(*) FILTER (WHERE e.state = 'unlinked'),
+				count(*) FILTER (WHERE e.state = 'pending')
+			FROM easypatch_organizations l JOIN organizations o ON o.id = l.organization_id
+			LEFT JOIN devices d ON d.organization_id = l.organization_id
+			LEFT JOIN easypatch_devices e ON e.device_id = d.id
+			WHERE l.organization_id = $1
+			GROUP BY l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, l.auto_install`, organizationID).
+			Scan(&l.OrganizationID, &l.OrganizationName, &l.EasyPatchID, &l.EasyPatchName, &l.LinkedAt, &l.AutoInstall,
+				&l.Devices.Linked, &l.Devices.Unlinked, &l.Devices.Pending)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationLink{}, apperr.NotFound()
+	}
+	return l, err
+}
+
 // recheckOrganization has the next pass check an organization's devices.
 func recheckOrganization(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE easypatch_devices SET state = 'pending', reason = '', checked_at = NULL

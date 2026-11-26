@@ -1,15 +1,15 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { api, fieldError } from "../../api/client";
-import { useApiMutation, useOrganizations, useSites } from "../../api/hooks";
+import { useApiMutation } from "../../api/hooks";
 import type { AlertKind, AlertPolicy, AlertPolicyInput, AlertSeverity, DiskCheck, ScriptLevel } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Button, cx, Field, InlineError, Input, KeyValueList, Segmented, Select, SelectField, TextareaField, TextField } from "../../components/ui";
+import { Button, cx, Field, InlineError, Input, KeyValueList, Segmented, SelectField, TextareaField, TextField } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { CHECK_NAMES, CHECKS, conditionText, KIND_NAMES, KINDS, policyScope, POLICY_LIMITS } from "./alertText";
 
-const FIELDS = ["name", "description", "kind", "checkName", "threshold", "minutes", "severity", "organizationId", "siteId"];
+const FIELDS = ["name", "description", "kind", "checkName", "threshold", "minutes", "severity"];
 
 const SEVERITIES: { value: AlertSeverity; label: string }[] = [
   { value: "warning", label: "Warning" },
@@ -77,19 +77,22 @@ export function useCanWritePolicies(): boolean {
 }
 
 /** Adds a policy, or edits or deletes one. */
-export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose: () => void; policy?: AlertPolicy }) {
+/** Where a new policy goes when the page fixes it (an organization's or site's page, or Settings for shared ones). */
+export interface PolicyScopeFixed {
+  level: ScriptLevel;
+  organizationId: string | null;
+  siteId: string | null;
+  /** What the scope is called in the summary: the organization's or site's name. */
+  name: string;
+}
+
+export function PolicyDialog({ open, onClose, policy, fixed }: { open: boolean; onClose: () => void; policy?: AlertPolicy; fixed: PolicyScopeFixed }) {
   const { session } = useAuth();
   const toast = useToast();
-  const orgs = useOrganizations();
-  const superAdmin = session?.isSuperAdmin === true;
-  const levelId = useId();
   const thresholdId = useId();
   const minutesId = useId();
   const severityId = useId();
 
-  const [level, setLevel] = useState<ScriptLevel>("organization");
-  const [organizationId, setOrganizationId] = useState("");
-  const [siteId, setSiteId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<AlertKind>("cpu");
@@ -105,9 +108,6 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
 
   useEffect(() => {
     if (!open) return;
-    setLevel(superAdmin ? "shared" : "organization");
-    setOrganizationId("");
-    setSiteId("");
     setName(policy?.name ?? "");
     setDescription(policy?.description ?? "");
     const k = policy?.kind ?? "cpu";
@@ -120,12 +120,8 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     setSeverity(policy?.severity ?? "warning");
     setEnabled(policy?.enabled ?? true);
     setMissing({});
-  }, [open, policy, superAdmin]);
+  }, [open, policy]);
 
-  const sites = useSites(open && level === "site" && organizationId ? organizationId : null);
-  const writableOrgs = orgs.items.filter((o) => level === "site" || o.canManage);
-  const writableSites = sites.items.filter((s) => s.canManage);
-  const noOrgLevel = !orgs.isPending && !orgs.items.some((o) => o.canManage);
 
   const save = useApiMutation(
     (input: AlertPolicyInput) =>
@@ -209,13 +205,11 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     if (!name.trim()) m.name = "Enter a name.";
     if (!validThreshold) m.threshold = diskHealth ? CHECK_RANGE[checkName] : "Use a whole percentage from 1 to 100.";
     if (!validMinutes) m.minutes = `Use ${minMinutes} to 1,440 minutes.`;
-    if (!policy && level !== "shared" && !organizationId) m.organizationId = "Choose an organization.";
-    if (!policy && level === "site" && !siteId) m.siteId = "Choose a site.";
     setMissing(m);
     if (Object.keys(m).length > 0) return;
     save.mutate({
-      organizationId: level === "shared" ? null : organizationId,
-      siteId: level === "site" ? siteId : null,
+      organizationId: fixed.organizationId,
+      siteId: fixed.siteId,
       name: name.trim(),
       description: description.trim(),
       kind,
@@ -274,9 +268,9 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
 
   const scope = policy
     ? policyScope(policy)
-    : level === "shared"
+    : fixed.level === "shared"
       ? "Every device"
-      : (level === "site" ? sites.items.find((s) => s.id === siteId)?.name : orgs.items.find((o) => o.id === organizationId)?.name) ?? null;
+      : fixed.name;
   const summary =
     validThreshold && validMinutes
       ? `${enabled ? "Raises" : "Once turned on, raises"} a ${severity} alert ${scope ? `on ${scope === "Every device" ? "any device" : `a device in ${scope}`} ` : ""}when: ${lowerFirst(conditionText({ kind, checkName, threshold: sentThreshold, minutes: sentMinutes }))}.`
@@ -303,74 +297,10 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
             error={err("name")}
             autoFocus
           />
-          {policy ? (
-            <KeyValueList narrow items={[["Applies to", <span key="s">{policyScope(policy)}</span>]]} />
-          ) : (
-            <div className="flex flex-col gap-3">
-              <Field label="Applies to" htmlFor={levelId}>
-                <Select
-                  id={levelId}
-                  value={level}
-                  onChange={(e) => {
-                    setLevel(e.target.value as ScriptLevel);
-                    setOrganizationId("");
-                    setSiteId("");
-                  }}
-                >
-                  {superAdmin && <option value="shared">Every device</option>}
-                  <option value="organization" disabled={noOrgLevel}>
-                    One organization's devices
-                  </option>
-                  <option value="site">One site's devices</option>
-                </Select>
-              </Field>
-              {level !== "shared" && (
-                <div className="flex flex-wrap gap-3">
-                  <SelectField
-                    label="Organization"
-                    required
-                    value={organizationId}
-                    onChange={(e) => {
-                      setOrganizationId(e.target.value);
-                      setSiteId("");
-                      edited("organizationId");
-                    }}
-                    error={err("organizationId")}
-                    disabled={orgs.isPending}
-                    className="min-w-44 flex-1"
-                  >
-                    <option value="">Choose…</option>
-                    {writableOrgs.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
-                    ))}
-                  </SelectField>
-                  {level === "site" && (
-                    <SelectField
-                      label="Site"
-                      required
-                      value={siteId}
-                      onChange={(e) => {
-                        setSiteId(e.target.value);
-                        edited("siteId");
-                      }}
-                      error={err("siteId")}
-                      disabled={!organizationId || sites.isPending}
-                      className="min-w-44 flex-1"
-                    >
-                      <option value="">{organizationId && !sites.isPending && writableSites.length === 0 ? "No sites you manage" : "Choose…"}</option>
-                      {writableSites.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </SelectField>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <KeyValueList
+            narrow
+            items={[["Applies to", <span key="s">{policy ? policyScope(policy) : fixed.level === "shared" ? "Every device" : fixed.name}</span>]]}
+          />
 
           <div className={cx("grid grid-cols-1 gap-3", diskHealth ? "sm:grid-cols-2" : "sm:grid-cols-[minmax(0,1fr)_auto_auto]")}>
             <SelectField

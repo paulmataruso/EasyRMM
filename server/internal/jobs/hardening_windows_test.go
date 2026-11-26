@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -405,5 +406,228 @@ func TestWindowsHardeningFolderAsSystem(t *testing.T) {
 	r = checkAll(t)
 	if f := r.Platform.Windows.Hardening; f.Folder != "refused" || !notSupported(r) {
 		t.Errorf("a junction: %+v", f)
+	}
+}
+
+// runHardening runs the script a Windows job carries, with the agent's
+// arguments, and parses its result as the server does for a job of that
+// mode and modules.
+func runHardening(t *testing.T, h Hardening, args ...string) *hardeningResult {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "easyrmm-hardening.ps1")
+	if err := os.WriteFile(script, []byte(windowsHardeningScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(windowsPowerShell(), append([]string{"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script}, args...)...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if stderr.Len() > 0 {
+		t.Logf("stderr: %s", stderr.String())
+	}
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	r, err := parseHardeningResult(string(out), h)
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return r
+}
+
+// regValue is a value as its type and data, or "absent".
+func regValue(t *testing.T, path, name string) string {
+	t.Helper()
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, strings.TrimPrefix(path, `HKLM\`), registry.QUERY_VALUE)
+	if err != nil {
+		return "absent"
+	}
+	defer func() { _ = k.Close() }()
+	if n, _, err := k.GetIntegerValue(name); err == nil {
+		return fmt.Sprintf("dword:%d", n)
+	}
+	if s, _, err := k.GetStringValue(name); err == nil {
+		return "string:" + s
+	}
+	return "absent"
+}
+
+// Apply, then undo, as LocalSystem on a real Windows (ADR-0054, W2): the
+// autoplay module's values are written and read back, a second apply
+// changes nothing, the guard's task is armed and a confirm ends it, undo
+// returns every value to what the computer had before (present with its
+// type, or absent), and the guard's own timer undoes a change that no one
+// confirms. These tests change the computer's registry and
+// %ProgramData%\EasyRMM\Hardening, so they run only on runners made for
+// the job, like the others of the AsSystem job.
+func TestWindowsHardeningApplyUndoAsSystem(t *testing.T) {
+	hardeningSystemTest(t)
+	hardening := filepath.Join(os.Getenv("ProgramData"), "EasyRMM", "Hardening")
+	type value struct{ path, name string }
+	var values []value
+	for _, s := range windowsSettings {
+		if s.Module == "autoplay" {
+			values = append(values, value{s.Path, s.Name})
+		}
+	}
+	if len(values) != 3 {
+		t.Fatalf("autoplay has %d registry settings", len(values))
+	}
+	snap := func() map[value]string {
+		m := map[value]string{}
+		for _, v := range values {
+			m[v] = regValue(t, v.path, v.name)
+		}
+		return m
+	}
+	before := snap()
+	task := func() bool {
+		return exec.Command("schtasks", "/Query", "/TN", `\EasyRMM\EasyRMM Hardening Rollback`).Run() == nil
+	}
+	restore := func() {
+		for v, was := range before {
+			k, err := registry.OpenKey(registry.LOCAL_MACHINE, strings.TrimPrefix(v.path, `HKLM\`), registry.SET_VALUE)
+			if err != nil {
+				continue
+			}
+			if was == "absent" {
+				_ = k.DeleteValue(v.name)
+			} else if n, ok := strings.CutPrefix(was, "dword:"); ok {
+				var d uint32
+				_, _ = fmt.Sscan(n, &d)
+				_ = k.SetDWordValue(v.name, d)
+			}
+			_ = k.Close()
+		}
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("schtasks", "/Delete", "/TN", `\EasyRMM\EasyRMM Hardening Rollback`, "/F").Run()
+		_ = os.RemoveAll(hardening)
+		restore()
+	})
+	if err := os.RemoveAll(hardening); err != nil {
+		t.Fatal(err)
+	}
+	autoplay := []string{"autoplay"}
+	hApply := Hardening{Platform: HardeningWindows, Mode: HardeningApply, Modules: autoplay}
+	hUndo := Hardening{Platform: HardeningWindows, Mode: HardeningUndo, Modules: autoplay}
+
+	r := runHardening(t, hApply, "apply", "autoplay", "guard-minutes=30")
+	m := r.Modules[0]
+	if m.Outcome == HardeningRefused {
+		t.Skipf("apply is refused on this computer, which is correct there: %s", m.OutcomeReason)
+	}
+	want := map[string]string{"autoplay-non-volume": "dword:1", "autoplay-autorun": "dword:1", "autoplay-all-drives": "dword:255"}
+	byID := map[string]value{}
+	for _, s := range windowsSettings {
+		if s.Module == "autoplay" {
+			byID[s.ID] = value{s.Path, s.Name}
+		}
+	}
+	if m.Outcome != HardeningApplied && m.Outcome != HardeningUnchanged {
+		t.Fatalf("apply: %s %s", m.Outcome, m.OutcomeReason)
+	}
+	for id, w := range want {
+		if got := regValue(t, byID[id].path, byID[id].name); got != w {
+			t.Errorf("%s after apply: %s, want %s", id, got, w)
+		}
+		if st := setting(r, "autoplay", id); st == nil || st.State != "in_place" {
+			t.Errorf("%s read back: %+v", id, st)
+		}
+	}
+	changed := m.Outcome == HardeningApplied
+	if changed && !task() {
+		t.Error("the guard's task was not armed")
+	}
+	for _, f := range []string{"manifest.json", "easyrmm-hardening.ps1"} {
+		if _, err := os.Stat(filepath.Join(hardening, f)); changed && err != nil {
+			t.Errorf("no %s after apply: %v", f, err)
+		}
+	}
+
+	// A second apply changes nothing.
+	if r = runHardening(t, hApply, "apply", "autoplay"); r.Modules[0].Outcome != HardeningUnchanged {
+		t.Errorf("second apply: %s %s", r.Modules[0].Outcome, r.Modules[0].OutcomeReason)
+	}
+
+	// The confirm job's script ends the guard.
+	cmd := exec.Command(windowsPowerShell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+		filepath.Join(hardening, "easyrmm-hardening.ps1"), "confirm")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("confirm: %v %s", err, out)
+	}
+	if task() {
+		t.Error("the guard's task is still there after confirm")
+	}
+
+	// Undo, from the copy on the computer itself, as the guide says.
+	cmd = exec.Command(windowsPowerShell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+		filepath.Join(hardening, "easyrmm-hardening.ps1"), "undo", "all")
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), HardeningResultPrefix) {
+		t.Fatalf("undo from the copy: %v %s", err, out)
+	}
+	for v, was := range before {
+		if got := regValue(t, v.path, v.name); got != was {
+			t.Errorf("%s\\%s after undo: %s, was %s", v.path, v.name, got, was)
+		}
+	}
+	// The same through the job's script: nothing is left to undo.
+	if r = runHardening(t, hUndo, "undo", "autoplay"); r.Modules[0].Outcome != HardeningNothingToUndo {
+		t.Errorf("undo with no record: %s", r.Modules[0].Outcome)
+	}
+
+	// Undo of a value an administrator changed afterwards leaves it.
+	runHardening(t, hApply, "apply", "autoplay")
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, strings.TrimPrefix(byID["autoplay-autorun"].path, `HKLM\`), registry.SET_VALUE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = k.SetDWordValue(byID["autoplay-autorun"].name, 7)
+	_ = k.Close()
+	r = runHardening(t, hUndo, "undo", "autoplay")
+	if o := r.Modules[0].Outcome; o != HardeningPartlyUndone {
+		t.Errorf("undo of a changed value: %s", o)
+	}
+	if got := regValue(t, byID["autoplay-autorun"].path, byID["autoplay-autorun"].name); got != "dword:7" {
+		t.Errorf("the changed value was not left: %s", got)
+	}
+	_ = os.RemoveAll(hardening)
+	restore()
+
+	// An unconfirmed change is undone by the computer's own timer.
+	runHardening(t, hApply, "apply", "--settings", "autoplay-autorun", "guard-minutes=1")
+	deadline := time.Now().Add(5 * time.Minute)
+	for regValue(t, byID["autoplay-autorun"].path, byID["autoplay-autorun"].name) != before[byID["autoplay-autorun"]] {
+		if time.Now().After(deadline) {
+			t.Fatal("the guard did not undo the change within five minutes")
+		}
+		time.Sleep(10 * time.Second)
+	}
+	if task() {
+		t.Error("the task is still there after it undid the change")
+	}
+	if b, err := os.ReadFile(filepath.Join(hardening, "last-rollback.json")); err != nil || !strings.Contains(string(b), "autoplay-autorun") {
+		t.Errorf("no note of the rollback: %v %s", err, b)
+	}
+}
+
+// The apply and undo logic of the script on Windows PowerShell 5.1, which
+// the agent runs it with, against a registry that is a hashtable (the same
+// harness and expected output as the PowerShell 7 test).
+func TestWindowsApplyUndoFlowOnWindows(t *testing.T) {
+	dir, _ := filepath.Abs("hardening")
+	harness, _ := filepath.Abs(filepath.Join("testdata", "windows-flow-harness.ps1"))
+	out, err := exec.Command(windowsPowerShell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", harness,
+		"-Script", filepath.Join(dir, "windows.ps1"), "-Settings", filepath.Join(dir, "windows-settings.json")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "windows-flow-expected.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	norm := func(b []byte) string { return strings.ReplaceAll(strings.TrimSpace(string(b)), "\r\n", "\n") }
+	if norm(out) != norm(want) {
+		t.Errorf("the flow printed\n%s\nwant\n%s", out, want)
 	}
 }

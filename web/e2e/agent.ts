@@ -71,12 +71,6 @@ export class Agent {
     return jobs.map((j) => JSON.parse(Buffer.from(j.payload, "base64").toString("utf8")) as JobPayload);
   }
 
-  /** A heartbeat with these facts (agentproto.HeartbeatRequest): the device checks in. */
-  async heartbeat(facts: unknown): Promise<void> {
-    const r = await this.post("/api/agent/v1/heartbeat", { facts });
-    if (!r.ok()) throw new Error(`heartbeat: ${r.status()} ${await r.text()}`);
-  }
-
   /** Whether the server lets the run start now. */
   async start(runId: string): Promise<boolean> {
     return ((await (await this.post(`/api/agent/v1/jobs/${runId}/start`, {})).json()) as { proceed: boolean }).proceed;
