@@ -28,30 +28,30 @@ describe("visibleTabs", () => {
   });
 
   it("orders the organization's tabs and hides what the viewer may not see", () => {
-    expect(ids("organization", ["doc.view", "patch.view"], true)).toEqual([
+    expect(ids("organization", ["doc.view", "patch.configure"], true)).toEqual([
       "overview",
       "contacts",
-      "patch-policy",
+      "patching",
     ]);
     expect(ids("organization", ["doc.view"], true)).toEqual([
       "overview",
       "contacts",
     ]);
-    expect(ids("organization", ["patch.view"], true)).toEqual([
+    expect(ids("organization", ["patch.configure"], true)).toEqual([
       "overview",
-      "patch-policy",
+      "patching",
     ]);
   });
 
-  it("shows Contacts at the organization only, and Patch policy at the site only with the engine set up", () => {
-    expect(ids("site", ["doc.view", "patch.view"], true)).toEqual([
+  it("shows Contacts at the organization only, and Patching at the site only with the engine set up", () => {
+    expect(ids("site", ["doc.view", "patch.configure"], true)).toEqual([
       "overview",
-      "patch-policy",
+      "patching",
     ]);
-    expect(ids("site", ["doc.view", "patch.view"], false)).toEqual([
+    expect(ids("site", ["doc.view", "patch.configure"], false)).toEqual([
       "overview",
     ]);
-    expect(ids("organization", ["patch.view"], false)).toEqual(["overview"]);
+    expect(ids("organization", ["patch.configure"], false)).toEqual(["overview"]);
   });
 
   it("checks the permission at the level asked: the same holder differs per level", () => {

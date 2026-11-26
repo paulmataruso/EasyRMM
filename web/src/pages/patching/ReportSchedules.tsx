@@ -9,7 +9,7 @@ import { Badge, Button, Card, EmptyState, ErrorState, InlineError, SelectField, 
 import { addresses } from "../reports/PatchReports";
 import { ReportMailAlert } from "../reports/ReportMailAlert";
 
-// Settings → Patching → Report schedules: on a day of each month, EasyPatch makes each
+// An organization's page → Patching: on a day of each month, EasyPatch makes each
 // organization's report of the month before and emails it.
 
 /** "5 December 2026", from 2006-01-02, as the organization's own date. */
@@ -24,8 +24,10 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-export function ReportSchedules() {
-  const list = useApi<PatchReportSchedule[]>("/patching/report-schedules");
+/** Every organization's schedule, or with `organizationId` just that one (its own page, ADR-0072). */
+export function ReportSchedules({ organizationId }: { organizationId?: string }) {
+  const all = useApi<PatchReportSchedule[]>("/patching/report-schedules");
+  const list = organizationId && all.data ? { ...all, data: all.data.filter((s) => s.organizationId === organizationId) } : all;
   const [editing, setEditing] = useState<PatchReportSchedule | null>(null);
   if (list.isPending) return <Spinner />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => void list.refetch()} />;
@@ -38,7 +40,7 @@ export function ReportSchedules() {
       </p>
       <ReportMailAlert className="mx-4 mt-3" />
       {list.data.length === 0 ? (
-        <EmptyState title="No organizations to schedule" compact icon={<CalendarClock className="size-8" aria-hidden />}>
+        <EmptyState title={organizationId ? "No schedule for this organization" : "No organizations to schedule"} compact icon={<CalendarClock className="size-8" aria-hidden />}>
           Schedules belong to organizations in the patching engine whose patching you see as a whole.
         </EmptyState>
       ) : (

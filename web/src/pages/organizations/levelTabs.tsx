@@ -4,8 +4,9 @@ import type { PatchStatus, Permission } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
+import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { ContactsTab } from "./tabs/ContactsTab";
-import { PatchPolicyTab } from "./tabs/PatchPolicyTab";
+import { PatchingTab } from "./tabs/PatchingTab";
 
 // The tab strip of the organization and site pages (ADR-0072, slice S4). A tab is one line in LEVEL_TABS: its id (the
 // `?tab=` value), label, the permission it needs, the levels it appears at and its component. Order in the array is the
@@ -56,12 +57,19 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     component: ContactsTab,
   },
   {
-    id: "patch-policy",
-    label: "Patch policy",
-    permission: "patch.view",
+    id: "alert-policies",
+    label: "Alert policies",
+    permission: "monitoring.view",
+    levels: ["organization", "site"],
+    component: AlertPoliciesTab,
+  },
+  {
+    id: "patching",
+    label: "Patching",
+    permission: "patch.configure",
     levels: ["organization", "site"],
     when: (ctx) => ctx.patchingConfigured,
-    component: PatchPolicyTab,
+    component: PatchingTab,
   },
 ];
 
@@ -78,12 +86,16 @@ export function visibleTabs(
   );
 }
 
+/** Tab ids that were renamed: the old `?tab=` still opens the tab. */
+const TAB_ALIASES: Record<string, string> = { "patch-policy": "patching" };
+
 /** The active tab: `?tab=` when it is shown at this level, otherwise Overview. */
 export function activeTab(
   visible: readonly LevelTab[],
   param: string | null,
 ): LevelTab {
-  return visible.find((t) => t.id === param) ?? visible[0]!;
+  const wanted = param === null ? null : (TAB_ALIASES[param] ?? param);
+  return visible.find((t) => t.id === wanted) ?? visible[0]!;
 }
 
 /** The strip and the active tab's panel. `overview` is the page's own content. */

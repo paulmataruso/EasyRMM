@@ -4,10 +4,10 @@ import { PageHeader, Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { settingsParts } from "../../nav/SectionNav";
 import { AgentFilesTab } from "./AgentFilesTab";
+import { AlertPoliciesSettings } from "./AlertPoliciesSettings";
 import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
-import { EasyPatchTab } from "./EasyPatchTab";
 import { NotificationsTab } from "./NotificationsTab";
 import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
@@ -22,9 +22,9 @@ const SUBTITLES: Record<string, string> = {
   "agent-files": "Every file this server hands out or the agents install, with MD5 and SHA-256, kept current.",
   notifications: "The mail server EasyRMM sends invitations, password resets and the patching engine's email through, and how much mail it sends.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
-  easypatch: "The patching engine in this deployment, the organizations where EasyRMM installs its agent automatically, and devices it cannot match.",
+  "alert-policies": "Shared alert policies: what raises an alert on every device in every organization. An organization's or a site's own are on its page.",
   patching:
-    "The default patch policy and tags, each organization's monthly report schedule, and the patching engine's own settings, OS lifecycle dates, agent packages, alert rules, notifications and audit log.",
+    "The patching engine, the default patch policy and tags every organization starts from, and the engine's own settings, OS lifecycle dates, agent packages, alert rules, notifications and audit log. An organization's or a site's own patching settings are on its page.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -39,6 +39,12 @@ export function SettingsPage() {
   const first = parts[0];
   if (!first) return <Navigate to="/" replace />;
   const requested = url.get("tab");
+  // Moved places (ADR-0072): the engine is a view of Patching; report schedules are each organization's own.
+  if (requested === "easypatch") return <Navigate to="/settings?tab=patching&view=engine" replace />;
+  if (requested === "patching" && url.get("view") === "reports") {
+    const org = url.get("organizationId");
+    return <Navigate to={org ? `/organizations/${org}?tab=patching` : "/organizations"} replace />;
+  }
   const part = parts.find((p) => p.id === requested) ?? first;
 
   return (
@@ -57,7 +63,7 @@ export function SettingsPage() {
       {part.id === "agent-files" && <AgentFilesTab />}
       {part.id === "notifications" && <NotificationsTab />}
       {part.id === "forwarding" && <AuditForwardingTab />}
-      {part.id === "easypatch" && <EasyPatchTab />}
+      {part.id === "alert-policies" && <AlertPoliciesSettings />}
       {part.id === "patching" && <PatchingTab />}
       {part.id === "sso" && <SingleSignOnTab />}
     </>

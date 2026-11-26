@@ -140,17 +140,17 @@ describe("alerts page", () => {
     installFakeApi(routes([]));
     renderApp("/alerts");
     expect(await screen.findByText("No active alerts")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Review policies" }));
-    expect(await screen.findByRole("tab", { name: "Policies", selected: true })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Review policies" }));
     expect(await screen.findByText("No alert policies")).toBeInTheDocument();
+    expect(location()).toBe("/settings?tab=alert-policies");
     expect(screen.getByText(/An administrator adds them/)).toBeInTheDocument();
   });
 
   it("hides policies and actions from people who may only look", async () => {
     installFakeApi({ ...routes([{ ...DISK, canManage: false }]), ...{ "GET /auth/session": ok(VIEWER) } });
-    renderApp("/alerts?tab=policies");
+    renderApp("/alerts");
     expect(await screen.findByRole("table")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Policies" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Policies" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Acknowledge|Resolve/ })).not.toBeInTheDocument();
   });
 });
@@ -161,6 +161,16 @@ describe("alert policies", () => {
     alertPolicy("p2", "Acme memory", { level: "organization", organizationId: "o1", organizationName: "Northwind Traders", kind: "memory", threshold: 80, enabled: false, canEdit: false }),
   ];
 
+  /** What an organization's or site's page asks for besides its policies. */
+  function pageRoutes() {
+    return {
+      "GET /organizations/:id": ok(org("o1", "Northwind Traders")),
+      "GET /organizations/:id/sites": ok({ items: [] }),
+      "GET /sites/:id": ok(site("s1", "o1", "Head office")),
+      "GET /sites/:id/device-groups": ok({ items: [] }),
+    };
+  }
+
   function adminRoutes() {
     return {
       ...routes(),
@@ -169,35 +179,50 @@ describe("alert policies", () => {
     };
   }
 
-  it("lists policies with their condition, scope and state", async () => {
+  it("lists the shared policies with their condition, scope and state, and leaves the others to their pages", async () => {
     installFakeApi(adminRoutes());
-    renderApp("/alerts?tab=policies");
+    renderApp("/settings?tab=alert-policies");
     const table = await screen.findByRole("table");
     const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(1);
     expect(within(rows[0]!).getAllByText("No check-in for 15 minutes").length).toBeGreaterThan(0);
     expect(within(rows[0]!).getAllByText("Every device").length).toBeGreaterThan(0);
     expect(within(rows[0]!).getByText("On")).toBeInTheDocument();
     expect(within(rows[0]!).getByText("2")).toBeInTheDocument();
-    expect(within(rows[1]!).getByText("Off")).toBeInTheDocument();
-    expect(within(rows[1]!).queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
-    expect(screen.getByText("2 policies, 1 turned on.")).toBeInTheDocument();
+    expect(screen.getByText("1 policy, 1 turned on.")).toBeInTheDocument();
+    expect(screen.queryByText("Acme memory")).not.toBeInTheDocument();
   });
 
-  it("adds a policy for one site", async () => {
+  it("lists an organization's own policies on its page, read-only without edit rights", async () => {
+    installFakeApi({ ...adminRoutes(), ...pageRoutes() });
+    renderApp("/organizations/o1?tab=alert-policies");
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]!).getByText("Acme memory")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("Off")).toBeInTheDocument();
+    expect(within(rows[0]!).queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Device offline")).not.toBeInTheDocument();
+  });
+
+  it("adds a policy for one site from the site's page, with the scope fixed", async () => {
     const user = userEvent.setup();
-    const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
-    renderApp("/alerts?tab=policies");
+    const server = installFakeApi({
+      ...adminRoutes(),
+      ...pageRoutes(),
+      "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }),
+    });
+    renderApp("/sites/s1?tab=alert-policies");
     await user.click(await screen.findByRole("button", { name: "New policy" }));
     const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
+    expect(within(dialog).getByText("Head office")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Applies to")).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
     expect(within(dialog).getByText("Enter a name.")).toBeInTheDocument();
     expect(server.callsTo("POST /alert-policies")).toHaveLength(0);
 
     await user.type(within(dialog).getByLabelText(/Name/), "Head office disks");
-    await user.selectOptions(within(dialog).getByLabelText("Applies to"), "site");
-    await user.selectOptions(within(dialog).getByLabelText(/Organization/), "o1");
-    await user.selectOptions(await within(dialog).findByLabelText(/Site/), "s1");
     await user.selectOptions(within(dialog).getByLabelText("Watch for"), "disk");
     const threshold = within(dialog).getByLabelText("At or above");
     await user.clear(threshold);
@@ -223,10 +248,23 @@ describe("alert policies", () => {
     expect(await screen.findByText(/Added Head office disks/)).toBeInTheDocument();
   });
 
+  it("sends the old Policies tab address to the policies of its scope", async () => {
+    installFakeApi({ ...adminRoutes(), ...pageRoutes() });
+    renderApp("/alerts?tab=policies&organizationId=o1");
+    await waitFor(() => expect(location()).toBe("/organizations/o1?tab=alert-policies"));
+  });
+
+  it("links the alerts of a group to the policies of its site", async () => {
+    installFakeApi({ ...adminRoutes(), "GET /device-groups/:id": ok({ id: "g1", organizationId: "o1", siteId: "s1", name: "Tills", description: "", createdAt: "", updatedAt: "" }) });
+    renderApp("/alerts?groupId=g1");
+    const link = await screen.findByRole("link", { name: "Policies" });
+    await waitFor(() => expect(link).toHaveAttribute("href", "/sites/s1?tab=alert-policies"));
+  });
+
   it("checks the minutes an offline policy needs", async () => {
     const user = userEvent.setup();
     const server = installFakeApi(adminRoutes());
-    renderApp("/alerts?tab=policies");
+    renderApp("/settings?tab=alert-policies");
     await user.click(await screen.findByRole("button", { name: "New policy" }));
     const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
     await user.type(within(dialog).getByLabelText(/Name/), "Down");
@@ -243,7 +281,7 @@ describe("alert policies", () => {
   it("adds a remote access policy with minutes and no threshold (ADR-0069)", async () => {
     const user = userEvent.setup();
     const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
-    renderApp("/alerts?tab=policies");
+    renderApp("/settings?tab=alert-policies");
     await user.click(await screen.findByRole("button", { name: "New policy" }));
     const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
     await user.type(within(dialog).getByLabelText(/Name/), "Remote access, head office");
@@ -274,7 +312,7 @@ describe("alert policies", () => {
       ...adminRoutes(),
       "POST /alert-policies": { status: 422, body: { error: { code: "validation_failed", message: "Some fields need attention.", fields: { name: "A policy with this name already exists here." } } } },
     });
-    renderApp("/alerts?tab=policies");
+    renderApp("/settings?tab=alert-policies");
     await user.click(await screen.findByRole("button", { name: "New policy" }));
     const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
     await user.type(within(dialog).getByLabelText(/Name/), "Device offline");
@@ -289,7 +327,7 @@ describe("alert policies", () => {
       "PATCH /alert-policies/:id": (r) => ok({ ...policies[0], ...(r.body as object) }),
       "DELETE /alert-policies/:id": noContent,
     });
-    renderApp("/alerts?tab=policies");
+    renderApp("/settings?tab=alert-policies");
     await user.click(await screen.findByRole("button", { name: "Edit Device offline" }));
     let dialog = await screen.findByRole("dialog", { name: "Edit Device offline" });
     expect(within(dialog).getByText("Every device")).toBeInTheDocument();
@@ -431,7 +469,7 @@ describe("disk health alerts (ADR-0065)", () => {
     }
     /** Opens a new policy for disk health, on the policies page rendered once per test. */
     async function newPolicy(user: ReturnType<typeof userEvent.setup>) {
-      if (!screen.queryByRole("tab", { name: "Policies" })) renderApp("/alerts?tab=policies");
+      if (!screen.queryByTestId("location")) renderApp("/settings?tab=alert-policies");
       await screen.findByRole("button", { name: "Edit High processor use" });
       await user.click(screen.getByRole("button", { name: "New policy" }));
       const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
@@ -569,7 +607,7 @@ describe("disk health alerts (ADR-0065)", () => {
         ...adminRoutes([hot, failing]),
         "PATCH /alert-policies/:id": (r) => ok({ ...hot, ...(r.body as object) }),
       });
-      renderApp("/alerts?tab=policies");
+      renderApp("/settings?tab=alert-policies");
       const table = await screen.findByRole("table");
       expect(within(table).getAllByText("A disk at 55 °C or more for 1 hour").length).toBeGreaterThan(0);
       expect(within(table).getAllByText("A disk's own verdict is failing").length).toBeGreaterThan(0);
