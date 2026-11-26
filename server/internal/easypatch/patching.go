@@ -324,7 +324,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 	var rows []deviceRow
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		list, err := tx.Query(ctx, deviceSelect+`
-			WHERE (l.organization_id IS NOT NULL OR e.device_id IS NOT NULL)
+			WHERE NOT d.quick_assist AND (l.organization_id IS NOT NULL OR e.device_id IS NOT NULL)
 			  AND ($1::uuid IS NULL OR d.organization_id = $1) AND ($2::uuid IS NULL OR d.site_id = $2)
 			  AND ($3::uuid IS NULL OR d.device_group_id = $3)
 			  AND ($4 = '' OR d.name ILIKE $4 OR d.hostname ILIKE $4)

@@ -314,7 +314,7 @@ const (
 	// ADR-0018): either agent checked in recently.
 	onlineSQL   = `(d.remote_online OR coalesce(d.agent_last_seen_at > now() - interval '3 minutes', false))`
 	lastSeenSQL = `greatest(d.last_seen_at, d.agent_last_seen_at)`
-	scopeSQL    = `($1::uuid IS NULL OR d.organization_id = $1) AND ($2::uuid IS NULL OR d.site_id = $2) AND ($3 = '' OR d.platform = $3)`
+	scopeSQL    = `NOT d.quick_assist AND ($1::uuid IS NULL OR d.organization_id = $1) AND ($2::uuid IS NULL OR d.site_id = $2) AND ($3 = '' OR d.platform = $3)`
 	fromSQL     = ` JOIN organizations o ON o.id = d.organization_id JOIN sites st ON st.id = d.site_id`
 )
 

@@ -527,3 +527,63 @@ func conflict(err error) bool {
 	e, ok := apperr.As(err)
 	return ok && e.Kind == apperr.KindConflict
 }
+
+func TestHolderRuleOnRemoteToolsAndFloodNotice(t *testing.T) {
+	f := newFx(t)
+	f.openMode()
+	admin := f.user(rbac.RoleOrgAdmin, f.acme)
+	tech := f.user(rbac.RoleTechnician, f.acme)
+	other := f.user(rbac.RoleTechnician, f.acme)
+
+	// An ordinary device is not touched by the rule.
+	site := f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)
+	plain := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname) VALUES ($1, $2, 'pc', 'pc') RETURNING id`, f.acme, site)
+	if err := quickassist.Guard(f.ctx, f.db, other, plain); err != nil {
+		t.Fatalf("ordinary device: %v", err)
+	}
+
+	perm, err := f.svc.CreateLink(f.ctx, admin, quickassist.CreateInput{OrganizationID: f.acme, Kind: quickassist.KindPermanent, Name: "Desk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.runner(perm.Token, "123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, sid := uuid.MustParse(res.DeviceID), uuid.MustParse(res.SessionID)
+	if err := quickassist.Guard(f.ctx, f.db, tech, dev); !errors.Is(err, quickassist.ErrNotHeld) {
+		t.Fatalf("a waiting request is usable: %v", err)
+	}
+	if _, err := f.svc.Accept(f.ctx, tech, sid, "123456"); err != nil {
+		t.Fatal(err)
+	}
+	if err := quickassist.Guard(f.ctx, f.db, tech, dev); err != nil {
+		t.Fatalf("the holder: %v", err)
+	}
+	if err := quickassist.Guard(f.ctx, f.db, other, dev); !errors.Is(err, quickassist.ErrNotHeld) {
+		t.Fatalf("another technician: %v", err)
+	}
+	if err := quickassist.Guard(f.ctx, f.db, admin, dev); err != nil {
+		t.Fatalf("an administrator may take over: %v", err)
+	}
+	if err := f.svc.End(f.ctx, tech, sid); err != nil {
+		t.Fatal(err)
+	}
+	if err := quickassist.Guard(f.ctx, f.db, tech, dev); !errors.Is(err, quickassist.ErrNotHeld) {
+		t.Fatalf("an ended session is usable: %v", err)
+	}
+
+	// The flood notice goes out once per link per day.
+	var told []string
+	f.svc.OnThrottled(func(_ context.Context, org uuid.UUID, link string) { told = append(told, link) })
+	f.exec(`UPDATE quick_assist_links SET bucket_tokens = 0, bucket_at = now() WHERE id = $1`, perm.Link.ID)
+	for range 3 {
+		_, _, err := f.svc.Download(f.ctx, f.ip(), perm.Token)
+		if !errors.Is(err, quickassist.ErrThrottled) {
+			t.Fatalf("download: %v", err)
+		}
+	}
+	if len(told) != 1 || told[0] != "Desk" {
+		t.Fatalf("told %v", told)
+	}
+}

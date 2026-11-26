@@ -108,7 +108,14 @@ type Service struct {
 	// perAddr limits downloads and enrollments from one address; the
 	// per-link bucket is the primary limit and lives in the database.
 	downloads, enrolls, pages *auth.KeyedLimiter
+	// onThrottled, when set, hears of a link that went over its bucket, at
+	// most once per link per day.
+	onThrottled func(ctx context.Context, org uuid.UUID, link string)
 }
+
+// OnThrottled sets what is told that a link went over its bucket (the
+// alert mail). It runs after the transaction commits.
+func (s *Service) OnThrottled(f func(ctx context.Context, org uuid.UUID, link string)) { s.onThrottled = f }
 
 // New builds the service. publicURL is the console's address the ticket
 // names; key signs tickets (the server's job key).
@@ -503,6 +510,8 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 		return nil, nil, ErrRateLimited
 	}
 	throttled := false
+	var alertOrg uuid.UUID
+	var alertLink string
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		r, err := s.lookup(ctx, tx, token, true)
 		if err != nil {
@@ -523,6 +532,17 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 					return err
 				}
 				throttled = true
+				var fresh bool
+				if err := tx.QueryRow(ctx, `UPDATE quick_assist_links SET last_alert_at = $2::timestamptz WHERE id = $1
+					AND (last_alert_at IS NULL OR last_alert_at < $2::timestamptz - interval '1 day') RETURNING true`, r.ID, now).Scan(&fresh); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return err
+				}
+				if fresh {
+					alertOrg, alertLink = r.OrganizationID, r.Name
+					if alertLink == "" {
+						alertLink = "an unnamed link"
+					}
+				}
 				return nil
 			}
 			if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET bucket_tokens = $2, bucket_at = $3, last_used_at = $3, download_count = download_count + 1 WHERE id = $1`, r.ID, tokens-1, now); err != nil {
@@ -537,6 +557,9 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 		return s.audit.Write(ctx, tx, s.linkEvent(audit.Actor{Type: audit.ActorSystem, Label: "quickassist user", SourceIP: ip}, &r.Link, ActionLinkDownload, audit.Success, nil))
 	})
 	if err == nil && throttled {
+		if alertOrg != uuid.Nil && s.onThrottled != nil && devscope.Allowed(alertOrg) {
+			s.onThrottled(ctx, alertOrg, alertLink)
+		}
 		return nil, nil, ErrThrottled
 	}
 	return trailer, link, err

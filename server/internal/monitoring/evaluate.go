@@ -200,8 +200,8 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 				greatest(d.last_seen_at, d.agent_last_seen_at) AS seen,
 				coalesce(s.n, 0) AS n, coalesce(s.n_recent, 0) AS n_recent, s.lo, s.last, s.hi_recent
 			FROM alert_policies p
-			JOIN devices d ON p.organization_id IS NULL
-				OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id))
+			JOIN devices d ON NOT d.quick_assist AND (p.organization_id IS NULL
+				OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id)))
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
 			LEFT JOIN LATERAL (
 				SELECT count(*) AS n, min(v) AS lo, (array_agg(v ORDER BY at DESC))[1] AS last,

@@ -19,6 +19,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -478,6 +479,9 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := quickassist.GuardTx(ctx, tx, c, ids...); err != nil {
 		return nil, err
 	}
 	if missing := len(ids) - len(found); missing > 0 {

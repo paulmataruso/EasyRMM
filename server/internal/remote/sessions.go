@@ -21,6 +21,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -113,6 +114,9 @@ func (s *Service) StartSession(ctx context.Context, c access.Caller, sessionID, 
 			DeviceID: d.ID, TargetType: "device", TargetID: d.ID.String(), Outcome: audit.Denied,
 			Details: map[string]any{"kind": string(kind), "device": d.Name},
 		})
+		return nil, err
+	}
+	if err := quickassist.Guard(ctx, s.db, c, d.ID); err != nil {
 		return nil, err
 	}
 	if d.MeshNodeID == "" {
