@@ -1,0 +1,15 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $o = Get-ADComputer -Identity ([string]$p.id) -Properties SamAccountName, DNSHostName, primaryGroupID, objectClass @common
+    $pg = Get-Prop $o 'primaryGroupID'
+    $self = ([string]$o.DNSHostName -eq [string]$c.Server)
+    if ($pg -eq 516 -or $pg -eq 521 -or $self -or (Test-UnderDn ([string]$o.DistinguishedName) ([string]$c.ControllersDn))) {
+        Stop-With 'protected_target' 'A domain controller is never disabled from here.'
+    }
+    Disable-ADAccount -Identity $o @common
+    Write-Result $true ([ordered]@{ done = $true }) $null $null
+} catch {
+    Stop-ForError $_
+}

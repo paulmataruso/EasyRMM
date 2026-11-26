@@ -164,10 +164,13 @@ type Replication struct {
 
 // Health is health_read's result.
 type Health struct {
-	Controller  string      `json:"controller"`
-	Domain      string      `json:"domain"`
-	Checks      []Check     `json:"checks"`
-	Replication Replication `json:"replication"`
+	Controller string  `json:"controller"`
+	Domain     string  `json:"domain"`
+	Checks     []Check `json:"checks"`
+	// LockedOutCount is how many accounts are locked out now; null when the
+	// controller could not say.
+	LockedOutCount *int        `json:"lockedOutCount"`
+	Replication    Replication `json:"replication"`
 }
 
 // Done is the result of a change that has nothing to return.
@@ -191,4 +194,46 @@ type Created struct {
 type Reset struct {
 	MustChange bool `json:"mustChange"`
 	Unlocked   bool `json:"unlocked"`
+}
+
+// Computer is a row of computer_list.
+type Computer struct {
+	ID         string `json:"id"`
+	Sam        string `json:"sam"`
+	Name       string `json:"name"`
+	DNSName    string `json:"dnsName"`
+	OS         string `json:"os"`
+	Enabled    bool   `json:"enabled"`
+	Controller bool   `json:"controller"`
+}
+
+// ComputerPage is a page of computer_list.
+type ComputerPage struct {
+	Items   []Computer `json:"items"`
+	Next    *string    `json:"next"`
+	Scanned int        `json:"scanned"`
+}
+
+// PrivilegedMember is a direct member of a privileged group.
+type PrivilegedMember struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// PrivilegedGroup is one of the protected groups with its direct members.
+// Tier 1 is Domain, Enterprise and Schema Administrators and the built-in
+// Administrators; tier 2 the other protected groups.
+type PrivilegedGroup struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	Tier      int                `json:"tier"`
+	Total     int                `json:"total"`
+	ChangedAt *time.Time         `json:"changedAt"`
+	Members   []PrivilegedMember `json:"members"`
+}
+
+// Privileged is privileged_members' result (sensitive).
+type Privileged struct {
+	Groups []PrivilegedGroup `json:"groups"`
 }

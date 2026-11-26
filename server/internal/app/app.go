@@ -46,6 +46,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/adapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/backupapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/defenderapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
@@ -85,6 +86,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/activedirectory"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/backup"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
@@ -612,6 +614,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
 	backupapi.New(backup.NewCards(d.DB, d.Modules)).Register(mux)
+	adapi.New(activedirectory.New(d.DB, d.Modules, d.Audit)).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)

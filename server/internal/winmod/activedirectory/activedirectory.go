@@ -132,6 +132,15 @@ func Actions() []winmod.Action {
 	health := read("health_read", "Check the directory's health", 300, rbac.PermADView)
 	health.Decode, health.CountField, health.Freshness, health.Schedule = winmod.Typed[Health](), "checks", 5*time.Minute, time.Hour
 
+	computers := read("computer_list", "List computers", 120, rbac.PermADView, pContainer, pScope, pMatch, pAfter, pPageSize)
+	computers.Decode, computers.CountField = winmod.Typed[ComputerPage](), "items"
+
+	// Who is in the privileged groups is sensitive; the server reads it
+	// hourly for the group-change alert and keeps it as a short snapshot.
+	privileged := read("privileged_members", "Read the privileged groups", 120, rbac.PermADViewSensitive)
+	privileged.Decode, privileged.Sensitive, privileged.SensitivePermission = winmod.Typed[Privileged](), true, rbac.PermADViewSensitive
+	privileged.CountField, privileged.Keep, privileged.Freshness, privileged.Schedule = "groups", sensitiveKeep, 15*time.Minute, time.Hour
+
 	// The help desk: unlock, enable, disable, reset a password, on ordinary
 	// users. Enable, disable and reset need a typed confirmation and a
 	// step-up; a service account needs the second confirmation, which needs
@@ -155,11 +164,11 @@ func Actions() []winmod.Action {
 	set := write("user_set", "Change a user's attributes", 60, rbac.PermADManage, withCredential(pID, serviceConfirm(rbac.PermADManage),
 		attr("givenName"), attr("surname"), attr("displayName"), attr("description"), attr("mail"), attr("telephone"),
 		attr("title"), attr("department"), attr("company"), attr("office")))
-	set.Decode = winmod.Typed[Changed]()
+	set.Decode, set.Confirm, set.Subject = winmod.Typed[Changed](), true, "id"
 
 	move := write("user_move", "Move a user to another organizational unit", 60, rbac.PermADManage, withCredential(pID, serviceConfirm(rbac.PermADManage),
 		winmod.Param{Name: "targetOu", Type: winmod.DN, Required: true}))
-	move.Decode = winmod.Typed[Done]()
+	move.Decode, move.Confirm, move.Subject = winmod.Typed[Done](), true, "id"
 
 	create := write("user_create", "Create a user", 120, rbac.PermADManage, withCredential(
 		winmod.Param{Name: "ou", Type: winmod.DN, Required: true},
@@ -181,18 +190,21 @@ func Actions() []winmod.Action {
 		winmod.Param{Name: "scope", Type: winmod.Enum, Required: true, Values: []string{"domain_local", "global", "universal"}},
 		winmod.Param{Name: "category", Type: winmod.Enum, Required: true, Values: []string{"security", "distribution"}},
 		winmod.Param{Name: "description", Type: winmod.Text, Max: 200}))
-	groupCreate.Decode = winmod.Typed[Created]()
+	groupCreate.Decode, groupCreate.Confirm, groupCreate.Subject = winmod.Typed[Created](), true, "name"
 
 	addMember := write("group_add_member", "Add a member to a group", 120, rbac.PermADManage, withCredential(pID, pMember))
 	addMember.Decode, addMember.Destructive, addMember.Subject = winmod.Typed[Done](), true, "id"
 
 	removeMember := write("group_remove_member", "Remove a member from a group", 120, rbac.PermADManage, withCredential(pID, pMember))
-	removeMember.Decode = winmod.Typed[Done]()
+	removeMember.Decode, removeMember.Confirm, removeMember.Subject = winmod.Typed[Done](), true, "id"
 
 	groupDelete := write("group_delete", "Delete a group", 120, rbac.PermADManage, withCredential(pID))
 	groupDelete.Decode, groupDelete.Destructive, groupDelete.Subject = winmod.Typed[Done](), true, "id"
 
-	return []winmod.Action{status, ouTree, userList, userGet, groupList, groupMembers, health,
+	computerDisable := write("computer_disable", "Disable a computer account", 60, rbac.PermADManage, withCredential(pID))
+	computerDisable.Decode, computerDisable.Destructive, computerDisable.Subject = winmod.Typed[Done](), true, "id"
+
+	return []winmod.Action{status, ouTree, userList, userGet, groupList, groupMembers, health, computers, privileged, computerDisable,
 		unlock, enable, disable, reset, set, move, create, del, groupCreate, addMember, removeMember, groupDelete}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -225,14 +226,17 @@ func TestResultsDecode(t *testing.T) {
 	c := catalog(t)
 	user := `{"id":"S-1-5-21-1-2-3-1104","sam":"ann","name":"Ann","upn":"ann@corp.test","enabled":true,"lockedOut":false,"passwordExpired":false,"protection":"none","reason":""}`
 	samples := map[string]string{
-		"status":        `{"domain":"corp.test","domainSid":"S-1-5-21-1-2-3","forest":"corp.test","forestRootSid":"S-1-5-21-1-2-3","domainMode":"Windows2016Domain","forestMode":"Windows2016Forest","controller":"dc1.corp.test","readOnly":false,"globalCatalog":true,"pdcEmulator":"dc1.corp.test","recycleBinEnabled":false,"passwordPolicy":{"minLength":7,"complexity":true,"historyCount":24,"maxAgeDays":42,"lockoutThreshold":0,"lockoutDurationMinutes":30,"lockoutObservationMinutes":30}}`,
-		"ou_tree":       `{"parent":"DC=corp,DC=test","items":[{"dn":"OU=Staff,DC=corp,DC=test","name":"Staff","kind":"ou","protectedFromDelete":true,"writable":true}]}`,
-		"user_list":     `{"items":[` + user + `],"next":null,"scanned":1,"domainSid":"S-1-5-21-1-2-3"}`,
-		"group_list":    `{"items":[{"id":"S-1-5-21-1-2-3-1105","sam":"Sales","name":"Sales","scope":"global","category":"security","description":"","protection":"none","reason":""}],"next":"Sales","scanned":9,"domainSid":"S-1-5-21-1-2-3"}`,
-		"group_members": `{"items":[{"id":"S-1-5-21-1-2-3-1104","sam":"ann","name":"Ann","kind":"user","key":"ann"}],"next":null,"total":1}`,
-		"user_get":      `{"id":"S-1-5-21-1-2-3-1104","sam":"ann","upn":"ann@corp.test","name":"Ann","displayName":"Ann","givenName":"","surname":"","description":"","mail":"","telephone":"","title":"","department":"","company":"","office":"","ou":"OU=Staff,DC=corp,DC=test","enabled":true,"lockedOut":false,"passwordExpired":false,"passwordNeverExpires":false,"cannotChangePassword":false,"passwordLastSetAt":"2026-11-01T08:00:00Z","accountExpiresAt":null,"createdAt":"2026-10-01T08:00:00Z","lastLogonApproxAt":null,"groups":["Sales"],"protection":"none","reason":""}`,
-		"health_read":   `{"controller":"dc1.corp.test","domain":"corp.test","checks":[{"name":"replication","state":"critical","detail":"x"}],"replication":{"failureCount":2,"oldestFailureAt":"2026-11-26T05:00:00Z","partners":[{"partner":"DC2","lastSuccessAt":null,"lastResult":8524}]}}`,
-		"user_unlock":   `{"done":true}`, "user_enable": `{"done":true}`, "user_disable": `{"done":true}`, "user_move": `{"done":true}`,
+		"status":             `{"domain":"corp.test","domainSid":"S-1-5-21-1-2-3","forest":"corp.test","forestRootSid":"S-1-5-21-1-2-3","domainMode":"Windows2016Domain","forestMode":"Windows2016Forest","controller":"dc1.corp.test","readOnly":false,"globalCatalog":true,"pdcEmulator":"dc1.corp.test","recycleBinEnabled":false,"passwordPolicy":{"minLength":7,"complexity":true,"historyCount":24,"maxAgeDays":42,"lockoutThreshold":0,"lockoutDurationMinutes":30,"lockoutObservationMinutes":30}}`,
+		"ou_tree":            `{"parent":"DC=corp,DC=test","items":[{"dn":"OU=Staff,DC=corp,DC=test","name":"Staff","kind":"ou","protectedFromDelete":true,"writable":true}]}`,
+		"user_list":          `{"items":[` + user + `],"next":null,"scanned":1,"domainSid":"S-1-5-21-1-2-3"}`,
+		"group_list":         `{"items":[{"id":"S-1-5-21-1-2-3-1105","sam":"Sales","name":"Sales","scope":"global","category":"security","description":"","protection":"none","reason":""}],"next":"Sales","scanned":9,"domainSid":"S-1-5-21-1-2-3"}`,
+		"group_members":      `{"items":[{"id":"S-1-5-21-1-2-3-1104","sam":"ann","name":"Ann","kind":"user","key":"ann"}],"next":null,"total":1}`,
+		"user_get":           `{"id":"S-1-5-21-1-2-3-1104","sam":"ann","upn":"ann@corp.test","name":"Ann","displayName":"Ann","givenName":"","surname":"","description":"","mail":"","telephone":"","title":"","department":"","company":"","office":"","ou":"OU=Staff,DC=corp,DC=test","enabled":true,"lockedOut":false,"passwordExpired":false,"passwordNeverExpires":false,"cannotChangePassword":false,"passwordLastSetAt":"2026-11-01T08:00:00Z","accountExpiresAt":null,"createdAt":"2026-10-01T08:00:00Z","lastLogonApproxAt":null,"groups":["Sales"],"protection":"none","reason":""}`,
+		"health_read":        `{"controller":"dc1.corp.test","domain":"corp.test","lockedOutCount":3,"checks":[{"name":"replication","state":"critical","detail":"x"}],"replication":{"failureCount":2,"oldestFailureAt":"2026-11-26T05:00:00Z","partners":[{"partner":"DC2","lastSuccessAt":null,"lastResult":8524}]}}`,
+		"computer_list":      `{"items":[{"id":"S-1-5-21-1-2-3-1113","sam":"PC1$","name":"PC1","dnsName":"pc1.corp.test","os":"Windows 11","enabled":true,"controller":false}],"next":null,"scanned":1}`,
+		"privileged_members": `{"groups":[{"id":"S-1-5-21-1-2-3-512","name":"Domain Admins","tier":1,"total":1,"changedAt":"2026-11-26T05:00:00Z","members":[{"id":"S-1-5-21-1-2-3-500","name":"Administrator","kind":"user"}]}]}`,
+		"computer_disable":   `{"done":true}`,
+		"user_unlock":        `{"done":true}`, "user_enable": `{"done":true}`, "user_disable": `{"done":true}`, "user_move": `{"done":true}`,
 		"user_delete": `{"done":true}`, "group_add_member": `{"done":true}`, "group_remove_member": `{"done":true}`, "group_delete": `{"done":true}`,
 		"user_set": `{"changed":["title"]}`, "user_create": `{"id":"S-1-5-21-1-2-3-1106","sam":"bob","name":"Bob"}`,
 		"group_create":        `{"id":"S-1-5-21-1-2-3-1107","sam":"G","name":"G"}`,
@@ -303,6 +307,39 @@ func TestReplicationAlert(t *testing.T) {
 		t.Error("a snapshot without the replication check is unknown, not healthy")
 	}
 	if _, err := evalReplication(json.RawMessage(`nonsense`), nil); err == nil {
+		t.Error("garbage is unknown")
+	}
+}
+
+func TestLockoutAndPrivilegedAlerts(t *testing.T) {
+	three, one, hours := 3, 1, 24
+	lock := func(n *int) json.RawMessage { b, _ := json.Marshal(Health{LockedOutCount: n}); return b }
+	if v, err := evalLockedOut(lock(&three), &one); err != nil || !v.Holds {
+		t.Errorf("3 locked out against 1: %+v %v", v, err)
+	}
+	if v, err := evalLockedOut(lock(&one), &three); err != nil || v.Holds {
+		t.Errorf("1 locked out against 3: %+v %v", v, err)
+	}
+	if _, err := evalLockedOut(lock(nil), &one); err == nil {
+		t.Error("a count the controller could not give is unknown")
+	}
+	now := time.Now().UTC()
+	old, fresh := now.Add(-48*time.Hour), now.Add(-time.Hour)
+	priv := func(tier int, at *time.Time) json.RawMessage {
+		b, _ := json.Marshal(Privileged{Groups: []PrivilegedGroup{{Name: "Domain Admins", Tier: tier, ChangedAt: at}}})
+		return b
+	}
+	for _, c := range []struct {
+		tier  int
+		at    *time.Time
+		holds bool
+	}{{1, &fresh, true}, {1, &old, false}, {2, &fresh, false}, {1, nil, false}} {
+		v, err := evalPrivileged(priv(c.tier, c.at), &hours)
+		if err != nil || v.Holds != c.holds || (v.Holds && strings.Contains(v.Detail, "member")) {
+			t.Errorf("%+v: %+v %v", c, v, err)
+		}
+	}
+	if _, err := evalPrivileged(json.RawMessage(`x`), &hours); err == nil {
 		t.Error("garbage is unknown")
 	}
 }

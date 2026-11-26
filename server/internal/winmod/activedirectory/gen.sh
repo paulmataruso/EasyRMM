@@ -22,7 +22,7 @@ for body in src/*.body; do
   name=$(basename "$body" .body)
   { cat src/head.txt
     { cat src/lib.txt
-      case "$name" in status|ou_tree|health_read|group_members) ;; *) echo; cat src/guard.txt ;; esac
+      case "$name" in status|ou_tree|health_read|group_members|computer_list) ;; *) echo; cat src/guard.txt ;; esac
     } | prefix
     echo; cat "$body"; } > "scripts/$name.ps1"
 done

@@ -112,7 +112,7 @@ function Find-Group([string]$fn_Sid, [bool]$fn_ForestWide, [bool]$fn_Required, [
     if ($fn_c.Common.ContainsKey('Credential')) { $fn_common['Credential'] = $fn_c.Common['Credential'] }
     if ($fn_ForestWide -and $fn_c.ForestSid -ne $fn_c.DomainSid) { $fn_common['Server'] = Join-Text $fn_c.Server ':3268' }
     try {
-        return Get-ADGroup -Identity $fn_Sid -Properties member @common
+        return Get-ADGroup -Identity $fn_Sid -Properties member, whenChanged @common
     } catch {
         if ($_.Exception.GetType().Name -eq 'ADIdentityNotFoundException' -and -not $fn_Required) { return $null }
         throw

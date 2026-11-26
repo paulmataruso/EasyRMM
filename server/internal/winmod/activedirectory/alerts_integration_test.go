@@ -157,8 +157,8 @@ func TestReplicationPolicyIsCreatedOnceAndStaysQuiet(t *testing.T) {
 	count := func(org uuid.UUID) int {
 		return mustInt(f.str(`SELECT count(*)::text FROM alert_policies WHERE organization_id = $1 AND module = 'active_directory'`, org))
 	}
-	if n := count(f.acme); n != 1 {
-		t.Errorf("%d default policies after two evaluations, want 1", n)
+	if n := count(f.acme); n != 4 {
+		t.Errorf("%d default policies after two evaluations, want 4", n)
 	}
 	if n := count(f.globex); n != 0 {
 		t.Errorf("an organization with no domain controller has %d", n)
@@ -269,5 +269,59 @@ func TestReplicationAlertSkipsOrganizationsOutsideTheScope(t *testing.T) {
 	}
 	if n := mustInt(f.str(`SELECT count(*)::text FROM alert_policies WHERE organization_id = $1`, f.globex)); n != 0 {
 		t.Errorf("an organization outside the scope has %d policies", n)
+	}
+}
+
+func TestDomainsAreGroupedBySIDAndThePinIsKept(t *testing.T) {
+	f := newFx(t)
+	svc := activedirectory.New(f.db, f.mods, audit.New(f.db, nil))
+	status := func(dev uuid.UUID, host string, ro bool) {
+		st := activedirectory.Status{Domain: "corp.test", DomainSID: "S-1-5-21-1-2-3", Controller: host, PDCEmulator: "dc1.corp.test", ReadOnly: ro}
+		b, _ := json.Marshal(st)
+		f.exec(`INSERT INTO windows_module_snapshots (device_id, module, action, params_hash, taken_at, data) VALUES ($1, 'active_directory', 'active_directory.status', '', now(), $2)`, dev, b)
+	}
+	d1, d2, d3 := f.device(f.acme, f.hq, "dc1"), f.device(f.acme, f.hq, "dc2"), f.device(f.acme, f.hq, "rodc")
+	status(d1, "dc1.corp.test", false)
+	status(d2, "dc2.corp.test", false)
+	status(d3, "rodc.corp.test", true)
+	f.snapshot(d1, 0, "critical", 2)
+	f.snapshot(d2, 0, "ok", 0)
+	out, err := svc.Read(f.ctx, f.admin, f.acme)
+	if err != nil || len(out.Domains) != 1 || len(out.Domains[0].Controllers) != 3 {
+		t.Fatalf("%+v, %v", out, err)
+	}
+	// dc1 holds the PDC role but is unhealthy; the healthy dc2 is chosen, never the read-only one.
+	if d := out.Domains[0]; d.Chosen == nil || *d.Chosen != d2 {
+		t.Errorf("chosen %v (%s)", d.Chosen, d.Why)
+	}
+	if err := svc.Pin(f.ctx, f.admin, f.acme, "S-1-5-21-1-2-3", &d3); err != nil {
+		t.Fatal(err)
+	}
+	out, _ = svc.Read(f.ctx, f.admin, f.acme)
+	if d := out.Domains[0]; d.Pinned == nil || *d.Pinned != d3 || *d.Chosen != d2 {
+		t.Errorf("a read-only pin is kept but not chosen: %+v", d)
+	}
+	if err := svc.Pin(f.ctx, f.admin, f.acme, "S-1-5-21-1-2-3", &d1); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Pin(f.ctx, f.admin, f.acme, "not a sid", nil); err == nil {
+		t.Error("a bad SID was accepted")
+	}
+	other := f.device(f.globex, f.main, "other")
+	if err := svc.Pin(f.ctx, f.admin, f.acme, "S-1-5-21-1-2-3", &other); err == nil {
+		t.Error("another organization's computer was pinned")
+	}
+	if err := svc.Pin(f.ctx, f.admin, f.acme, "S-1-5-21-1-2-3", nil); err != nil {
+		t.Fatal(err)
+	}
+	if n := mustInt(f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'active_directory.pin'`)); n != 3 {
+		t.Errorf("%d pin audit rows", n)
+	}
+	// A module that is off hides the domain; a caller without ad.view finds nothing.
+	if err := f.mods.SetEnabled(f.ctx, f.admin, modules.AtOrganization, f.acme, modules.ActiveDirectory, false); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := svc.Read(f.ctx, f.admin, f.acme); out.Enabled || len(out.Domains) != 0 {
+		t.Errorf("module off: %+v", out)
 	}
 }

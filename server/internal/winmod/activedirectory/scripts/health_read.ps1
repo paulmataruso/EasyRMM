@@ -176,10 +176,14 @@ try {
     } catch {
         $checks += New-Check 'sysvol' 'could_not_run' 'The SYSVOL check could not run.'
     }
+    # How many accounts are locked out now.
+    $locked = $null
+    try { $locked = @(Search-ADAccount -LockedOut -UsersOnly @common).Count } catch { $locked = $null }
     $data = [ordered]@{
         controller = [string]$c.Dc.HostName
         domain = [string]$c.DomainName
         checks = @($checks)
+        lockedOutCount = $locked
         replication = [ordered]@{ failureCount = $failureCount; oldestFailureAt = Get-UtcText $oldest; partners = @($partners) }
     }
     Write-Result $true $data $null $null

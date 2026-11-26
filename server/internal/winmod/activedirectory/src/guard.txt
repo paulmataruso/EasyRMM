@@ -5,7 +5,7 @@ function Find-Group([string]$Sid, [bool]$ForestWide, [bool]$Required, [hashtable
     if ($c.Common.ContainsKey('Credential')) { $common['Credential'] = $c.Common['Credential'] }
     if ($ForestWide -and $c.ForestSid -ne $c.DomainSid) { $common['Server'] = Join-Text $c.Server ':3268' }
     try {
-        return Get-ADGroup -Identity $Sid -Properties member @common
+        return Get-ADGroup -Identity $Sid -Properties member, whenChanged @common
     } catch {
         if ($_.Exception.GetType().Name -eq 'ADIdentityNotFoundException' -and -not $Required) { return $null }
         throw
