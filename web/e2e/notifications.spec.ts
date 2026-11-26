@@ -76,7 +76,7 @@ test("a platform webhook is added, tested, received signed, and its secret shown
   await dialog.getByLabel(/^Web address/).fill(`https://127.0.0.1:${port}/hook?token=e2e-secret-token`);
   await dialog.getByLabel(/^Certificate authority/).fill(authority);
   await dialog.getByRole("button", { name: "Add channel" }).click();
-  await expect(page.getByRole("cell", { name: /E2E receiver/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^E2E receiver/ })).toBeVisible();
   // The list shows the host, never the address's path or query.
   await expect(page.getByText("e2e-secret-token")).toHaveCount(0);
 
@@ -111,7 +111,7 @@ test("an organization's administrator adds an email channel, and a loopback webh
   await dialog.getByLabel(/^Name/).fill("Service desk");
   await dialog.getByLabel(/^Recipients/).fill("desk@example.com, lead@example.com");
   await dialog.getByRole("button", { name: "Add channel" }).click();
-  await expect(page.getByRole("cell", { name: /Service desk/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^Service desk/ })).toBeVisible();
   await expect(page.getByText("2 recipients")).toBeVisible();
 
   // No mail server runs in this suite: the test says so, and the message waits.
@@ -125,7 +125,7 @@ test("an organization's administrator adds an email channel, and a loopback webh
   await dialog.getByLabel(/^Web address/).fill(`https://127.0.0.1:${port}/hook`);
   await dialog.getByLabel(/^Certificate authority/).fill(authority);
   await dialog.getByRole("button", { name: "Add channel" }).click();
-  await expect(page.getByRole("cell", { name: /Loopback hook/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^Loopback hook/ })).toBeVisible();
   const before = received.length;
   await page.getByRole("button", { name: "Test Loopback hook" }).click();
   await expect(page.getByText(/does not connect to 127\.0\.0\.1/)).toBeVisible({ timeout: 30_000 });
