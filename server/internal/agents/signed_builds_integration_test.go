@@ -200,7 +200,7 @@ func TestSignedBuilds(t *testing.T) {
 	if p := f.windowsBeat(w1, shaOf(rsa)); p != nil {
 		t.Errorf("told to update from the signed build: %+v", p)
 	}
-	if lb, ok := f.svc.BuildLookup("windows", "amd64"); !ok || lb.SHA256 != shaOf(rsa) || lb.WaitingFor != "" {
+	if lb, ok := f.svc.BuildLookup(uuid.Nil, "windows", "amd64"); !ok || lb.SHA256 != shaOf(rsa) || lb.WaitingFor != "" {
 		t.Errorf("lookup %+v", lb)
 	}
 
@@ -244,7 +244,7 @@ func TestSignedBuilds(t *testing.T) {
 	if _, ok := b.For("windows", "arm64"); ok || !b.Withheld("windows", "arm64") {
 		t.Error("arm64's unsigned build is still served")
 	}
-	if lb, ok := f.svc.BuildLookup("windows", "arm64"); !ok || lb.SHA256 != "" || lb.WaitingFor != "v1.2.0" {
+	if lb, ok := f.svc.BuildLookup(uuid.Nil, "windows", "arm64"); !ok || lb.SHA256 != "" || lb.WaitingFor != "v1.2.0" {
 		t.Errorf("arm64 lookup %+v %v", lb, ok)
 	}
 	if st, _ := f.svc.UpdateSettings(f.ctx, admin); len(st.Withheld) != 1 || st.Withheld[0] != "arm64" || len(st.Builds) != 2 {
@@ -267,7 +267,7 @@ func TestSignedBuilds(t *testing.T) {
 	if s, _ := b.For("windows", "amd64"); s.SHA256 != shaOf(ecdsa) || s.Version != "v1.2.0" {
 		t.Errorf("with only signed builds after the upgrade: %+v", s)
 	}
-	if lb, _ := f.svc.BuildLookup("windows", "amd64"); lb.SHA256 != shaOf(ecdsa) || lb.WaitingFor != "v1.3.0" {
+	if lb, _ := f.svc.BuildLookup(uuid.Nil, "windows", "amd64"); lb.SHA256 != shaOf(ecdsa) || lb.WaitingFor != "v1.3.0" {
 		t.Errorf("lookup after the upgrade %+v", lb)
 	}
 	if d, _ := devs.Get(f.ctx, admin, w1.ID); d.Agent.Update == nil || d.Agent.Update.WaitingFor != "v1.3.0" {
@@ -280,7 +280,7 @@ func TestSignedBuilds(t *testing.T) {
 	if s, _ := b.For("windows", "amd64"); s.SHA256 != shaOf(newer) || s.Signed != nil {
 		t.Errorf("the release's build after the upgrade: %+v", s)
 	}
-	if lb, _ := f.svc.BuildLookup("windows", "amd64"); lb.WaitingFor != "" {
+	if lb, _ := f.svc.BuildLookup(uuid.Nil, "windows", "amd64"); lb.WaitingFor != "" {
 		t.Errorf("waiting without only signed builds: %+v", lb)
 	}
 

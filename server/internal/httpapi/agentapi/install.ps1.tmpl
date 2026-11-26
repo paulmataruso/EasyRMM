@@ -69,6 +69,8 @@ try {
     }
 {{- end}}
     $web = New-Object Net.WebClient
+    # The token tells the server which organization's build to hand out.
+    $web.Headers.Add('X-Easyrmm-Token', $Token)
     $exe = Join-Path $tmp $file
     Write-Host "easyrmm: downloading $file from $Server"
     try {

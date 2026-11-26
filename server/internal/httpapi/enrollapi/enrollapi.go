@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
@@ -284,8 +285,18 @@ func (a *API) downloads(w http.ResponseWriter, r *http.Request) error {
 	if o, ok := httpapi.OriginOf(r); ok {
 		current = o.Console
 	}
+	// The console's downloads are tied to no organization: with a dev scope
+	// set they are the stable builds (package devscope).
+	builds := a.builds
+	if !devscope.Allowed(uuid.Nil) {
+		builds = a.svc.BuildsFor(uuid.Nil)
+	}
+	items := []agents.Build{}
+	if builds != nil {
+		items = builds.List()
+	}
 	httpapi.WriteJSON(w, http.StatusOK, downloads{
-		ServerURL: a.server, Items: a.builds.List(), Addresses: a.addresses,
+		ServerURL: a.server, Items: items, Addresses: a.addresses,
 		Current: current, CertificateAuthority: a.ca,
 	})
 	return nil

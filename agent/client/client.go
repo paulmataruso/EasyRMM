@@ -235,9 +235,11 @@ func (c *Client) signed(resp *http.Response, target, nonce string, sum [sha256.S
 }
 
 // Download downloads one of the server's agent builds into w (ADR-0027).
-// The caller checks what it got against the update it acts on.
+// The caller checks what it got against the update it acts on. The request is
+// signed, so a server that holds back test builds from some organizations
+// (its dev scope) knows whose build to hand out.
 func (c *Client) Download(ctx context.Context, file string, w io.Writer) error {
-	resp, err := c.do(ctx, http.MethodGet, agentproto.PathAgentDownload(url.PathEscape(file)), nil, false)
+	resp, err := c.do(ctx, http.MethodGet, agentproto.PathAgentDownload(url.PathEscape(file)), nil, true)
 	if err != nil {
 		return err
 	}

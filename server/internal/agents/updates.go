@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -84,15 +85,32 @@ func (s *Service) SetUpdates(b *Builds, key ed25519.PrivateKey) {
 	s.builds, s.updateKey = b, key
 }
 
+// SetStable gives the service the stable builds: what every organization
+// outside the dev scope is offered while one is set (package devscope).
+func (s *Service) SetStable(b *Builds) { s.stable = b }
+
+// BuildsFor is the set of builds handed to an organization's devices and
+// installers: the server's builds, or while a dev scope is set and the
+// organization is outside it, the stable ones. uuid.Nil, a download tied to
+// no organization, is outside any scope. It is nil when there is none: with
+// a scope set and no stable builds loaded, nothing is offered.
+func (s *Service) BuildsFor(org uuid.UUID) *Builds {
+	if devscope.Allowed(org) {
+		return s.builds
+	}
+	return s.stable
+}
+
 // BuildLookup finds the server's build for a platform, for devices. With
 // only signed builds handed out, and none signed from the release's build
 // (ADR-0049), it says so, with the older signed build served or none.
-func (s *Service) BuildLookup(platform, arch string) (devices.ServedBuild, bool) {
-	if s.builds == nil {
+func (s *Service) BuildLookup(org uuid.UUID, platform, arch string) (devices.ServedBuild, bool) {
+	builds := s.BuildsFor(org)
+	if builds == nil {
 		return devices.ServedBuild{}, false
 	}
-	waiting := s.builds.Waiting(platform, arch)
-	b, ok := s.builds.For(platform, arch)
+	waiting := builds.Waiting(platform, arch)
+	b, ok := builds.For(platform, arch)
 	if !ok {
 		return devices.ServedBuild{WaitingFor: waiting}, waiting != ""
 	}
@@ -101,12 +119,13 @@ func (s *Service) BuildLookup(platform, arch string) (devices.ServedBuild, bool)
 
 // ReleaseHashes are the SHA-256 of the bundled builds for a platform and
 // architecture, whatever is served in their place.
-func (s *Service) ReleaseHashes(platform, arch string) []string {
-	if s.builds == nil {
+func (s *Service) ReleaseHashes(org uuid.UUID, platform, arch string) []string {
+	builds := s.BuildsFor(org)
+	if builds == nil {
 		return nil
 	}
 	var out []string
-	for _, b := range s.builds.Release() {
+	for _, b := range builds.Release() {
 		if b.OS == platform && b.Arch == arch {
 			out = append(out, b.SHA256)
 		}
@@ -198,10 +217,11 @@ func (u *update) retarget(b Build) {
 // planUpdate settles the device's update in its heartbeat and returns the
 // instruction to send, if any. It runs in the heartbeat's transaction.
 func (s *Service) planUpdate(ctx context.Context, tx pgx.Tx, d *Device, f facts, report *agentproto.UpdateReport, ip netip.Addr) (*agentproto.SignedUpdate, error) {
-	if s.builds == nil || s.updateKey == nil {
+	builds := s.BuildsFor(d.OrganizationID)
+	if builds == nil || s.updateKey == nil {
 		return nil, nil
 	}
-	b, haveBuild := s.builds.For(f.platform, f.arch)
+	b, haveBuild := builds.For(f.platform, f.arch)
 	u, err := loadUpdate(ctx, tx, d.ID)
 	if err != nil {
 		return nil, err
@@ -390,22 +410,23 @@ func (s *Service) UpdateSettings(ctx context.Context, c access.Caller) (*UpdateS
 				out.UpdatedBy = *p.updatedBy
 			}
 		}
-		rows, err := tx.Query(ctx, `SELECT d.platform, coalesce(d.agent_arch, ''), coalesce(d.agent_sha256, ''),
+		rows, err := tx.Query(ctx, `SELECT d.organization_id, d.platform, coalesce(d.agent_arch, ''), coalesce(d.agent_sha256, ''),
 				coalesce(u.state, ''), coalesce(u.target_sha256, ''), count(*)
 			FROM devices d LEFT JOIN agent_updates u ON u.device_id = d.id
 			WHERE d.agent_public_key IS NOT NULL
-			GROUP BY 1, 2, 3, 4, 5`)
+			GROUP BY 1, 2, 3, 4, 5, 6`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
+			var org uuid.UUID
 			var platform, arch, sha, state, target string
 			var n int
-			if err := rows.Scan(&platform, &arch, &sha, &state, &target, &n); err != nil {
+			if err := rows.Scan(&org, &platform, &arch, &sha, &state, &target, &n); err != nil {
 				return err
 			}
-			build, ok := s.BuildLookup(platform, arch)
+			build, ok := s.BuildLookup(org, platform, arch)
 			switch {
 			case !ok:
 				out.Fleet["none"] += n
@@ -487,8 +508,8 @@ func (s *Service) RequestUpdate(ctx context.Context, c access.Caller, deviceID u
 	}
 	var b Build
 	ok := false
-	if s.builds != nil && s.updateKey != nil {
-		b, ok = s.builds.For(d.Platform, d.Agent.Arch)
+	if builds := s.BuildsFor(d.OrganizationID); builds != nil && s.updateKey != nil {
+		b, ok = builds.For(d.Platform, d.Agent.Arch)
 	}
 	switch {
 	case !ok:
@@ -503,38 +524,60 @@ func (s *Service) RequestUpdate(ctx context.Context, c access.Caller, deviceID u
 }
 
 // RequestAll asks for every outdated agent that can update itself to be
-// updated, failed ones included, and returns how many were asked for.
+// updated, failed ones included, and returns how many were asked for. With a
+// dev scope set, each device is asked for its own organization's build.
 func (s *Service) RequestAll(ctx context.Context, c access.Caller) (int, error) {
 	if err := c.RequireGlobal(rbac.PermSettingsManage); err != nil {
 		return 0, err
 	}
-	if s.builds == nil || s.updateKey == nil {
+	if s.updateKey == nil {
 		return 0, nil
 	}
-	total := 0
-	for _, b := range s.builds.List() {
-		var ids []uuid.UUID
-		err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, `SELECT id FROM devices
-				WHERE agent_public_key IS NOT NULL AND platform = $1 AND agent_arch = $2
-				  AND agent_sha256 IS NOT NULL AND agent_sha256 <> $3`, b.OS, b.Arch, b.SHA256)
-			if err != nil {
-				return err
-			}
-			ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-			return err
-		})
-		if err != nil {
-			return 0, err
+	// The organizations a set of builds is for: all of them, or with a dev
+	// scope the one inside it for the server's builds and the rest for the
+	// stable ones.
+	type pass struct {
+		builds *Builds
+		where  string
+		args   []any
+	}
+	passes := []pass{{builds: s.builds, where: "TRUE"}}
+	if org, ok := devscope.Org(); ok {
+		passes = []pass{
+			{builds: s.builds, where: "d.organization_id = $4", args: []any{org}},
+			{builds: s.stable, where: "d.organization_id <> $4", args: []any{org}},
 		}
-		if len(ids) == 0 {
+	}
+	total := 0
+	for _, ps := range passes {
+		if ps.builds == nil {
 			continue
 		}
-		n, err := s.request(ctx, c, ids, b, true)
-		if err != nil {
-			return 0, err
+		for _, b := range ps.builds.List() {
+			var ids []uuid.UUID
+			err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+				rows, err := tx.Query(ctx, `SELECT d.id FROM devices d
+					WHERE d.agent_public_key IS NOT NULL AND d.platform = $1 AND d.agent_arch = $2
+					  AND d.agent_sha256 IS NOT NULL AND d.agent_sha256 <> $3 AND `+ps.where,
+					append([]any{b.OS, b.Arch, b.SHA256}, ps.args...)...)
+				if err != nil {
+					return err
+				}
+				ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+				return err
+			})
+			if err != nil {
+				return 0, err
+			}
+			if len(ids) == 0 {
+				continue
+			}
+			n, err := s.request(ctx, c, ids, b, true)
+			if err != nil {
+				return 0, err
+			}
+			total += n
 		}
-		total += n
 	}
 	return total, nil
 }

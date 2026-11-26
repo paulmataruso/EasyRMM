@@ -373,3 +373,15 @@ func nullUUID(id uuid.UUID) *uuid.UUID {
 	}
 	return &id
 }
+
+// TokenOrg is the organization a deployment token belongs to, for the
+// downloads an installer makes before it enrolls (package devscope). A token
+// that is unknown or revoked belongs to none.
+func (s *Service) TokenOrg(ctx context.Context, secret string) (uuid.UUID, bool) {
+	var org uuid.UUID
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT organization_id FROM enrollment_tokens WHERE token_hash = $1 AND revoked_at IS NULL`,
+			hashToken(secret)).Scan(&org)
+	})
+	return org, err == nil
+}

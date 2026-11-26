@@ -139,6 +139,8 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_LISTEN_HEALTH":        "the port the image's health check reads",
 	"EASYRMM_LISTEN_OFFLOAD":       "a loopback port, used only behind a reverse proxy on the host",
 	"EASYRMM_AGENT_DIR":            "the agent builds inside the image",
+	"EASYRMM_AGENT_STABLE_DIR":     "the stable agent builds inside the image (development only, with EASYRMM_DEV_SCOPE_ORG)",
+	"EASYRMM_DEV_SCOPE_ORG":        "development only: set by the local deploy, never in .env",
 	"EASYRMM_WEB_DIR":              "the console is built into the binary",
 	"EASYRMM_DATABASE_MAX_CONNS":   "sized to the postgres service's max_connections",
 	"EASYRMM_LOG_FORMAT":           "JSON for docker logs",

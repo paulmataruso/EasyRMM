@@ -52,7 +52,7 @@ func newPatched(t *testing.T) *patched {
 	p.patch.SetClock(func() time.Time { return p.at })
 	f.svc.UsePatching(p.patch)
 	// The server bundles the build the devices run.
-	f.svc.SetBuilds(func(platform, arch string) []string {
+	f.svc.SetBuilds(func(_ uuid.UUID, platform, arch string) []string {
 		if platform == "linux" && arch == "amd64" {
 			return []string{recoveryHash}
 		}

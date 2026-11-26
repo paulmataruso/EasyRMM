@@ -69,12 +69,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 fetch() {
 {{- if .Pin}}
-	curl -fsSL --proto '=https' --insecure --pinnedpubkey "$PIN" -o "$2" "$1"
+	printf 'header = "X-Easyrmm-Token: %s"\n' "$TOKEN" | curl -K - -fsSL --proto '=https' --insecure --pinnedpubkey "$PIN" -o "$2" "$1"
 {{- else}}
 	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL {{if .HTTPS}}--proto '=https' {{end}}-o "$2" "$1"
+		printf 'header = "X-Easyrmm-Token: %s"\n' "$TOKEN" | curl -K - -fsSL {{if .HTTPS}}--proto '=https' {{end}}-o "$2" "$1"
 	elif command -v wget >/dev/null 2>&1; then
-		wget -q {{if .HTTPS}}--https-only {{end}}-O "$2" "$1"
+		printf 'header = X-Easyrmm-Token: %s\n' "$TOKEN" >"$TMP/wgetrc"
+		WGETRC="$TMP/wgetrc" wget -q {{if .HTTPS}}--https-only {{end}}-O "$2" "$1"
 	else
 		fail "curl or wget is required"
 	fi
