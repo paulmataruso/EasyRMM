@@ -1,6 +1,6 @@
 # ADR-0070: Microsoft Defender exclusions at install
 
-* Status: Proposed (amended 2026-11-26). Not implemented.
+* Status: Accepted (2026-11-26, after independent review). Not implemented yet.
 * Revised after an independent review (2026-11-23), every point *decided in
   review*: the subtree is verified, the install folder is made safely and
   deleted by the script, the .NET extraction folder and the TEMP of the
