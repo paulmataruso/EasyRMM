@@ -86,6 +86,12 @@ describe("visibleTabs", () => {
     expect(ids("site", ["org.view"])).toEqual(["overview", "windows-modules"]);
   });
 
+  it("puts Windows modules after Patching and before Install (ADR-0072 amendment)", () => {
+    const all: Permission[] = ["org.view", "patch.configure", "enrollment.manage", "monitoring.view"];
+    expect(ids("organization", all, true).slice(-3)).toEqual(["patching", "windows-modules", "install"]);
+    expect(ids("site", all, true).slice(-3)).toEqual(["patching", "windows-modules", "install"]);
+  });
+
   it("checks the permission at the level asked: the same holder differs per level", () => {
     const tabs: LevelTab[] = [
       {

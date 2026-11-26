@@ -651,3 +651,43 @@ Amended 2026-11-26 (decided in review, while building slice 5):
 * `docs/architecture/feature-plan-msp.md`, F2.
 * `server/internal/rbac/rbac.go`, `server/internal/monitoring/policies.go`,
   `internal/agentproto/agentproto.go`, `server/internal/devscope/devscope.go`.
+
+Amended 2026-11-26 (decided in review, while building slices 8 and 9):
+
+* **The AST check** is `scripts/ci/check-winmod-ast.ps1` (rules in
+  `scripts/ci/winmod-ast/WinmodAst.ps1`), run on the Windows runner over every
+  `.ps1` under `server/internal/winmod`, then against its own good and bad
+  fixtures so a rule that stops catching fails the build. It adds to the list
+  above: `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`
+  are required; `$p = [Console]::In.ReadToEnd() | ConvertFrom-Json` must appear
+  once and nothing else may read parameters (no script `param` block, `$args`,
+  `$input`, `$env:`, `Read-Host`, `[Environment]` readers); a call operator or
+  dot-sourcing takes a literal name only; `-ComputerName`, `-CimSession`,
+  `-Server` and `-Session` never take a value from `$p` (ADR-0076). A variable
+  assigned from `$p` counts as `$p` (a hashtable or array literal holding a
+  value does not: it builds no text). The check does not follow a value into a
+  function's parameter, so the string rules apply inside the function to what
+  it builds.
+* **Shared helpers are `_*.ps1` library files**: function definitions only, no
+  stdin or strict-mode requirement. ADR-0077's `New-EasyRmmCredential` exemption
+  is the entry in `scripts/ci/winmod-helper-pins.json` (function name to the
+  SHA-256 of its body, line endings normalised); `ConvertTo-SecureString
+  -AsPlainText` passes only inside that function, in a library file, defined
+  once, with a body matching the pin. The pins file is empty until ADR-0077's
+  slice adds the helper and its pin.
+* **Parameters reach a script as ASCII JSON.** Windows PowerShell 5.1 reads
+  standard input in the console's code page, not UTF-8, so the server writes
+  every character above U+007F in `params` as a `\uXXXX` escape
+  (`winmod.MarshalParams`); the document decodes to the same values. The
+  hostile-value test sends quotes, `$()`, backticks, newlines, typographic
+  quotes and Unicode through this path and fails if a canary file appears.
+  A script's *output* is read in the same code page: a script that returns
+  non-ASCII text must escape it the same way (the fixture does); a module
+  that needs this adds the helper to its library.
+* **UI (slice 8).** The device page's module tabs are one registry
+  (`pages/devices/modules/moduleTabs.tsx`), shown when the role is detected, the
+  module is on for the site and the viewer holds the view permission; off keeps
+  the URL and shows "this module is off for this site"; absent falls back to
+  Overview. Cards on the organization and site pages come with slices 6 and 7
+  (they draw from Facts and snapshots, which do not exist yet), so this slice
+  builds the device-level frame and its Defender card only.

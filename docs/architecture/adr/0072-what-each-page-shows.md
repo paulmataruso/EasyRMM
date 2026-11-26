@@ -155,6 +155,7 @@ greyed. Each tab names its permission, checked at the level of the selection
 | People (`user.view`) | who holds a role here (invite, change, remove) | - | - |
 | Alert policies (`monitoring.view` to see, `monitoring.manage` to change) | the organization's policies | the site's policies | - |
 | Patching (`patch.configure`; the tab shows once the engine is set up) | patch policy, tags, monthly report schedule, install the patching agent automatically | patch policy (override) | - |
+| Windows modules (`org.view` to see, `org.manage` or `site.manage` to change) | which Windows management modules are on (ADR-0073) | the same, with a per-site override | - |
 | Install (`enrollment.manage`) | install tokens and commands for the organization | the same, for the site | - |
 | Settings (`device.edit`) | - | - | group-wide verbose agent logging |
 
@@ -217,6 +218,15 @@ a new one later adds to this tab.
   link is still shown after either.
 
 ## Amendments
+
+* Amended 2026-11-26 (decided in review, while building ADR-0073 slice 8):
+  organization-level module settings had no slot. The "Windows modules" tab
+  (ADR-0073's toggles, `org.view` to see) sits at the organization and the site
+  between Patching and Install: both are configuration, and Install stays last
+  because it is the action tab. The device's module tabs (Security first) come
+  after Logs and show only when the role is detected, the module is on for the
+  site and the viewer holds the module's view permission; a module that is off
+  keeps its URL, which says so.
 
 * Amended 2026-11-26 (decided in review): S1 and S2 as built. The `?deviceId=`
   redirect leaves `?tab=alerts&deviceId=` alone, because the Alerts tab filters

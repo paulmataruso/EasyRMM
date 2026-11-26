@@ -1,5 +1,5 @@
 # Checks the PowerShell scripts the agent runs (the Windows software and
-# hardening scripts, and internal/winpolicy's reader): each parses, with
+# hardening scripts, internal/winpolicy's reader and the Windows modules' catalogue): each parses, with
 # Windows PowerShell 5.1 where it is installed (the agent runs them with
 # it) and with the PowerShell running this, and PSScriptAnalyzer finds no
 # error or warning under PSScriptAnalyzerSettings.psd1.
@@ -15,6 +15,7 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $scripts = @(
     Get-ChildItem -Path (Join-Path $root 'server/internal/jobs') -Recurse -Filter '*.ps1'
     Get-ChildItem -Path (Join-Path $root 'internal/winpolicy') -Recurse -Filter '*.ps1'
+    Get-ChildItem -Path (Join-Path $root 'server/internal/winmod') -Recurse -Filter '*.ps1'
 ) | Sort-Object FullName
 
 if (-not $Module) {
@@ -60,7 +61,10 @@ foreach ($s in $scripts) {
 
 $settings = Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'
 foreach ($s in $scripts) {
-    foreach ($r in @(Invoke-ScriptAnalyzer -Path $s.FullName -Settings $settings)) {
+    # A catalogue script that takes no parameters still reads $p (ADR-0073), so for those the unused variable is expected.
+    $skip = @()
+    if ($s.FullName.Replace('\', '/') -like '*/server/internal/winmod/*') { $skip = @('PSUseDeclaredVarsMoreThanAssignments') }
+    foreach ($r in @(Invoke-ScriptAnalyzer -Path $s.FullName -Settings $settings -ExcludeRule $skip)) {
         Write-Host "$($s.FullName):$($r.Line): $($r.RuleName): $($r.Message)"
         $failed = $true
     }

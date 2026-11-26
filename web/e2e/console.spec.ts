@@ -1174,6 +1174,33 @@ test("a Windows agent's roles are stored, and an organization turns a Windows mo
   expect(list.find((m) => m.module === "dns")?.enabled).toBe(false);
 });
 
+test("a device's Security tab follows the Defender module: shown, then off for its site once the organization turns it off", async () => {
+  const page = admin;
+  const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "defender", state: "present" }] } });
+  const dev = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { organizationId: string };
+  await page.goto(`/devices/${agent.deviceId}?tab=security`);
+  await expect(page.getByRole("tab", { name: "Security" })).toBeVisible();
+  await expect(page.getByText("Not read yet")).toBeVisible();
+
+  await page.goto(`/organizations/${dev.organizationId}?tab=windows-modules`);
+  const defender = page.getByRole("checkbox", { name: "Microsoft Defender" });
+  await expect(defender).toBeChecked();
+  await defender.click();
+  await expect(page.getByText("Saved.")).toBeVisible();
+
+  await page.goto(`/devices/${agent.deviceId}?tab=security`);
+  await expect(page.getByText("Microsoft Defender is off for this site")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Security" })).toHaveCount(0);
+  await page.getByRole("link", { name: /Windows modules settings/ }).click();
+  await expect(page).toHaveURL(/\/sites\/[^/]+\?tab=windows-modules$/);
+
+  // Back on, so what follows sees the default.
+  await page.goto(`/organizations/${dev.organizationId}?tab=windows-modules`);
+  await page.getByRole("checkbox", { name: "Microsoft Defender" }).click();
+  await expect(page.getByRole("checkbox", { name: "Microsoft Defender" })).toBeChecked();
+});
+
 test("Confirm it is you asks for a second factor again, refuses a wrong code, and lasts a while", async () => {
   const page = admin;
   await page.goto("/account");

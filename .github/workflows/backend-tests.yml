@@ -91,8 +91,17 @@ jobs:
       # stdin params, and its output is decoded by the catalogue's schema.
       # The runner's Defender may be in any state: the test logs what it says
       # (-v) and accepts module_missing, so the job summary records it.
-      - name: Windows module scripts (defender.status)
+      - name: Windows module scripts (defender.status, hostile values)
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/winmod/...
+      # ADR-0073, slice 9: the AST check over every catalogue script (no
+      # Invoke-Expression, parameters only from standard input, no string or
+      # filter built from a value, -AsPlainText only in the pinned helper),
+      # then its self-test over the good and bad fixtures. The hostile-value
+      # test above sends quotes, $(), backticks, newlines and Unicode through
+      # the real parameter path and fails if any is evaluated.
+      - name: Windows module scripts (AST check)
+        shell: pwsh
+        run: ./scripts/ci/check-winmod-ast.ps1
       # ADR-0065: the disk reader on the runner's disks, through the same
       # IOCTLs the agent sends. They are Azure virtual disks: NVMe ones,
       # which the NVMe path reads, or, on some runners, Hyper-V's virtual
