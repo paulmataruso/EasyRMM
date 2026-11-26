@@ -169,3 +169,37 @@ func TestCaptureOfLargeOutputStaysWithinTheLimit(t *testing.T) {
 		t.Errorf("len %d", len(s))
 	}
 }
+
+// Params reach the script on standard input only (ADR-0073): its argv and
+// environment, read from /proc by the script itself, never hold them.
+func TestExecuteDeliversParamsOnStdinOnly(t *testing.T) {
+	const secret = "hunter2-Zq9"
+	p := payload("sh", `cat; echo
+echo "argv:$(tr '\0' ' ' < /proc/$$/cmdline)"
+echo "env:$(tr '\0' ' ' < /proc/$$/environ)"
+ls -l /proc/$$/fd/0 | sed 's/.*-> //'`, "x")
+	p.V, p.Params = agentproto.JobPayloadVersionParams, []byte(`{"name":"a","password":"`+secret+`"}`)
+	res := Execute(context.Background(), p, t.TempDir())
+	if res.Status != agentproto.RunSucceeded {
+		t.Fatalf("result %+v", res)
+	}
+	lines := strings.Split(res.Stdout, "\n")
+	if lines[0] != string(p.Params) {
+		t.Errorf("stdin = %q", lines[0])
+	}
+	rest := strings.Join(lines[1:], "\n")
+	if strings.Contains(rest, secret) || strings.Contains(rest, `"name"`) {
+		t.Errorf("params outside stdin: %q", rest)
+	}
+	if !strings.Contains(rest, "argv:") || !strings.Contains(rest, "pipe:") {
+		t.Errorf("stdin is not a pipe, or argv unread: %q", rest)
+	}
+	if strings.Contains(res.Stderr, secret) {
+		t.Errorf("stderr: %q", res.Stderr)
+	}
+	// Without params the script's stdin is empty, as before.
+	res = Execute(context.Background(), payload("sh", "cat; echo done"), t.TempDir())
+	if res.Stdout != "done\n" {
+		t.Errorf("stdin without params: %q", res.Stdout)
+	}
+}

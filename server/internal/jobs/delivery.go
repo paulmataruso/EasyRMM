@@ -121,7 +121,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 			UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1
 			FROM due, jobs j
 			WHERE r.id = due.id AND j.id = r.job_id
-			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback`,
+			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback, j.params`,
 			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs, accepts)
 		if err != nil {
 			return err
@@ -137,7 +137,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 				expires        time.Time
 				timeoutSeconds int
 			)
-			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback); err != nil {
+			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback, &p.Params); err != nil {
 				rows.Close()
 				return err
 			}

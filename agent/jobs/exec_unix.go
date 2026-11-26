@@ -18,8 +18,8 @@ import (
 var searchPath = []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"}
 
 // Accepts lists the job capabilities this build takes, for its polls
-// (agentproto.PollRequest.Accepts): none on Linux, where pwsh does not run.
-func Accepts() []string { return []string{} }
+// (agentproto.PollRequest.Accepts): job params; pwsh does not run on Linux.
+func Accepts() []string { return []string{agentproto.CapJobParams} }
 
 // interpreter finds a shell's program; the result reports its path.
 func interpreter(p agentproto.JobPayload) (program, error) {

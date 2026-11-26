@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -77,6 +78,11 @@ func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agen
 	cmd.Dir = dir
 	cmd.Env = withEnv(environment(p, dir), prog.env)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// Params go to the script's standard input and nowhere else: a pipe,
+	// never the command line, the environment or a file (ADR-0073).
+	if len(p.Params) > 0 {
+		cmd.Stdin = bytes.NewReader(p.Params)
+	}
 	// Background children may hold the output open; stop waiting for them
 	// soon after the script itself exits.
 	cmd.WaitDelay = 5 * time.Second

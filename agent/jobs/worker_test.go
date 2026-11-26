@@ -8,6 +8,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -502,5 +504,30 @@ func TestClearWork(t *testing.T) {
 	}
 	if err := w.ClearWork(); err != nil {
 		t.Errorf("clearing nothing: %v", err)
+	}
+}
+
+func TestWorkerRefusesAParamsJobItCannotVerify(t *testing.T) {
+	h := newHarness(t, t.TempDir(), func(context.Context, agentproto.JobPayload, string) agentproto.ResultRequest {
+		t.Error("a job with a bad hash ran")
+		return agentproto.ResultRequest{}
+	})
+	sj, err := agentproto.SignJob(h.priv, agentproto.JobPayload{
+		RunID: run1, JobID: "44444444-4444-4444-8444-444444444444", DeviceID: device, Shell: "sh", Script: "id",
+		Args: []string{}, TimeoutSeconds: 5, ExpiresAt: time.Now().Add(time.Hour), Params: []byte(`{"a":"b"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-sign, as the key's holder, with the params hash of other params.
+	p, _, _ := agentproto.DecodeJob(sj)
+	p.ParamsSHA256 = strings.Repeat("a", 64)
+	b, _ := json.Marshal(p)
+	sig := ed25519.Sign(h.priv, append([]byte("EASYRMM-JOB-SIG-V2\n"), b...))
+	bad := agentproto.SignedJob{Payload: base64.StdEncoding.EncodeToString(b), Signature: base64.StdEncoding.EncodeToString(sig)}
+	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{bad}}
+	run, res := h.srv.result(t)
+	if run != run1 || res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "do not match the hashes") || !strings.HasSuffix(res.Error, "It was not run.") {
+		t.Errorf("%s %+v", run, res)
 	}
 }
