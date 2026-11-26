@@ -32,6 +32,7 @@ function page(load: () => Promise<ComponentType>): LazyPage {
 const DashboardPage = page(() => import("./pages/DashboardPage").then((m) => m.DashboardPage));
 const OrganizationsPage = page(() => import("./pages/organizations/OrganizationsPage").then((m) => m.OrganizationsPage));
 const OrganizationDetailPage = page(() => import("./pages/organizations/OrganizationDetailPage").then((m) => m.OrganizationDetailPage));
+const GroupDetailPage = page(() => import("./pages/organizations/GroupDetailPage").then((m) => m.GroupDetailPage));
 const SiteDetailPage = page(() => import("./pages/organizations/SiteDetailPage").then((m) => m.SiteDetailPage));
 const SettingsPage = page(() => import("./pages/settings/SettingsPage").then((m) => m.SettingsPage));
 const UserDetailPage = page(() => import("./pages/settings/UserDetailPage").then((m) => m.UserDetailPage));
@@ -128,6 +129,13 @@ function PatchingRoute() {
   return deviceId && params.get("tab") !== "alerts" ? <Navigate to={`/patching/devices/${encodeURIComponent(deviceId)}`} replace /> : <PatchingPage />;
 }
 
+/** Old links and bookmarks to /sites/:id?groupId= open the group's own page (ADR-0072). */
+function SiteRoute() {
+  const [params] = useSearchParams();
+  const groupId = params.get("groupId");
+  return groupId ? <Navigate to={`/groups/${encodeURIComponent(groupId)}`} replace /> : <SiteDetailPage />;
+}
+
 export function App() {
   useReloadWhenOutdated();
   return (
@@ -150,7 +158,8 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="organizations" element={<OrganizationsPage />} />
         <Route path="organizations/:id" element={<OrganizationDetailPage />} />
-        <Route path="sites/:id" element={<SiteDetailPage />} />
+        <Route path="sites/:id" element={<SiteRoute />} />
+        <Route path="groups/:id" element={<GroupDetailPage />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/add" element={<AddDevicesPage />} />
         <Route path="devices/approvals" element={<ApprovalsPage />} />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { Download, Pause, Play, ScrollText, Gauge } from "lucide-react";
 import { api, apiUrl, errorMessage, fieldError } from "../../api/client";
 import { useApiMutation } from "../../api/hooks";
@@ -122,7 +123,7 @@ export function AgentLogsPanel({ device }: { device: Device }) {
   }, [rows, path, filters, toast]);
 
   const stop = useApiMutation(
-    () => (meta?.verbose?.scope === "group" ? api.del(`/device-groups/${meta.verbose.groupId}/agent-logs/verbose`) : api.del(`${path}/verbose`)),
+    () => api.del(`${path}/verbose`),
     {
       onSuccess: () => {
         toast.success("Verbose logging turned off.");
@@ -246,7 +247,7 @@ export function AgentLogsPanel({ device }: { device: Device }) {
           Kept for {meta?.retentionDays ?? 14} days. Secrets such as tokens and passwords are removed on the device and again on the server.
         </p>
       </Card>
-      {verboseOpen && <VerboseDialog device={device} onClose={() => setVerboseOpen(false)} onDone={(until, scope) => setMeta((m) => (m ? { ...m, verbose: { until, scope } } : m))} />}
+      {verboseOpen && <VerboseDialog device={device} onClose={() => setVerboseOpen(false)} onDone={(until) => setMeta((m) => (m ? { ...m, verbose: { until, scope: "device" } } : m))} />}
     </div>
   );
 }
@@ -286,9 +287,14 @@ function Status({ device, meta, live, onStop, stopping }: {
         <Alert tone="info" title="Verbose logging is on">
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>
-              Until {formatDateTime(v.until)}, set on {v.scope === "group" ? `the group ${device.deviceGroupName ?? ""}`.trim() : "this device"}. The agent then returns to Info by itself.
+              Until {formatDateTime(v.until)}, set on {v.scope === "group" ? "the group" : "this device"}. The agent then returns to Info by itself.
             </span>
-            {device.canUpdateAgent && (
+            {v.scope === "group" && v.groupId && (
+              <Link to={`/groups/${v.groupId}?tab=settings`} className="text-accent hover:underline">
+                {`Change it on the group ${device.deviceGroupName ?? ""}`.trim()}
+              </Link>
+            )}
+            {v.scope !== "group" && device.canUpdateAgent && (
               <Button size="sm" onClick={onStop} loading={stopping}>
                 Turn off
               </Button>
@@ -306,17 +312,16 @@ function Status({ device, meta, live, onStop, stopping }: {
   );
 }
 
-function VerboseDialog({ device, onClose, onDone }: { device: Device; onClose: () => void; onDone: (until: string, scope: "device" | "group") => void }) {
+function VerboseDialog({ device, onClose, onDone }: { device: Device; onClose: () => void; onDone: (until: string) => void }) {
   const toast = useToast();
   const [hours, setHours] = useState(DEFAULT_VERBOSE_HOURS);
-  const [scope, setScope] = useState<"device" | "group">("device");
   const start = useApiMutation(
     () =>
-      api.put<{ until: string }>(scope === "group" && device.deviceGroupId ? `/device-groups/${device.deviceGroupId}/agent-logs/verbose` : `/devices/${device.id}/agent-logs/verbose`, { hours }),
+      api.put<{ until: string }>(`/devices/${device.id}/agent-logs/verbose`, { hours }),
     {
       onSuccess: (r) => {
         toast.success(`Verbose logging is on until ${formatDateTime(r.until)}.`);
-        onDone(r.until, scope);
+        onDone(r.until);
         onClose();
       },
     },
@@ -341,12 +346,6 @@ function VerboseDialog({ device, onClose, onDone }: { device: Device; onClose: (
             </option>
           ))}
         </SelectField>
-        {device.deviceGroupId && (
-          <SelectField label="On" value={scope} onChange={(e) => setScope(e.target.value as "device" | "group")} hint="A group's setting covers every device in it, including ones added meanwhile.">
-            <option value="device">{device.name} only</option>
-            <option value="group">Every device in {device.deviceGroupName ?? "its group"}</option>
-          </SelectField>
-        )}
         <InlineError error={start.error} fields={["hours"]} />
         <div className="flex justify-end gap-2 border-t border-line pt-3">
           <Button onClick={onClose} disabled={start.isPending}>

@@ -7,6 +7,7 @@ describe("sections", () => {
     expect(sectionFor("/account")).toBeNull();
     expect(sectionFor("/organizations")).toBe("organizations");
     expect(sectionFor("/organizations/o1")).toBe("organizations");
+    expect(sectionFor("/groups/g1")).toBe("organizations");
     expect(sectionFor("/sites/s1")).toBe("organizations");
     expect(sectionFor("/devices/d1/remote/desktop")).toBe("devices");
     expect(sectionFor("/devicesx")).toBeNull();
@@ -23,6 +24,7 @@ describe("sections", () => {
     expect(selectedKey("organizations", "/organizations", "")).toBe("all");
     expect(selectedKey("organizations", "/organizations/o%201", "")).toBe("o:o 1");
     expect(selectedKey("organizations", "/sites/s1", "")).toBe("s:s1");
+    expect(selectedKey("organizations", "/groups/g1", "")).toBe("g:g1");
     expect(selectedKey("organizations", "/organizations/o1/edit", "")).toBeNull();
 
     expect(selectedKey("devices", "/devices", "")).toBe("all");
@@ -57,6 +59,7 @@ describe("sections", () => {
     expect(targetHref("organizations", { kind: "all" }, "/sites/s1", "")).toBe("/organizations");
     expect(targetHref("organizations", { kind: "org", id: "o 1" }, "/organizations", "")).toBe("/organizations/o%201");
     expect(targetHref("organizations", { kind: "site", id: "s1", organizationId: "o1" }, "/organizations", "")).toBe("/sites/s1");
+    expect(targetHref("organizations", { kind: "group", id: "g 1", organizationId: "o1", siteId: "s1" }, "/organizations", "")).toBe("/groups/g%201");
   });
 
   it("narrows a section's list, keeping its other filters and starting its pages again", () => {
