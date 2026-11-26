@@ -791,6 +791,7 @@ begin_module() {
 	M_REASON=
 	M_MISSING=
 	M_CHANGES=
+	M_SETTINGS=
 	M_OK=0
 	M_BAD=0
 	M_TCP=
@@ -822,6 +823,23 @@ in_place() { M_OK=$((M_OK + 1)); }
 missing() {
 	M_BAD=$((M_BAD + 1))
 	append M_MISSING "$1"
+}
+# set_ok ID VALUE WANT and set_bad ID VALUE WANT TEXT: a setting by its id
+# (linux-settings.json), in effect or not; set_bad's TEXT is what missing
+# lists. VALUE is what the computer has now, WANT what the check wants. The
+# result's settings list carries them next to the text lists (ADR-0078 C0).
+setting() {
+	st_v=$(printf '%s' "$3" | tr '\t\n\r' '   ')
+	st_w=$(printf '%s' "$4" | tr '\t\n\r' '   ')
+	append M_SETTINGS "$1	$2	$st_v	$st_w"
+}
+set_ok() {
+	in_place
+	setting "$1" in_place "$2" "$3"
+}
+set_bad() {
+	missing "$4"
+	setting "$1" not_in_place "$2" "$3"
 }
 # What apply would change, or (starting "Left as it is" or "Refused") what it
 # would not, and why.
@@ -874,6 +892,7 @@ finish_module() {
 	keep "R_$fm_v" "$M_REASON"
 	keep "MI_$fm_v" "$M_MISSING"
 	keep "CH_$fm_v" "$M_CHANGES"
+	keep "ST_$fm_v" "$M_SETTINGS"
 	keep "PT_$fm_v" "$M_TCP"
 	keep "PU_$fm_v" "$M_UDP"
 	keep "PD_$fm_v" "$M_DOCKER"
@@ -898,12 +917,13 @@ WEAK_MACS='^hmac-md5|^hmac-ripemd160|^hmac-sha1-96|^umac-64'
 # entries the extended regular expression WEAK matches.
 ssh_algorithms() {
 	sa_now=$(sshd_val "$1")
+	sa_id=ssh-$(printf '%s' "$1" | sed 's/algorithms$//')
 	sa_weak=$(printf '%s\n' "$sa_now" | tr ',' '\n' | grep -E -- "$3" | tr '\n' ' ')
 	sa_weak=${sa_weak% }
 	if [ -z "$sa_weak" ]; then
-		in_place
+		set_ok "$sa_id" '' 'no weak algorithms'
 	else
-		missing "$2 without weak algorithms (now also $sa_weak)"
+		set_bad "$sa_id" "$sa_weak" 'no weak algorithms' "$2 without weak algorithms (now also $sa_weak)"
 		change "$2: remove $sa_weak"
 		todo "$2 $(printf '%s\n' "$sa_now" | tr ',' '\n' | grep -Ev -- "$3" | tr '\n' ',' | sed 's/,$//')"
 	fi
@@ -1126,9 +1146,9 @@ check_ssh() {
 	cs_prl=$(sshd_val permitrootlogin)
 	cs_root_after=$cs_prl
 	case $cs_prl in
-	prohibit-password | without-password | forced-commands-only | no) in_place ;;
+	prohibit-password | without-password | forced-commands-only | no) set_ok ssh-permit-root-login "$cs_prl" prohibit-password ;;
 	*)
-		missing "PermitRootLogin prohibit-password (now $cs_prl)"
+		set_bad ssh-permit-root-login "$cs_prl" prohibit-password "PermitRootLogin prohibit-password (now $cs_prl)"
 		root_password_used
 		cs_rp=$?
 		if [ "$cs_rp" -eq 1 ] || [ "$OPT_ROOT_PASSWORD_OFF" = yes ]; then
@@ -1146,8 +1166,8 @@ check_ssh() {
 
 	# PermitEmptyPasswords no.
 	cs_v=$(sshd_val permitemptypasswords)
-	if [ "$cs_v" = no ]; then in_place; else
-		missing "PermitEmptyPasswords no (now $cs_v)"
+	if [ "$cs_v" = no ]; then set_ok ssh-permit-empty-passwords "$cs_v" no; else
+		set_bad ssh-permit-empty-passwords "$cs_v" no "PermitEmptyPasswords no (now $cs_v)"
 		change 'PermitEmptyPasswords no'
 		todo 'PermitEmptyPasswords no'
 		cs_changes=yes
@@ -1156,8 +1176,8 @@ check_ssh() {
 	# LoginGraceTime 30 or less, never 0, which is no limit.
 	cs_v=$(sshd_val logingracetime)
 	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
-	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 30 ]; then in_place; else
-		missing "LoginGraceTime 30 (now $cs_v)"
+	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 30 ]; then set_ok ssh-login-grace-time "$cs_v" 30; else
+		set_bad ssh-login-grace-time "$cs_v" 30 "LoginGraceTime 30 (now $cs_v)"
 		change 'LoginGraceTime 30'
 		todo 'LoginGraceTime 30'
 		cs_changes=yes
@@ -1165,8 +1185,8 @@ check_ssh() {
 
 	# X11Forwarding no.
 	cs_v=$(sshd_val x11forwarding)
-	if [ "$cs_v" = no ]; then in_place; else
-		missing "X11Forwarding no (now $cs_v)"
+	if [ "$cs_v" = no ]; then set_ok ssh-x11-forwarding "$cs_v" no; else
+		set_bad ssh-x11-forwarding "$cs_v" no "X11Forwarding no (now $cs_v)"
 		change 'X11Forwarding no'
 		todo 'X11Forwarding no'
 		cs_changes=yes
@@ -1176,16 +1196,16 @@ check_ssh() {
 	# 3, or shorter; 0 turns either off.
 	cs_v=$(sshd_val clientaliveinterval)
 	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
-	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 300 ]; then in_place; else
-		missing "ClientAliveInterval 300 (now $cs_v)"
+	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 300 ]; then set_ok ssh-client-alive-interval "$cs_v" 300; else
+		set_bad ssh-client-alive-interval "$cs_v" 300 "ClientAliveInterval 300 (now $cs_v)"
 		change 'ClientAliveInterval 300'
 		todo 'ClientAliveInterval 300'
 		cs_changes=yes
 	fi
 	cs_v=$(sshd_val clientalivecountmax)
 	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
-	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 3 ]; then in_place; else
-		missing "ClientAliveCountMax 3 (now $cs_v)"
+	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 3 ]; then set_ok ssh-client-alive-count-max "$cs_v" 3; else
+		set_bad ssh-client-alive-count-max "$cs_v" 3 "ClientAliveCountMax 3 (now $cs_v)"
 		change 'ClientAliveCountMax 3'
 		todo 'ClientAliveCountMax 3'
 		cs_changes=yes
@@ -1203,10 +1223,10 @@ check_ssh() {
 	if [ -n "$cs_policy" ]; then
 		case ":$cs_policy:" in
 		:LEGACY:* | *:SHA1:*)
-			missing "A crypto policy without weak ciphers, key exchanges and MACs (now $cs_policy)"
+			set_bad ssh-crypto-policy "$cs_policy" 'no weak algorithms' "A crypto policy without weak ciphers, key exchanges and MACs (now $cs_policy)"
 			change "Left as it is: the system's crypto policy $cs_policy, which sets SSH's algorithms here; change it with update-crypto-policies"
 			;;
-		*) in_place ;;
+		*) set_ok ssh-crypto-policy "$cs_policy" 'no weak algorithms' ;;
 		esac
 	else
 		cs_before=$M_BAD
@@ -1228,12 +1248,12 @@ check_ssh() {
 		cs_pw=$(sshd_val passwordauthentication)
 		cs_kv=$(sshd_val $cs_kbd)
 		cs_pw_missing=no
-		if [ "$cs_pw" = no ]; then in_place; else
-			missing "PasswordAuthentication no (now $cs_pw)"
+		if [ "$cs_pw" = no ]; then set_ok ssh-password-authentication "$cs_pw" no; else
+			set_bad ssh-password-authentication "$cs_pw" no "PasswordAuthentication no (now $cs_pw)"
 			cs_pw_missing=yes
 		fi
-		if [ "$cs_kv" = no ]; then in_place; else
-			missing "$cs_kbd_name no (now $cs_kv)"
+		if [ "$cs_kv" = no ]; then set_ok ssh-kbd-interactive-authentication "$cs_kv" no; else
+			set_bad ssh-kbd-interactive-authentication "$cs_kv" no "$cs_kbd_name no (now $cs_kv)"
 			cs_pw_missing=yes
 		fi
 		if [ "$cs_pw_missing" = yes ]; then
@@ -1540,22 +1560,26 @@ check_firewall() {
 	cf_nft=no
 	have nft && cf_nft=yes
 	if [ "$cf_nft" = yes ] && nf_tables_present && cf_table=$(t 30 nft -n list table inet easyrmm 2>/dev/null); then
-		in_place
+		set_ok firewall-table "loaded" 'table inet easyrmm loaded'
 		# Every port apply would leave open must be open in the table: a
 		# service that started listening since is cut off until it is.
+		cf_closed=
 		for cf_pr in tcp udp; do
 			if [ "$cf_pr" = tcp ]; then cf_want=$M_TCP; else cf_want=$M_UDP; fi
 			for cf_p in $cf_want; do
 				if fw_table_allows "$cf_table" "$cf_pr" "$cf_p"; then in_place; else
 					missing "$cf_pr port $cf_p open in table inet easyrmm (it is dropped now)"
+					cf_closed="$cf_closed $cf_pr/$cf_p"
 				fi
 			done
 		done
+		if [ -z "$cf_closed" ]; then setting firewall-ports-open in_place 'all open' 'every port apply leaves open is open'
+		else setting firewall-ports-open not_in_place "dropped:${cf_closed%  }" 'every port apply leaves open is open'; fi
 	else
-		missing 'nftables table inet easyrmm loaded'
+		set_bad firewall-table 'not loaded' 'table inet easyrmm loaded' 'nftables table inet easyrmm loaded'
 	fi
-	if [ -f "$FW_FILE" ]; then in_place; else missing "$FW_FILE"; fi
-	if unit_enabled "$FW_UNIT"; then in_place; else missing "$FW_UNIT enabled"; fi
+	if [ -f "$FW_FILE" ]; then set_ok firewall-rules-file present 'rules file present'; else set_bad firewall-rules-file absent 'rules file present' "$FW_FILE"; fi
+	if unit_enabled "$FW_UNIT"; then set_ok firewall-unit-enabled enabled 'unit enabled at boot'; else set_bad firewall-unit-enabled 'not enabled' 'unit enabled at boot' "$FW_UNIT enabled"; fi
 
 	if [ "$M_BAD" -gt 0 ]; then
 		[ "$cf_nft" = yes ] || change 'Install nftables'
@@ -1667,8 +1691,8 @@ check_fail2ban() {
 		return
 	fi
 	if [ "$ck_installed" = no ]; then
-		missing 'fail2ban installed and running'
-		missing 'An sshd jail'
+		set_bad fail2ban-installed 'not installed' installed 'fail2ban installed and running'
+		set_bad fail2ban-sshd-jail 'no jail' 'sshd jail running' 'An sshd jail'
 		if [ "$FAMILY" = rhel ] && ! epel_enabled; then
 			change 'Add the EPEL repository (epel-release); the patching engine then updates its packages too'
 		fi
@@ -1678,56 +1702,57 @@ check_fail2ban() {
 	fi
 
 	ck_fix=no
-	if unit_enabled fail2ban.service; then in_place; else
-		missing 'fail2ban starts at boot'
+	setting fail2ban-installed in_place installed installed
+	if unit_enabled fail2ban.service; then set_ok fail2ban-enabled enabled 'enabled at boot'; else
+		set_bad fail2ban-enabled 'not enabled' 'enabled at boot' 'fail2ban starts at boot'
 		ck_fix=yes
 	fi
 	if ! t 20 fail2ban-client ping >/dev/null 2>&1; then
-		missing 'fail2ban running'
-		missing 'An sshd jail running'
+		set_bad fail2ban-running 'not running' running 'fail2ban running'
+		set_bad fail2ban-sshd-jail 'no jail' 'sshd jail running' 'An sshd jail running'
 		change 'Start fail2ban'
 		f2b_changes
 		return
 	fi
-	in_place
+	set_ok fail2ban-running running running
 	if ! t 20 fail2ban-client status sshd >/dev/null 2>&1; then
-		missing 'An sshd jail running'
+		set_bad fail2ban-sshd-jail 'no jail' 'sshd jail running' 'An sshd jail running'
 		f2b_changes
 		return
 	fi
-	in_place
+	set_ok fail2ban-sshd-jail running 'sshd jail running'
 
 	# Each value as strict as the jail's, or stricter.
 	ck_v=$(t 20 fail2ban-client get sshd maxretry 2>/dev/null | tail -n 1)
 	case $ck_v in '' | *[!0-9]*) ck_n=999 ;; *) ck_n=$ck_v ;; esac
-	if [ "$ck_n" -le 5 ]; then in_place; else
-		missing "sshd jail maxretry 5 (now $ck_v)"
+	if [ "$ck_n" -le 5 ]; then set_ok fail2ban-maxretry "$ck_v" '5 or fewer'; else
+		set_bad fail2ban-maxretry "$ck_v" '5 or fewer' "sshd jail maxretry 5 (now $ck_v)"
 		ck_fix=yes
 	fi
 	ck_v=$(t 20 fail2ban-client get sshd findtime 2>/dev/null | tail -n 1)
 	case $ck_v in '' | *[!0-9]*) ck_n=0 ;; *) ck_n=$ck_v ;; esac
-	if [ "$ck_n" -ge 600 ]; then in_place; else
-		missing "sshd jail findtime 600 seconds (now $ck_v)"
+	if [ "$ck_n" -ge 600 ]; then set_ok fail2ban-findtime "$ck_v" '600 or more'; else
+		set_bad fail2ban-findtime "$ck_v" '600 or more' "sshd jail findtime 600 seconds (now $ck_v)"
 		ck_fix=yes
 	fi
 	ck_v=$(t 20 fail2ban-client get sshd bantime 2>/dev/null | tail -n 1)
 	case $ck_v in -[0-9]*) ck_n=999999999 ;; '' | *[!0-9]*) ck_n=0 ;; *) ck_n=$ck_v ;; esac
-	if [ "$ck_n" -ge 3600 ]; then in_place; else
-		missing "sshd jail bantime 3600 seconds (now $ck_v)"
+	if [ "$ck_n" -ge 3600 ]; then set_ok fail2ban-bantime "$ck_v" '3600 or more'; else
+		set_bad fail2ban-bantime "$ck_v" '3600 or more' "sshd jail bantime 3600 seconds (now $ck_v)"
 		ck_fix=yes
 	fi
 	ck_v=$(t 20 fail2ban-client get sshd bantime.increment 2>/dev/null | tail -n 1)
 	case $ck_v in
-	True | true | 1) in_place ;;
+	True | true | 1) set_ok fail2ban-bantime-increment "$ck_v" true ;;
 	False | false | 0)
-		missing 'Longer bans for repeat offenders (bantime.increment)'
+		set_bad fail2ban-bantime-increment "$ck_v" true 'Longer bans for repeat offenders (bantime.increment)'
 		ck_fix=yes
 		;;
 	*) change 'Whether repeat offenders get longer bans could not be read from this fail2ban' ;;
 	esac
 	# A jail without a ban action lists its bans and blocks nothing.
-	if [ -n "$(f2b_jail_actions)" ]; then in_place; else
-		missing 'The sshd jail bans with an action (it has none)'
+	if [ -n "$(f2b_jail_actions)" ]; then set_ok fail2ban-ban-action present 'an action'; else
+		set_bad fail2ban-ban-action none 'an action' 'The sshd jail bans with an action (it has none)'
 		ck_fix=yes
 	fi
 	# The trusted ranges, compared in the form fail2ban prints them.
@@ -1735,12 +1760,16 @@ check_fail2ban() {
 		ck_ign=$(t 20 fail2ban-client get sshd ignoreip 2>/dev/null | sed -n 's/^[|`]- *//p')
 		ck_ign_canon=
 		for ck_i in $ck_ign; do ck_ign_canon="$ck_ign_canon $(canon_net "$ck_i")"; done
+		ck_lost=
 		for ck_t in $(printf '%s' "$OPT_TRUSTED" | tr ',' ' '); do
 			if in_words "$(canon_net "$ck_t")" "$ck_ign_canon"; then in_place; else
 				missing "sshd jail never bans $ck_t"
+				ck_lost="$ck_lost $ck_t"
 				ck_fix=yes
 			fi
 		done
+		if [ -z "$ck_lost" ]; then setting fail2ban-trusted-ranges in_place 'all listed' 'every trusted range ignored'
+		else setting fail2ban-trusted-ranges not_in_place "not ignored:$ck_lost" 'every trusted range ignored'; fi
 	fi
 	[ "$ck_fix" = no ] || f2b_changes
 }
@@ -1816,21 +1845,28 @@ check_kernel() {
 		ck_kind=${ck_rest#*:}
 		# In a container only the network settings are its own.
 		if [ "$IN_CONTAINER" = yes ] && [ "$ck_kind" = K ]; then continue; fi
+		ck_id=kernel-$(printf '%s' "$ck_name" | tr '._' '--')
 		if [ "$ck_rule" = rp ] && is_k8s_node; then
+			setting "$ck_id" reported 'Kubernetes node' "$ck_want"
 			change "Left as it is: $ck_name, because this is a Kubernetes node (Calico refuses to run with it loose)"
 			continue
 		fi
 		ck_path=/proc/sys/$(printf '%s' "$ck_name" | tr '.' '/')
 		if [ ! -r "$ck_path" ]; then
+			setting "$ck_id" not_applicable 'not on this kernel' "$ck_want"
 			ck_skipped="$ck_skipped $ck_name"
 			continue
 		fi
 		ck_now=$(head -n 1 "$ck_path" 2>/dev/null)
-		case $ck_now in '' | *[!0-9-]* | ?*-*) ck_skipped="$ck_skipped $ck_name" && continue ;; esac
+		case $ck_now in '' | *[!0-9-]* | ?*-*)
+			setting "$ck_id" not_applicable 'not a number' "$ck_want"
+			ck_skipped="$ck_skipped $ck_name" && continue
+			;;
+		esac
 		if kernel_value_ok "$ck_rule" "$ck_now" "$ck_want"; then
-			in_place
+			set_ok "$ck_id" "$ck_now" "$ck_want"
 		else
-			missing "$ck_name = $ck_want (now $ck_now)"
+			set_bad "$ck_id" "$ck_now" "$ck_want" "$ck_name = $ck_want (now $ck_now)"
 			change "$ck_name = $ck_want"
 			todo "$ck_name $ck_want"
 			ck_set=yes
@@ -1869,7 +1905,7 @@ check_audit() {
 		return
 	fi
 	if ! have auditctl; then
-		missing 'auditd installed and running'
+		set_bad audit-service 'not installed' 'running and enabled at boot' 'auditd installed and running'
 		missing "EasyRMM's audit rules"
 		change 'Install auditd and start it at boot'
 		change "Add rules for accounts, sudoers, SSH and PAM configuration, time, kernel modules, mounts and commands run with raised privileges in $AUDIT_FILE, loaded with augenrules --load (never immutable, never panic)"
@@ -1878,8 +1914,8 @@ check_audit() {
 		todo rules
 		return
 	fi
-	if unit_active auditd.service && unit_enabled auditd.service; then in_place; else
-		missing 'auditd running and started at boot'
+	if unit_active auditd.service && unit_enabled auditd.service; then set_ok audit-service running 'running and enabled at boot'; else
+		set_bad audit-service 'not running or not enabled' 'running and enabled at boot' 'auditd running and started at boot'
 		change 'Start auditd and start it at boot'
 		todo start
 	fi
@@ -1891,13 +1927,25 @@ check_audit() {
 	ca_oifs=$IFS
 	IFS=$nl
 	set -f
+	ca_n=0
 	for ca_rule in $AUDIT_RULES; do
 		set +f
+		ca_n=$((ca_n + 1))
+		case $ca_n in
+		1) ca_id=audit-rules-accounts ;;
+		2) ca_id=audit-rules-sudoers ;;
+		3) ca_id=audit-rules-ssh ;;
+		4) ca_id=audit-rules-pam ;;
+		5) ca_id=audit-rules-time ;;
+		6) ca_id=audit-rules-kernel-modules ;;
+		7) ca_id=audit-rules-mounts ;;
+		*) ca_id=audit-rules-privileged-commands ;;
+		esac
 		IFS=$ca_oifs
 		ca_what=${ca_rule%%|*}
 		ca_re=${ca_rule#*|}
-		if text_has "$ca_live" -E -- "$ca_re"; then in_place; else
-			missing "Audit rules for $ca_what"
+		if text_has "$ca_live" -E -- "$ca_re"; then set_ok "$ca_id" loaded "a rule for $ca_what"; else
+			set_bad "$ca_id" 'not loaded' "a rule for $ca_what" "Audit rules for $ca_what"
 			ca_missing=yes
 		fi
 		IFS=$nl
@@ -1921,17 +1969,18 @@ check_audit() {
 # and groups are left alone.
 perm_max() {
 	[ -e "$1" ] || return 0
+	pm_id=${3:-permissions$(printf '%s' "$1" | tr '/._' '---')}
 	pm_m=$(stat -L -c %a "$1" 2>/dev/null)
 	case $pm_m in '' | *[!0-7]*)
-		missing "$1 at most $2 (its mode could not be read)"
+		set_bad "$pm_id" unreadable "$2 or stricter" "$1 at most $2 (its mode could not be read)"
 		return
 		;;
 	esac
 	pm_extra=$((0$pm_m & ~0$2 & 07777))
-	if [ "$pm_extra" -eq 0 ]; then in_place; else
+	pm_now=$(printf '%04o' $((0$pm_m)))
+	if [ "$pm_extra" -eq 0 ]; then set_ok "$pm_id" "$pm_now" "$2 or stricter"; else
 		pm_new=$(printf '%04o' $((0$pm_m & 0$2)))
-		pm_now=$(printf '%04o' $((0$pm_m)))
-		missing "$1 mode $2 or stricter (now $pm_now)"
+		set_bad "$pm_id" "$pm_now" "$2 or stricter" "$1 mode $2 or stricter (now $pm_now)"
 		change "$1: mode $pm_now to $pm_new"
 		todo "$1 $pm_new"
 	fi
@@ -1961,8 +2010,8 @@ check_permissions() {
 		cp_opts=$(awk '$2 == "/boot/efi" { o = $4 } END { print o }' /proc/self/mounts)
 		cp_mask=$(printf '%s\n' "$cp_opts" | tr ',' '\n' | sed -n 's/^fmask=//p;s/^umask=//p' | tail -n 1)
 		case $cp_mask in '' | *[!0-7]*) cp_mask=0022 ;; esac
-		if [ $((0$cp_mask & 077)) -eq $((077)) ]; then in_place; else
-			missing "$cp_efi readable by root only: /boot/efi mounted with fmask=0077 (now $cp_opts)"
+		if [ $((0$cp_mask & 077)) -eq $((077)) ]; then set_ok permissions-grub-cfg "$cp_opts" 'fmask 0077'; else
+			set_bad permissions-grub-cfg "$cp_opts" 'fmask 0077' "$cp_efi readable by root only: /boot/efi mounted with fmask=0077 (now $cp_opts)"
 			change "Left as it is: $cp_efi is on the FAT EFI partition, whose modes come from the mount; set fmask=0077 for /boot/efi in /etc/fstab"
 		fi
 	else
@@ -1974,7 +2023,7 @@ check_permissions() {
 			[ -e "$cp_cfg" ] || cp_cfg=/boot/grub2/grub.cfg
 			;;
 		esac
-		perm_max "$cp_cfg" 0600
+		perm_max "$cp_cfg" 0600 permissions-grub-cfg
 	fi
 	if [ "$M_OK" -eq 0 ] && [ "$M_BAD" -eq 0 ]; then
 		not_applicable 'None of the files this module checks exists here.'
@@ -2055,9 +2104,14 @@ check_services() {
 		IFS=$cv_oifs
 		cv_name=${cv_e%%|*}
 		cv_how=$(service_on "$cv_e")
+		case $cv_name in the*) cv_sid=services-ypserv ;; *) cv_sid=services-$cv_name ;; esac
 		if [ -n "$cv_how" ]; then
+			# Not set_bad: the module is in place or not, never partly.
 			missing "$cv_name off (on through $cv_how)"
+			setting "$cv_sid" not_in_place "on through $cv_how" off
 			change "Turn $cv_name off: $cv_how"
+		else
+			setting "$cv_sid" in_place off off
 		fi
 		IFS=$nl
 	done
@@ -2104,21 +2158,23 @@ check_kernel_modules() {
 	modprobe_config
 	km_set=
 	for km in $KERNEL_MODULES; do
+		km_id=kernel-modules-$km
 		if kept_from_loading "$km"; then
-			in_place
+			set_ok "$km_id" 'kept from loading' 'kept from loading'
 			continue
 		fi
 		km_file=$(t 20 modinfo -F filename "$km" 2>/dev/null | head -n 1)
 		if [ -z "$km_file" ]; then
 			# Not on this kernel at all, so it cannot load.
-			in_place
+			set_ok "$km_id" 'not on this kernel' 'kept from loading'
 		elif [ "$km_file" = '(builtin)' ]; then
+			setting "$km_id" reported 'built into this kernel' 'kept from loading'
 			change "Left as it is: $km is built into this kernel"
 		elif module_loaded "$km"; then
-			missing "$km kept from loading (it is loaded now)"
+			set_bad "$km_id" loaded 'kept from loading' "$km kept from loading (it is loaded now)"
 			change "Left as it is: $km is loaded now, so something uses it (Oracle RAC uses rds)"
 		else
-			missing "$km kept from loading"
+			set_bad "$km_id" 'can load' 'kept from loading' "$km kept from loading"
 			km_set="$km_set $km"
 		fi
 	done
@@ -2165,16 +2221,16 @@ check_usb_storage() {
 	fi
 	modprobe_config
 	if kept_from_loading usb_storage || kept_from_loading usb-storage; then
-		in_place
+		set_ok usb-storage-kept-from-loading 'kept from loading' 'kept from loading'
 		return
 	fi
 	us_file=$(t 20 modinfo -F filename usb_storage 2>/dev/null | head -n 1)
 	if [ "$us_file" = '(builtin)' ]; then
-		missing 'usb-storage kept from loading'
+		set_bad usb-storage-kept-from-loading 'built into this kernel' 'kept from loading' 'usb-storage kept from loading'
 		change 'Left as it is: usb-storage is built into this kernel'
 		return
 	fi
-	missing 'usb-storage kept from loading'
+	set_bad usb-storage-kept-from-loading 'can load' 'kept from loading' 'usb-storage kept from loading'
 	# Refused where a mounted filesystem or swap is on a USB disk: the setting
 	# reaches the initramfs, and such a computer would not boot.
 	if ! have lsblk; then
@@ -2265,34 +2321,34 @@ check_sudo() {
 	set +f
 	IFS=$cu_oifs
 	# Commands run in a pseudo-terminal.
-	if [ "$cu_pty" = yes ]; then in_place; else
-		missing 'sudo runs commands in a pseudo-terminal (use_pty)'
+	if [ "$cu_pty" = yes ]; then set_ok sudo-use-pty yes yes; else
+		set_bad sudo-use-pty "$cu_pty" yes 'sudo runs commands in a pseudo-terminal (use_pty)'
 		change 'Defaults use_pty'
 		todo use_pty
 	fi
 	# Commands logged to a file of their own, with a logrotate
 	# entry for it.
 	if [ -n "$cu_logfile" ]; then
-		in_place
-		if grep -Fqs "$cu_logfile" /etc/logrotate.conf /etc/logrotate.d/*; then in_place; else
-			missing "A logrotate entry for $cu_logfile"
+		set_ok sudo-logfile "$cu_logfile" 'a log file'
+		if grep -Fqs "$cu_logfile" /etc/logrotate.conf /etc/logrotate.d/*; then set_ok sudo-logrotate present 'a logrotate entry'; else
+			set_bad sudo-logrotate absent 'a logrotate entry' "A logrotate entry for $cu_logfile"
 			change "Add a logrotate entry for $cu_logfile"
 			todo "logrotate $cu_logfile"
 		fi
 	else
-		missing "sudo logs commands to $SUDO_LOG (logfile)"
-		missing "A logrotate entry for $SUDO_LOG"
+		set_bad sudo-logfile none 'a log file' "sudo logs commands to $SUDO_LOG (logfile)"
+		set_bad sudo-logrotate absent 'a logrotate entry' "A logrotate entry for $SUDO_LOG"
 		change "Defaults logfile=$SUDO_LOG, with a logrotate entry for it"
 		todo logfile
 		todo "logrotate $SUDO_LOG"
 	fi
 	if [ -e "$SUDO_FILE" ]; then
 		cu_mode=$(stat -c %a "$SUDO_FILE" 2>/dev/null)
-		[ "$cu_mode" = 440 ] || {
-			missing "$SUDO_FILE mode 0440 (now $cu_mode)"
+		if [ "$cu_mode" = 440 ]; then set_ok sudo-file-mode "$cu_mode" 440; else
+			set_bad sudo-file-mode "$cu_mode" 440 "$SUDO_FILE mode 0440 (now $cu_mode)"
 			change "$SUDO_FILE: mode 0440"
 			todo mode
-		}
+		fi
 	fi
 	if [ "$M_BAD" -gt 0 ]; then
 		change "The settings go in $SUDO_FILE (mode 0440), checked with visudo -c before it is put in place"
@@ -2340,9 +2396,9 @@ check_time() {
 		[ -n "$ct_installed" ] || ! unit_exists "$ct_u" || ct_installed=$ct_u
 	done
 	if [ -n "$ct_running" ]; then
-		in_place
-		if unit_enabled "$ct_running"; then in_place; else
-			missing "$ct_running started at boot"
+		set_ok time-service-running "$ct_running" 'a time service running'
+		if unit_enabled "$ct_running"; then set_ok time-service-enabled enabled 'enabled at boot'; else
+			set_bad time-service-enabled 'not enabled' 'enabled at boot' "$ct_running started at boot"
 			change "Start $ct_running at boot"
 			M_TODO="unit $ct_running"
 		fi
@@ -2350,7 +2406,7 @@ check_time() {
 		[ "$M_BAD" -eq 0 ] || reason "$ct_running keeps the time but is not started at boot."
 		return
 	fi
-	missing 'A time synchronisation service running'
+	set_bad time-service-running none 'a time service running' 'A time synchronisation service running'
 	if [ -n "$ct_installed" ]; then
 		change "Start $ct_installed, and start it at boot"
 		M_TODO="unit $ct_installed"
@@ -2379,9 +2435,9 @@ check_shared_memory() {
 	cm_fix=no
 	for cm_o in nodev nosuid noexec; do
 		case ",$cm_live," in
-		*",$cm_o,"*) in_place ;;
+		*",$cm_o,"*) set_ok "shared-memory-$cm_o" "${cm_live:-not mounted}" "$cm_o" ;;
 		*)
-			missing "/dev/shm mounted $cm_o (now ${cm_live:-not mounted})"
+			set_bad "shared-memory-$cm_o" "${cm_live:-not mounted}" "$cm_o" "/dev/shm mounted $cm_o (now ${cm_live:-not mounted})"
 			cm_fix=yes
 			;;
 		esac
@@ -2390,8 +2446,8 @@ check_shared_memory() {
 	*,nodev,*) case ",$cm_tab," in *,nosuid,*) case ",$cm_tab," in *,noexec,*) cm_tabok=yes ;; *) cm_tabok=no ;; esac ;; *) cm_tabok=no ;; esac ;;
 	*) cm_tabok=no ;;
 	esac
-	if [ "$cm_tabok" = yes ]; then in_place; else
-		missing "/etc/fstab mounts /dev/shm nodev,nosuid,noexec (now ${cm_tab:-no entry})"
+	if [ "$cm_tabok" = yes ]; then set_ok shared-memory-fstab "$cm_tab" nodev,nosuid,noexec; else
+		set_bad shared-memory-fstab "${cm_tab:-no entry}" nodev,nosuid,noexec "/etc/fstab mounts /dev/shm nodev,nosuid,noexec (now ${cm_tab:-no entry})"
 		cm_fix=yes
 	fi
 	if [ "$cm_fix" = yes ]; then
@@ -2429,19 +2485,19 @@ check_mac() {
 		cm_cfg=$(sed -n 's/^[[:space:]]*SELINUX=[[:space:]]*\([a-z]*\).*/\1/p' /etc/selinux/config 2>/dev/null | tail -n 1)
 		case $cm_mode in
 		enforcing)
-			in_place
-			if [ "$cm_cfg" = enforcing ]; then in_place; else
-				missing "SELINUX=enforcing in /etc/selinux/config (now ${cm_cfg:-not set})"
+			set_ok mac-selinux-mode enforcing enforcing
+			if [ "$cm_cfg" = enforcing ]; then set_ok mac-selinux-config enforcing enforcing; else
+				set_bad mac-selinux-config "${cm_cfg:-not set}" enforcing "SELINUX=enforcing in /etc/selinux/config (now ${cm_cfg:-not set})"
 				change 'SELINUX=enforcing in /etc/selinux/config'
 				todo config
 			fi
 			;;
 		disabled)
-			missing 'SELinux enforcing (now disabled)'
+			set_bad mac-selinux-mode disabled enforcing 'SELinux enforcing (now disabled)'
 			change 'Left as it is: SELinux is disabled, and turning it on needs a relabel and a restart'
 			;;
 		permissive)
-			missing 'SELinux enforcing (now permissive)'
+			set_bad mac-selinux-mode permissive enforcing 'SELinux enforcing (now permissive)'
 			cm_refused=
 			avc_denials
 			case $? in
@@ -2482,14 +2538,16 @@ check_mac() {
 			fi
 			;;
 		esac
-		[ "$cm_mode" = enforcing ] || [ "$cm_cfg" = enforcing ] || missing "SELINUX=enforcing in /etc/selinux/config (now ${cm_cfg:-not set})"
+		if [ "$cm_mode" = enforcing ]; then :
+		elif [ "$cm_cfg" = enforcing ]; then setting mac-selinux-config in_place enforcing enforcing
+		else set_bad mac-selinux-config "${cm_cfg:-not set}" enforcing "SELINUX=enforcing in /etc/selinux/config (now ${cm_cfg:-not set})"; fi
 		return
 	fi
 	if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ]; then
 		# AppArmor: profiles in complain mode are
 		# listed, not enforced; enforcing them all at once would turn on
 		# experimental ones.
-		in_place
+		set_ok mac-apparmor enabled enabled
 		cm_prof=/sys/kernel/security/apparmor/profiles
 		if [ -r "$cm_prof" ]; then
 			cm_complain=$(sed -n 's/^\(.*\) (complain)$/\1/p' "$cm_prof" | sort)
@@ -2500,7 +2558,10 @@ check_mac() {
 				for cm_p in $cm_complain; do missing "AppArmor profile $cm_p enforcing (now complain)"; done
 				set +f
 				IFS=$cm_oifs
+				setting mac-apparmor-profiles not_in_place "$(printf '%s\n' "$cm_complain" | grep -c .) in complain mode" 'every profile enforcing'
 				change 'Left as it is: AppArmor profiles in complain mode are listed, not enforced; enforcing them all at once would turn on experimental profiles'
+			else
+				setting mac-apparmor-profiles in_place 'all enforcing' 'every profile enforcing'
 			fi
 			reason "AppArmor is on, with $(grep -c ' (enforce)$' "$cm_prof") profiles enforcing."
 			[ -z "$cm_complain" ] || reason "AppArmor is on, with $(grep -c ' (enforce)$' "$cm_prof") profiles enforcing and $(printf '%s\n' "$cm_complain" | grep -c .) in complain mode."
@@ -2509,7 +2570,7 @@ check_mac() {
 		fi
 		return
 	fi
-	missing 'SELinux or AppArmor on'
+	set_bad mac-enabled off 'SELinux or AppArmor on' 'SELinux or AppArmor on'
 	change 'Left as it is: turning SELinux or AppArmor on needs the boot configuration changed and a restart'
 }
 
@@ -2520,9 +2581,9 @@ check_integrity() {
 	# AIDE installed, a baseline, a daily check. Debian's aide comes without
 	# its configuration and aideinit, which are aide-common's.
 	if ! have aide || { [ "$FAMILY" = debian ] && ! have aideinit; }; then
-		missing 'AIDE installed'
-		missing 'An AIDE baseline'
-		missing 'A daily AIDE check'
+		set_bad integrity-aide-installed 'not installed' installed 'AIDE installed'
+		set_bad integrity-aide-baseline none 'a baseline' 'An AIDE baseline'
+		set_bad integrity-aide-daily none 'a daily check' 'A daily AIDE check'
 		change 'Install AIDE'
 		todo install
 		for ci_d in /var/lib/docker /var/lib/containers; do
@@ -2536,29 +2597,36 @@ check_integrity() {
 		todo daily
 		return
 	fi
-	in_place
+	set_ok integrity-aide-installed installed installed
+	ci_inc=
+	ci_exc=
 	for ci_d in /var/lib/docker /var/lib/containers; do
 		[ -d "$ci_d" ] || continue
 		if grep -Eqs "^[[:space:]]*!$ci_d" /etc/aide/aide.conf /etc/aide/aide.conf.d/* /etc/aide.conf; then in_place; else
 			missing "AIDE leaves out $ci_d"
+			ci_inc="$ci_inc $ci_d"
 			change "Leave $ci_d out of AIDE's checks"
 			todo "exclude $ci_d"
 		fi
+		ci_exc="$ci_exc $ci_d"
 	done
+	if [ -z "$ci_exc" ]; then :
+	elif [ -z "$ci_inc" ]; then setting integrity-aide-excludes in_place 'left out' 'container storage left out'
+	else setting integrity-aide-excludes not_in_place "checked:$ci_inc" 'container storage left out'; fi
 	ci_db=no
 	for ci_f in /var/lib/aide/aide.db /var/lib/aide/aide.db.gz; do
 		[ -s "$ci_f" ] && ci_db=yes
 	done
-	if [ "$ci_db" = yes ]; then in_place; else
+	if [ "$ci_db" = yes ]; then set_ok integrity-aide-baseline present 'a baseline'; else
 		case $(unit_states "$AIDE_INIT_UNIT.service") in
 		*' active')
-			missing 'An AIDE baseline (being built now)'
+			set_bad integrity-aide-baseline 'being built' 'a baseline' 'An AIDE baseline (being built now)'
 			;;
 		*)
 			if [ "$SYSTEMD_UP" = yes ] && t 20 systemctl is-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1; then
-				missing "An AIDE baseline (the last build failed: journalctl -u $AIDE_INIT_UNIT)"
+				set_bad integrity-aide-baseline 'last build failed' 'a baseline' "An AIDE baseline (the last build failed: journalctl -u $AIDE_INIT_UNIT)"
 			else
-				missing 'An AIDE baseline'
+				set_bad integrity-aide-baseline none 'a baseline' 'An AIDE baseline'
 			fi
 			change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit; the next check reports whether it finished"
 			todo baseline
@@ -2571,8 +2639,8 @@ check_integrity() {
 	elif grep -qs aide /etc/crontab /etc/cron.d/* /etc/cron.daily/*; then
 		ci_daily=yes
 	fi
-	if [ "$ci_daily" = yes ]; then in_place; else
-		missing 'A daily AIDE check'
+	if [ "$ci_daily" = yes ]; then set_ok integrity-aide-daily scheduled 'a daily check'; else
+		set_bad integrity-aide-daily none 'a daily check' 'A daily AIDE check'
 		change "Check daily, with the distribution's timer where it has one"
 		todo daily
 	fi
@@ -5413,6 +5481,42 @@ jarr() {
 	}'
 }
 
+# jsettings LIST LEN WITH: the settings of LIST (id, state, value and want
+# on a line, tab-separated) as a JSON array; with WITH "notin", only those
+# not in place.
+jsettings() {
+	printf '%s\n' "$1" | awk -F '\t' -v len="$2" -v with="$3" "$AWK_ESC"'
+	$1 != "" && (with != "notin" || $2 != "in_place") {
+		out = out (n++ ? "," : "") "{\"id\":" esc($1) ",\"state\":" esc($2)
+		if ($3 != "") out = out ",\"value\":" esc(substr($3, 1, len))
+		if ($4 != "") out = out ",\"want\":" esc(substr($4, 1, len))
+		out = out "}"
+	}
+	END { if (n) printf "[%s]", out }'
+}
+
+# render_settings LIST MAX LEN: ,"settings":[...] and, when the limit cuts
+# the list, ,"settingsOmitted":"in_place" (the ones in place are left out) or
+# "all". A setting left out is unknown to the reader, never in place.
+render_settings() {
+	rs_n=$(printf '%s\n' "$1" | grep -c .)
+	[ "$rs_n" -gt 0 ] || return 0
+	if [ "$rs_n" -le "$2" ]; then
+		rs_with=all
+		rs_om=
+	else
+		rs_with=notin
+		rs_om=in_place
+		rs_k=$(printf '%s\n' "$1" | awk -F '\t' '$1 != "" && $2 != "in_place"' | grep -c .)
+		if [ "$rs_k" -gt "$2" ] || [ "$rs_k" -eq 0 ]; then
+			printf ',"settingsOmitted":"all"'
+			return 0
+		fi
+	fi
+	printf ',"settings":%s' "$(jsettings "$1" "$3" "$rs_with")"
+	[ -z "$rs_om" ] || printf ',"settingsOmitted":"%s"' "$rs_om"
+}
+
 # render_module MODULE MAX LEN
 render_module() {
 	rm_v=$(printf '%s' "$1" | tr '-' '_')
@@ -5424,6 +5528,7 @@ render_module() {
 	[ -z "$rm_a" ] || rm_out="$rm_out,\"missing\":$rm_a"
 	rm_a=$(jarr "$(kept "CH_$rm_v")" "$2" "$3" yes)
 	[ -z "$rm_a" ] || rm_out="$rm_out,\"changes\":$rm_a"
+	rm_out="$rm_out$(render_settings "$(kept "ST_$rm_v")" "$2" "$3")"
 	if [ "$1" = firewall ]; then
 		case $rm_state in in_place | partly | not_in_place | half_applied)
 			rm_p=

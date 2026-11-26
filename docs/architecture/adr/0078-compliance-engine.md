@@ -521,7 +521,7 @@ before it.
 
 Files:
 * `server/internal/jobs/hardening/linux.sh`: each module's check prints its
-  settings by id (`ssh-permit-root-login`, `ssh-password-auth`, ...) with
+  settings by id (`ssh-permit-root-login`, `ssh-password-authentication`, ...) with
   state, value and wanted value.
 * `server/internal/jobs/hardening.go`: a `Settings []HardeningSetting` list
   on `HardeningFinding` (the Windows type, shared), parsing and validation.
@@ -534,6 +534,30 @@ Tests: a table test per module of the check output to the setting list; the
 existing SSH integration harness (`hardening_script_ssh_integration_test.go`)
 asserts ids and states; an old script's result without the list still parses
 (compatibility); `go vet -tags integration,vm`.
+
+*Built (C0):* `linux-settings.json` lists 106 ids, each starting with its
+module (`ssh-x11-forwarding`, `kernel-net-ipv4-tcp-syncookies`,
+`permissions-etc-shadow`, `services-telnet`, `audit-rules-sudoers`, ...). The
+script's `set_ok` and `set_bad` record a setting beside the text line, and a
+result lists `{id, state, value, want}` per setting (`HardeningFinding`
+embeds the Windows `WindowsFinding`, so `settings` and `settingsOmitted` are
+the Windows fields). States are `in_place`, `not_in_place`, `reported` (built
+into the kernel, a Kubernetes node) and `not_applicable`. Where several
+things share one line of text (open firewall ports, AppArmor profiles in
+complain mode, trusted ranges, container storage excluded from AIDE) one
+setting stands for the group. A check that did not run (module not
+applicable, sshd missing, auditd not installed) lists no setting for what it
+did not read.
+
+*How a mixed fleet reads.* The server embeds the script and sends it with
+each job, so a new server never receives a new result from an old script and
+an old server never sees `settings`; results already stored have the text
+lists only, and the stored JSON and the API only gain an optional field. A
+reader that needs a setting by id treats a module whose result has no
+`settings` (stored before C0) as `unknown`, never `in_place`, and a setting
+absent from a result as `unknown`; the text lists keep working for the
+console. When the result is too long the script drops the settings in place
+first (`settingsOmitted = in_place`), then all (`all`), as Windows does.
 
 #### C1: the library, packs and scan
 

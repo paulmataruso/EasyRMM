@@ -73,10 +73,13 @@ How it runs:
 
 ## 8. A Linux check
 
-The Linux finding today has only free-text `Missing`, `Changes` and `Done`
-lists, so the setting id below (`ssh-permit-root-login`) does **not exist
-yet**. ADR-0078 slice C0 creates per-setting ids for the Linux script; the
-example uses the id C0 will create.
+The Linux finding carries free-text `Missing`, `Changes` and `Done` lists
+and, since ADR-0078 slice C0, a typed `settings` list: each setting by its id
+in `server/internal/jobs/hardening/linux-settings.json`, with its state,
+current value and wanted value (the Windows shape). The id below
+(`ssh-permit-root-login`) is a real one. The script reports `prohibit-password`
+as in place and wants it; this control is stricter and compares the reported
+current value itself.
 
 **Root cannot sign in over SSH.**
 
@@ -90,7 +93,7 @@ example uses the id C0 will create.
   "scopes": ["any"],
   "severity": "high",
   "executor": "hardening",
-  "executor_ref": {"module": "ssh", "setting": "ssh-permit-root-login"},   // an id slice C0 creates in linux-settings.json; it does not exist in the code today
+  "executor_ref": {"module": "ssh", "setting": "ssh-permit-root-login"},   // an id in linux-settings.json (slice C0)
   "detect": {
     "summary": "Ask the running SSH server for its effective settings and read permitrootlogin. Do not parse the file: include files and Match blocks change the effective value.",
     "command_shape": "sshd -T (effective settings, as the daemon sees them)"

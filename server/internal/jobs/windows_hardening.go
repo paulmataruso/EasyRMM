@@ -679,9 +679,3 @@ func (f WindowsFinding) validWindows(module string) bool {
 	}
 	return true
 }
-
-// hasWindowsFields reports whether a finding has any of Windows' fields,
-// which Linux's never have.
-func (f WindowsFinding) hasWindowsFields() bool {
-	return f.Settings != nil || f.Managed != nil || f.Notes != nil || f.SettingsOmitted != "" || f.Exposure != nil
-}
