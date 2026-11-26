@@ -622,7 +622,7 @@ func (s *Service) SweepInstalls(ctx context.Context) (int, error) {
 			return err
 		}
 		// A device qualifies the way ineligible() decides, in SQL.
-		const qualifies = `d.agent_public_key IS NOT NULL AND d.platform IN ('windows', 'linux') AND d.agent_arch IN ('amd64', 'arm64')
+		const qualifies = `NOT d.quick_assist AND d.agent_public_key IS NOT NULL AND d.platform IN ('windows', 'linux') AND d.agent_arch IN ('amd64', 'arm64')
 			AND coalesce(i.data->'easyPatch'->>'status', 'NotEnrolled') = 'NotEnrolled'
 			AND NOT EXISTS (SELECT 1 FROM easypatch_opt_outs o WHERE o.device_id = d.id)
 			AND NOT EXISTS (SELECT 1 FROM easypatch_removals r WHERE r.device_id = d.id)`

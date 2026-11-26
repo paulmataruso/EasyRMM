@@ -36,9 +36,21 @@ catch (CliUsageException ex)
 
 static async Task<int> RunAgentAsync(string[] arguments)
 {
-    if (arguments.Length > 0)
+    var adHoc = AdHocMode.Parse(arguments);
+    if (adHoc is null && arguments.Length > 0)
     {
         throw new CliUsageException($"'run' takes no arguments (got '{arguments[0]}').");
+    }
+
+    if (adHoc is not null)
+    {
+        // A real install is never disturbed, and the ad-hoc agent never starts beside one.
+        if (AdHocMode.ExistingInstall() is { } existing)
+        {
+            return Cli.StartupFailure($"EasyPatch is already installed on this computer ({existing}); its patching applies.", Cli.ExitExistingInstall);
+        }
+
+        AdHocMode.Enable(adHoc.Value);
     }
 
     var dataDirectory = AgentComposition.DataDirectory;
@@ -71,7 +83,10 @@ static async Task<int> RunAgentAsync(string[] arguments)
         DisableDefaults = true,
     });
 
-    builder.Services.AddWindowsService(options => options.ServiceName = AgentComposition.ServiceName);
+    if (!AdHocMode.Active)
+    {
+        builder.Services.AddWindowsService(options => options.ServiceName = AgentComposition.ServiceName);
+    }
     builder.Services.Configure<HostOptions>(options =>
     {
         // Give an in-flight WUA call time to observe cancellation and the job state time to persist.

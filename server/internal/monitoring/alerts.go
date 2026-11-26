@@ -76,7 +76,7 @@ const alertColumns = `a.id, a.seq, a.policy_id, a.device_id, d.name, d.organizat
 	a.acknowledged_at, a.acknowledged_by_label, a.resolved_at, a.resolved_by_label, coalesce(a.resolution, '')`
 
 const alertFrom = ` FROM alerts a
-	JOIN devices d ON d.id = a.device_id
+	JOIN devices d ON d.id = a.device_id AND NOT d.quick_assist
 	JOIN organizations o ON o.id = d.organization_id
 	JOIN sites si ON si.id = d.site_id`
 

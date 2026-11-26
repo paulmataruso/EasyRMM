@@ -90,6 +90,10 @@ function Sessions({ org, view }: { org: string; view: Exclude<View, "links"> }) 
   const decline = useApiMutation((s: QuickAssistSession) => api.post(`/quickassist/sessions/${s.id}/decline`), { invalidate: inval, onSuccess: () => toast.success("Request declined.") });
   const end = useApiMutation((s: QuickAssistSession) => api.post(`/quickassist/sessions/${s.id}/end`), { invalidate: inval, onSuccess: () => toast.success("Session ended. The program is removing itself.") });
   const takeover = useApiMutation((s: QuickAssistSession) => api.post(`/quickassist/sessions/${s.id}/takeover`), { invalidate: inval, onSuccess: () => toast.success("You hold this session now.") });
+  const install = useApiMutation((s: QuickAssistSession) => api.post(`/quickassist/sessions/${s.id}/install`), {
+    invalidate: inval,
+    onSuccess: () => toast.success("Asked. The user is shown a question on their screen and nothing is installed unless they agree."),
+  });
   const { can, session } = useAuth();
 
   if (q.isLoading) return <Spinner />;
@@ -159,6 +163,13 @@ function Sessions({ org, view }: { org: string; view: Exclude<View, "links"> }) 
                           Take over
                         </Button>
                       )}{" "}
+                      {can("quickassist.install") && s.elevated && (
+                        <>
+                          <Button size="sm" variant="secondary" onClick={() => install.mutate(s)}>
+                            Install agent
+                          </Button>{" "}
+                        </>
+                      )}
                       <Button size="sm" variant="danger" onClick={() => end.mutate(s)}>
                         End session
                       </Button>

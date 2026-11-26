@@ -11,7 +11,7 @@ namespace EasyPatch.Agent.Platform;
 /// </summary>
 internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
 {
-    public const string KeyPath = @"SOFTWARE\EasyPatch\Agent";
+    public static string KeyPath => AdHocMode.Active ? AdHocMode.RegistryKeyPath : @"SOFTWARE\EasyPatch\Agent";
 
     private const string ServerUrlValue = "ServerUrl";
     private const string EnrollmentTokenValue = "EnrollmentToken";

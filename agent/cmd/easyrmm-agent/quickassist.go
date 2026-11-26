@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"os"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -21,6 +23,7 @@ func (e *env) quickAssist(ctx context.Context, args []string) error {
 	caFile := fs.String("ca-file", "", "PEM file of a private certificate authority to trust")
 	server := fs.String("server", "", "reach the server at this address instead of the one in the ticket (shown in the consent text)")
 	poll := fs.Duration("poll", 0, "how often to ask the server about the session (default: the server's)")
+	offered := fs.Bool("elevated", false, "administrator rights were already asked for (set by the program when it restarts itself)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -30,13 +33,20 @@ func (e *env) quickAssist(ctx context.Context, args []string) error {
 	if *poll < 0 || (*poll != 0 && *poll < 100*time.Millisecond) {
 		return errors.New("--poll is too short")
 	}
+	// On Windows the program asks for administrator rights first, through
+	// UAC, by starting itself again; a user who says no continues without
+	// them, with screen and inventory only (ADR-0080).
+	if runtime.GOOS == "windows" && !e.isRoot() && !*offered && !*clean {
+		if self, err := os.Executable(); err == nil && quickassist.Relaunch(self, append([]string{"quick-assist", "--elevated"}, args...)) {
+			return nil
+		}
+	}
+	if *base == "" {
+		*base = quickassist.BaseFor(e.isRoot())
+	}
 	opts := quickassist.Options{Self: *self, BaseDir: *base, CAFile: *caFile, Server: *server, Version: Version, Poll: *poll, Elevated: e.isRoot(), Out: e.stdout}
 	if *clean {
-		b := opts.BaseDir
-		if b == "" {
-			b = quickassist.DefaultBase()
-		}
-		n, err := quickassist.Clean(b)
+		n, err := quickassist.Clean(opts.BaseDir)
 		if err != nil {
 			return err
 		}

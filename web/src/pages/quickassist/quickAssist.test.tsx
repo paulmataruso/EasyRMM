@@ -8,7 +8,7 @@ import { renderApp } from "../../test/render";
 
 const TECH = sessionView({
   isSuperAdmin: false,
-  permissions: ["org.view", "site.view", "device.view", "quickassist.view", "quickassist.link.create", "quickassist.session"],
+  permissions: ["org.view", "site.view", "device.view", "quickassist.view", "quickassist.link.create", "quickassist.session", "quickassist.install"],
 });
 const ACME = org("o1", "Acme");
 
@@ -71,11 +71,13 @@ describe("Quick Assist", () => {
     const active = { ...request, state: "active" as const, acceptedBy: "u-alex", elevated: true };
     const ended = { ...request, id: "s2", state: "ended" as const, endReason: "technician", cleanup: "verified" as const, endedAt: "2026-11-26T11:00:00Z" };
     const user = userEvent.setup();
-    const server = installFakeApi(routes([active], { "POST /quickassist/sessions/:id/end": noContent }));
+    const server = installFakeApi(routes([active], { "POST /quickassist/sessions/:id/end": noContent, "POST /quickassist/sessions/:id/install": noContent }));
     renderApp("/quickassist?view=active");
     expect(await screen.findByText(/You hold it/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "End session" }));
     await waitFor(() => expect(server.callsTo("POST /quickassist/sessions/:id/end")).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: "Install agent" }));
+    await waitFor(() => expect(server.callsTo("POST /quickassist/sessions/:id/install")).toHaveLength(1));
 
     installFakeApi(routes([ended]));
     renderApp("/quickassist?view=ended");

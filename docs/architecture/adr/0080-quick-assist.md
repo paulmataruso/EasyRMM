@@ -679,57 +679,75 @@ Everything else is decided in review above.
   step-up standing in for ADR-0024's approval.
 * macOS is out of scope: there is no macOS EasyRMM agent.
 
-## Built so far (2026-11-26)
+## Built so far (2026-11-26, second pass)
 
-*Amended 2026-11-26 (decided in review), while building QA1, QA2 and the Linux part of QA7:*
+*Amended 2026-11-26 (decided in review), while building QA1, QA2, QA3 (not run), QA4, QA5, the compile-checked part of QA6 and the Linux part of QA7:*
 
 * **Owner decision 1 is built as option (c), pending the owner.** The one
   switch is the platform setting `quickassist.link_mode`: `own_test` (the
-  default, also when the setting is missing or unreadable) or `open`.
-  In `own_test` only **one-time** links can be made, each is marked a test link
-  (`quick_assist_links.test`, shown on the link page and in the console), and
-  **only the person who made a link accepts a session from it** (another
-  technician's accept is refused and audited as denied). Changing the mode
-  needs `settings.manage` platform-wide and a step-up, and is audited
-  (`quickassist.settings.update`). Lifting the restriction is that one setting
-  and nothing else changes.
-* **The ticket carries the server's public key.** A release build is shared by
-  every server, so the runner cannot hold a per-server key in its build, and
-  the "key pinned in the binary's build" above cannot be done. The runner
-  checks that its trailer is whole, signed and unexpired against the key the
-  ticket carries (a courtesy against damage and old files); the **server is the
-  only authority**, checking every ticket against its own key at enrollment.
-  The consent window names the server from the ticket, as before.
-* **Not built yet:** the 9-character link code (a signed ticket does not fit
-  in 9 characters; it needs a short server-side code and is for when signing
-  makes the trailer unusable); the one-alert-per-link-per-day mail for a
-  throttled link (the audit row `quickassist.link.throttled` and the link's
-  `last_alert_at` column exist; ADR-0053's sender is not called); the stale-link
-  revoker (90 and 180 days); the settings for the bucket, caps and timings
-  (they are constants in `server/internal/quickassist`); the idle limit; the
-  maximum-length extension; the holder rule on remote desktop, terminal, files
-  and scripts (acceptance and the holder rule are enforced on the Quick Assist
-  actions only; `remote`, `jobs` and `agentfiles` do not yet ask whether a
-  device is a Quick Assist device); the EasyPatch link state in
-  `quick_assist_orgs` and the MeshCentral group (the table exists, unused).
-* **Slices.** QA1 (links, ticket, limits, rbac, audit, `devscope`), QA2 (the
-  session, acceptance by the typed code, the Quick Assist site and its device
-  filter, the sweep and retention) and QA4 (the section, requests, active,
-  links, ended, the badge) are built. QA7's Linux runner is built without
-  MeshAgent (terminal consent, enrollment, status loop, clean-up and its
-  signed report, crash clean-up by `quick-assist --clean`); there is no shell
-  fetcher beside `install.sh.tmpl` yet. **QA3 (the Windows runner, job object,
-  MeshAgent `connect`), QA5 (install permanently and conversion) and QA6
-  (EasyPatch ad-hoc mode) are not built.** The runner's `--server` flag
-  reaches the server at another address than the ticket's (tests, a private
-  network); the consent window names the address used and the server still
-  checks the ticket against its own.
-* **The download's SHA-256.** The page cannot show the hash of the file the
-  user will download, because the trailer differs per download; the response
-  carries the program's hash (before the ticket) in `X-Program-Sha256`.
-* **Not run on a real system.** Nothing here was run on Windows. The Linux
-  runner ran against the real server in tests and in the browser end-to-end
-  run only.
+  default, also when the setting is missing or unreadable) or `open`. In
+  `own_test` only **one-time** links can be made, each is marked a test link
+  (`quick_assist_links.test`), and **only the person who made a link accepts a
+  session from it**. Changing the mode needs `settings.manage` and a step-up,
+  and is audited (`quickassist.settings.update`).
+* **The ticket carries the server's public key** (accepted by the
+  coordinator). A release build is shared by every server, so a per-server key
+  cannot be pinned in it; the runner checks that its trailer is whole, signed
+  and unexpired against the key it carries, and the server, which holds the
+  real key, is the only authority.
+* **Holder rule.** `quickassist.Guard` is asked by remote sessions
+  (`remote.StartSession`) and by job and script targets (`jobs.targets`): a
+  Quick Assist device is usable only while its session is active and the
+  caller holds it or may take sessions over. File transfer goes through the
+  remote session. Quick Assist devices are filtered out of the device list and
+  tree, the site list, reports, alert evaluation and listing, and patching
+  (list and automatic install). A move to a normal site clears the flag.
+* **Flood mail.** A permanent link that goes over its bucket mails the
+  organization's administrators once a day per link through the mail server
+  in force (`app/quickassist_mail.go`), behind `devscope`.
+* **Install permanently (QA5).** `RequestInstall` (needs
+  `quickassist.install`, the holder rule, an elevated session and a step-up in
+  the API) shows the user a question in the runner; only the user's typed
+  INSTALL (the runner's signed message) makes the server issue the conversion
+  token (one use, 30 minutes, the Quick Assist site, `devscope` checked). The
+  runner runs its own `install` with it; the new device is found by the token
+  it enrolled with, linked to the session (`origin_session_id`), the session
+  moves to it and the temporary device and key go after the runner's clean-up
+  report. The token is revoked then. Keep in the Quick Assist site, or move
+  with the ordinary move action.
+* **MeshAgent ad hoc (QA3), not run on Windows.** `meshagent.ModeAdHoc` runs
+  `meshagent connect` from the session folder as a confined child (job object
+  with KILL_ON_JOB_CLOSE on Windows, a process group with a parent-death
+  signal on Linux), with the settings the server already serves for the
+  device's site, given `meshServiceName=EasyRMMQA-<8 hex>` and a `Tag`. The
+  runner verifies the server's signature on the binary and the settings,
+  reports the node id, and at the end stops the child by its process handle,
+  deletes the registry key of that exact name and removes the folder; the
+  server removes the node on the end report. The Windows runner adds the
+  consent window (a MessageBox with Yes and No beside the console text and
+  code), a UAC relaunch, and the session folder under ProgramData or the
+  user's local data. **Not verified:** nothing was run on Windows or against
+  MeshCentral; where MeshAgent keeps the node certificate, and whether
+  `connect` works as a standard user, are the spike's questions still open.
+  The server does not yet cross-check the node's `Tag` (it needs MeshCentral).
+  The Windows folder's ACL uses the existing protect helper and is untested
+  for the not-elevated folder.
+* **EasyPatch ad hoc (QA6), compile-checked only.** `EasyPatch.Agent run
+  --adhoc --data-dir D --registry-key K --lock L` uses its own data
+  directory, registry key and lock name, skips the Windows-service wiring,
+  needs an elevated process and exits 8 when a real install is there (its
+  service, data directory or registry key). It builds; there is no test for
+  it (the test project does not reference the Windows agent) and it has not
+  run on Windows. **Not built:** the runner starting it, the EasyPatch token
+  and the removal of its device at the end.
+* **Not built yet:** the 9-character link code; the stale-link revoker; the
+  settings for the bucket, caps and timings (constants in
+  `server/internal/quickassist`); the idle limit; the maximum-length
+  extension; the MeshCentral group per organization (the site's own group is
+  used, which is one per Quick Assist site); the shell fetcher for Linux; the
+  runner's EasyPatch child. The page cannot show the hash of the file the user
+  downloads (the trailer differs per download); the response carries the
+  program's hash in `X-Program-Sha256`.
 
 ## References
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,13 +25,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/agent/client"
+	"github.com/paulmataruso/easyrmm/agent/quickassist"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/quickassistapi"
-	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
+	qa "github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
@@ -59,7 +64,7 @@ func newE2E(t *testing.T) *e2e {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { (*handler.Load()).ServeHTTP(w, r) }))
 	t.Cleanup(srv.Close)
 
-	f := &fx{t: t, ctx: context.Background(), db: inst.DB, svc: quickassist.New(inst.DB, audit.New(inst.DB, nil), key, srv.URL)}
+	f := &fx{t: t, ctx: context.Background(), db: inst.DB, svc: qa.New(inst.DB, audit.New(inst.DB, nil), key, srv.URL)}
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 
 	// The real agent, built from this tree, served as the release build.
@@ -303,7 +308,7 @@ func TestRunnerCancelAndWrongCode(t *testing.T) {
 	p.code(t)
 	_, _ = io.WriteString(p.in, "YES\n")
 	sid, _ := e.session()
-	for range quickassist.MaxCodeFailures {
+	for range qa.MaxCodeFailures {
 		_, _ = e.svc.Accept(e.ctx, tech, sid, "000000")
 	}
 	if err := p.exit(t); err != nil {
@@ -350,5 +355,127 @@ func TestRunnerCrashIsCleanedUp(t *testing.T) {
 	}
 	if n := e.count(`SELECT count(*) FROM quick_assist_sessions WHERE id = $1 AND state = 'lost' AND cleanup = 'unconfirmed'`, sid); n != 1 {
 		t.Fatal("the crashed session is not lost and unconfirmed")
+	}
+}
+
+// lockedBuffer is a writer the runner fills and the test reads.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+func waitText(t *testing.T, b *lockedBuffer, re *regexp.Regexp) []string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if m := re.FindStringSubmatch(b.String()); m != nil {
+			return m
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("never saw %s in:\n%s", re, b.String())
+	return nil
+}
+
+// TestInstallPermanently: the technician asks, the user agrees in the
+// runner, the permanent agent enrolls with the conversion token, and the
+// session moves to it, with the temporary device and key gone.
+func TestInstallPermanently(t *testing.T) {
+	e := newE2E(t)
+	tech := e.user(rbac.RoleTechnician, e.acme)
+	admin := e.user(rbac.RoleOrgAdmin, e.acme)
+	path := e.fetch(e.oneTime(tech, e.acme).Token)
+
+	in, w := io.Pipe()
+	out := &lockedBuffer{}
+	var newDevice string
+	var enrolledWith string
+	done := make(chan error, 1)
+	go func() {
+		done <- quickassist.Run(context.Background(), quickassistopts(path, e, in, out, &newDevice, &enrolledWith))
+	}()
+	code := waitText(t, out, regexp.MustCompile(`Your session code: (\d{6})`))[1]
+	_, _ = io.WriteString(w, "YES\n")
+	sid, did := e.session()
+	if _, err := e.svc.Accept(e.ctx, tech, sid, code); err != nil {
+		t.Fatal(err)
+	}
+	// A technician without the install permission cannot ask; the
+	// administrator who takes the session over can.
+	if err := e.svc.RequestInstall(e.ctx, tech, sid); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("technician asked to install: %v", err)
+	}
+	if err := e.svc.Takeover(e.ctx, admin, sid); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.RequestInstall(e.ctx, admin, sid); err != nil {
+		t.Fatal(err)
+	}
+	waitText(t, out, regexp.MustCompile(`Type INSTALL`))
+	_, _ = io.WriteString(w, "INSTALL\n")
+	if err := <-done; err != nil {
+		t.Fatalf("runner: %v\n%s", err, out.String())
+	}
+	_ = w.Close()
+
+	if n := e.count(`SELECT count(*) FROM quick_assist_sessions WHERE id = $1 AND state = 'converted' AND device_id = $2 AND cleanup = 'verified'`, sid, newDevice); n != 1 {
+		t.Fatalf("session not moved to the new device:\n%s", out.String())
+	}
+	if n := e.count(`SELECT count(*) FROM devices WHERE id = $1`, did); n != 0 {
+		t.Fatal("the temporary device is still there")
+	}
+	if n := e.count(`SELECT count(*) FROM devices d JOIN sites s ON s.id = d.site_id WHERE d.id = $1 AND d.quick_assist AND d.origin_session_id = $2 AND s.kind = 'quick_assist'`, newDevice, sid); n != 1 {
+		t.Fatal("the permanent device is not linked to its session in the Quick Assist site")
+	}
+	if n := e.count(`SELECT count(*) FROM enrollment_tokens WHERE revoked_at IS NOT NULL AND name = 'Quick Assist conversion' AND max_uses = 1 AND expires_at < now() + interval '31 minutes'`); n != 1 {
+		t.Fatal("the conversion token is not one use, short and spent")
+	}
+	if got := e.leftovers(); len(got) != 0 {
+		t.Fatalf("left behind: %v", got)
+	}
+	if got := e.actions("quickassist.converted"); len(got) != 1 {
+		t.Fatalf("audit: %v", got)
+	}
+	// Retention does not delete the permanent device.
+	e.exec(`UPDATE quick_assist_sessions SET ended_at = now() - interval '40 days' WHERE id = $1`, sid)
+	if err := e.svc.Sweep(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`SELECT count(*) FROM devices WHERE id = $1`, newDevice); n != 1 {
+		t.Fatal("retention deleted the permanent device")
+	}
+	// Moved out of the Quick Assist site it is an ordinary device: the move
+	// action clears the flag.
+	_ = enrolledWith
+}
+
+func quickassistopts(path string, e *e2e, in io.Reader, out io.Writer, newDevice, enrolledWith *string) quickassist.Options {
+	return quickassist.Options{
+		Self: path, BaseDir: e.base, Server: e.url, Poll: 100 * time.Millisecond, Elevated: true, In: in, Out: out,
+		Install: func(ctx context.Context, server, token string) error {
+			c, err := client.New(client.Options{Server: server})
+			if err != nil {
+				return err
+			}
+			pub, _, _ := ed25519.GenerateKey(rand.Reader)
+			res, err := c.Enroll(ctx, token, pub, agentproto.Facts{Hostname: "pc-1", OS: "Test OS", Platform: "linux", Arch: "amd64", AgentVersion: "dev"})
+			if err != nil {
+				return err
+			}
+			*newDevice, *enrolledWith = res.DeviceID, token
+			return nil
+		},
 	}
 }

@@ -30,6 +30,7 @@ type QAFacts struct {
 
 // QAEnrollResult is the server's answer to a runner.
 type QAEnrollResult struct {
+	JobKey           string `json:"jobKey"`
 	DeviceID         string `json:"deviceId"`
 	SessionID        string `json:"sessionId"`
 	HeartbeatSeconds int    `json:"heartbeatSeconds"`
@@ -38,8 +39,16 @@ type QAEnrollResult struct {
 
 // QAState is the session's state as the runner sees it.
 type QAState struct {
-	State     string `json:"state"`
-	EndReason string `json:"endReason"`
+	State     string   `json:"state"`
+	EndReason string   `json:"endReason"`
+	Install   string   `json:"install"`
+	Offer     *QAOffer `json:"offer"`
+}
+
+// QAOffer names what the user is asked to keep.
+type QAOffer struct {
+	Organization string `json:"organization"`
+	Site         string `json:"site"`
 }
 
 // QACheck is one check of a cleanup report.
@@ -78,6 +87,44 @@ func (c *Client) QAStatus(ctx context.Context) (*QAState, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// QAMesh tells the server which MeshAgent node this session started.
+func (c *Client) QAMesh(ctx context.Context, nodeID string) error {
+	body, err := json.Marshal(map[string]string{"nodeId": nodeID})
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, "POST", qaticket.PathMesh, body, true)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+// QAInstall tells the server the user's answer to "keep the agent". On yes
+// the answer carries the token for the one enrollment that installs it.
+func (c *Client) QAInstall(ctx context.Context, accept bool) (string, error) {
+	body, err := json.Marshal(map[string]bool{"accept": accept})
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := c.call(ctx, "POST", qaticket.PathInstall, body, true, &out); err != nil {
+		return "", err
+	}
+	return out.Token, nil
+}
+
+// QAConverted reports that the permanent agent is in place.
+func (c *Client) QAConverted(ctx context.Context) error {
+	resp, err := c.do(ctx, "POST", qaticket.PathConverted, []byte("{}"), true)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
 // QAEnd reports the end of the session and its cleanup.

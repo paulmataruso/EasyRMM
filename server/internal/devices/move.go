@@ -211,7 +211,9 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 				WHEN mesh_node_id IS NULL OR site_id = $3 THEN mesh_from_site_id
 				WHEN coalesce(mesh_from_site_id, site_id) = $3 THEN NULL
 				ELSE coalesce(mesh_from_site_id, site_id) END,
-			mesh_settings_pending = mesh_settings_pending OR (mesh_node_id IS NOT NULL AND site_id <> $3)
+			mesh_settings_pending = mesh_settings_pending OR (mesh_node_id IS NOT NULL AND site_id <> $3),
+			-- Moved out of a Quick Assist site, a device is an ordinary one (ADR-0080).
+			quick_assist = quick_assist AND EXISTS (SELECT 1 FROM sites q WHERE q.id = $3 AND q.kind = 'quick_assist')
 		WHERE id = $1`, m.id, tgtOrg, in.SiteID, in.GroupID); err != nil {
 		return err
 	}
