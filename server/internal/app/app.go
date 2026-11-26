@@ -29,6 +29,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/content"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/defenderlog"
@@ -48,6 +51,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/backupapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/complianceapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/defenderapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/docsapi"
@@ -127,6 +131,9 @@ type Deps struct {
 	Inventory *inventory.Service
 	// Hardware stores devices' disk health (ADR-0065).
 	Hardware *hardware.Service
+	// Compliance is the compliance engine: control library, packs and scans
+	// (ADR-0078).
+	Compliance *engine.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
 	// Modules is the Windows management framework: roles and toggles
@@ -245,6 +252,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, cfg.JobOutputRetention, log)
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
+	d.Compliance = engine.New(db, d.Jobs, auditLog, log)
 	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
 	d.Jobs.SetStepUp(sessions)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
@@ -610,6 +618,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
+	complianceapi.New(d.Compliance).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
@@ -750,6 +759,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// The compliance content (ADR-0078): a file the edition may not carry is
+	// refused and logged, and the server starts without it.
+	if err := deps.Compliance.LoadContent(ctx, content.FS, compliance.Edition); err != nil {
+		log.Error("compliance: loading the content failed", "error", err)
+	}
 	// Read before the listeners open, then followed (ADR-0052). Offline
 	// policies count from when the server began serving agents.
 	hold := updater.NewHold(cfg.UpdaterStatusDir, log)
@@ -781,6 +795,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
+	wg.Go(func() { deps.Compliance.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })

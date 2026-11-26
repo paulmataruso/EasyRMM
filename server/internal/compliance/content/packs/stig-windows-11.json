@@ -1,0 +1,1685 @@
+{
+ "pack": {
+  "key": "stig-windows-11",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "DISA STIG for Microsoft Windows 11, V2R11 (ids only)",
+  "licence_class": "PUBLIC_DOMAIN",
+  "source_id": "disa-stig",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "stig-windows-11",
+  "version": "V2R11",
+  "title": "DISA STIG for Microsoft Windows 11, V2R11, rule ids",
+  "publisher": "DISA",
+  "source_id": "disa-stig",
+  "text_policy": "ids_only"
+ },
+ "requirements": [
+  {
+   "req_id": "WN11-00-000045",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000045 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000110",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000110 (EasyRMM module features)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000115",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000115 (EasyRMM module features)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000120",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000120 (EasyRMM module features)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000135",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000135 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000155",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000155 (EasyRMM module powershell)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000160",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000160 (EasyRMM module smb)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000165",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000165 (EasyRMM module smb)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-00-000170",
+   "parent_id": null,
+   "title_own": "Rule WN11-00-000170 (EasyRMM module smb)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000005",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000005 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000010",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000010 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000015",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000015 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000020",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000020 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000025",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000025 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000030",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000030 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000035",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000035 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000040",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000040 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-AC-000045",
+   "parent_id": null,
+   "title_own": "Rule WN11-AC-000045 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000035",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000035 (EasyRMM module name-resolution)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000037",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000037 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000038",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000038 (EasyRMM module wdigest)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000040",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000040 (EasyRMM module smb-signing)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000100",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000100 (EasyRMM module printing)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000110",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000110 (EasyRMM module printing)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000155",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000155 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000180",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000180 (EasyRMM module autoplay)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000185",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000185 (EasyRMM module autoplay)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000190",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000190 (EasyRMM module autoplay)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000210",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000210 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000270",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000270 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000275",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000275 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000280",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000280 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000285",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000285 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000290",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000290 (EasyRMM module rdp)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000315",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000315 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000326",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000326 (EasyRMM module powershell)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000327",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000327 (EasyRMM module powershell)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000330",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000330 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000335",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000335 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000345",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000345 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000350",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000350 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000355",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000355 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-CC-000360",
+   "parent_id": null,
+   "title_own": "Rule WN11-CC-000360 (EasyRMM module winrm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000010",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000010 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000015",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000015 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000020",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000020 (EasyRMM module accounts)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000100",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000100 (EasyRMM module smb-signing)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000110",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000110 (EasyRMM module smb)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000120",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000120 (EasyRMM module smb-signing)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000140",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000140 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000145",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000145 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000150",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000150 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000160",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000160 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000165",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000165 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000167",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000167 (EasyRMM module anonymous)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000180",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000180 (EasyRMM module ntlm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000195",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000195 (EasyRMM module ntlm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000205",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000205 (EasyRMM module ntlm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000215",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000215 (EasyRMM module ntlm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000220",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000220 (EasyRMM module ntlm)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000245",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000245 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000250",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000250 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000255",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000255 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000260",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000260 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000265",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000265 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000270",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000270 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WN11-SO-000275",
+   "parent_id": null,
+   "title_own": "Rule WN11-SO-000275 (EasyRMM module uac)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "WN11-00-000045",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000110",
+   "control_ids": [
+    "win.features.fax-server",
+    "win.features.ftp-server",
+    "win.features.pnrp",
+    "win.features.simple-tcp",
+    "win.features.telnet",
+    "win.features.tftp"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000115",
+   "control_ids": [
+    "win.features.fax-server",
+    "win.features.ftp-server",
+    "win.features.pnrp",
+    "win.features.simple-tcp",
+    "win.features.telnet",
+    "win.features.tftp"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000120",
+   "control_ids": [
+    "win.features.fax-server",
+    "win.features.ftp-server",
+    "win.features.pnrp",
+    "win.features.simple-tcp",
+    "win.features.telnet",
+    "win.features.tftp"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000135",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000155",
+   "control_ids": [
+    "win.powershell.script-block-logging",
+    "win.powershell.v2"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000160",
+   "control_ids": [
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000165",
+   "control_ids": [
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-00-000170",
+   "control_ids": [
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000005",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000010",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000015",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000020",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000025",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000030",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000035",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000040",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-AC-000045",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000035",
+   "control_ids": [
+    "win.name-resolution.llmnr",
+    "win.name-resolution.netbios-release",
+    "win.name-resolution.node-type"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000037",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000038",
+   "control_ids": [
+    "win.wdigest.logon-credential"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000040",
+   "control_ids": [
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000100",
+   "control_ids": [
+    "win.printing.driver-admins",
+    "win.printing.http-drivers",
+    "win.printing.http-printing",
+    "win.printing.spooler"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000110",
+   "control_ids": [
+    "win.printing.driver-admins",
+    "win.printing.http-drivers",
+    "win.printing.http-printing",
+    "win.printing.spooler"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000155",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000180",
+   "control_ids": [
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000185",
+   "control_ids": [
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000190",
+   "control_ids": [
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000210",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000270",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000275",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000280",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000285",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000290",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000315",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000326",
+   "control_ids": [
+    "win.powershell.script-block-logging",
+    "win.powershell.v2"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000327",
+   "control_ids": [
+    "win.powershell.script-block-logging",
+    "win.powershell.v2"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000330",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000335",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000345",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000350",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000355",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-CC-000360",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000010",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000015",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000020",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000100",
+   "control_ids": [
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000110",
+   "control_ids": [
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000120",
+   "control_ids": [
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000140",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000145",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000150",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000160",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000165",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000167",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000180",
+   "control_ids": [
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000195",
+   "control_ids": [
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000205",
+   "control_ids": [
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000215",
+   "control_ids": [
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000220",
+   "control_ids": [
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000245",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000250",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000255",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000260",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000265",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000270",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WN11-SO-000275",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

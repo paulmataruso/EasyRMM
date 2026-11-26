@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "files": [
+  {
+   "path": "controls/linux.json",
+   "kind": "library",
+   "licence_class": "ORIGINAL",
+   "source_id": "easyrmm-hardening",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "c60f522d9ebd86e1c9f728a18e812b1d63938fe5abe8e775e56c588eb0973d56"
+  },
+  {
+   "path": "controls/windows.json",
+   "kind": "library",
+   "licence_class": "ORIGINAL",
+   "source_id": "easyrmm-hardening",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "532934676d4db513abb397b73296cf38131564946aa9a101ab5d1b739eb6a6cd"
+  },
+  {
+   "path": "packs/cis-xref.json",
+   "kind": "pack",
+   "licence_class": "ORIGINAL",
+   "source_id": "cis-xref",
+   "review_state": "needed",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "4d1d4096dc2da15da62ee5d973751150a6c56ffe6474800a4ae6fde8bdeff6b7"
+  },
+  {
+   "path": "packs/cmmc-l1.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "cmmc-32cfr170",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "f65851a735319a6d6543e2e7da6cca29b05e77aee68c1d9c42633f3c35094aa5"
+  },
+  {
+   "path": "packs/cmmc-l2.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "cmmc-32cfr170",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "4912fe562fb4fcec68bdb49fa1876eade504a1eaf62ba052b5ab657cfaf4f20a"
+  },
+  {
+   "path": "packs/gdpr-indicative.json",
+   "kind": "pack",
+   "licence_class": "ORIGINAL",
+   "source_id": "gdpr-reg-2016-679",
+   "review_state": "needed",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "2dd0dac1eb5b602af83d461f88a5d7bc0e1e14c37ea5a76ae877df1a5fe3c618"
+  },
+  {
+   "path": "packs/hipaa-security.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "hipaa-45cfr164",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "61ce274cc95089cf27983c863325fc9c5cb3d68d40aedc2719b793f823aa9d74"
+  },
+  {
+   "path": "packs/nist-800-171r2.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "nist-800-171r2",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "c2cb51655c2de0df6d737299f9eab8b6e7ab7a98b4e82928cde171a5639afc76"
+  },
+  {
+   "path": "packs/nist-800-53r5.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "nist-800-53r5",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "e59a4135234a56d14c5e3d62a9874dae2484abb3f0a59f8e0a3332cb81a82d1b"
+  },
+  {
+   "path": "packs/nist-csf-2.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "nist-csf-2",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "6f861dc932e1025f065627ced731d961d8734a4e581002b89a8a8512a819c5a1"
+  },
+  {
+   "path": "packs/profiles.json",
+   "kind": "pack",
+   "licence_class": "ORIGINAL",
+   "source_id": "easyrmm-hardening",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "2f9dd69a928be82cfe2feef3f2290a3d44312ddc6b25a60ac5abc3f169543201"
+  },
+  {
+   "path": "packs/soc2-tsc-indicative.json",
+   "kind": "pack",
+   "licence_class": "ORIGINAL",
+   "source_id": "aicpa-tsc",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "1b61fb11f5fef4fcc4fb2c4d9f8ba70bb78080f2c1a5898543756de320b08cf8"
+  },
+  {
+   "path": "packs/stig-defender-antivirus.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "disa-stig",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "5a08f79c676dd88788684dac34bcb763ef08b730fa7bbd300c34173f0bb7b505"
+  },
+  {
+   "path": "packs/stig-defender-firewall.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "disa-stig",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "34dcdebd1313c9751c95d217d2bb002feaac9770a650ec681b73160fec379603"
+  },
+  {
+   "path": "packs/stig-windows-11.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "disa-stig",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "4701473c62882737fb11607e69d4de3fd4c2765a1c1504df6a13a07f4b26f882"
+  },
+  {
+   "path": "packs/stig-windows-server-2025.json",
+   "kind": "pack",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "disa-stig",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "6e68242f308ac0faae30f881180b723bde29ce7044731aac6f8cf100e57511ff"
+  },
+  {
+   "path": "sources.json",
+   "kind": "sources",
+   "licence_class": "PUBLIC_DOMAIN",
+   "source_id": "easyrmm-hardening",
+   "review_state": "none",
+   "author": "EasyRMM",
+   "derived_from_content": false,
+   "sha256": "2c052fa55cbd047fc487a53bc1adacdc0ef0ef81d02cde2f9806a31101e1d9d1"
+  }
+ ]
+}

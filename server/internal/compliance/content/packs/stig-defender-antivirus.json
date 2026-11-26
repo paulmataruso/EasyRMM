@@ -1,0 +1,762 @@
+{
+ "pack": {
+  "key": "stig-defender-antivirus",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "DISA STIG for Microsoft Defender Antivirus, V2R10 (ids only)",
+  "licence_class": "PUBLIC_DOMAIN",
+  "source_id": "disa-stig",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "stig-defender-antivirus",
+  "version": "V2R10",
+  "title": "DISA STIG for Microsoft Defender Antivirus, V2R10, rule ids",
+  "publisher": "DISA",
+  "source_id": "disa-stig",
+  "text_policy": "ids_only"
+ },
+ "requirements": [
+  {
+   "req_id": "WNDF-AV-000001",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000001 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000010",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000010 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000021",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000021 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000022",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000022 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000032",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000032 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000033",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000033 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000034",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000034 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000035",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000035 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000036",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000036 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000037",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000037 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000038",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000038 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000039",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000039 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000043",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000043 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000044",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000044 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000045",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000045 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000046",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000046 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000047",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000047 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000048",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000048 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000049",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000049 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000050",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000050 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "differs"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000051",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000051 (EasyRMM module asr)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000052",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000052 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNDF-AV-000073",
+   "parent_id": null,
+   "title_own": "Rule WNDF-AV-000073 (EasyRMM module defender)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "WNDF-AV-000001",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000010",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000021",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000022",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000032",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000033",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000034",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000035",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000036",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000037",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000038",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000039",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000043",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000044",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000045",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000046",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000047",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000048",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000049",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000050",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (differs by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000051",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000052",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNDF-AV-000073",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

@@ -607,6 +607,43 @@ Tests:
 * Web: vitest for the counts, the hidden tab, wording ("compliant" never
   appears: a test greps the rendered strings).
 
+*Built (C1), amended 2026-11-26 (decided in review):* the library, the packs, the scan and the read API are in; the web screens are not (C2 builds
+the per-organization results screens; the permissions are added to the web's type list only).
+
+* **Migrations** are `90291_compliance_library.sql` (global tables) and `90292_compliance_results.sql` (per organization), renumbered by the integrator.
+  `compliance_controls` gains `apply_ref`, `undo_ref` (the hardening job a fix and its undo would be) and `body_sha256`: a control keeps its meaning
+  under its version, and the loader refuses a changed definition that keeps the version. `compliance_org_settings` gains `scan_profile`.
+* **The global tables are written by the system scope only** (the pack loader at server start); every scope reads them, and a user's scope
+  cannot write one. The data model said "read-only to the app role", but the server runs as one role, so the guard is row-level security as for the
+  other tables. `compliance_results_history` is insert-only: a direct delete or update is refused, a delete that follows from deleting a parent is
+  allowed, and the retention purge says so with a setting.
+* **Pack files** map a requirement to several controls at once (`control_ids`), with the mapping's licence class and provenance in
+  `mapping_defaults`. A pack file with any other field (a script, a check) does not parse.
+* **Content:** 234 controls (128 Windows, 106 Linux) generated from the scripts' own settings lists by `go run ./server/cmd/genlibrary` (the test
+  fails if the files are out of date), each with its check, apply and undo reference and its risk tier (Windows from W2's tiers, Linux by module);
+  13 framework packs and the profiles. NIST 800-171 r2 is built here with full text of the 110 requirements. The `satisfies_objective` mappings are
+  few (20 requirements) and hand-written; everything else is `related`. Objectives (SP 800-171A) are modelled and loaded but none ship yet, so
+  the mappings are to whole requirements; control references (`compliance_control_refs`) ship empty.
+* **Weights are not verified.** The DoD weights in the 800-171 and CMMC Level 2 packs were written from memory of the methodology and total 311, not
+  313. The pack says `weights_verified: false`, the test accepts the total only while that is false, and C5 must not compute a SPRS range from them
+  until a person checks the published table.
+* **Licence rules.** GDPR (`needed`: the regulation's reuse terms are unread) and `cis-xref` (`needed`: the owner decision 1) wait for review, so
+  `packlint -edition commercial` fails until each is cleared with a reference. The CIS numbers are the Windows desktop numbering as recalled,
+  nine account-policy recommendations, and must be checked against the benchmark version before the pack is cleared. HIPAA is carried as ids and
+  our titles (`ids_and_own_titles`), not regulation text. The commercial edition is set with `-X ...compliance.Edition=commercial`
+  (the server Dockerfile takes `EDITION`); a commercial build also needs `manifest.sig`, an ed25519 signature of `manifest.json` by the release
+  key (`content.ReleasePublicKey`), which the release script is to write. Step 6 of the check (repeating 1 to 3 on the built image) is the release
+  script's, and is not built.
+* **Scans** use `jobs.CreateHardeningJob` in check mode, one job per platform for all its devices, asking only the modules the profile's controls
+  name; without `run` they read what the last checks stored. Results come from `device_hardening`, setting by setting: a setting the check did not
+  report, a module stored before C0, a failed check and a result cut short for length are `unknown`. A cut-short module is asked for again once, one
+  module per job; if it is still cut short the scan is `partial`. `devscope.Allowed(org)` is checked for hand-started and scheduled scans. A weekly
+  schedule (`compliance_org_settings`) needs `compliance.edit` to set, and ticks hourly. The ADR-0073 scheduling gate does not exist yet; the tick
+  is the engine's own until it does.
+* **Read API:** controls, profiles, packs (with coverage), scans, a framework's roll-up, a device's results, settings, and the loader's report
+  (`compliance.admin`). Permissions are as section 8; organization-level reads need the permission at the organization (a site-only assignment
+  sees nothing), and no step-up permission has an action yet.
+
 #### C2: results and the fix queue
 
 *Goal:* fixes with agreement. **Needs ADR-0054 W2** (apply and undo) for

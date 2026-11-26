@@ -1,0 +1,370 @@
+{
+ "pack": {
+  "key": "soc2-tsc-indicative",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "SOC 2 trust services criteria, security (indicative)",
+  "licence_class": "ORIGINAL",
+  "source_id": "aicpa-tsc",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "soc2-tsc-indicative",
+  "version": "2017",
+  "title": "SOC 2 security criteria: indicative mapping by EasyRMM, not an audit criterion",
+  "publisher": "EasyRMM",
+  "source_id": "aicpa-tsc",
+  "text_policy": "ids_and_own_titles"
+ },
+ "requirements": [
+  {
+   "req_id": "CC6.1",
+   "parent_id": null,
+   "title_own": "Logical access controls",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC6.2",
+   "parent_id": null,
+   "title_own": "Registering and authorising users",
+   "text_full": null,
+   "class": "organisational",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC6.3",
+   "parent_id": null,
+   "title_own": "Role-based access and removal",
+   "text_full": null,
+   "class": "organisational",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC6.6",
+   "parent_id": null,
+   "title_own": "Protection against outside threats",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC6.7",
+   "parent_id": null,
+   "title_own": "Restricting data movement",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC6.8",
+   "parent_id": null,
+   "title_own": "Preventing and detecting unauthorised software",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC7.1",
+   "parent_id": null,
+   "title_own": "Detecting configuration changes and vulnerabilities",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC7.2",
+   "parent_id": null,
+   "title_own": "Monitoring for anomalies",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  },
+  {
+   "req_id": "CC8.1",
+   "parent_id": null,
+   "title_own": "Change management",
+   "text_full": null,
+   "class": "organisational",
+   "weight": null,
+   "flags": {
+    "indicative": true
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "CC6.1",
+   "control_ids": [
+    "linux.permissions.etc-cron-d",
+    "linux.permissions.etc-cron-daily",
+    "linux.permissions.etc-cron-hourly",
+    "linux.permissions.etc-cron-monthly",
+    "linux.permissions.etc-cron-weekly",
+    "linux.permissions.etc-crontab",
+    "linux.permissions.etc-group",
+    "linux.permissions.etc-gshadow",
+    "linux.permissions.etc-passwd",
+    "linux.permissions.etc-shadow",
+    "linux.permissions.etc-ssh-sshd-config",
+    "linux.permissions.grub-cfg",
+    "linux.ssh.ciphers",
+    "linux.ssh.client-alive-count-max",
+    "linux.ssh.client-alive-interval",
+    "linux.ssh.crypto-policy",
+    "linux.ssh.kbd-interactive-authentication",
+    "linux.ssh.kex",
+    "linux.ssh.login-grace-time",
+    "linux.ssh.macs",
+    "linux.ssh.password-authentication",
+    "linux.ssh.permit-empty-passwords",
+    "linux.ssh.permit-root-login",
+    "linux.ssh.x11-forwarding",
+    "linux.sudo.file-mode",
+    "linux.sudo.logfile",
+    "linux.sudo.logrotate",
+    "linux.sudo.use-pty",
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.bitlocker.min-pin",
+    "win.bitlocker.preboot-pin",
+    "win.bitlocker.protected",
+    "win.bitlocker.recovery-password",
+    "win.laps.managed",
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  },
+  {
+   "req_id": "CC6.6",
+   "control_ids": [
+    "linux.fail2ban.ban-action",
+    "linux.fail2ban.bantime",
+    "linux.fail2ban.bantime-increment",
+    "linux.fail2ban.enabled",
+    "linux.fail2ban.findtime",
+    "linux.fail2ban.installed",
+    "linux.fail2ban.maxretry",
+    "linux.fail2ban.running",
+    "linux.fail2ban.sshd-jail",
+    "linux.fail2ban.trusted-ranges",
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1",
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  },
+  {
+   "req_id": "CC6.7",
+   "control_ids": [
+    "linux.usb-storage.kept-from-loading",
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume",
+    "win.bitlocker.min-pin",
+    "win.bitlocker.preboot-pin",
+    "win.bitlocker.protected",
+    "win.bitlocker.recovery-password",
+    "win.tls.ssl2-client",
+    "win.tls.ssl2-server",
+    "win.tls.ssl3-client",
+    "win.tls.ssl3-server",
+    "win.tls.tls10-client",
+    "win.tls.tls10-server",
+    "win.tls.tls11-client",
+    "win.tls.tls11-server"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  },
+  {
+   "req_id": "CC6.8",
+   "control_ids": [
+    "linux.integrity.aide-baseline",
+    "linux.integrity.aide-daily",
+    "linux.integrity.aide-excludes",
+    "linux.integrity.aide-installed",
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.features.fax-server",
+    "win.features.ftp-server",
+    "win.features.pnrp",
+    "win.features.simple-tcp",
+    "win.features.telnet",
+    "win.features.tftp"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  },
+  {
+   "req_id": "CC7.1",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "linux.integrity.aide-baseline",
+    "linux.integrity.aide-daily",
+    "linux.integrity.aide-excludes",
+    "linux.integrity.aide-installed",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  },
+  {
+   "req_id": "CC7.2",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "linux.fail2ban.ban-action",
+    "linux.fail2ban.bantime",
+    "linux.fail2ban.bantime-increment",
+    "linux.fail2ban.enabled",
+    "linux.fail2ban.findtime",
+    "linux.fail2ban.installed",
+    "linux.fail2ban.maxretry",
+    "linux.fail2ban.running",
+    "linux.fail2ban.sshd-jail",
+    "linux.fail2ban.trusted-ranges",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Indicative mapping by EasyRMM, not an audit criterion."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}
