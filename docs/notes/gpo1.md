@@ -64,4 +64,4 @@ Keep the stdout of each step if you can: the output of a script run is what repl
 
 Also record, for the follow-up: the real size of each GPO's backup (the cap is 36,000 bytes zipped), how long the GPO list takes to read on your domain, and whether the link tree and the list were "walked" (the walk is skipped above 600 containers).
 
-Note: the down migration `90481` also deletes `bitlocker` rows, because the checks now allow that name.
+Note: the down migration `00081` also deletes `bitlocker` rows, because the checks now allow that name.

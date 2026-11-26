@@ -772,3 +772,13 @@ time and stay with it when a device they name moves.
 fact of the computer, not of the organization, so a move leaves the rows alone:
 they follow the device, like `device_hardening`. The disposition test lists
 both as "follows the device".
+
+### Amended 2026-11-26 (decided in review), Group Policy
+
+`gpo_org_settings` (migration `00083`, ADR-0083 slice 1) belongs to the
+organization, so the disposition test lists it as owned. `gpo_backups`
+(`00082`) and `gpo_change_requests` (`00083`) are records of the organization
+whose domain the controller served, so they stay with it when the controller
+moves. A backup is restored, and a request is used, only within the
+organization that holds it (both are looked up by the device's current
+organization), so neither reaches the new one.
