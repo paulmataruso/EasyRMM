@@ -62,6 +62,8 @@ type server struct {
 	protocol int
 	// settingsSHA is the MeshAgent settings hash the heartbeat announces (ADR-0069).
 	settingsSHA string
+	// rescan makes the heartbeat answer ask for a roles rescan (ADR-0073).
+	rescan bool
 }
 
 // download serves a signed download, as the server does.
@@ -116,6 +118,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.protocol != 0 {
 			update += `,"protocol":` + strconv.Itoa(s.protocol)
+		}
+		if s.rescan {
+			update += `,"rescanRoles":true`
 		}
 		announce := ""
 		if s.settingsSHA != "" {
@@ -564,5 +569,34 @@ func TestBeatAppliesMovedSiteSettings(t *testing.T) {
 		if m.reconf != 0 || m.applied != "old" || !strings.HasPrefix(r.status.MeshAgent, "settings update failed") {
 			t.Errorf("%s: reconfigured %d, applied %q, status %q", name, m.reconf, m.applied, r.status.MeshAgent)
 		}
+	}
+}
+
+type roleScanner struct{ rescans int }
+
+func (r *roleScanner) Roles(context.Context) []agentproto.Role {
+	return []agentproto.Role{{Name: agentproto.RoleDNS, State: agentproto.RolePresent}}
+}
+func (r *roleScanner) Rescan() { r.rescans++ }
+
+// The roles ride on the heartbeat, and a rescan request reaches the
+// scanner (ADR-0073).
+func TestBeatReportsRolesAndHonoursRescan(t *testing.T) {
+	s := &server{}
+	r := newRunner(t, s, nil)
+	rs := &roleScanner{}
+	r.Roles = rs
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.heartbeats[0].Facts.Roles; len(got) != 1 || got[0].Name != "dns" || rs.rescans != 0 {
+		t.Fatalf("roles = %+v, rescans = %d", got, rs.rescans)
+	}
+	s.rescan = true
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rs.rescans != 1 {
+		t.Errorf("rescans = %d, want 1", rs.rescans)
 	}
 }

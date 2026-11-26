@@ -1060,7 +1060,7 @@ test("the one Repair button says what it would do, and refuses what it cannot or
 
   // Once it checks in, the EasyPatch agent the earlier steps linked to this device is the one that is silent (the
   // stand-in engine has not heard from it): the EasyRMM agent repairs it, and the dialog says so before it asks.
-  await agent.heartbeat({ hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" });
+  await agent.heartbeat({ facts: { hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" } });
   await page.reload();
   await repair.click();
   await expect(dialog.getByTestId("repair-plan")).toHaveText(
@@ -1071,6 +1071,7 @@ test("the one Repair button says what it would do, and refuses what it cannot or
   await expect(page.getByText(/Restart the EasyPatch agent/)).toBeVisible();
   // One at a time: the button waits while the repair runs.
   await expect(repair).toBeDisabled();
+});
 
 test("a Windows agent's Defender state and installed hashes show on the device, next to the list in Settings", async () => {
   const page = admin;
@@ -1148,4 +1149,26 @@ test("the audit log records everything and its hash chain verifies", async () =>
 
   await page.getByRole("button", { name: "Verify integrity" }).click();
   await expect(page.getByText(/^Intact: \d+ entries checked, none altered or removed\.$/)).toBeVisible();
+});
+
+test("a Windows agent's roles are stored, and an organization turns a Windows module off in its card", async () => {
+  const page = admin;
+  const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  // Never reported: unknown, not absent. Then a report, with a name the server does not know dropped.
+  await agent.heartbeat({ facts });
+  const before = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}/roles`)).json()) as { known: boolean };
+  expect(before.known).toBe(false);
+  await agent.heartbeat({ facts: { ...facts, roles: [{ name: "dns", state: "present" }, { name: "made_up", state: "present" }] } });
+  const after = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}/roles`)).json()) as { known: boolean; roles: { name: string; module: string; enabled: boolean }[] };
+  expect(after.known).toBe(true);
+  expect(after.roles.map((r) => r.name)).toEqual(["dns"]);
+
+  // The card on the organization's page: DNS is on by default, and off once unticked, which the API confirms.
+  await page.goto(`/organizations/${northwindId}?tab=windows-modules`);
+  const dns = page.getByRole("checkbox", { name: "DNS" });
+  await expect(dns).toBeChecked();
+  await dns.uncheck();
+  await expect(page.getByText("Saved.")).toBeVisible();
+  const list = (await (await page.request.get(`/api/v1/organizations/${northwindId}/windows-modules`)).json()) as { module: string; enabled: boolean }[];
+  expect(list.find((m) => m.module === "dns")?.enabled).toBe(false);
 });

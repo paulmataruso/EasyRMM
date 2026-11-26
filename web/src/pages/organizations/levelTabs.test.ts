@@ -54,6 +54,14 @@ describe("visibleTabs", () => {
     expect(ids("organization", ["patch.view"], false)).toEqual(["overview"]);
   });
 
+  it("shows Windows modules at the organization and the site to whoever may view the organization", () => {
+    expect(ids("organization", ["org.view"])).toEqual([
+      "overview",
+      "windows-modules",
+    ]);
+    expect(ids("site", ["org.view"])).toEqual(["overview", "windows-modules"]);
+  });
+
   it("checks the permission at the level asked: the same holder differs per level", () => {
     const tabs: LevelTab[] = [
       {

@@ -40,6 +40,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/meshagent"
 	"github.com/paulmataruso/easyrmm/agent/metrics"
 	"github.com/paulmataruso/easyrmm/agent/removal"
+	"github.com/paulmataruso/easyrmm/agent/roles"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/update"
@@ -425,6 +426,9 @@ func (e *env) run(ctx context.Context) error {
 		Log:      e.log,
 		// MeshAgent's files are checked with the key pinned for jobs.
 		Key: pinnedKey(cfg),
+	}
+	if runtime.GOOS == "windows" {
+		r.Roles = &roles.Scanner{Read: roles.Read}
 	}
 	var mesh *meshagent.Manager
 	var ship *logship.Shipper

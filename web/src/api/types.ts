@@ -36,6 +36,24 @@ export type Permission =
   | "doc.view"
   | "doc.manage"
   | "log.view"
+  | "defender.view"
+  | "defender.manage"
+  | "ad.view"
+  | "ad.manage"
+  | "ad.reset_password"
+  | "ad.view_sensitive"
+  | "ca.view"
+  | "ca.manage"
+  | "dns.view"
+  | "dns.manage"
+  | "dhcp.view"
+  | "dhcp.manage"
+  | "shares.view"
+  | "shares.manage"
+  | "print.view"
+  | "print.manage"
+  | "backup.view"
+  | "backup.manage"
   | "settings.manage";
 
 export type Role =
@@ -3367,4 +3385,14 @@ export interface AgentFileEntry {
 export interface AgentFiles {
   entries: AgentFileEntry[];
   canRefresh: boolean;
+}
+
+/** One Windows module's toggle at an organization or a site (ADR-0073). */
+export interface WindowsModuleSetting {
+  module: string;
+  label: string;
+  /** What applies here: the site's override, else the organization's, else on. */
+  enabled: boolean;
+  /** The row at this level; null when none, so the level inherits. */
+  override: boolean | null;
 }

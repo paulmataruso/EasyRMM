@@ -21,6 +21,9 @@ enforce that higher roles are strict supersets of lower ones.
 | `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
+| `defender.view`, `ad.view`, `dhcp.view`, `print.view`, `backup.view`, `defender.manage`, `print.manage`, `backup.manage` | | ✓ | ✓ | ✓ | ✓ |
+| `ca.view`, `dns.view`, `shares.view`, `ad.view_sensitive`, `dns.manage`, `dhcp.manage`, `shares.manage` | | | ✓ | ✓ | ✓ |
+| `ca.manage`, `ad.manage`, `ad.reset_password` | | | | ✓ | ✓ |
 
 `job.view_sensitive` opens what a run printed and a job's argument values,
 which can hold secrets; `job.view` shows the jobs and runs without them.
@@ -43,6 +46,14 @@ Read-Only, as logs can hold user names, paths and host names. Turning
 verbose logging on or off for a device or a group needs `device.edit`
 ([Agent logs](../operations/agent-logs.md),
 [ADR-0069](../architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md)).
+
+The Windows management modules ([ADR-0073](../architecture/adr/0073-windows-management-modules.md))
+each have a `.view` and a `.manage` permission (Active Directory also has
+`ad.reset_password` and `ad.view_sensitive`). Read-Only holds none of them:
+module state (users, shares, printers, certificates, backup paths) is more
+than a status light. Active Directory, certificate authority, DNS and DHCP
+power reaches the whole domain, not one site, so `ad.manage` and
+`ca.manage` start at Organization Administrator.
 
 ## Granting roles
 

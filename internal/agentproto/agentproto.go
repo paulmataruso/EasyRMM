@@ -71,6 +71,10 @@ type Facts struct {
 	// MeshSettingsSHA256 is the SHA-256 of the MeshAgent settings the agent
 	// last applied from the server, in lowercase hex (ADR-0069).
 	MeshSettingsSHA256 string `json:"meshSettingsSha256,omitempty"`
+	// Roles are the Windows roles and features detected (ADR-0073). Nil
+	// (absent or null) means the agent could not or did not detect them, which
+	// the server reads as unknown; an empty list means none were found.
+	Roles []Role `json:"roles"`
 }
 
 // EnrollRequest exchanges a deployment token for a device identity.
@@ -212,6 +216,9 @@ type HeartbeatResponse struct {
 	// JobsWaiting says that work is waiting that the channel did not carry,
 	// such as a jobs frame over its cap: the agent makes an ordinary poll.
 	JobsWaiting bool `json:"jobsWaiting,omitempty"`
+	// RescanRoles asks the agent to detect its roles again at once
+	// (ADR-0073).
+	RescanRoles bool `json:"rescanRoles,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

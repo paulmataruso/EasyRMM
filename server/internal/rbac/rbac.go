@@ -69,6 +69,29 @@ const (
 	// permission: logs can hold user names, paths and host names, so
 	// Technicians and above hold it, Read-Only does not.
 	PermLogView Permission = "log.view"
+
+	// The Windows management modules (ADR-0073). Each module has a view and
+	// a manage permission; Active Directory adds two more. None is a
+	// view permission: module state is more than a status light, so
+	// Read-Only holds none of them.
+	PermDefenderView    Permission = "defender.view"
+	PermDefenderManage  Permission = "defender.manage"
+	PermADView          Permission = "ad.view"
+	PermADManage        Permission = "ad.manage"
+	PermADResetPassword Permission = "ad.reset_password"
+	PermADViewSensitive Permission = "ad.view_sensitive"
+	PermCAView          Permission = "ca.view"
+	PermCAManage        Permission = "ca.manage"
+	PermDNSView         Permission = "dns.view"
+	PermDNSManage       Permission = "dns.manage"
+	PermDHCPView        Permission = "dhcp.view"
+	PermDHCPManage      Permission = "dhcp.manage"
+	PermSharesView      Permission = "shares.view"
+	PermSharesManage    Permission = "shares.manage"
+	PermPrintView       Permission = "print.view"
+	PermPrintManage     Permission = "print.manage"
+	PermBackupView      Permission = "backup.view"
+	PermBackupManage    Permission = "backup.manage"
 )
 
 // AllPermissions lists every permission.
@@ -80,6 +103,9 @@ var AllPermissions = []Permission{
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
 	PermDocView, PermDocManage, PermLogView,
+	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
+	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -158,14 +184,21 @@ var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
 	PermDocManage, PermLogView,
+	// The Windows modules (ADR-0073): every view except ad.view_sensitive,
+	// ca.view, dns.view and shares.view, which start at Site Administrator,
+	// plus the reversible manage permissions. No Active Directory writes.
+	PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
+	PermDefenderManage, PermBackupManage, PermPrintManage,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
 	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
+	PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADView, PermADViewSensitive,
 })
 
-var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure})
+var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,
+	PermCAManage, PermADManage, PermADResetPassword})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{

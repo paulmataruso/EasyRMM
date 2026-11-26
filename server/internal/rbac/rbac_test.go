@@ -383,3 +383,35 @@ func TestPlacement(t *testing.T) {
 		}
 	}
 }
+
+// The Windows module permissions per built-in role (ADR-0073, section 3).
+func TestWindowsModulePermissions(t *testing.T) {
+	all := []Permission{
+		PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+		PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
+		PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
+	}
+	want := map[Role][]Permission{
+		RoleReadOnly: {},
+		RoleTechnician: {
+			PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
+			PermDefenderManage, PermBackupManage, PermPrintManage,
+		},
+	}
+	want[RoleSiteAdmin] = append(slices.Clone(want[RoleTechnician]),
+		PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADViewSensitive)
+	want[RoleOrgAdmin] = append(slices.Clone(want[RoleSiteAdmin]), PermCAManage, PermADManage, PermADResetPassword)
+	want[RoleSuperAdmin] = all
+	for role, held := range want {
+		for _, p := range all {
+			if got := slices.Contains(Roles[role].Permissions, p); got != slices.Contains(held, p) {
+				t.Errorf("%s holds %s = %v, want %v", role, p, got, !got)
+			}
+		}
+	}
+	for _, p := range all {
+		if !slices.Contains(AllPermissions, p) {
+			t.Errorf("%s is missing from AllPermissions", p)
+		}
+	}
+}

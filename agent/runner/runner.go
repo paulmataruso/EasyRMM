@@ -93,6 +93,13 @@ var ErrRestart = errors.New("runner: the agent must restart into another build")
 // ErrRemoved ends Run when the agent must uninstall itself in this process.
 var ErrRemoved = errors.New("runner: the agent must uninstall itself")
 
+// RoleScanner detects the roles of a Windows computer, caching the result
+// (agent/roles.Scanner).
+type RoleScanner interface {
+	Roles(ctx context.Context) []agentproto.Role
+	Rescan()
+}
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -152,6 +159,9 @@ type Runner struct {
 	// only where the server's last answer allowed it.
 	Defender  DefenderManager
 	Installed InstalledReporter
+	// Roles detects the Windows roles reported with each heartbeat
+	// (ADR-0073); nil reports none.
+	Roles RoleScanner
 
 	status      state.Status
 	failures    int
@@ -255,6 +265,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		f.MeshSettingsSHA256 = r.Mesh.AppliedSettings()
 		r.status.MeshNodeID = id
 	}
+	if r.Roles != nil {
+		f.Roles = r.Roles.Roles(ctx)
+	}
 	req := agentproto.HeartbeatRequest{Facts: f}
 	if r.Metrics != nil {
 		m := r.Metrics(ctx)
@@ -290,6 +303,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	r.failures = 0
 	r.defendAnswered(resp.Defender)
+	if resp.RescanRoles && r.Roles != nil {
+		r.Roles.Rescan()
+	}
 	if r.Update != nil {
 		r.Update.Reached()
 		if r.Settled != nil && !r.settled {

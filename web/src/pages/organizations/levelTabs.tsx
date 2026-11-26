@@ -6,6 +6,7 @@ import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { ContactsTab } from "./tabs/ContactsTab";
 import { PatchPolicyTab } from "./tabs/PatchPolicyTab";
+import { WindowsModulesTab } from "./tabs/WindowsModulesTab";
 
 // The tab strip of the organization and site pages (ADR-0072, slice S4). A tab is one line in LEVEL_TABS: its id (the
 // `?tab=` value), label, the permission it needs, the levels it appears at and its component. Order in the array is the
@@ -62,6 +63,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     levels: ["organization", "site"],
     when: (ctx) => ctx.patchingConfigured,
     component: PatchPolicyTab,
+  },
+  {
+    id: "windows-modules",
+    label: "Windows modules",
+    permission: "org.view",
+    levels: ["organization", "site"],
+    component: WindowsModulesTab,
   },
 ];
 

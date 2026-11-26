@@ -52,6 +52,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/repairsapi"
@@ -64,6 +65,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/recovery"
@@ -114,6 +116,9 @@ type Deps struct {
 	Hardware *hardware.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
+	// Modules is the Windows management framework: roles and toggles
+	// (ADR-0073).
+	Modules *modules.Service
 	// AgentChannel is the agents' WebSocket channel; off unless
 	// EASYRMM_AGENT_CHANNEL is on (ADR-0059).
 	AgentChannel *agentchannel.Hub
@@ -229,6 +234,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
+	d.Modules = modules.New(db, auditLog, log)
+	d.Agents.SetRoleStore(d.Modules)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
 	if d.Mesh != nil {
@@ -553,6 +560,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
+	modulesapi.New(d.Modules).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)

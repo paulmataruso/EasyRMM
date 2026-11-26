@@ -584,6 +584,33 @@ markers per role, the `winmod` migration and list exclusion, the AD
 protected-target guard, AST-based injection checks, per-organization default
 policies and the framework `devscope` gate.
 
+Amended 2026-11-26 (decided in review, while building slices 1 and 2):
+
+* `modules.Allowed` takes the site and the module as well as the
+  organization, `Allowed(ctx, org, site, module)`, because the toggle it wraps
+  is per module and per site; an unreadable toggle answers no.
+* The shares are counted from the values of
+  `HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Shares` (names not
+  ending in `$`), not `NetShareEnum`: administrative shares and `IPC$` are not
+  stored there, and no API call is needed. `Print$` in the same key is the
+  print marker.
+* `file_server` is server-only like the other server roles (a share on a
+  desktop is not a file server).
+* A desktop's `windows_backup` state is `present` when the File History service
+  (`fhsvc`) runs, else `unconfigured` (not verified on a real desktop).
+* A Defender that is installed but not in `Normal` running mode is reported
+  with the state `passive`; a failed query is `unknown`.
+* The server asks for a rescan with `rescanRoles` in the heartbeat answer. A
+  report with `roles` absent or null is unknown; `[]` is known and empty.
+  An organization outside the dev scope stores no roles.
+* `modules.Offered` answers 404 when the role is not detected, the module is
+  off for the site, or the caller lacks the module's view permission.
+* The framework's removal hook (`OnRoleRemoved`) exists and runs in the
+  heartbeat's transaction; the snapshot table (slice 6) and the alert
+  registry (slice 7) register their clearing on it when they land. The
+  catalogue lint that fails a dispatch without `modules.Allowed` waits for
+  slice 5, the first code that dispatches.
+
 ## References
 
 * `agent/jobs/worker.go`, `server/internal/jobs/hardening.go` and `key.go`.

@@ -41,7 +41,10 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	if err != nil {
 		return nil, err
 	}
-	var before string
+	var (
+		before string
+		rescan bool
+	)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, '') FROM devices WHERE id = $1`, d.ID).Scan(&before)
 		// The name follows the hostname until someone renames the device.
@@ -61,6 +64,23 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		}
 		if allowed {
 			if err := s.storeDefender(ctx, tx, d, f.hostname, ip, report); err != nil {
+				return err
+			}
+		}
+		// Like the update, the roles are an extra: a failure to store them
+		// never fails the heartbeat.
+		if s.roles != nil {
+			rp, err := tx.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			if rescan, err = s.roles.StoreRoles(ctx, rp, d.ID, d.OrganizationID, f.roles); err != nil {
+				s.log.Error("agents: storing the roles failed", "error", err, "device_id", d.ID)
+				rescan = false
+				if err := rp.Rollback(ctx); err != nil {
+					return err
+				}
+			} else if err := rp.Commit(ctx); err != nil {
 				return err
 			}
 		}
@@ -112,6 +132,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		Update:           update,
 		Uninstall:        uninstall,
 		Defender:         &agentproto.DefenderPolicy{Enabled: allowed},
+		RescanRoles:      rescan,
 	}, nil
 }
 

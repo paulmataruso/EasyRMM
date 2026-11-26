@@ -80,7 +80,19 @@ type Service struct {
 	version func(version string)
 	// builtChanged is called after the served builds were loaded.
 	builtChanged func()
+	// roles stores what a heartbeat reports of the device's Windows roles
+	// (ADR-0073); nil ignores them.
+	roles RoleStore
 }
+
+// RoleStore keeps the roles an agent reported (modules.Service). It runs in
+// the heartbeat's transaction and says whether the agent is to rescan.
+type RoleStore interface {
+	StoreRoles(ctx context.Context, tx pgx.Tx, deviceID, orgID uuid.UUID, reported []agentproto.Role) (rescan bool, err error)
+}
+
+// SetRoleStore has heartbeats' roles stored in rs (ADR-0073).
+func (s *Service) SetRoleStore(rs RoleStore) { s.roles = rs }
 
 // OnRemoved has f called after a device is deleted, such as to have the
 // patching engine told at once to remove the device's EasyPatch agent.
@@ -188,9 +200,10 @@ func (s *Service) Cleanup(ctx context.Context) error {
 // facts are validated, cleaned device facts.
 type facts struct {
 	hostname, os, platform, arch, version string
-	meshNode                              string // MeshCentral encoding, "" if none
-	sha256                                string // the agent's executable, "" if not reported
-	meshSettings                          string // the MeshAgent settings the agent applied, "" if not reported
+	meshNode                              string            // MeshCentral encoding, "" if none
+	sha256                                string            // the agent's executable, "" if not reported
+	meshSettings                          string            // the MeshAgent settings the agent applied, "" if not reported
+	roles                                 []agentproto.Role // the roles the agent detected, nil if not reported (ADR-0073)
 }
 
 // cleanFacts validates what an agent reports. Free text is cut to the
@@ -215,6 +228,7 @@ func cleanFacts(f agentproto.Facts) (facts, error) {
 	if agentproto.ValidSHA256(f.AgentSHA256) {
 		out.sha256 = f.AgentSHA256
 	}
+	out.roles = f.Roles
 	if agentproto.ValidSHA256(f.MeshSettingsSHA256) {
 		out.meshSettings = f.MeshSettingsSHA256
 	}
