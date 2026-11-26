@@ -4382,6 +4382,7 @@ export interface TlsCheck {
   status: "ok" | "warn" | "fail";
   detail: string;
   fix?: string;
+}
 
 // The registry editor (ADR-0067, slice 1).
 
