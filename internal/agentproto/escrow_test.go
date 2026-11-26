@@ -83,3 +83,48 @@ func TestEscrowRecordAndReportChecks(t *testing.T) {
 		t.Error("a bad volume id passed")
 	}
 }
+
+func TestVerifyEscrowKeyRefusesMalformedInstructions(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	now := time.Now()
+	sign := func(payload string) SignedEscrowKey {
+		sig := ed25519.Sign(priv, append([]byte(escrowKeySigContext), payload...))
+		return SignedEscrowKey{Payload: base64.StdEncoding.EncodeToString([]byte(payload)), Signature: base64.StdEncoding.EncodeToString(sig)}
+	}
+	good := escrowPayload(now)
+	for name, s := range map[string]SignedEscrowKey{
+		"payload not base64":   {Payload: "***", Signature: "AAAA"},
+		"signature not base64": {Payload: "e30=", Signature: "***"},
+		"not JSON":             sign("{"),
+		"unknown field":        sign(`{"v":1,"extra":1}`),
+		"wrong version":        sign(`{"v":9}`),
+	} {
+		if _, _, err := VerifyEscrowKey(pub, s, "dev", now); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	for name, mut := range map[string]func(*EscrowKeyPayload){
+		"key version 0":      func(p *EscrowKeyPayload) { p.KeyVersion = 0 },
+		"short public key":   func(p *EscrowKeyPayload) { p.PublicKey = base64.StdEncoding.EncodeToString([]byte("short")) },
+		"public key garbage": func(p *EscrowKeyPayload) { p.PublicKey = "***" },
+		"bad key id":         func(p *EscrowKeyPayload) { p.KeyID = "a|b" },
+		"no expiry":          func(p *EscrowKeyPayload) { p.ExpiresAt = time.Time{} },
+	} {
+		p := good
+		mut(&p)
+		s, _ := SignEscrowKey(priv, p)
+		if _, _, err := VerifyEscrowKey(pub, s, "dev", now); !errors.Is(err, ErrEscrowKeyMalformed) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if (EscrowVolumesReport{Volumes: []EscrowVolume{{ID: "v", Protectors: []EscrowProtector{{ID: "a|b"}}}}}).Check() == nil {
+		t.Error("a bad protector id passed")
+	}
+	if (EscrowVolumesReport{Volumes: []EscrowVolume{{ID: "v", Mount: strings.Repeat("x", 17)}}}).Check() == nil {
+		t.Error("a long mount passed")
+	}
+	rec := EscrowRecord{VolumeID: "v", ProtectorID: "p", Kind: EscrowBitLocker, KeyID: "k", Enc: base64.StdEncoding.EncodeToString(make([]byte, 32)), Ciphertext: "***", Fingerprint: strings.Repeat("a", 32)}
+	if rec.Check() == nil {
+		t.Error("a ciphertext that is not base64 passed")
+	}
+}

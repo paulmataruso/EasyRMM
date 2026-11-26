@@ -269,7 +269,7 @@ func TestEscrowUploadVerifiesInsideTheKeystore(t *testing.T) {
 	if len(need.Need) != 1 || need.Need[0].ProtectorID != f.prot {
 		t.Fatalf("need = %+v", need)
 	}
-	ans, err := f.svc.Upload(f.ctx, dev, netip.MustParseAddr("192.0.2.9"), f.record(dev, key, pub, f.vol, f.prot, password1))
+	ans, err := f.svc.Upload(f.ctx, dev, netip.Addr{}, f.record(dev, key, pub, f.vol, f.prot, password1))
 	if err != nil || ans.State != agentproto.EscrowVerified || ans.Again {
 		t.Fatalf("upload: %+v %v", ans, err)
 	}

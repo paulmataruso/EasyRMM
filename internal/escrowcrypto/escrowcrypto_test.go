@@ -133,3 +133,69 @@ func TestFingerprintBindsProtector(t *testing.T) {
 		t.Fatal("the protector is not in the fingerprint")
 	}
 }
+
+func TestKeyDerivationAndRawSeal(t *testing.T) {
+	ikm := bytes.Repeat([]byte{7}, 32)
+	priv, pub, err := DeriveKey(ikm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv2, pub2, _ := DeriveKey(ikm)
+	if !bytes.Equal(priv, priv2) || !bytes.Equal(pub, pub2) {
+		t.Fatal("the same input material made different keys")
+	}
+	if p, err := PublicFrom(priv); err != nil || !bytes.Equal(p, pub) {
+		t.Fatalf("PublicFrom: %v", err)
+	}
+	if _, _, err := DeriveKey([]byte("short")); !errors.Is(err, ErrKey) {
+		t.Errorf("short input material: %v", err)
+	}
+	if _, err := PublicFrom([]byte{1}); !errors.Is(err, ErrKey) {
+		t.Errorf("short private key: %v", err)
+	}
+	info := []byte("test|info")
+	enc, ct, err := SealRaw(pub, info, []byte("a kek"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pt, err := OpenRaw(priv, info, enc, ct); err != nil || string(pt) != "a kek" {
+		t.Fatalf("raw round trip: %q %v", pt, err)
+	}
+	if _, err := OpenRaw(priv, []byte("other"), enc, ct); !errors.Is(err, ErrDecrypt) {
+		t.Errorf("another info: %v", err)
+	}
+	if _, err := OpenRaw([]byte{1}, info, enc, ct); !errors.Is(err, ErrKey) {
+		t.Errorf("a short private key: %v", err)
+	}
+	if _, err := OpenRaw(priv, info, enc, make([]byte, maxRaw+17)); !errors.Is(err, ErrDecrypt) {
+		t.Errorf("an oversized ciphertext: %v", err)
+	}
+	for _, bad := range [][]byte{nil, make([]byte, maxRaw+1)} {
+		if _, _, err := SealRaw(pub, info, bad); !errors.Is(err, ErrSecret) {
+			t.Errorf("%d bytes: %v", len(bad), err)
+		}
+	}
+	if _, _, err := SealRaw([]byte{1}, info, []byte("x")); !errors.Is(err, ErrKey) {
+		t.Errorf("a short public key: %v", err)
+	}
+	if _, err := Open(priv, Context{Org: "a|b"}, enc, ct); !errors.Is(err, ErrDecrypt) {
+		t.Errorf("an invalid context: %v", err)
+	}
+	if _, err := Open(priv, ctx, enc, make([]byte, MaxSecret+17)); !errors.Is(err, ErrDecrypt) {
+		t.Errorf("an oversized record: %v", err)
+	}
+	if _, _, err := Seal(pub, ctx, make([]byte, MaxSecret+1)); !errors.Is(err, ErrSecret) {
+		t.Errorf("an oversized secret: %v", err)
+	}
+	if b, err := NormalizeBitLockerBytes([]byte(" " + secret + "\n")); err != nil || string(b) != secret {
+		t.Errorf("NormalizeBitLockerBytes: %q %v", b, err)
+	}
+	if _, err := NormalizeBitLockerBytes([]byte("no")); err == nil {
+		t.Error("a bad password passed")
+	}
+	x := []byte{1, 2, 3}
+	Zero(x)
+	if !bytes.Equal(x, []byte{0, 0, 0}) {
+		t.Error("Zero left bytes")
+	}
+}

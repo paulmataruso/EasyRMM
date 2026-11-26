@@ -162,6 +162,16 @@ floors=(
   "internal/logredact                      88"
   "server/internal/agentlogs               85"
   "server/internal/httpapi/agentlogsapi    80"
+  # The keystore and recovery-key escrow (ADR-0081): the cryptography the agent
+  # and the keystore share, the keystore process (its TPM, passphrase and file
+  # modes, recovery bundles, wraps and checks), the server's side of the socket
+  # and the escrow states, the agent's escrow code (its Windows WMI reader has no
+  # test off Windows), and the console route.
+  "internal/escrowcrypto                   90"
+  "server/internal/keystored               75"
+  "server/internal/keystore                78"
+  "server/internal/httpapi/keystoreapi     85"
+  "agent/escrow                            85"
 )
 
 if [[ ! -f "$profile" ]]; then

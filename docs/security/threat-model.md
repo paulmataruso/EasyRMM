@@ -46,6 +46,27 @@ their own rights, and EasyRMM narrows what reaches them.
 * Rate limits and lockouts on passwords and second factors.
 * Re-entering the password for sensitive changes.
 
+**Recovery keys: agent, server, keystore** ([ADR-0081](../architecture/adr/0081-the-keystore.md), [The keystore](../operations/keystore.md))
+* The keystore is its own container with no network, a read-only root, no
+  capabilities, a non-root user and locked, dump-free memory. The server
+  reaches it only through a Unix socket whose peer's user ID the kernel
+  reports; init, unseal and recovery checks are on a second socket inside the
+  container, so no console or server process can feed or capture a passphrase.
+* The key-encryption key is never in the server, PostgreSQL, `.env`, a
+  backup or the updater's copy: it is sealed to the host's TPM (Secure Boot
+  policy), or wrapped under a passphrase typed at the host, or, only on
+  purpose, a file (a standing console warning).
+* An agent seals each BitLocker recovery password to its organization's
+  public key before it leaves the device, bound to the organization, device,
+  volume, protector and key by HPKE's context, so a copied record opens
+  nowhere else. The server stores it and the keystore checks it, returning
+  only match or mismatch; nothing is ever replaced by a record that does not
+  match (it is kept as a conflict beside the verified one).
+* The escrow public key reaches an agent signed with the job key. A
+  compromised server could hand an agent a public key of its own, but it can
+  already run code on every agent, so the trust does not change.
+* No key can be read back in this slice.
+
 **Between tenants** ([ADR-0002](../architecture/adr/0002-postgresql-rls-tenant-isolation.md), [Roles and permissions](rbac.md))
 * Every tenant table has forced row-level security under the caller's
   scope.

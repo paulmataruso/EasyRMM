@@ -625,6 +625,25 @@ Amended 2026-11-26 (decided in review, while building slice 1):
   before it ends; a keystore whose recovery is not verified wraps nothing
   (`recovery_not_verified`). The generated six-word passphrase is not built; a
   passphrase of at least 16 characters is typed twice.
+* **One image, two programs.** The keystore container runs the server image's
+  second binary (`/usr/local/bin/easyrmm-keystore`, entrypoint and healthcheck
+  set in the compose file), so a release pulls and verifies one image, the
+  manifest and the updater's `compose config --images` check are unchanged, and
+  the keystore needs no image of its own. It is still its own container with
+  `network_mode: none`, a read-only root, `cap_drop: ALL`,
+  `no-new-privileges`, user 65531, `memlock` unlimited, no core files and
+  `memswap_limit` equal to `mem_limit`. `network_mode: none` is the one
+  exception to the deployment's host networking (`docs/architecture/network.md`).
+* **Where the socket lives.** The service socket's folder is `run/` inside the
+  keystore's state directory (`/var/lib/easyrmm-keystore/run`, mounted at
+  `/run/easyrmm-keystore` in both containers, read-only in the server's), not
+  a host `/run` folder, so it exists after a reboot with nothing to recreate
+  it. The state directory is `EASYRMM_KEYSTORE_DIR`, which `setup.sh` refuses
+  to put in or around the data root or the deployment's tree, and the updater
+  refuses the same at every upgrade (`checkMounts`).
+* **The TPM device** is offered through `EASYRMM_TPM_DEVICE` and
+  `EASYRMM_TPM_GID` in `.env` (set by `setup.sh` when `/dev/tpmrm0` exists),
+  because the updater refuses a second compose file and `COMPOSE_FILE`.
 * **KEK versions are mirrored.** The keystore has no database, so the server
   copies each version's metadata (`keystore_kek_versions`: check value, mode,
   state, verified-at; no key) from its status, to show recovery state and for

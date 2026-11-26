@@ -354,8 +354,13 @@ func TestComposeListeners(t *testing.T) {
 	}
 	blocks := regexp.MustCompile(`(?m)^  [a-z][a-z0-9-]*:$`).Split(section, -1)[1:]
 	for i, s := range services {
-		if !strings.Contains(blocks[i], "\n    network_mode: host\n") {
-			t.Errorf("service %s does not use host networking", s[1])
+		// The keystore (ADR-0081) is the one service with no network at all.
+		want, other := "host", "none"
+		if s[1] == "keystore" {
+			want, other = "none", "host"
+		}
+		if !strings.Contains(blocks[i], "\n    network_mode: "+want+"\n") || strings.Contains(blocks[i], "\n    network_mode: "+other+"\n") {
+			t.Errorf("service %s does not use network_mode: %s", s[1], want)
 		}
 		if strings.Contains(blocks[i], "\n    ports:") {
 			t.Errorf("service %s maps ports", s[1])

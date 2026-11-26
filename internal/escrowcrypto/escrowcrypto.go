@@ -138,6 +138,9 @@ func PublicFrom(priv []byte) ([]byte, error) {
 // material (RFC 9180 DeriveKeyPair), such as the Argon2id output of the
 // keystore's recovery code. The caller zeroes ikm and the private bytes.
 func DeriveKey(ikm []byte) (priv, pub []byte, err error) {
+	if len(ikm) < 32 {
+		return nil, nil, ErrKey
+	}
 	kem, _, _ := suite()
 	k, err := kem.DeriveKeyPair(ikm)
 	if err != nil {
