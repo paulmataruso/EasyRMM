@@ -413,7 +413,8 @@ func TestEdgeACMEServesChallengesAndRedirects(t *testing.T) {
 	cfg.ACMEDirectory = "https://127.0.0.1:1/directory" // never contacted by this test
 	cfg.ListenHTTPS = reserveAddr(t)
 	cfg.ListenHTTP = reserveAddr(t)
-	stop := runEdge(t, &edge{cfg: cfg, handler: okHandler(), hold: notHeld(t), log: discard()})
+	svc := tlscert.New(tlscert.Deps{}, tlscert.Settings{Names: []string{"rmm.test", "mesh.rmm.test"}})
+	stop := runEdge(t, &edge{cfg: cfg, handler: okHandler(), hold: notHeld(t), log: discard(), tls: svc})
 	resp, _ := get(t, noRedirect(), "http://"+cfg.ListenHTTP+"/x", "mesh.rmm.test")
 	if resp.StatusCode != http.StatusPermanentRedirect || !strings.HasPrefix(resp.Header.Get("Location"), "https://mesh.rmm.test:") {
 		t.Fatalf("acme redirect: %d %q", resp.StatusCode, resp.Header.Get("Location"))

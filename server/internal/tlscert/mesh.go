@@ -130,7 +130,7 @@ func ServeMesh(ctx context.Context, ln net.Listener, get func(*tls.ClientHelloIn
 		c, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return nil
+				return nil //nolint:nilerr // the listener was closed to stop it
 			}
 			var ne net.Error
 			if errors.As(err, &ne) && ne.Timeout() {
@@ -141,7 +141,9 @@ func ServeMesh(ctx context.Context, ln net.Listener, get func(*tls.ClientHelloIn
 		go func() {
 			defer c.Close()
 			_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-			_ = tls.Server(c, cfg).Handshake()
+			hctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			_ = tls.Server(c, cfg).HandshakeContext(hctx)
 		}()
 	}
 }

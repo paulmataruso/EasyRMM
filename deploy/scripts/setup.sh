@@ -4,7 +4,7 @@
 #   - creates the data directories with the ownership the containers expect
 #
 # Usage (run from the deploy/ directory, as root or with sudo):
-#   ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
+#   ./scripts/setup.sh --hostname rmm.example.com
 #   ./scripts/setup.sh --hostname rmm.example.com --tls-mode offload --trusted-proxies 127.0.0.1/32
 #   ./scripts/setup.sh --hostname rmm.example.com --tls-mode manual \
 #       --cert-file /etc/easyrmm/tls/fullchain.pem --key-file /etc/easyrmm/tls/privkey.pem
@@ -236,8 +236,6 @@ authentik_ask() {
     die "the sign-in name must differ from EasyRMM's own names"
   [[ "$admin_email" =~ $authentik_valid_email ]] || die "the administrator's email must be an address such as admin@example.com"
   [[ "$tls_mode" != "offload" ]] || die "--with-authentik needs EasyRMM's own TLS (acme, manual or internal): its edge serves Authentik's name"
-  # ACME's account address, when none is given: the administrator's.
-  [[ -n "$acme_email" ]] || acme_email="$admin_email"
 }
 
 # authentik_env writes Authentik's settings and secrets to .env.
@@ -439,7 +437,7 @@ if [[ "$with_authentik" == true ]]; then
   authentik_ask
 fi
 case "$tls_mode" in
-  acme) [[ -n "$acme_email" ]] || die "--acme-email is required for --tls-mode acme" ;;
+  acme) echo "Let's Encrypt: by choosing --tls-mode acme you accept its Subscriber Agreement (https://letsencrypt.org/repository/). No email is sent to it unless you give --acme-email." ;;
   manual) [[ -n "$cert_file" && -n "$key_file" ]] || die "--cert-file and --key-file are required for --tls-mode manual" ;;
   offload) [[ -n "$trusted_proxies" ]] || die "--trusted-proxies is required for --tls-mode offload" ;;
   internal) ;;
@@ -733,6 +731,10 @@ echo "  1. Point DNS for ${hostname} and ${mesh_hostname:-mesh.${hostname}} at t
 echo "  2. Allow inbound TCP 443 (and 80 for ACME HTTP-01), and outbound HTTPS to"
 echo "     github.com for MeshCentral's first-start agent download."
 echo "  3. docker compose up -d"
+if [[ "$tls_mode" == "acme" ]]; then
+  echo "     then, to see whether Let's Encrypt can reach this server (DNS, CAA, ports 80 and 443):"
+  echo "       docker compose exec server easyrmm-server tls check"
+fi
 echo "  4. Open https://${hostname}/ and enter the setup token from:"
 echo "       ${data_root}/server/setup-token"
 echo "  5. Initialise the keystore, which holds BitLocker and LUKS recovery keys (ADR-0081):"

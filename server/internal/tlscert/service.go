@@ -375,13 +375,13 @@ func (s *Service) onEvent(ctx context.Context, event string, data map[string]any
 	now := s.deps.Now()
 	row, err := s.loadRow(ctx, ai.name)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errGate, err)
+		return fmt.Errorf("%w: %s", errGate, err.Error())
 	}
 	if err := s.permit(row, ai.kind, now); err != nil {
-		return fmt.Errorf("%w: %v", errGate, err)
+		return fmt.Errorf("%w: %s", errGate, err.Error())
 	}
 	if err := s.recordAttempt(ctx, ai.name, ai.kind, now); err != nil {
-		return fmt.Errorf("%w: %v", errGate, err)
+		return fmt.Errorf("%w: %s", errGate, err.Error())
 	}
 	return nil
 }
@@ -482,7 +482,7 @@ func (s *Service) byPerson(ctx context.Context, actor audit.Actor, name, kind, a
 	}
 	if !ready {
 		if err := s.ensureAccount(ctx); err != nil {
-			return fmt.Errorf("%w: %v", ErrNoAccount, err)
+			return fmt.Errorf("%w: %s", ErrNoAccount, err.Error())
 		}
 	}
 	if kind == kindOrderAnyway {

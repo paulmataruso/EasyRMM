@@ -38,7 +38,7 @@ func (s *Service) importAutocert(ctx context.Context) ([]string, error) {
 	var imported []string
 	if dir := s.set.AutocertDir; dir != "" {
 		if _, err := os.Stat(dir); err == nil {
-			if raw, err := os.ReadFile(filepath.Join(dir, "acme_account+key")); err == nil && !s.store.Exists(ctx, s.accountKeyName()) {
+			if raw, err := os.ReadFile(filepath.Join(dir, "acme_account+key")); err == nil && !s.store.Exists(ctx, s.accountKeyName()) { //nolint:gosec // the data directory, named by the operator
 				// autocert wrote the account's key as PEM; CertMagic wants the
 				// same encoding, decoded and encoded again to be sure of it.
 				if priv, err := certmagic.PEMDecodePrivateKey(raw); err == nil {
@@ -53,7 +53,7 @@ func (s *Service) importAutocert(ctx context.Context) ([]string, error) {
 				if strings.ContainsAny(name, `/\`) {
 					continue
 				}
-				raw, err := os.ReadFile(filepath.Join(dir, name))
+				raw, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // a managed name, without separators
 				if err != nil {
 					continue
 				}
@@ -94,7 +94,7 @@ func (s *Service) importOne(ctx context.Context, name string, raw []byte) (bool,
 			if leaf == nil {
 				c, err := x509.ParseCertificate(b.Bytes)
 				if err != nil {
-					return false, nil
+					return false, nil //nolint:nilerr // an unusable entry is skipped
 				}
 				leaf = c
 			}
@@ -105,14 +105,14 @@ func (s *Service) importOne(ctx context.Context, name string, raw []byte) (bool,
 	}
 	priv, err := certmagic.PEMDecodePrivateKey(keyPEM)
 	if err != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // an unusable entry is skipped
 	}
 	ek, ok := priv.(*ecdsa.PrivateKey)
 	if !ok || !ek.PublicKey.Equal(leaf.PublicKey) {
 		return false, nil
 	}
 	if time.Now().After(leaf.NotAfter) || leaf.VerifyHostname(name) != nil {
-		return false, nil
+		return false, nil //nolint:nilerr // an unusable entry is skipped
 	}
 	ik := s.issuerKey()
 	if s.store.Exists(ctx, certmagic.StorageKeys.SiteCert(ik, name)) {

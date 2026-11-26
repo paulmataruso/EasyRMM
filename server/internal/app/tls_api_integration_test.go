@@ -47,10 +47,10 @@ func TestCertificatesAPI(t *testing.T) {
 
 	var v tlsOverview
 	admin.expect(http.StatusOK, "GET", base, nil, &v)
-	if v.Mode != "acme" || !v.Managed || v.Status == nil || len(v.Status.Names) != 2 || v.Status.Account || v.Status.Email != "" {
-		t.Fatalf("overview: %+v", v)
+	if v.Mode != "acme" || !v.Managed || v.Status == nil || len(v.Status.Names) != 1 || v.Status.Account || v.Status.Email != "" {
+		t.Fatalf("overview: %+v %+v", v, v.Status)
 	}
-	if v.Status.Names[0].Name != "mesh.rmm.test" || v.Status.Names[0].Role != "remote access" || v.Status.Names[1].Name != "rmm.test" || v.Status.Names[1].State != "pending" {
+	if v.Status.Names[0].Name != "rmm.test" || v.Status.Names[0].State != "pending" {
 		t.Fatalf("names: %+v", v.Status.Names)
 	}
 	if len(v.Status.Warnings) != 1 || !strings.Contains(v.Status.Warnings[0], "EASYRMM_MESH_CERT_URL") {

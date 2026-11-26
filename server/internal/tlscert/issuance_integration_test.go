@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/certmagic"
 )
 
 // A real ACME run against Pebble: the service issues for the names in .env at
@@ -72,12 +74,14 @@ func TestIssuance(t *testing.T) {
 		t.Fatal("a valid certificate was attempted again")
 	}
 	// The CertMagic defaults were not touched, and nothing read the pipe.
-	if w.Close() == nil {
-		// closing the write end makes a read return EOF at once; reaching
-		// the prompt before would have blocked the whole test instead.
-	}
+	// Closing the write end makes a read return EOF at once; reaching the
+	// prompt before would have blocked the whole test instead.
+	_ = w.Close()
 	if b, _ := io.ReadAll(io.LimitReader(r, 1)); len(b) != 0 {
 		t.Fatal("something was written to standard input")
+	}
+	if certmagic.DefaultACME.Agreed {
+		t.Fatal("CertMagic's package-wide agreement was set")
 	}
 	if got := f.row(f.svc, "rmm.test").Issuer; got == "" {
 		t.Fatal("the issuer is not recorded")

@@ -952,6 +952,27 @@ is for the case where a choice made in the console locks the operator out
 of it, and comes with 5b2, which makes the first such choice; the guide
 describes it. TLS never stops the server from starting.
 
+*Amended 2026-11-26 (decided in review), slice 5a as built:*
+
+* A restart while a new certificate waits for MeshCentral's name serves the
+  stored one at once: storage holds only the newest certificate, so the one
+  served before the restart no longer exists. The time of MeshCentral's last
+  read is kept across the restart, as stated, and the rules apply again from
+  the next renewal.
+* The failure budget counts every failed attempt of a name within the hour,
+  not only failed validations: the error text does not tell them apart
+  reliably, and counting more is the safe side.
+* The check's token is kept in `tls_storage` for the minutes the check runs,
+  not in memory: `easyrmm-server tls check` runs in a process of its own and
+  the running server answers for it.
+* The scheduler also loads, each minute, whatever storage holds that it does
+  not serve (a renewal by another server), besides the `NOTIFY` listener.
+* `EASYRMM_LISTEN_MESH_CERT` (default `127.0.0.1:18444`) is the dedicated
+  listener's address; `EASYRMM_MESH_CERT_URL` outside `offload` mode is
+  ignored with a note on the page and in the log.
+* Step-up authentication is not needed in 5a: **Retry now** and **Order
+  anyway** act on `.env` names only, which the ADR's list does not cover.
+
 ### Slices
 * **5a. CertMagic, status and alerts.** For the names in `.env`:
   CertMagic with ARI and the managed list, EasyRMM's scheduler and gate

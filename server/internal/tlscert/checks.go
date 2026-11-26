@@ -65,8 +65,8 @@ func (s *Service) own() []netip.Addr {
 }
 
 // Check runs the checks for a name. They connect out, so they are held to an
-// address policy: an address is dialled only if it is one of this server's
-// own or public unicast, checked on the address actually dialled, so DNS
+// address policy: an address is dialed only if it is one of this server's
+// own or public unicast, checked on the address actually dialed, so DNS
 // cannot point a check elsewhere between lookup and connection. No redirects
 // are followed, the outcome is pass or fail with a fixed reason (never what
 // the other side said), each connection times out after 5 seconds, and a

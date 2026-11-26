@@ -102,8 +102,8 @@ func (s *Service) syncName(ctx context.Context, name string) error {
 func (s *Service) persistSlot(ctx context.Context, name string) {
 	served, pending, ready := s.slot.State()
 	err := s.deps.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE tls_certificates SET served_serial = nullif($2, ''), pending_serial = nullif($3, ''),
-			pending_ready_at = CASE WHEN $3 = '' THEN NULL ELSE $4 END WHERE name = $1`, name, served, pending, ready)
+		_, err := tx.Exec(ctx, `UPDATE tls_certificates SET served_serial = nullif($2::text, ''), pending_serial = nullif($3::text, ''),
+			pending_ready_at = CASE WHEN $3::text = '' THEN NULL ELSE $4::timestamptz END WHERE name = $1`, name, served, pending, ready)
 		return err
 	})
 	if err != nil {
@@ -324,7 +324,7 @@ func (s *Service) checkProbe(w http.ResponseWriter, r *http.Request, next func()
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	_, _ = w.Write([]byte(token))
+	_, _ = w.Write(want) //nolint:gosec // plain text, and only the token this server stored for the check
 }
 
 // CheckHandler wraps the console's handler so that the checks can find the

@@ -219,7 +219,7 @@ var lockPing = 5 * time.Second
 
 func lockKey(name string) int64 {
 	sum := sha256.Sum256([]byte("easyrmm tls lock " + name))
-	return int64(binary.BigEndian.Uint64(sum[:8]))
+	return int64(binary.BigEndian.Uint64(sum[:8]) >> 1) //nolint:gosec // 63 bits: fits
 }
 
 // Lock blocks until the named lock is held, or ctx ends.
@@ -251,7 +251,7 @@ func (s *Storage) Lock(ctx context.Context, name string) error {
 	s.mu.Lock()
 	s.locks[name] = h
 	s.mu.Unlock()
-	go h.watch()
+	go h.watch() //nolint:gosec // outlives the request on purpose: it watches the lock until Unlock
 	return nil
 }
 
