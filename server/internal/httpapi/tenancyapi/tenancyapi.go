@@ -37,6 +37,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/sites/{id}/device-groups", a.listGroups)
 	r("POST /api/v1/sites/{id}/device-groups", a.createGroup)
 
+	r("GET /api/v1/device-groups/{id}", a.getGroup)
 	r("PUT /api/v1/device-groups/{id}", a.updateGroup)
 	r("DELETE /api/v1/device-groups/{id}", a.deleteGroup)
 }
@@ -266,6 +267,19 @@ func (a *API) listGroups(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[tenancy.DeviceGroup]{Items: items})
+	return nil
+}
+
+func (a *API) getGroup(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	g, err := a.svc.GetDeviceGroup(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, g)
 	return nil
 }
 

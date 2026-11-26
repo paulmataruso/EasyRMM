@@ -174,9 +174,9 @@ export function SiteDetailPage() {
                   </thead>
                   <tbody>
                     {groups.items.map((g) => (
-                      <tr key={g.id} aria-current={g.id === url.get("groupId") ? "true" : undefined} className={g.id === url.get("groupId") ? "bg-accent-soft" : undefined}>
+                      <tr key={g.id}>
                         <td className="font-medium">
-                          <Link to={`/devices?organizationId=${s.organizationId}&siteId=${s.id}&groupId=${g.id}`} className="hover:text-accent hover:underline">
+                          <Link to={`/groups/${g.id}`} className="hover:text-accent hover:underline">
                             {g.name}
                           </Link>
                         </td>

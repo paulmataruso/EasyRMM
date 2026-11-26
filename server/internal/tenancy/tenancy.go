@@ -725,6 +725,53 @@ func (s *Service) getGroup(ctx context.Context, c access.Caller, id uuid.UUID) (
 	return &g, err
 }
 
+// DeviceGroupDetail is one device group with what its page shows.
+type DeviceGroupDetail struct {
+	DeviceGroup
+	OrganizationName string `json:"organizationName"`
+	SiteName         string `json:"siteName"`
+	// DeviceCount is how many devices are in the group.
+	DeviceCount int `json:"deviceCount"`
+	// VerboseUntil is when group-wide verbose agent logging ends, when it is on.
+	VerboseUntil *time.Time `json:"verboseUntil"`
+	// CanManage tells the client whether the caller may rename or delete it.
+	CanManage bool `json:"canManage"`
+	// CanEditDevices tells the client whether the caller may change the
+	// group's agent settings (device.edit at its site).
+	CanEditDevices bool `json:"canEditDevices"`
+}
+
+// GetDeviceGroup returns one device group. It needs site.view at the group's
+// site, as listing does; a group the caller cannot see is not found.
+func (s *Service) GetDeviceGroup(ctx context.Context, c access.Caller, id uuid.UUID) (*DeviceGroupDetail, error) {
+	g, err := s.getGroup(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	site, err := s.GetSite(ctx, c, g.SiteID)
+	if err != nil {
+		return nil, err
+	}
+	d := DeviceGroupDetail{DeviceGroup: *g, OrganizationName: site.OrganizationName, SiteName: site.Name}
+	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM devices WHERE device_group_id = $1`, id).Scan(&d.DeviceCount); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `SELECT until FROM agent_log_verbose WHERE group_id = $1 AND until > now()`, id).Scan(&d.VerboseUntil)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	where := rbac.Site(g.OrganizationID, g.SiteID)
+	d.CanManage = c.Can(rbac.PermSiteManage, where)
+	d.CanEditDevices = c.Can(rbac.PermDeviceEdit, where)
+	return &d, nil
+}
+
 func mapGroupWriteError(err error) error {
 	if database.IsUniqueViolation(err) && database.ConstraintName(err) == "device_groups_site_name_key" {
 		return apperr.Invalid("name", "This site already has a group with this name.")

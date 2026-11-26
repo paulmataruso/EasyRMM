@@ -19,7 +19,7 @@ export const SECTION_PERMISSION: Record<Exclude<SectionId, "organizations" | "se
 
 export function sectionFor(pathname: string): SectionId | null {
   const under = (base: string) => pathname === base || pathname.startsWith(`${base}/`);
-  if (under("/organizations") || under("/sites")) return "organizations";
+  if (under("/organizations") || under("/sites") || under("/groups")) return "organizations";
   if (under("/devices")) return "devices";
   if (under("/alerts")) return "alerts";
   if (under("/scripts")) return "scripts";
@@ -68,8 +68,9 @@ export function selectedKey(section: SectionId, pathname: string, search: string
       if (pathname === "/organizations") return "all";
       const org = one(/^\/organizations\/([^/]+)$/, pathname);
       if (org) return orgKey(org);
+      const group = one(/^\/groups\/([^/]+)$/, pathname);
+      if (group) return groupKey(group);
       const site = one(/^\/sites\/([^/]+)$/, pathname);
-      if (site && p.get("groupId")) return groupKey(p.get("groupId")!);
       return site ? siteKey(site) : null;
     }
     case "devices": {
@@ -115,7 +116,7 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
   if (section === "organizations") {
     if (target.kind === "org") return `/organizations/${encodeURIComponent(target.id)}`;
     if (target.kind === "site") return `/sites/${encodeURIComponent(target.id)}`;
-    if (target.kind === "group") return `/sites/${encodeURIComponent(target.siteId)}?groupId=${encodeURIComponent(target.id)}`;
+    if (target.kind === "group") return `/groups/${encodeURIComponent(target.id)}`;
     // A device's own page is its part of this view.
     if (target.kind === "device") return `/devices/${encodeURIComponent(target.id)}`;
     return "/organizations";

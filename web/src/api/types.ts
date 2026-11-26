@@ -321,6 +321,18 @@ export interface DeviceTreeData {
   counts: DeviceTreeCount[];
 }
 
+/** One device group with what its page shows (GET /device-groups/{id}, ADR-0072). */
+export interface DeviceGroupDetail extends DeviceGroup {
+  organizationName: string;
+  siteName: string;
+  deviceCount: number;
+  /** When group-wide verbose agent logging ends, when it is on. */
+  verboseUntil: string | null;
+  canManage: boolean;
+  /** device.edit at the group's site: the group's agent settings. */
+  canEditDevices: boolean;
+}
+
 export interface DeviceGroupInput {
   name: string;
   description: string;

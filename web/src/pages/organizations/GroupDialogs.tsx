@@ -7,7 +7,7 @@ import { useToast } from "../../components/Toast";
 import { Button, InlineError, TextareaField, TextField } from "../../components/ui";
 
 /** What a change to a device group refreshes: the sites' pages, the tree and the devices' group names. */
-const GROUP_CHANGED = ["/sites", "/organizations", "/device-tree", "/devices", "/audit"];
+const GROUP_CHANGED = ["/sites", "/organizations", "/device-tree", "/device-groups", "/devices", "/audit"];
 
 /** Creates a device group in a site, or edits one. Shared by the site's page and the sidebar tree's group menu (ADR-0069). */
 export function DeviceGroupDialog({ open, onClose, siteId, group }: { open: boolean; onClose: () => void; siteId: string; group?: DeviceGroup }) {

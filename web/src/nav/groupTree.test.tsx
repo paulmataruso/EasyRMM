@@ -57,6 +57,7 @@ function routes() {
     "GET /audit": ok({ items: [] }),
     "GET /remote-access/status": ok({ address: "https://mesh.rmm.example.com", connected: true, lastSyncAt: "2026-11-01T09:59:00Z", devices: 3, devicesOnline: 2 }),
     "GET /sites/:id": ok(SITES[0]),
+    "GET /device-groups/:id": ok({ ...SERVERS, organizationName: "Northwind Traders", siteName: "Head office", deviceCount: 150, verboseUntil: null, canManage: true, canEditDevices: true }),
     "GET /organizations/:id": ok(ORGS[0]),
   };
 }
@@ -125,7 +126,7 @@ describe("the device tree", () => {
       ["/alerts", "/alerts?organizationId=o1&siteId=s1&groupId=g1", "/alerts?organizationId=o1&siteId=s1&groupId=g1&deviceId=d1"],
       ["/jobs", "/jobs?organizationId=o1&siteId=s1&groupId=g1", "/jobs?organizationId=o1&siteId=s1&groupId=g1&deviceId=d1"],
       ["/scripts", "/scripts?library=o1&groupId=g1", "/scripts?library=o1&deviceId=d1"],
-      ["/organizations", "/sites/s1?groupId=g1", "/devices/d1"],
+      ["/organizations", "/groups/g1", "/devices/d1"],
     ];
     for (const [start, groupHref, deviceHref] of cases) {
       installFakeApi(routes());

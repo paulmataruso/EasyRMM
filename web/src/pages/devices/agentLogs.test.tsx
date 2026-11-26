@@ -96,34 +96,29 @@ describe("the Logs tab", () => {
     expect(clicked[0]).toContain("level=error");
   });
 
-  it("turns verbose logging on for the device, or its group, and off again", async () => {
+  it("turns verbose logging on for the device, and offers no group choice (ADR-0072)", async () => {
     const user = userEvent.setup();
     const server = installFakeApi({
       ...routes(TECH, page([rec(1, "hello")])),
       "PUT /devices/:id/agent-logs/verbose": ok({ until: "2026-11-23T12:00:00Z" }),
-      "PUT /device-groups/:id/agent-logs/verbose": ok({ until: "2026-11-23T14:00:00Z" }),
-      "DELETE /device-groups/:id/agent-logs/verbose": noContent,
     });
     renderApp("/devices/d1?tab=logs");
     await screen.findByText("hello");
     await user.click(screen.getByRole("button", { name: "Verbose for…" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByLabelText("For")).toHaveValue("2");
+    expect(within(dialog).queryByLabelText("On")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Turn on" }));
     await waitFor(() => expect(server.call("PUT /devices/:id/agent-logs/verbose").body).toEqual({ hours: 2 }));
     expect(await screen.findByText("Verbose logging is on")).toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("button", { name: "Verbose for…" }));
-    const second = await screen.findByRole("dialog");
-    await user.selectOptions(within(second).getByLabelText("For"), "4");
-    await user.selectOptions(within(second).getByLabelText("On"), "group");
-    await user.click(within(second).getByRole("button", { name: "Turn on" }));
-    await waitFor(() => expect(server.call("PUT /device-groups/:id/agent-logs/verbose").body).toEqual({ hours: 4 }));
-    expect(server.call("PUT /device-groups/:id/agent-logs/verbose").params.id).toBe("g1");
-    expect(await screen.findByText(/set on the group Servers/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Turn off" }));
-    await waitFor(() => expect(server.callsTo("DELETE /device-groups/:id/agent-logs/verbose")).toHaveLength(1));
-    await waitFor(() => expect(screen.queryByText("Verbose logging is on")).not.toBeInTheDocument());
+  it("says a group's setting is on and links to the group, without a way to turn it off here", async () => {
+    installFakeApi(routes(TECH, { ...page([rec(1, "hello")]), verbose: { until: "2026-11-23T14:00:00Z", scope: "group", groupId: "g1" } }));
+    renderApp("/devices/d1?tab=logs");
+    expect(await screen.findByText(/set on the group\./)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Change it on the group Servers/ })).toHaveAttribute("href", "/groups/g1?tab=settings");
+    expect(screen.queryByRole("button", { name: "Turn off" })).not.toBeInTheDocument();
   });
 
   it("offers no verbose button without device.edit", async () => {
