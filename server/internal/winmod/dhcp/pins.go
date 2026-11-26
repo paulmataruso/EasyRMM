@@ -21,7 +21,7 @@ var pins = map[string]string{
 	"scope_deactivate":     "114785ec77f9776d6b064bf3fc720c5b3dda724f8d03eb5015fb05f888eadf0e",
 	"scope_get":            "c518a9f756d0da882ed708cb3bdeac417e8e500f9ee695904019ebffdcd4e858",
 	"scope_list":           "bf6f3e3da6044bb1d64bd456fa094368225caf277ef0b921178e3eed6f9e4a00",
-	"scope_range_set":      "aaacc452ee1280e6108b9050976be4c7e61362e434672b8a0899db71dcd784a2",
+	"scope_range_set":      "c72bc07c1d7b8f1aab0a1b70f58261085af838a92cfa2a38a64786c62db276b9",
 	"scope_remove":         "a89f84623a810d6003d65161ff0ed679cd8912c39f4df59ae791d6fce7233244",
 	"scope_set":            "c5ed4777342f14404ce0891197babef866f1f74c78f17d29fa1fe29ca95e6e0f",
 	"status":               "38c41af18a1bc4b5e835a71058b303f40339f867e65f8860fae5acc01fcce41b",

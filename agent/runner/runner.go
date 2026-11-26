@@ -126,6 +126,18 @@ type EscrowAgent interface {
 	Start(ctx context.Context)
 }
 
+// TrustAgent handles ADR-0055's trust instructions (agent/trust.Agent).
+type TrustAgent interface {
+	// Caps is what the agent announces in its heartbeat.
+	Caps() []string
+	// Report is the report of the last instruction handled, nil when none is
+	// to be sent.
+	Report() *agentproto.TrustReport
+	// Answered takes the signed instruction of a heartbeat answer, nil when
+	// it carried none, and the server's protocol level.
+	Answered(ctx context.Context, level int, s *agentproto.SignedTrust)
+}
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -210,6 +222,9 @@ type Runner struct {
 	// Escrow escrows BitLocker recovery keys (ADR-0081); nil escrows none.
 	// It works only with the escrow key the server's last answer carried.
 	Escrow EscrowAgent
+	// Trust verifies certificate chains and widens the agent's trust when a
+	// signed instruction asks (ADR-0055); nil does neither.
+	Trust TrustAgent
 
 	status      state.Status
 	failures    int
@@ -365,6 +380,11 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	if r.Client.Level() >= 2 {
 		req.Accepts = r.Accepts
 	}
+	if r.Trust != nil && r.Client.Level() >= 2 {
+		// Added after level 2: only a server that reads it hears it (ADR-0009).
+		req.Caps = append(req.Caps, r.Trust.Caps()...)
+		req.Trust = r.Trust.Report()
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -417,6 +437,11 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	if r.Escrow != nil {
 		r.Escrow.Answered(resp.Escrow)
 		r.Escrow.Start(ctx)
+	}
+	if r.Trust != nil {
+		// After the update was confirmed above: a trust change is made only
+		// by a build that reached the server, so a rollback cannot lose it.
+		r.Trust.Answered(ctx, r.Client.Level(), resp.Trust)
 	}
 	if r.Inventory != nil {
 		r.syncInventory(ctx, resp.InventoryHash)

@@ -176,6 +176,8 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /auth/sso": ok({ providers: [] }),
     // A non-Windows device's page asks for its disk recovery keys (ADR-0081); by default it has none.
     "GET /devices/:id/escrow": ok({ applicable: false, canRead: false, twoPerson: false, keystore: { state: "unavailable", recoveryVerified: false, fileMode: false }, volumes: [] }),
+    // A device page asks what its agent trusts (ADR-0055); by default nothing has been asked.
+    "GET /devices/:id/tls-trust": ok({ capable: false, widened: false, checks: [], unprotected: false, canTerminal: false, platform: "linux", siteId: "s1" }),
     "GET /auth/identities": ok({ items: [] }),
     "GET /alerts/summary": ok({ active: 0, critical: 0, warning: 0, acknowledged: 0, devices: 0 }),
     "GET /alerts": ok({ items: [] }),

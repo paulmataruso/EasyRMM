@@ -79,6 +79,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlstrustapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
@@ -101,6 +102,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
+	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
@@ -205,6 +207,9 @@ type Deps struct {
 	// Keystore stores the recovery keys agents escrow and has the keystore
 	// process check them (ADR-0081); it holds no key.
 	Keystore *keystore.Service
+	// TLSTrust asks agents to verify the certificate chains the edge serves
+	// and keeps their answers (ADR-0055, slice 5b1).
+	TLSTrust *tlstrust.Service
 	// Notify is the one notification sender: channels, the outbox, notices
 	// (ADR-0053).
 	Notify *notify.Service
@@ -412,6 +417,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		ks = &keystore.Client{Path: cfg.KeystoreSocket}
 	}
 	d.Keystore = keystore.New(db, auditLog, ks, jobKey, log)
+	d.TLSTrust = tlstrust.New(db, auditLog, jobKey, log)
+	d.TLSTrust.SetEasyPatchHost(easyPatchHost(db, cfg.PublicURL))
 	// Reading a key needs the session stepped up (ADR-0055) and mails the
 	// organization's administrators (ADR-0053).
 	d.Keystore.SetStepUp(sessions)
@@ -688,6 +695,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	modreadapi.New(d.ModSnap).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
+	tlstrustapi.New(d.TLSTrust).Register(mux)
 	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
 	postureapi.New(d.Posture).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
@@ -737,7 +745,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore).WithTrust(d.TLSTrust)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -910,7 +918,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.ListenHealth != "" {
 		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, hold, log) })
 	}
-	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS}
+	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS, trust: deps.TLSTrust}
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()

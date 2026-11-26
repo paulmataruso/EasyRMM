@@ -21,10 +21,14 @@ import (
 
 // Config is the agent's enrollment, stored as JSON. It holds no secret.
 type Config struct {
-	Server     string    `json:"server"`
-	CAFile     string    `json:"caFile,omitempty"`
-	DeviceID   string    `json:"deviceId"`
-	EnrolledAt time.Time `json:"enrolledAt"`
+	Server string `json:"server"`
+	CAFile string `json:"caFile,omitempty"`
+	// TrustSystem is set when a trust instruction widened the agent's trust
+	// (ADR-0055): from then on it trusts the system's roots and CAFile
+	// together. Without it, CAFile alone is trusted when there is one.
+	TrustSystem bool      `json:"trustSystem,omitempty"`
+	DeviceID    string    `json:"deviceId"`
+	EnrolledAt  time.Time `json:"enrolledAt"`
 	// MeshAgentMode is how MeshAgent runs: "service" (a systemd unit or a
 	// Windows service; "systemd" in older enrollments) or "child".
 	MeshAgentMode string `json:"meshAgentMode"`
@@ -47,6 +51,7 @@ const (
 	keyFile     = "device.key"
 	statusFile  = "status.json"
 	escrowFile  = "escrow.json"
+	trustFile   = "trust.json"
 	caFile      = "ca.pem"
 	packageFile = "package.json"
 )
@@ -64,6 +69,7 @@ var layout = [][]string{
 	{configFile, keyFile, pendingFile, caFile},
 	{statusFile},
 	{escrowFile},
+	{trustFile},
 	{packageFile},
 	{".tmp-*"},                         // writeFile's
 	{"removal.json"},                   // removal.File
@@ -427,6 +433,48 @@ func (s Store) SaveEscrowKey(k EscrowKey) error {
 		return err
 	}
 	return s.write(escrowFile, append(b, '\n'))
+}
+
+// TrustLog is what the agent remembers of the trust instructions it handled
+// (ADR-0055), so that one cannot be replayed: the newest issue time handled,
+// and each recent instruction's ID with the report made for it.
+type TrustLog struct {
+	// Issued is the newest IssuedAt of an instruction handled; an instruction
+	// issued before it is refused.
+	Issued  time.Time      `json:"issued,omitzero"`
+	Handled []TrustHandled `json:"handled,omitempty"`
+}
+
+// TrustHandled is one instruction handled: its ID, when it was issued and
+// the report made for it, as JSON.
+type TrustHandled struct {
+	ID     string          `json:"id"`
+	Issued time.Time       `json:"issued"`
+	Report json.RawMessage `json:"report"`
+}
+
+// LoadTrustLog reads the trust log; an empty one when there is none or it is
+// damaged.
+func (s Store) LoadTrustLog() TrustLog {
+	var l TrustLog
+	path, err := s.path(trustFile)
+	if err != nil {
+		return l
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if err != nil || json.Unmarshal(b, &l) != nil {
+		return TrustLog{}
+	}
+	return l
+}
+
+// SaveTrustLog records the trust log.
+func (s Store) SaveTrustLog(l TrustLog) error {
+	b, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	return s.write(trustFile, append(b, '\n'))
 }
 
 // Package records which package holds the agent (ADR-0056) and what the

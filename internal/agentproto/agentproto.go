@@ -176,6 +176,10 @@ type HeartbeatRequest struct {
 	// from an agent that holds the channel and does not poll (ADR-0059).
 	// Older agents send none.
 	Accepts []string `json:"accepts,omitempty"`
+	// Trust reports how the agent handled the last trust instruction
+	// (ADR-0055); sent only to servers of level 2 or higher, and only until
+	// an answer no longer carries that instruction.
+	Trust *TrustReport `json:"trust,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -242,6 +246,9 @@ type HeartbeatResponse struct {
 	// Escrow gives the agent its organization's recovery-key escrow public
 	// key (ADR-0081), only to an agent that announced CapEscrow.
 	Escrow *SignedEscrowKey `json:"escrow,omitempty"`
+	// Trust asks the agent to verify certificate chains and, for a move, to
+	// widen its trust (ADR-0055), only to an agent that announced CapTrust.
+	Trust *SignedTrust `json:"trust,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

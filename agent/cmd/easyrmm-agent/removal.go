@@ -74,7 +74,7 @@ func (e *env) removeOnRequest(ctx context.Context, file string) error {
 	if err != nil {
 		return err
 	}
-	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
+	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, TrustSystem: cfg.TrustSystem, Version: Version})
 	if err != nil {
 		return err
 	}

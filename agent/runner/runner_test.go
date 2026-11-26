@@ -66,6 +66,8 @@ type server struct {
 	rescan bool
 	// escrow is its signed escrow key, JSON (ADR-0081).
 	escrow string
+	// trust is its signed trust instruction, JSON (ADR-0055).
+	trust string
 }
 
 // download serves a signed download, as the server does.
@@ -126,6 +128,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.escrow != "" {
 			update += `,"escrow":` + s.escrow
+		}
+		if s.trust != "" {
+			update += `,"trust":` + s.trust
 		}
 		announce := ""
 		if s.settingsSHA != "" {

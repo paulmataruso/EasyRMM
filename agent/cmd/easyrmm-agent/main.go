@@ -49,6 +49,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/roles"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
+	"github.com/paulmataruso/easyrmm/agent/trust"
 	"github.com/paulmataruso/easyrmm/agent/update"
 	"github.com/paulmataruso/easyrmm/agent/winevents"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -470,7 +471,7 @@ func (e *env) registerPEM(ctx context.Context, server, token string, caPEM []byt
 			_ = os.Remove(cfg.CAFile)
 		}
 	}()
-	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
+	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, TrustSystem: cfg.TrustSystem, Version: Version})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -536,7 +537,7 @@ func (e *env) run(ctx context.Context) error {
 		// deleted, never used.
 		e.sweepFile(cfg)
 	}
-	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
+	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, TrustSystem: cfg.TrustSystem, Version: Version})
 	if err != nil {
 		return err
 	}
@@ -644,6 +645,9 @@ func (e *env) run(ctx context.Context) error {
 		DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
 		Launch: e.launchRemoval, Report: c.Removed,
 	}
+	// Certificate chains are verified, and trust widened, only for an
+	// instruction signed with the pinned job key (ADR-0055).
+	r.Trust = &trust.Agent{DeviceID: cfg.DeviceID, Config: cfg, Key: pinnedKey(cfg), Store: e.store, Client: c, Log: e.log}
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

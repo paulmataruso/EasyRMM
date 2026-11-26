@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
 )
 
@@ -60,6 +62,20 @@ func TestHTTPQuickAssist(t *testing.T) {
 	}
 	wantStatus(t, admin.do("PUT", "/api/v1/quickassist/settings", map[string]string{"mode": "x"}), http.StatusUnprocessableEntity, "")
 	admin.expect(http.StatusOK, "PUT", "/api/v1/quickassist/settings", map[string]string{"mode": "open"}, nil)
+
+	// The app-wide default lifetime of a new one-time link: set, read back,
+	// and refused outside its bounds or when it is not JSON.
+	admin.expect(http.StatusOK, "PUT", "/api/v1/quickassist/settings/default-life", map[string]int{"minutes": 90}, nil)
+	var life struct {
+		DefaultLifeMinutes int `json:"defaultLifeMinutes"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/quickassist/settings", nil, &life)
+	if life.DefaultLifeMinutes != 90 {
+		t.Fatalf("default life %d, want 90", life.DefaultLifeMinutes)
+	}
+	wantStatus(t, admin.do("PUT", "/api/v1/quickassist/settings/default-life", map[string]int{"minutes": 0}), http.StatusUnprocessableEntity, "")
+	wantStatus(t, admin.do("PUT", "/api/v1/quickassist/settings/default-life", map[string]int{"minutes": 7*24*60 + 1}), http.StatusUnprocessableEntity, "")
+	wantStatus(t, admin.do("PUT", "/api/v1/quickassist/settings/default-life", "ninety"), http.StatusBadRequest, "")
 	var perm struct {
 		Link struct {
 			ID string `json:"id"`
@@ -71,6 +87,10 @@ func TestHTTPQuickAssist(t *testing.T) {
 	admin.expect(http.StatusOK, "POST", "/api/v1/quickassist/links/"+perm.Link.ID+"/pause", map[string]bool{"paused": false}, nil)
 	admin.expect(http.StatusOK, "POST", "/api/v1/quickassist/links/"+perm.Link.ID+"/revoke", nil, nil)
 	wantStatus(t, admin.do("POST", "/api/v1/quickassist/links/nope/revoke", nil), http.StatusNotFound, "")
+	wantStatus(t, admin.do("POST", "/api/v1/quickassist/links/nope/pause", map[string]bool{"paused": true}), http.StatusNotFound, "")
+	wantStatus(t, admin.do("POST", "/api/v1/quickassist/links/"+perm.Link.ID+"/pause", "yes"), http.StatusBadRequest, "")
+	wantStatus(t, admin.do("POST", "/api/v1/quickassist/sessions/"+uuid.NewString()+"/install", nil), http.StatusNotFound, "")
+	wantStatus(t, admin.do("POST", "/api/v1/quickassist/sessions/nope/install", nil), http.StatusNotFound, "")
 
 	// The public page: no session needed, locked-down headers, and one answer
 	// for every link that cannot be used.

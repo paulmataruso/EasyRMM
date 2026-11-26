@@ -116,7 +116,7 @@ export function windowsInstallCommand(serverUrl: string, secret: string, keyPin?
   ].join("; ");
 }
 
-type Platform = "windows" | "linux";
+export type Platform = "windows" | "linux";
 
 const PLATFORMS: { value: Platform; label: string }[] = [
   { value: "windows", label: "Windows" },
@@ -517,16 +517,18 @@ function ApprovalInstallSteps({ created, onDone }: { created: NewApprovalToken; 
   );
 }
 
-function InstallSteps({ secret, serverUrl, notice, details, onDone }: {
+export function InstallSteps({ secret, serverUrl, notice, details, onDone, initialPlatform = "windows" }: {
   secret: string;
   serverUrl: string;
   notice: ReactNode;
   details: [ReactNode, ReactNode][];
   onDone: () => void;
+  /** The operating system whose command is shown first. */
+  initialPlatform?: Platform;
 }) {
   const { addresses, current } = useAddresses(serverUrl);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [platform, setPlatform] = useState<Platform>("windows");
+  const [platform, setPlatform] = useState<Platform>(initialPlatform);
   const address = addresses.find((a) => a.url === chosen) ?? current;
   return (
     <div className="flex flex-col gap-4">

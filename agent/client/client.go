@@ -28,10 +28,13 @@ import (
 // Client is a connection to one EasyRMM server.
 type Client struct {
 	base *url.URL
-	http *http.Client
+	// http and ws are replaced as one by Retrust when a trust instruction
+	// widens the agent's trust (ADR-0055).
+	http atomic.Pointer[http.Client]
 	// ws is the HTTP client of the channel's connection: the same transport
 	// and roots, HTTP/1.1 only, and no overall timeout (ADR-0059).
-	ws     *http.Client
+	ws     atomic.Pointer[http.Client]
+	custom bool // Options.Transport was given: Retrust changes nothing
 	device string
 	key    ed25519.PrivateKey
 	now    func() time.Time
@@ -59,6 +62,10 @@ type Options struct {
 	// CAFile, if set, is a PEM bundle trusted instead of the system roots,
 	// for servers with a private certificate authority.
 	CAFile string
+	// TrustSystem makes CAFile an addition to the system roots instead of
+	// their replacement: the agent's trust after a trust instruction
+	// (ADR-0055). Without a CAFile it changes nothing.
+	TrustSystem bool
 	// Version is the agent version, sent as the User-Agent.
 	Version string
 	// Transport replaces the HTTP transport (tests).
@@ -73,21 +80,77 @@ func New(o Options) (*Client, error) {
 	}
 	rt := o.Transport
 	if rt == nil {
-		t := http.DefaultTransport.(*http.Transport).Clone()
-		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-		if o.CAFile != "" {
-			pem, err := os.ReadFile(o.CAFile) //nolint:gosec // a path the administrator chose
-			if err != nil {
-				return nil, fmt.Errorf("reading the CA file: %w", err)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(pem) {
-				return nil, fmt.Errorf("%s holds no PEM certificates", o.CAFile)
-			}
-			t.TLSClientConfig.RootCAs = pool
+		t, err := transport(o.CAFile, o.TrustSystem, u.Hostname())
+		if err != nil {
+			return nil, err
 		}
 		rt = t
 	}
+	c := &Client{
+		base:    u,
+		custom:  o.Transport != nil,
+		now:     time.Now,
+		agent:   "easyrmm-agent/" + o.Version,
+		known:   make(chan struct{}),
+		knownBy: time.Now().Add(LevelWait),
+	}
+	c.setTransport(rt)
+	return c, nil
+}
+
+// transport builds the HTTP transport that trusts the system's roots, or, with
+// a CA file, that file alone, or, with trustSystem too, both (ADR-0055). The
+// plain cases use Go's own verification; only the two together need ours.
+func transport(caFile string, trustSystem bool, host string) (*http.Transport, error) {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if caFile == "" {
+		return t, nil
+	}
+	pem, err := os.ReadFile(caFile) //nolint:gosec // a path the administrator chose
+	if err != nil {
+		return nil, fmt.Errorf("reading the CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s holds no PEM certificates", caFile)
+	}
+	if !trustSystem {
+		t.TLSClientConfig.RootCAs = pool
+		return t, nil
+	}
+	// Go verifies against one set of roots. Here the chain is checked on its
+	// own, against the system's roots first (the platform's verifier on
+	// Windows) and then against the CA file, with the server name the
+	// connection was made for; nothing else is relaxed.
+	t.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // VerifyConnection below verifies in full
+	t.TLSClientConfig.VerifyConnection = verifyEither(pool, host)
+	return t, nil
+}
+
+// verifyEither verifies the server's chain for host, the server the client was
+// made for, against the system's roots or, failing that, pool. The host is not
+// read from the connection: it carries no server name for an IP address.
+func verifyEither(pool *x509.CertPool, host string) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 || host == "" {
+			return errors.New("the server sent no certificate, or the client has no server name")
+		}
+		inter := x509.NewCertPool()
+		for _, c := range cs.PeerCertificates[1:] {
+			inter.AddCert(c)
+		}
+		opts := x509.VerifyOptions{DNSName: host, Intermediates: inter, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		if _, err := cs.PeerCertificates[0].Verify(opts); err == nil {
+			return nil
+		}
+		opts.Roots = pool
+		_, err := cs.PeerCertificates[0].Verify(opts)
+		return err
+	}
+}
+
+func (c *Client) setTransport(rt http.RoundTripper) {
 	wsRT := rt
 	if t, ok := rt.(*http.Transport); ok {
 		t = t.Clone()
@@ -95,15 +158,24 @@ func New(o Options) (*Client, error) {
 		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 		wsRT = t
 	}
-	return &Client{
-		base:    u,
-		http:    &http.Client{Transport: rt, Timeout: 5 * time.Minute},
-		ws:      &http.Client{Transport: wsRT},
-		now:     time.Now,
-		agent:   "easyrmm-agent/" + o.Version,
-		known:   make(chan struct{}),
-		knownBy: time.Now().Add(LevelWait),
-	}, nil
+	c.http.Store(&http.Client{Transport: rt, Timeout: 5 * time.Minute})
+	c.ws.Store(&http.Client{Transport: wsRT})
+}
+
+// Retrust makes the client trust what a trust instruction widened it to
+// (ADR-0055): the system's roots and caFile together. Connections already
+// open go on; new ones verify as now configured. A client made with a
+// transport of its own keeps it.
+func (c *Client) Retrust(caFile string, trustSystem bool) error {
+	if c.custom {
+		return nil
+	}
+	t, err := transport(caFile, trustSystem, c.base.Hostname())
+	if err != nil {
+		return err
+	}
+	c.setTransport(t)
+	return nil
 }
 
 // Level is the protocol level of the server's last heartbeat answer
@@ -313,7 +385,7 @@ func (c *Client) send(ctx context.Context, method, target string, body []byte, s
 		a, _ := agentproto.Parse(h) // what Sign wrote parses
 		nonce = a.Nonce
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Load().Do(req)
 	if err != nil {
 		return nil, "", err
 	}

@@ -530,6 +530,17 @@ ADR-0053, slice 4. Every table has row-level security enabled and forced.
 The down migration drops them, the triggers and functions, the alert rows of
 the journal, and the columns of `devices`.
 
+## What agents trust (migration 00080)
+
+ADR-0055, slice 5b1. Both tables follow `devices`: read by whoever may see the device (row-level security enabled and forced), written with platform scope only. Neither holds a key or a secret: chains are public certificates.
+
+| Table | Notes |
+|---|---|
+| `device_tls_trust` | One row per device, `scope` (`agent`: the EasyRMM agent's own trust; `easypatch`: the EasyPatch agent's, checked by the EasyRMM agent against the system's roots), `host` and `purpose` (`served`, `fallback`, `target`): the chain asked about (`chain`, DER in base64, leaf first, and `chain_digest`), the certificates a move adds (`add_certs`), the instruction's `chain_id` and `request_id`, the `state` (`pending`, `passed`, `failed`) with the agent's error (300 characters at most) and when it was requested, sent and checked. A different digest replaces the row and asks again |
+| `device_tls_state` | One row per device that announced the capability: the `origin` its requests arrive at, its build's hash, whether it understands trust instructions, what it says it trusts (`system`, `ca-file`, `system+ca-file`; informational only), whether a move widened it, and the last refusal with the instruction it was for |
+
+The down migration drops both tables.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

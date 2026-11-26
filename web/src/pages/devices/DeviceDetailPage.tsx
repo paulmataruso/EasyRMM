@@ -31,6 +31,7 @@ import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
 import { EasyRmmRepairCard, PatchingRepairCard, RemoteRepairCard, RepairButton } from "./remoteRepair";
+import { AgentTrustCard } from "./DeviceTrust";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 import { DeviceCompliance, useComplianceEnabled } from "../compliance/DeviceCompliance";
 import { ModuleOff } from "./modules/ModuleTab";
@@ -178,6 +179,7 @@ export function DeviceDetailPage() {
       <RemoteRepairCard device={d} />
       <PatchingRepairCard device={d} />
       <EasyRmmRepairCard device={d} />
+      <AgentTrustCard device={d} terminal={<SessionButton device={d} kind="terminal" primary={false} />} />
 
       {hasAgent && <Tabs tabs={tabs} active={tab} onChange={showTab} />}
 

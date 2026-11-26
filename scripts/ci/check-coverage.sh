@@ -216,6 +216,11 @@ floors=(
   "server/internal/keystore                78"
   "server/internal/httpapi/keystoreapi     85"
   "agent/escrow                            85"
+  # Agent trust (ADR-0055, slice 5b1): the instruction's verification and
+  # widening on the agent, and the server's questions, answers and console view.
+  "agent/trust                             90"
+  "server/internal/tlstrust                85"
+  "server/internal/httpapi/tlstrustapi     75"
 )
 
 if [[ ! -f "$profile" ]]; then
