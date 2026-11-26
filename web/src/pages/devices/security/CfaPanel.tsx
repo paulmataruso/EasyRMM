@@ -82,7 +82,7 @@ export function CfaPanel({ device, canManage, canWeaken }: { device: Device; can
   };
   const tier3 = (action: string, params: Record<string, string>, subject: string, text: string) => setPending({ action, params, subject, text, danger: true });
   return (
-    <ReadPanel title="Controlled Folder Access" read={read} readLabel="Read folder access">
+    <ReadPanel title="Controlled Folder Access" read={read}>
       {(d) =>
         !d.supported ? (
           <p className="text-sm text-muted">This computer does not support Controlled Folder Access.</p>

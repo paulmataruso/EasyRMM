@@ -17,7 +17,7 @@ export function ThreatsPanel({ device, canManage, canWeaken, canSeeSensitive }: 
   const [restoring, setRestoring] = useState<string | null>(null);
   return (
     <>
-      <ReadPanel title="Threats" read={threats} readLabel="Read threats">
+      <ReadPanel title="Threats" read={threats}>
         {(d) => (
           <>
             {d.threats.length === 0 ? (
@@ -57,7 +57,7 @@ export function ThreatsPanel({ device, canManage, canWeaken, canSeeSensitive }: 
         }}
       />
       {canSeeSensitive && (
-        <ReadPanel title="Quarantine" read={quarantine} readLabel="Read quarantine">
+        <ReadPanel title="Quarantine" read={quarantine}>
           {(d) =>
             d.items.length === 0 ? (
               <p className="text-sm text-muted">Nothing is in quarantine.</p>

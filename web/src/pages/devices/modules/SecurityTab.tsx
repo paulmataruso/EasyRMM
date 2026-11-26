@@ -1,15 +1,9 @@
-import { useState } from "react";
-import { api } from "../../../api/client";
-import { useApi, useApiMutation } from "../../../api/hooks";
-import type {
-  DefenderStatus,
-  Device,
-  WinmodResult,
-  WinmodRun,
-} from "../../../api/types";
+import type { DefenderStatus, Device } from "../../../api/types";
 import { Badge, Card, InlineError, KeyValueList, type Tone } from "../../../components/ui";
 import { formatDateTime } from "../../../lib/format";
 import { ModuleTab } from "./ModuleTab";
+import { Loading, SkeletonKeyValue } from "./skeletons";
+import { useWinmodRead } from "./winmod";
 import { useAuth } from "../../../auth/AuthContext";
 import { AsrPanel } from "../security/AsrPanel";
 import { CfaPanel } from "../security/CfaPanel";
@@ -19,8 +13,6 @@ import { ProtectionPanel } from "../security/ProtectionPanel";
 import { ScansPanel } from "../security/ScansPanel";
 import { ThreatsPanel } from "../security/ThreatsPanel";
 import { TAMPER_NOTE } from "../security/text";
-
-const FINISHED = new Set(["succeeded", "failed", "timed_out", "canceled", "expired", "lost"]);
 
 /** Switches as words; null is "the computer does not say", which is not the same as off. */
 function onOff(v: boolean | null): { label: string; tone: Tone } {
@@ -48,42 +40,34 @@ function age(days: number | null): string {
   return days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
-/** The device page's "Security" tab: the Defender module (ADR-0074), one panel per area, each read on request. */
+/** The device page's "Security" tab: the Defender module (ADR-0074), one panel per area, each read by itself when the tab opens. */
 export function SecurityTab({ device }: { device: Device }) {
   const { canAt } = useAuth();
   const scope = { organizationId: device.organizationId, siteId: device.siteId };
   const canManage = canAt("defender.manage", scope);
   const canWeaken = canAt("defender.weaken", scope);
   const canSeeSensitive = canAt("defender.view_sensitive", scope);
-  const [runId, setRunId] = useState<string | null>(null);
-  const start = useApiMutation((_: void) =>
-    api.post<WinmodRun>(`/devices/${device.id}/winmod/defender.status`, {}),
-  );
-  const run = useApi<WinmodResult>(runId ? `/winmod/runs/${runId}` : null, undefined, {
-    refetchInterval: (r) => (r && (FINISHED.has(r.status) || r.ok !== undefined) ? false : 1500),
-  });
-  const result = run.data;
-  const waiting = start.isPending || (runId !== null && !run.error && !(result && (FINISHED.has(result.status) || result.ok !== undefined)));
-  const refresh = () =>
-    start.mutate(undefined, { onSuccess: (r) => setRunId(r.runId) });
-  const status = result?.ok ? (result.data as DefenderStatus) : null;
-  const failure = result && result.ok === false ? result.failure : null;
-  const lost = result && result.ok === undefined && FINISHED.has(result.status);
+  const read = useWinmodRead<DefenderStatus>(device.id, "defender.status", {});
+  const status = read.data?.data ?? null;
+  const failure = read.data?.failure ?? null;
+  const lost = read.data?.lost ?? null;
+  const loading = !status && !failure && !lost && !read.error;
   return (
     <ModuleTab
       name="Microsoft Defender"
-      asOf={status ? result?.finishedAt ?? null : null}
-      onRefresh={refresh}
-      refreshing={waiting}
-      unavailable={
-        failure
-          ? (FAILURES[failure.code] ?? failure.message)
-          : lost
-            ? (result?.error ?? `The read ended as ${result?.status}.`)
-            : undefined
-      }
+      asOf={status ? (read.data?.finishedAt ?? null) : null}
+      refreshing={read.isFetching}
+      loading={loading}
+      offline={read.data?.offline}
+      unavailable={failure ? (FAILURES[failure.code] ?? failure.message) : (lost ?? undefined)}
     >
-      <InlineError error={start.error ?? run.error} />
+      <InlineError error={read.error} />
+      {loading && (
+        <Loading name="Microsoft Defender">
+          <SkeletonKeyValue title="Protection" rows={8} />
+          <SkeletonKeyValue title="Engine and signatures" rows={7} />
+        </Loading>
+      )}
       {status && (
         <>
           <Card title="Protection">

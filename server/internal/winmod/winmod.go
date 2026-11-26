@@ -164,6 +164,13 @@ type Action struct {
 	Changes bool
 }
 
+// IsPlainRead says the action only reads: it changes nothing, asks for no
+// confirmation or step-up, runs as a script and needs a "view" permission. Only
+// such an action is read on a tab's own (ADR-0073 section 5, as amended).
+func (a Action) IsPlainRead() bool {
+	return !a.Changes && !a.NeedsConfirm() && !a.NeedsStepUp() && !a.IsNative() && strings.HasSuffix(string(a.Permission), ".view")
+}
+
 // IsNative says the action's executor is agent Go code, not a script.
 func (a Action) IsNative() bool { return a.Native != "" }
 
@@ -201,6 +208,9 @@ var ErrScriptPin = errors.New("winmod: a script does not match its pinned SHA-25
 func NewCatalog(actions ...Action) (*Catalog, error) {
 	c := &Catalog{byName: map[string]Action{}}
 	for _, a := range actions {
+		if _, ok := readThrough[a.Name]; ok && a.Freshness <= 0 && a.IsPlainRead() {
+			a.Freshness = ReadFreshness
+		}
 		if err := a.check(); err != nil {
 			return nil, fmt.Errorf("winmod: action %q: %w", a.Name, err)
 		}

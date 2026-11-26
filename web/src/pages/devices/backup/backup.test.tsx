@@ -42,6 +42,10 @@ function routes(session: ReturnType<typeof sessionView>, r: DeviceRoles, results
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/disks": ok({ items: [] }),
     "GET /devices/:id/defender": fail(404, "not_found", "none"),
+    "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) => {
+      const action = req.params.action!.replace("windows_backup.", "");
+      return ok({ action: req.params.action, takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: `r-${action}` });
+    },
     "POST /devices/:id/winmod/:action": (req: { params: Record<string, string> }) => {
       last.action = req.params.action!.replace("windows_backup.", "");
       return ok({ jobId: "j", runId: `r-${last.action}`, action: req.params.action, status: "queued", expiresAt: "2026-11-26T11:00:00Z" });

@@ -4,6 +4,7 @@ import type { Device, DnsRecord, DnsRecordList, DnsStatus, DnsZone, DnsZoneList 
 import { useAuth } from "../../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, TableWrap } from "../../../../../components/ui";
 import { ModuleTab } from "../../ModuleTab";
+import { SkeletonKeyValue, SkeletonSegmented, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodChange, useWinmodRead } from "../../winmod";
 import { CreateZoneDialog, RecordDialog, RemoveAllDialog, RemoveRecordDialog, RemoveZoneDialog, UpdateDialog } from "./DnsDialogs";
 import { isProtectedRecord, isProtectedZone, storage, ttlText } from "./dnsText";
@@ -23,21 +24,16 @@ const STATE_TONE = { running: "ok", stopped: "danger", absent: "neutral" } as co
 export function DnsView({ device }: { device: Device }) {
   const { canAt } = useAuth();
   const manage = canAt("dns.manage", { organizationId: device.organizationId, siteId: device.siteId });
-  const [started, setStarted] = useState(false);
   const [zoneName, setZoneName] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const status = useWinmodRead<DnsStatus>(device.id, "dns.status", {}, started);
-  const zones = useWinmodRead<DnsZoneList>(device.id, "dns.zone_list", {}, started);
-  const records = useWinmodRead<DnsRecordList>(device.id, "dns.record_list", { zone: zoneName ?? "", offset }, started && zoneName !== null);
+  const status = useWinmodRead<DnsStatus>(device.id, "dns.status", {});
+  const zones = useWinmodRead<DnsZoneList>(device.id, "dns.zone_list", {});
+  const records = useWinmodRead<DnsRecordList>(device.id, "dns.record_list", { zone: zoneName ?? "", offset }, zoneName !== null);
   const change = useWinmodChange(device.id, "dns");
 
   const reads = [status, zones, ...(zoneName ? [records] : [])];
   const refreshing = reads.some((r) => r.isFetching);
-  const refresh = () => {
-    if (!started) setStarted(true);
-    else reads.forEach((r) => void r.refetch());
-  };
   const failure = reads.map((r) => r.data?.failure).find(Boolean);
   const lost = reads.map((r) => r.data?.lost).find(Boolean);
   const st = status.data?.data ?? null;
@@ -53,8 +49,15 @@ export function DnsView({ device }: { device: Device }) {
     <ModuleTab
       name="DNS Server"
       asOf={st ? (status.data?.finishedAt ?? null) : null}
-      onRefresh={refresh}
       refreshing={refreshing}
+      loading={!st && !failure && !lost && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Server" rows={4} />
+          <SkeletonTable title="Zones" columns={4} rows={4} />
+        </>
+      }
+      offline={status.data?.offline}
       unavailable={failure ? failureText(failure) : (lost ?? undefined)}
     >
       <InlineError error={status.error ?? zones.error ?? records.error} />

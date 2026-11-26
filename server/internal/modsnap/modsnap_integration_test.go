@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/dhcp"
 )
 
 type fx struct {
@@ -54,7 +56,7 @@ func newFx(t *testing.T) *fx {
 		t.Fatal(err)
 	}
 	mods := modules.New(inst.DB, au, log)
-	cat, err := winmod.NewCatalog(defender.Actions()...)
+	cat, err := winmod.NewCatalog(slices.Concat(defender.Actions(), dhcp.Actions())...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,3 +286,125 @@ func TestRunSweepsUntilItsContextEnds(t *testing.T) {
 		t.Errorf("the first sweep started %d reads", f.reads(dev))
 	}
 }
+
+// A tab's read is audited as automatic; a read of an action that keeps no snapshot (a sensitive page of leases) starts
+// a run each time, one in flight per device, action and parameters; and a result older than two minutes is read again
+// although the action's own freshness is five.
+func TestAutomaticReadsAreMarkedAndBounded(t *testing.T) {
+	f := newFx(t)
+	dev := f.device(f.acme, f.hq, "dc1", 0)
+	mgr := f.user("m@example.com", rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: f.acme})
+	f.exec(`UPDATE devices SET roles = '[{"name":"defender","state":"present"},{"name":"dhcp","state":"present"}]' WHERE id = $1`, dev)
+
+	got, err := f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil)
+	if err != nil || got.RunID == nil || !got.Refreshing {
+		t.Fatalf("first read: %+v, %v", got, err)
+	}
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE device_id = $1 AND action = 'winmod.defender.status' AND details->>'automatic' = 'true'`, dev); n != 1 {
+		t.Errorf("%d audit rows marked automatic", n)
+	}
+	// The run named is the one in flight, and a second tab gets the same one.
+	again, err := f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil)
+	if err != nil || again.RunID == nil || *again.RunID != *got.RunID || f.reads(dev) != 1 {
+		t.Fatalf("second tab: %+v, %v, %d reads", again, err, f.reads(dev))
+	}
+
+	// Two minutes and a bit is stale although the action is fresh for five.
+	f.exec(`DELETE FROM jobs`)
+	f.snapshot(dev, 3, false)
+	if got, err = f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil); err != nil || !got.Stale || !got.Refreshing || got.TakenAt == nil {
+		t.Fatalf("three minutes old: %+v, %v", got, err)
+	}
+	f.exec(`DELETE FROM jobs`)
+	f.snapshot(dev, 1, false)
+	if got, err = f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil); err != nil || got.Stale || got.RunID != nil {
+		t.Fatalf("one minute old: %+v, %v", got, err)
+	}
+	// A running operation can ask for a younger result.
+	f.snapshot(dev, 0, false)
+	if got, err = f.svc.GetWithin(f.ctx, f.tech, dev, "defender.status", nil, 30*time.Second); err != nil || got.Stale {
+		t.Fatalf("just read, asked within 30 seconds: %+v, %v", got, err)
+	}
+	f.exec(`UPDATE windows_module_snapshots SET taken_at = now() - interval '45 seconds'`)
+	if got, err = f.svc.GetWithin(f.ctx, f.tech, dev, "defender.status", nil, 30*time.Second); err != nil || !got.Stale || !got.Refreshing {
+		t.Fatalf("45 seconds old, asked within 30: %+v, %v", got, err)
+	}
+
+	// Leases keep no snapshot: every read starts a run, one per scope in flight.
+	f.exec(`DELETE FROM jobs`)
+	a, err := f.svc.Get(f.ctx, mgr, dev, "dhcp.lease_list", json.RawMessage(`{"scopeId":"192.168.1.0"}`))
+	if err != nil || a.RunID == nil || a.Data != nil {
+		t.Fatalf("leases: %+v, %v", a, err)
+	}
+	b, err := f.svc.Get(f.ctx, mgr, dev, "dhcp.lease_list", json.RawMessage(`{"scopeId":"192.168.2.0"}`))
+	if err != nil || b.RunID == nil || *b.RunID == *a.RunID {
+		t.Fatalf("another scope shares the first one's run: %+v, %v", b, err)
+	}
+	a2, err := f.svc.Get(f.ctx, mgr, dev, "dhcp.lease_list", json.RawMessage(`{"scopeId":"192.168.1.0"}`))
+	if err != nil || a2.RunID == nil || *a2.RunID != *a.RunID {
+		t.Fatalf("same scope: %+v, %v", a2, err)
+	}
+	// A change is never read on its own.
+	if _, err := f.svc.Get(f.ctx, mgr, dev, "dhcp.scope_range_set", json.RawMessage(`{"scopeId":"192.168.1.0","startRange":"192.168.1.1","endRange":"192.168.1.9"}`)); !errors.Is(err, apperr.NotFound()) {
+		t.Errorf("a change was read on its own: %v", err)
+	}
+}
+
+// A computer outside the development scope is never read automatically.
+func TestAutomaticReadStaysInTheDevelopmentScope(t *testing.T) {
+	f := newFx(t)
+	dev := f.device(f.globex, f.main, "gx", 0)
+	gx := f.user("g@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.globex})
+	t.Cleanup(devscope.Set(f.acme))
+	if _, err := f.svc.Get(f.ctx, gx, dev, "defender.status", nil); !errors.Is(err, apperr.NotFound()) {
+		t.Errorf("outside the scope: %v", err)
+	}
+	if f.reads(dev) != 0 {
+		t.Error("a read was started outside the scope")
+	}
+}
+
+// The measured path of one read, against the real database: the job is made, the agent takes it and reports, and
+// the console's next look finds the result. Run with -v to see the times.
+func TestReadPathTimings(t *testing.T) {
+	f := newFx(t)
+	dev := f.device(f.acme, f.hq, "dc1", 0)
+	t0 := time.Now()
+	got, err := f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil)
+	if err != nil || got.RunID == nil {
+		t.Fatal(got, err)
+	}
+	created := time.Since(t0)
+	t1 := time.Now()
+	if _, err := f.jobs.Poll(f.ctx, dev, []string{agentproto.CapJobParams, agentproto.CapJobPwsh}); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := f.jobs.Start(f.ctx, dev, *got.RunID); err != nil || !st.Proceed {
+		t.Fatal(st, err)
+	}
+	claimed := time.Since(t1)
+	t2 := time.Now()
+	if err := f.jobs.Result(f.ctx, dev, *got.RunID, agentproto.ResultRequest{Status: jobs.StatusSucceeded, ExitCode: new(int), Stdout: timingStatus}); err != nil {
+		t.Fatal(err)
+	}
+	stored := time.Since(t2)
+	t3 := time.Now()
+	res, err := f.jobs.ReadWinmodResult(f.ctx, f.tech, *got.RunID)
+	if err != nil || res.OK == nil || !*res.OK {
+		t.Fatal(res, err)
+	}
+	seen := time.Since(t3)
+	t4 := time.Now()
+	after, err := f.svc.Get(f.ctx, f.tech, dev, "defender.status", nil)
+	if err != nil || after.Stale || after.Data == nil {
+		t.Fatalf("the next open: %+v, %v", after, err)
+	}
+	t.Logf("job created and audited %v; claimed (poll and start) %v; result stored %v; console reads the run %v; next tab open from the stored result %v",
+		created, claimed, stored, seen, time.Since(t4))
+}
+
+const timingStatus = `EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"antivirusEnabled":true,"antispywareEnabled":true,` +
+	`"realTimeProtectionEnabled":true,"behaviorMonitorEnabled":true,"ioavProtectionEnabled":true,"onAccessProtectionEnabled":true,` +
+	`"nisEnabled":true,"tamperProtected":false,"runningMode":"Normal","computerState":0,"engineVersion":"1.1.24090.11",` +
+	`"productVersion":"4.18.24090.11","serviceVersion":"4.18.24090.11","signatureVersion":"1.421.1.0",` +
+	`"signatureUpdatedAt":"2026-11-26T08:00:00Z","signatureAgeDays":0,"quickScanAgeDays":1,"fullScanAgeDays":null},"error":null}` + "\n"

@@ -1,12 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
 import { api } from "../../../api/client";
 import type { WinmodResult, WinmodRun } from "../../../api/types";
+import { RUN_POLL_MS, useWinmodRead } from "../modules/winmod";
 
 // Running a Windows Backup action (ADR-0077) and following its run: POST the action, then read the run until it
 // ends. A step-up the server asks for is handled by the API client.
 
 const FINISHED = new Set(["succeeded", "failed", "timed_out", "canceled", "expired", "lost"]);
-const POLL_MS = 1500;
+const POLL_MS = RUN_POLL_MS;
 const GIVE_UP_MS = 4 * 60 * 1000;
 
 export interface Outcome<T> {
@@ -65,13 +65,20 @@ export async function runBackup<T>(
   }
 }
 
-/** A read of the device that runs when the tab opens and again on refresh. */
-export function useBackupRead<T>(deviceId: string, action: string, params: Record<string, unknown> = {}, enabled = true) {
-  return useQuery<Outcome<T> & { readAt: string }>({
-    queryKey: ["backup-read", deviceId, action, JSON.stringify(params)],
-    enabled,
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    queryFn: async () => ({ ...(await runBackup<T>(deviceId, action, params)), readAt: new Date().toISOString() }),
-  });
+/**
+ * A read of the device for the tab: the last stored result shows at once, a new read starts by itself when it is old, and
+ * the tab keeps it fresh while it is open (the shared module read, ADR-0073 section 5). `refetch` and the query cache
+ * are those of `useWinmodRead`; a change invalidates ["winmod", deviceId].
+ */
+export function useBackupRead<T>(deviceId: string, action: string, params: Record<string, unknown> = {}, enabled = true, maxAgeSeconds?: number) {
+  const q = useWinmodRead<T>(deviceId, `windows_backup.${action}`, params, enabled, maxAgeSeconds);
+  const o = q.data;
+  const data: (Outcome<T> & { readAt: string }) | undefined = o
+    ? o.failure
+      ? { ok: false, code: o.failure.code, message: o.failure.message, readAt: o.finishedAt ?? "" }
+      : o.lost
+        ? { ok: false, message: o.lost, readAt: o.finishedAt ?? "" }
+        : { ok: true, data: o.data as T, readAt: o.finishedAt ?? "" }
+    : undefined;
+  return { ...q, data, offline: o?.offline ?? false };
 }

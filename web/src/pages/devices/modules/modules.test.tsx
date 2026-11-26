@@ -103,6 +103,10 @@ function routes(
     "GET /devices/:id/disks": ok({ items: [] }),
     "GET /devices/:id/defender": fail(404, "not_found", "none"),
     "GET /devices/:id/defender/events": ok({ items: [], gap: null }),
+    "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) =>
+      req.params.action === "defender.status"
+        ? ok({ action: "defender.status", takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: "r1" })
+        : fail(404, "not_found", "none"),
     "POST /devices/:id/winmod/defender.status": ok({
       jobId: "j1",
       runId: "r1",
@@ -145,19 +149,19 @@ describe("moduleTabState", () => {
 });
 
 describe("the Security tab", () => {
-  it("is in the strip and reads Defender's state on request", async () => {
+  it("is in the strip and reads Defender's state by itself, with no click", async () => {
     const api = installFakeApi(routes(VIEWER, roles([DEFENDER_ROLE])));
     renderApp("/devices/d1?tab=security");
     await screen.findByRole("tab", { name: "Security" });
-    await screen.findByText("Not read yet");
-    expect(api.callsTo("POST /devices/:id/winmod/defender.status")).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Read now" }));
+    expect(screen.queryByRole("button", { name: /read now|refresh/i })).toBeNull();
+    // The skeleton of the page stands in until the first result.
+    expect(screen.queryByRole("status", { name: "Loading Microsoft Defender" }) ?? true).toBeTruthy();
     await screen.findByText("Real-time protection");
     expect(screen.getByText("Not reported")).toBeInTheDocument();
     expect(screen.getByText("1.421.100.0")).toBeInTheDocument();
     expect(screen.getByText(/\(1 day ago\)/)).toBeInTheDocument();
     expect(screen.getByText("Never")).toBeInTheDocument();
-    expect(api.callsTo("POST /devices/:id/winmod/defender.status")).toHaveLength(1);
+    expect(api.callsTo("POST /devices/:id/winmod-read/:action").filter((c) => c.params.action === "defender.status")).toHaveLength(1);
   });
 
   it("says why when Defender is not installed", async () => {
@@ -169,7 +173,6 @@ describe("the Security tab", () => {
       }),
     );
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
     await screen.findByText(/Microsoft Defender is not installed/);
   });
 

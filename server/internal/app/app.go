@@ -65,6 +65,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/keystoreapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modreadapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/notifyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/postureapi"
@@ -675,6 +676,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)
 	jobsapi.New(d.Jobs).Register(mux)
+	modreadapi.New(d.ModSnap).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
 	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)

@@ -4,6 +4,7 @@ import { useAuth } from "../../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, Segmented, TableWrap } from "../../../../../components/ui";
 import { formatSize } from "../../../../../lib/format";
 import { ModuleTab } from "../../ModuleTab";
+import { SkeletonKeyValue, SkeletonSegmented, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodChange, useWinmodRead } from "../../winmod";
 import { ActionDialog, send, type Op } from "../kit";
 import type { Hardening, PrintDriver, PrintJobDocs, PrintJobList, PrintPort, PrintStatus, Printer, PrinterList } from "./types";
@@ -20,21 +21,19 @@ export function PrintView({ device }: { device: Device }) {
   const manage = canAt("print.manage", at);
   const destroy = canAt("print.destroy", at);
   const sensitive = canAt("print.view_sensitive", at);
-  const [started, setStarted] = useState(false);
   const [panel, setPanel] = useState<"printers" | "security" | "drivers">("printers");
   const [printer, setPrinter] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const status = useWinmodRead<PrintStatus>(device.id, `${M}.status`, {}, started);
-  const printers = useWinmodRead<PrinterList>(device.id, `${M}.printer_list`, {}, started);
-  const hardening = useWinmodRead<Hardening>(device.id, `${M}.hardening_status`, {}, started);
-  const jobs = useWinmodRead<PrintJobList>(device.id, `${M}.job_list`, { printer: printer ?? "" }, started && printer !== null);
-  const docs = useWinmodRead<PrintJobDocs>(device.id, `${M}.job_list_sensitive`, { printer: printer ?? "" }, started && printer !== null && sensitive);
-  const ports = useWinmodRead<{ ports: PrintPort[] }>(device.id, `${M}.port_list`, {}, started && panel === "drivers");
-  const drivers = useWinmodRead<{ drivers: PrintDriver[] }>(device.id, `${M}.driver_list`, {}, started && panel === "drivers");
+  const status = useWinmodRead<PrintStatus>(device.id, `${M}.status`, {});
+  const printers = useWinmodRead<PrinterList>(device.id, `${M}.printer_list`, {});
+  const hardening = useWinmodRead<Hardening>(device.id, `${M}.hardening_status`, {});
+  const jobs = useWinmodRead<PrintJobList>(device.id, `${M}.job_list`, { printer: printer ?? "" }, printer !== null);
+  const docs = useWinmodRead<PrintJobDocs>(device.id, `${M}.job_list_sensitive`, { printer: printer ?? "" }, printer !== null && sensitive);
+  const ports = useWinmodRead<{ ports: PrintPort[] }>(device.id, `${M}.port_list`, {}, panel === "drivers");
+  const drivers = useWinmodRead<{ drivers: PrintDriver[] }>(device.id, `${M}.driver_list`, {}, panel === "drivers");
   const change = useWinmodChange(device.id, M);
 
   const reads = [status, printers, hardening, ...(printer ? [jobs, ...(sensitive ? [docs] : [])] : []), ...(panel === "drivers" ? [ports, drivers] : [])];
-  const refresh = () => (started ? reads.forEach((r) => void r.refetch()) : setStarted(true));
   const failure = reads.map((r) => r.data?.failure).find(Boolean);
   const lost = reads.map((r) => r.data?.lost).find(Boolean);
   const st = status.data?.data ?? null;
@@ -52,8 +51,16 @@ export function PrintView({ device }: { device: Device }) {
     <ModuleTab
       name="Print server"
       asOf={st ? (status.data?.finishedAt ?? null) : null}
-      onRefresh={refresh}
       refreshing={reads.some((r) => r.isFetching)}
+      loading={!st && !failure && !lost && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Server" rows={4} />
+          <SkeletonSegmented />
+          <SkeletonTable title="Printers" columns={4} rows={4} />
+        </>
+      }
+      offline={status.data?.offline}
       unavailable={failure ? failureText(failure) : (lost ?? undefined)}
     >
       <InlineError error={reads.map((r) => r.error).find(Boolean) ?? change.error} />

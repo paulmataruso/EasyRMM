@@ -164,7 +164,7 @@ export function DiskDialog({ open, onClose, device, perform }: Base & { device: 
           Windows formats the disk and permanently erases everything on it. Only choose a disk that holds nothing you
           need. This needs a second factor.
         </Alert>
-        {disks.isFetching ? (
+        {disks.data === undefined ? (
           <Spinner />
         ) : (
           <Field label="Disk" htmlFor="backup-disk">
@@ -219,7 +219,7 @@ export function RestoreDialog({ open, onClose, device, perform, canDestroy }: Ba
   return (
     <Dialog open={open} onClose={onClose} title="Restore files" size="lg">
       <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3">
-        {versions.isFetching ? (
+        {versions.data === undefined ? (
           <Spinner />
         ) : (
           <Field label="Backup version" htmlFor="backup-version">

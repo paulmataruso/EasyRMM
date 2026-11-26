@@ -1,39 +1,18 @@
-import { useState } from "react";
-import { Alert, Badge, Button, Card, InlineError } from "../../../../components/ui";
+import { Alert, Badge, Card, InlineError } from "../../../../components/ui";
 import { formatDateTime } from "../../../../lib/format";
+import { SkeletonGrid } from "../skeletons";
 import type { Privileged } from "./types";
-import { useWinmod } from "./useWinmod";
+import { useFirstPage } from "./useFirstPage";
 
-/** Who is in the groups that hold the domain (read only; EasyRMM never adds anyone to one). */
+/** Who is in the groups that hold the domain (read only; EasyRMM never adds anyone to one). Read by itself when it opens. */
 export function PrivilegedCard({ deviceId }: { deviceId: string }) {
-  const run = useWinmod(deviceId);
-  const [data, setData] = useState<Privileged | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const load = async () => {
-    setBusy(true);
-    setError(null);
-    setProblem(null);
-    try {
-      const r = await run<Privileged>("privileged_members");
-      if (r.ok && r.data) setData(r.data);
-      else setProblem(r.failure?.message ?? "The controller did not answer.");
-    } catch (e) {
-      setError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const read = useFirstPage<Privileged>(deviceId, "privileged_members", {});
+  const data = read.page;
   return (
     <Card title="Privileged groups">
-      {!data && (
-        <Button size="sm" onClick={() => void load()} loading={busy}>
-          Show who is in them
-        </Button>
-      )}
-      <InlineError error={error} />
-      {problem && <Alert tone="warn">{problem}</Alert>}
+      <InlineError error={read.error} />
+      {read.problem && !data && <Alert tone="warn">{read.problem}</Alert>}
+      {!data && read.loading && <SkeletonGrid columns={2} rows={3} />}
       {data && (
         <div className="flex flex-col gap-4">
           {data.groups.map((g) => (

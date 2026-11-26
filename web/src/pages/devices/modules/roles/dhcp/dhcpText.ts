@@ -32,3 +32,29 @@ export const isIPv4 = (s: string) => V4.test(s.trim());
 
 /** Fixed addresses and ranges are shown as written; this is the one-line summary of a scope's range. */
 export const rangeText = (s: { startRange: string; endRange: string }) => `${s.startRange} – ${s.endRange}`;
+
+const toInt = (ip: string) => ip.trim().split(".").reduce((n, o) => n * 256 + Number(o), 0);
+
+/**
+ * Why a new address range for a scope cannot be applied, or null when it can: both ends are addresses, the start is not
+ * after the end, the range stays inside the scope's own subnet (Windows cannot change a scope's network or mask in
+ * place) and no exclusion falls outside it. The server and the script check the same, and Windows checks again.
+ */
+export function rangeProblem(
+  scope: { scopeId: string; subnetMask: string; startRange: string; endRange: string },
+  start: string,
+  end: string,
+  exclusions: { startRange: string; endRange: string }[],
+): string | null {
+  if (!isIPv4(start) || !isIPv4(end)) return "Use IPv4 addresses such as 192.0.2.10.";
+  const lo = toInt(start);
+  const hi = toInt(end);
+  if (lo > hi) return "The range ends before it starts.";
+  const mask = toInt(scope.subnetMask);
+  const net = (toInt(scope.scopeId) & mask) >>> 0;
+  if (((lo & mask) >>> 0) !== net || ((hi & mask) >>> 0) !== net) return `The range must stay inside the scope's network, ${scope.scopeId} with mask ${scope.subnetMask}.`;
+  if (start.trim() === scope.startRange && end.trim() === scope.endRange) return "This is the range the scope has now.";
+  const clash = exclusions.find((x) => toInt(x.startRange) < lo || toInt(x.endRange) > hi);
+  if (clash) return `The exclusion ${clash.startRange} to ${clash.endRange} would fall outside the new range. Remove or change it first.`;
+  return null;
+}

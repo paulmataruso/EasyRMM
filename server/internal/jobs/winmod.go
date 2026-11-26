@@ -59,6 +59,8 @@ type winmodRecord struct {
 	// Subject is the confirmed subject, for destructive actions.
 	Subject     string `json:"subject,omitempty"`
 	KeepSeconds int    `json:"keepSeconds"`
+	// Automatic is set for a read started on its own.
+	Automatic bool `json:"automatic,omitempty"`
 }
 
 // WinmodInput asks for one action of a module on one device.
@@ -69,6 +71,10 @@ type WinmodInput struct {
 	Params json.RawMessage `json:"params"`
 	// Confirm is "<action>:<subject>", for a destructive action.
 	Confirm string `json:"confirm"`
+	// Automatic marks a read the console or the server started on its own
+	// (a tab that opened, the scheduled sweep), not one a person asked for.
+	// The job's audit rows say so.
+	Automatic bool `json:"-"`
 }
 
 // WinmodRun is what a new action answers: the run to follow.
@@ -129,7 +135,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 		return nil, apperr.Conflict("step_up_required", "This action needs step-up authentication (ADR-0055), which is not available yet.")
 	}
 	rec := winmodRecord{Module: string(a.Module), Action: a.Name, Version: a.Version, ScriptSHA256: agentproto.HashScript(a.Script),
-		Subject: chk.Subject, KeepSeconds: int(a.Keep.Seconds())}
+		Subject: chk.Subject, KeepSeconds: int(a.Keep.Seconds()), Automatic: in.Automatic}
 	for name := range chk.Secrets {
 		rec.Secrets = append(rec.Secrets, name)
 	}
@@ -146,7 +152,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 		kind: KindWinmod, name: a.Label, shell: a.ShellName(), body: a.Script, args: []string{}, params: chk.Params,
 		timeout: a.Timeout, auditAction: "winmod." + a.Name, winmod: recJSON, ttl: ttl,
 		details: map[string]any{"module": string(a.Module), "action": a.Name, "version": a.Version, "params": chk.Audit,
-			"sensitive": a.Sensitive, "destructive": a.Destructive, "confirmed": a.NeedsConfirm(), "stepUp": a.NeedsStepUp()},
+			"sensitive": a.Sensitive, "destructive": a.Destructive, "confirmed": a.NeedsConfirm(), "stepUp": a.NeedsStepUp(), "automatic": in.Automatic},
 		inserted: func(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, expires time.Time) error {
 			for name, value := range chk.Secrets {
 				sealed, err := s.sealer.Seal([]byte(value), winmodAAD(jobID, name))
@@ -301,6 +307,9 @@ func (s *Service) recordWinmod(ctx context.Context, tx pgx.Tx, device, run uuid.
 		d := map[string]any{"module": m.Module, "action": m.Action, "version": m.Version, "ok": ok, "count": count}
 		if code != "" {
 			d["error"] = code
+		}
+		if m.Automatic {
+			d["automatic"] = true
 		}
 		return s.audit.Write(ctx, tx, audit.Event{
 			Actor: audit.SystemActor("winmod"), Action: "winmod." + m.Action + ".result", Outcome: audit.Success,

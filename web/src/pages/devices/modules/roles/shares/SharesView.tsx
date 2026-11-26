@@ -2,9 +2,11 @@ import { useState } from "react";
 import { Lock, Plus } from "lucide-react";
 import type { Device } from "../../../../../api/types";
 import { useAuth } from "../../../../../auth/AuthContext";
-import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, Segmented, SelectField, TableWrap, TextField } from "../../../../../components/ui";
+import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, Segmented, SelectField, Skeleton, TableWrap, TextField } from "../../../../../components/ui";
 import { formatDuration } from "../../../../../lib/format";
+import { Dialog } from "../../../../../components/Dialog";
 import { ModuleTab } from "../../ModuleTab";
+import { SkeletonKeyValue, SkeletonSegmented, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodChange, useWinmodRead } from "../../winmod";
 import { ActionDialog, FormDialog } from "../kit";
 import type { OpenFileList, Share, ShareAccess, ShareList, SessionList, SharesStatus } from "./types";
@@ -26,19 +28,17 @@ const flag = (v: boolean | null) => (v === null ? "—" : v ? "Yes" : "No");
 export function SharesView({ device }: { device: Device }) {
   const { canAt } = useAuth();
   const manage = canAt("shares.manage", { organizationId: device.organizationId, siteId: device.siteId });
-  const [started, setStarted] = useState(false);
   const [panel, setPanel] = useState<"shares" | "open">("shares");
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const status = useWinmodRead<SharesStatus>(device.id, `${M}.status`, {}, started);
-  const shares = useWinmodRead<ShareList>(device.id, `${M}.share_list`, {}, started);
-  const access = useWinmodRead<ShareAccess>(device.id, `${M}.share_perms_get`, { name: selected ?? "" }, started && selected !== null);
-  const sessions = useWinmodRead<SessionList>(device.id, `${M}.session_list`, {}, started && panel === "open");
-  const files = useWinmodRead<OpenFileList>(device.id, `${M}.openfile_list`, {}, started && panel === "open");
+  const status = useWinmodRead<SharesStatus>(device.id, `${M}.status`, {});
+  const shares = useWinmodRead<ShareList>(device.id, `${M}.share_list`, {});
+  const access = useWinmodRead<ShareAccess>(device.id, `${M}.share_perms_get`, { name: selected ?? "" }, selected !== null);
+  const sessions = useWinmodRead<SessionList>(device.id, `${M}.session_list`, {}, panel === "open");
+  const files = useWinmodRead<OpenFileList>(device.id, `${M}.openfile_list`, {}, panel === "open");
   const change = useWinmodChange(device.id, M);
 
-  const reads = [status, shares, ...(selected ? [access] : []), ...(panel === "open" ? [sessions, files] : [])];
-  const refresh = () => (started ? reads.forEach((r) => void r.refetch()) : setStarted(true));
+  const reads = [status, shares, ...(panel === "open" ? [sessions, files] : [])];
   const failure = reads.map((r) => r.data?.failure).find(Boolean);
   const lost = reads.map((r) => r.data?.lost).find(Boolean);
   const st = status.data?.data ?? null;
@@ -53,8 +53,16 @@ export function SharesView({ device }: { device: Device }) {
     <ModuleTab
       name="File shares"
       asOf={st ? (status.data?.finishedAt ?? null) : null}
-      onRefresh={refresh}
-      refreshing={reads.some((r) => r.isFetching)}
+      refreshing={[...reads, ...(selected ? [access] : [])].some((r) => r.isFetching)}
+      loading={!st && !failure && !lost && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Server" rows={7} />
+          <SkeletonSegmented />
+          <SkeletonTable title="Shares" columns={3} rows={4} />
+        </>
+      }
+      offline={status.data?.offline}
       unavailable={failure ? failureText(failure) : (lost ?? undefined)}
     >
       <InlineError error={reads.map((r) => r.error).find(Boolean)} />
@@ -132,56 +140,17 @@ export function SharesView({ device }: { device: Device }) {
           )}
         </Card>
       )}
-      {panel === "shares" && selected && access.data?.data && (
-        <Card
-          title={`Permissions of ${selected}`}
-          padded={false}
-          actions={
-            manage && !list?.shares.find((s) => s.name === selected)?.protected && (
-              <Button size="sm" onClick={() => open({ kind: "grant", share: list!.shares.find((s) => s.name === selected)! })}>Grant access</Button>
-            )
-          }
-        >
-          <TableWrap className="rounded-none border-0">
-            <table className="table-base">
-              <thead>
-                <tr>
-                  <th scope="col">Account</th>
-                  <th scope="col">Access</th>
-                  <th scope="col"><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {access.data.data.entries.map((e, i) => {
-                  const share = list?.shares.find((s) => s.name === selected);
-                  return (
-                    <tr key={`${e.account}|${e.type}|${i}`}>
-                      <td>{e.account}</td>
-                      <td>{e.type === "Deny" ? <Badge tone="danger">Blocked</Badge> : e.right}</td>
-                      <td className="text-right whitespace-nowrap">
-                        {manage && share && !share.protected && (
-                          <>
-                            {e.type === "Deny" ? (
-                              <Button size="sm" variant="ghost" onClick={() => open({ kind: "block", share, account: e.account, blocked: true })}>Unblock</Button>
-                            ) : (
-                              <>
-                                <Button size="sm" variant="ghost" onClick={() => open({ kind: "block", share, account: e.account, blocked: false })}>Block</Button>
-                                <Button size="sm" variant="danger-ghost" onClick={() => open({ kind: "revoke", share, account: e.account })}>Revoke</Button>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </TableWrap>
-          <p className="border-t border-line px-4 py-2 text-xs text-muted">
-            Share permissions are one of two gates: what a person can do to a file is the more restrictive of this and the folder&apos;s own permissions, which this console does not change.
-          </p>
-        </Card>
+      {selected && !dialog && (
+        <PermissionsDialog
+          share={list?.shares.find((s) => s.name === selected) ?? null}
+          name={selected}
+          read={access}
+          manage={manage}
+          onGrant={(share) => open({ kind: "grant", share })}
+          onBlock={(share, account, blocked) => open({ kind: "block", share, account, blocked })}
+          onRevoke={(share, account) => open({ kind: "revoke", share, account })}
+          onClose={() => setSelected(null)}
+        />
       )}
       {panel === "open" && (
         <>
@@ -247,6 +216,95 @@ export function SharesView({ device }: { device: Device }) {
       )}
       <SharesDialogs dialog={dialog} device={device} change={change} close={close} />
     </ModuleTab>
+  );
+}
+
+type AccessRead = ReturnType<typeof useWinmodRead<ShareAccess>>;
+
+/**
+ * A share's permissions in a dialog that opens at once: the entries read from the computer (a skeleton while they load,
+ * then the list, kept fresh while it is open) and, for someone who may manage shares, the changes: grant, block,
+ * unblock and revoke (ADR-0076, section 6). A protected share is shown and never changed.
+ */
+export function PermissionsDialog({ share, name, read, manage, onGrant, onBlock, onRevoke, onClose }: {
+  share: Share | null;
+  name: string;
+  read: AccessRead;
+  manage: boolean;
+  onGrant: (s: Share) => void;
+  onBlock: (s: Share, account: string, blocked: boolean) => void;
+  onRevoke: (s: Share, account: string) => void;
+  onClose: () => void;
+}) {
+  const data = read.data?.data ?? null;
+  const failure = read.data?.failure;
+  const editable = manage && share !== null && !share.protected;
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      size="lg"
+      title={`Permissions of ${name}`}
+      description="Who may reach this share over the network."
+      footer={
+        <>
+          {editable && <Button variant="primary" onClick={() => onGrant(share)}>Grant access</Button>}
+          <Button onClick={onClose}>Close</Button>
+        </>
+      }
+    >
+      {!data && !failure && !read.error && (
+        <div role="status" aria-busy="true" aria-label="Loading permissions" className="flex flex-col gap-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-6 w-full" />
+          ))}
+        </div>
+      )}
+      {failure && <Alert tone="warn">{failureText(failure)}</Alert>}
+      {read.data?.lost && <Alert tone="warn">{read.data.lost}</Alert>}
+      <InlineError error={read.error} />
+      {data && (
+        <TableWrap>
+          <table className="table-base">
+            <thead>
+              <tr>
+                <th scope="col">Account</th>
+                <th scope="col">Access</th>
+                <th scope="col"><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.entries.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="text-muted">No account has access to this share.</td>
+                </tr>
+              )}
+              {data.entries.map((e, i) => (
+                <tr key={`${e.account}|${e.type}|${i}`}>
+                  <td>{e.account}</td>
+                  <td>{e.type === "Deny" ? <Badge tone="danger">Blocked</Badge> : e.right}</td>
+                  <td className="text-right whitespace-nowrap">
+                    {editable &&
+                      (e.type === "Deny" ? (
+                        <Button size="sm" variant="ghost" onClick={() => onBlock(share, e.account, true)}>Unblock</Button>
+                      ) : (
+                        <>
+                          <Button size="sm" variant="ghost" onClick={() => onBlock(share, e.account, false)}>Block</Button>
+                          <Button size="sm" variant="danger-ghost" onClick={() => onRevoke(share, e.account)}>Revoke</Button>
+                        </>
+                      ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableWrap>
+      )}
+      {share?.protected && <p className="mt-3 text-xs text-muted">Windows needs this share; the console shows its permissions and does not change them.</p>}
+      <p className="mt-3 text-xs text-muted">
+        Share permissions are one of two gates: what a person can do to a file is the more restrictive of this and the folder&apos;s own permissions, which this console does not change.
+      </p>
+    </Dialog>
   );
 }
 

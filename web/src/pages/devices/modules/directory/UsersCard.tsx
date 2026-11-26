@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Lock, Search } from "lucide-react";
 import { useAuth } from "../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, InlineError, Input, Select, TableWrap } from "../../../../components/ui";
@@ -7,6 +7,8 @@ import { UserActionDialog, type UserAction } from "./UserActionDialog";
 import { ResetPasswordDialog } from "./ResetPasswordDialog";
 import type { DirectoryStatus, UserPage, UserRow } from "./types";
 import { useWinmod } from "./useWinmod";
+import { useFirstPage } from "./useFirstPage";
+import { SkeletonGrid } from "../skeletons";
 
 const STATES = [
   ["all", "All accounts"],
@@ -20,6 +22,9 @@ const STATES = [
 export function UsersCard({ deviceId, status, writable = true }: { deviceId: string; status: DirectoryStatus; writable?: boolean }) {
   const { can } = useAuth();
   const run = useWinmod(deviceId);
+  const first = useFirstPage<UserPage>(deviceId, "user_list", { scope: "subtree", pageSize: 100 });
+  // What the person asked for (a search, a further page) replaces the automatic first page.
+  const asked = useRef(false);
   const [rows, setRows] = useState<UserRow[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [match, setMatch] = useState("");
@@ -42,6 +47,7 @@ export function UsersCard({ deviceId, status, writable = true }: { deviceId: str
         if (match.trim()) params.match = match.trim();
         if (state !== "all") params.state = state;
         if (after) params.after = after;
+        asked.current = Boolean(after || match.trim() || state !== "all");
         const r = await run<UserPage>("user_list", params);
         if (!r.ok || !r.data) {
           setProblem(r.failure?.message ?? "The controller did not answer.");
@@ -58,6 +64,13 @@ export function UsersCard({ deviceId, status, writable = true }: { deviceId: str
     },
     [run, match, state],
   );
+
+  useEffect(() => {
+    if (first.page && !asked.current) {
+      setRows(first.page.items);
+      setNext(first.page.next);
+    }
+  }, [first.page]);
 
   const help = can("ad.helpdesk") && !status.readOnly && writable;
   const manage = can("ad.manage") && !status.readOnly && writable;
@@ -87,7 +100,7 @@ export function UsersCard({ deviceId, status, writable = true }: { deviceId: str
           ))}
         </Select>
         <Button type="submit" size="sm" icon={<Search className="size-3.5" aria-hidden />} loading={busy}>
-          {rows ? "Search" : "List users"}
+          Search
         </Button>
         {manage && (
           <Button size="sm" onClick={() => setCreating(true)}>
@@ -96,7 +109,9 @@ export function UsersCard({ deviceId, status, writable = true }: { deviceId: str
         )}
       </form>
       <InlineError error={error} />
-      {problem && <Alert tone="warn">{problem}</Alert>}
+      {(problem ?? first.problem) && !rows && <Alert tone="warn">{problem ?? first.problem}</Alert>}
+      {problem && rows && <Alert tone="warn">{problem}</Alert>}
+      {!rows && first.loading && !problem && <SkeletonGrid columns={4} rows={5} />}
       {rows && rows.length === 0 && <p className="text-sm text-muted">No account matches.</p>}
       {rows && rows.length > 0 && (
         <TableWrap>
