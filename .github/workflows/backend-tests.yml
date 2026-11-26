@@ -291,6 +291,22 @@ jobs:
             -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\jobs-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
             -Environment 'EASYRMM_TEST_SYSTEM=1'
           exit $LASTEXITCODE
+      # ADR-0081, slice 4: BitLocker's WMI as the agent calls it, as LocalSystem,
+      # on a 64 MiB file-backed virtual disk made for the test: recovery-password
+      # protectors are added, read and removed (a rotation's steps), the
+      # computer's preconditions are read. Nothing is encrypted and the system
+      # drive is never touched; there is no TPM here, so the TPM protector and
+      # encryption are not exercised. The tests skip, and say so, on an image
+      # whose edition has no BitLocker WMI class.
+      - name: BitLocker's WMI on a virtual disk, as LocalSystem
+        run: |
+          go test -c -o "$env:RUNNER_TEMP\escrow.test.exe" ./agent/escrow
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\escrow.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=TestWindows' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\escrow" `
+            -Environment 'EASYRMM_TEST_BITLOCKER=1'
+          exit $LASTEXITCODE
       # The Windows half of agent/powershell runs only here, as LocalSystem,
       # so its floor is kept here rather than in check-coverage.sh: the
       # statements of powershell_windows.go that either test binary ran.
