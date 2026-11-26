@@ -57,8 +57,10 @@ const (
 // Link modes: the one setting that restricts links until signing exists.
 const (
 	SettingLinkMode = "quickassist.link_mode"
-	ModeOwnTest     = "own_test"
-	ModeOpen        = "open"
+	// SettingDefaultLife is the app-wide default lifetime of a new one-time link, in minutes.
+	SettingDefaultLife = "quickassist.default_life_minutes"
+	ModeOwnTest        = "own_test"
+	ModeOpen           = "open"
 )
 
 // Limits (ADR-0080). The bucket and the caps are settings in the ADR; the
@@ -164,6 +166,51 @@ func (s *Service) Mode(ctx context.Context) (string, error) {
 		return ModeOwnTest, nil //nolint:nilerr // a setting that cannot be read is the restricted mode
 	}
 	return ModeOpen, nil
+}
+
+// DefaultLife reads the app-wide default lifetime of a new one-time link: 24 hours unless the setting says
+// otherwise and is within bounds.
+func (s *Service) DefaultLife(ctx context.Context) (time.Duration, error) {
+	var raw []byte
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, SettingDefaultLife).Scan(&raw)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DefaultOneTimeLife, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var m int
+	if err := json.Unmarshal(raw, &m); err != nil || m < 1 || time.Duration(m)*time.Minute > MaxOneTimeLife {
+		return DefaultOneTimeLife, nil //nolint:nilerr // an unusable setting is the built-in default
+	}
+	return time.Duration(m) * time.Minute, nil
+}
+
+// SetDefaultLife changes the default lifetime of a new one-time link (1 minute to 7 days). It needs the
+// platform-wide settings permission and is audited.
+func (s *Service) SetDefaultLife(ctx context.Context, c access.Caller, minutes int) error {
+	if err := c.RequireGlobal(rbac.PermSettingsManage); err != nil {
+		return err
+	}
+	if minutes < 1 || time.Duration(minutes)*time.Minute > MaxOneTimeLife {
+		return apperr.Invalid("minutes", "A one-time link lasts 1 minute to 7 days.")
+	}
+	raw, _ := json.Marshal(minutes)
+	var by *uuid.UUID
+	if c.Principal != nil {
+		by = &c.Principal.UserID
+	}
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO settings (key, value, updated_by) VALUES ($1, $2, $3)
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+			SettingDefaultLife, raw, by); err != nil {
+			return err
+		}
+		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "quickassist.settings.update", Outcome: audit.Success,
+			TargetType: "setting", TargetID: SettingDefaultLife, Details: map[string]any{"minutes": minutes}})
+	})
 }
 
 // SetMode changes the link mode. It needs the platform-wide settings
@@ -273,7 +320,9 @@ func (s *Service) CreateLink(ctx context.Context, c access.Caller, in CreateInpu
 	if in.Kind == KindOneTime {
 		life := in.Life
 		if life == 0 {
-			life = DefaultOneTimeLife
+			if life, err = s.DefaultLife(ctx); err != nil {
+				return nil, err
+			}
 		}
 		if life < time.Minute || life > MaxOneTimeLife {
 			return nil, apperr.Invalid("life", "A one-time link lasts 1 minute to 7 days.")
@@ -315,6 +364,22 @@ func (s *Service) CreateLink(ctx context.Context, c access.Caller, in CreateInpu
 		var by *uuid.UUID
 		if c.Principal != nil {
 			by = &c.Principal.UserID
+		}
+		if in.Name == "" {
+			// No name asked for: a readable one, from the time and who made it.
+			var who string
+			if by != nil {
+				if err := tx.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, *by).Scan(&who); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return err
+				}
+			}
+			in.Name = "Support link, " + s.now().UTC().Format("2 Jan 2006 15:04 UTC")
+			if who != "" {
+				in.Name += ", made by " + who
+			}
+			if len(in.Name) > maxName {
+				in.Name = in.Name[:maxName]
+			}
 		}
 		row := tx.QueryRow(ctx, `INSERT INTO quick_assist_links (organization_id, site_id, kind, name, note, token_hash, expires_at, created_by, test, created_at, bucket_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING `+linkCols,

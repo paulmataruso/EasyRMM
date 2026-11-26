@@ -21,6 +21,7 @@ const request: QuickAssistSession = {
 const routes = (sessions: QuickAssistSession[], extra = {}) => ({
   ...baseRoutes(TECH),
   "GET /organizations": ok({ items: [ACME] }),
+  "GET /quickassist/settings": ok({ mode: "own_test", defaultLifeMinutes: 1440 }),
   "GET /quickassist/waiting": ok({ waiting: sessions.filter((s) => s.state === "requested").length }),
   "GET /organizations/:id/quickassist/sessions": ok({ sessions }),
   ...extra,
@@ -84,7 +85,7 @@ describe("Quick Assist", () => {
     expect(await screen.findByText(/Ended by the technician\. Cleaned up, verified\./)).toBeInTheDocument();
   });
 
-  it("makes a one-time link, shows it once, and says only test links are allowed", async () => {
+  it("makes a one-time link with one click and shows it once", async () => {
     const user = userEvent.setup();
     const link: QuickAssistLink = {
       id: "l9", organizationId: "o1", siteId: null, kind: "one_time", name: "Help", note: "", state: "active", paused: false, test: true,
@@ -97,16 +98,14 @@ describe("Quick Assist", () => {
         "POST /organizations/:id/quickassist/links": { status: 201, body: { link, token: "qal_secret", path: "/qa/qal_secret" } },
       }),
     );
-    renderApp("/quickassist?view=links");
-    expect(await screen.findByText(/only one-time test links can be made/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "New link" }));
-    const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Name the user sees"), "Help");
-    // A permanent link is not offered while only test links are allowed.
-    expect(within(dialog).queryByRole("option", { name: /Permanent/ })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "Make link" }));
+    renderApp("/quickassist");
+    // One click, no name asked for, and the link is shown with its expiry.
+    await user.click(await screen.findByRole("button", { name: "New link" }));
     expect(await screen.findByLabelText("Link")).toHaveValue(`${window.location.origin}/qa/qal_secret`);
-    expect(server.callsTo("POST /organizations/:id/quickassist/links").map((c) => c.body)).toEqual([{ name: "Help", kind: "one_time" }]);
+    expect(screen.getByText(/Works once, until/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New permanent link" })).not.toBeInTheDocument();
+    expect(server.callsTo("POST /organizations/:id/quickassist/links").map((c) => c.body)).toEqual([{ kind: "one_time" }]);
   });
 
   it("is not in the menu without the permission", async () => {

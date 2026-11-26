@@ -991,6 +991,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "certificates", label: "Certificates", icon: <ShieldCheck className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "keystore", label: "Keystore", icon: <KeyRound className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "sso", label: "Single sign-on", icon: <LogIn className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "general", label: "General", icon: <SlidersHorizontal className="size-4" aria-hidden />, show: can("settings.manage") },
   ]
     .filter((p) => p.show)
     .map(({ id, label, icon }) => ({ id, label, icon }));

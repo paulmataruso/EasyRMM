@@ -32,20 +32,19 @@ test.afterAll(async () => {
 test("a link, the real program, acceptance by the code, the active list, and a verified clean-up", async () => {
   test.setTimeout(120_000);
   const page = admin;
-  await page.goto("/quickassist?view=links");
-  await expect(page.getByText(/only one-time test links can be made/)).toBeVisible();
+  // The Request page: one click on New link makes a link, with no name asked for, and shows it with its expiry.
+  await page.goto("/quickassist");
+  await expect(page.getByRole("button", { name: "New permanent link" })).toHaveCount(0);
   await page.getByRole("button", { name: "New link" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Name the user sees").fill("Support for Northwind");
-  await expect(dialog.getByRole("option", { name: /Permanent/ })).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Make link" }).click();
+  await expect(page.getByText(/Works once, until/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Copy/ })).toBeVisible();
   const link = await page.getByRole("textbox", { name: "Link", exact: true }).inputValue();
   await page.getByRole("button", { name: "Done" }).click();
 
   // The user opens the page, and downloads the program.
   const shown = await page.request.get(link);
   expect(shown.status()).toBe(200);
-  expect(await shown.text()).toContain("Support for Northwind");
+  expect(await shown.text()).toContain("Support link, ");
   const file = await page.request.get(`${link}/download?os=linux`);
   expect(file.status()).toBe(200);
   const dir = mkdtempSync(join(tmpdir(), "qa-e2e-"));
@@ -65,7 +64,7 @@ test("a link, the real program, acceptance by the code, the active list, and a v
 
   // The technician sees the request, and the code is nowhere on the page.
   await page.goto("/quickassist");
-  const row = page.getByRole("row").filter({ hasText: "Support for Northwind" });
+  const row = page.getByRole("row").filter({ hasText: "Support link, " });
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(page.locator("body")).not.toContainText(code);
   await row.getByRole("button", { name: /Accept/ }).click();
@@ -77,7 +76,7 @@ test("a link, the real program, acceptance by the code, the active list, and a v
   await accept.getByRole("button", { name: "Accept" }).click();
 
   await page.goto("/quickassist?view=active");
-  const active = page.getByRole("row").filter({ hasText: "Support for Northwind" });
+  const active = page.getByRole("row").filter({ hasText: "Support link, " });
   await expect(active).toBeVisible({ timeout: 30_000 });
   await expect.poll(() => /accepted/.test(out), { timeout: 30_000 }).toBe(true);
   // The computer is not in the ordinary Devices list.

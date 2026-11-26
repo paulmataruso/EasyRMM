@@ -6,6 +6,7 @@ import { settingsParts } from "../../nav/SectionNav";
 import { AgentFilesTab } from "./AgentFilesTab";
 import { AlertPoliciesSettings } from "./AlertPoliciesSettings";
 import { CertificatesTab } from "./CertificatesTab";
+import { GeneralTab } from "./GeneralTab";
 import { KeystoreTab } from "./KeystoreTab";
 import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
@@ -33,6 +34,7 @@ const SUBTITLES: Record<string, string> = {
     "The patching engine, the default patch policy and tags every organization starts from, and the engine's own settings, OS lifecycle dates, agent packages, alert rules, notifications and audit log. An organization's or a site's own patching settings are on its page.",
   certificates: "The certificates for this server's names: where they come from, when they renew, and what to do when one is failing.",
   keystore: "The service that holds the key protecting disk recovery keys: its state, its key versions and the alerts about it. An organization's own reads and switches are on its page.",
+  general: "App-wide defaults, set by super administrators. For now: how long a new Quick Assist link lasts.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -91,6 +93,7 @@ export function SettingsPage() {
       {part.id === "certificates" && <CertificatesTab />}
       {part.id === "keystore" && <KeystoreTab />}
       {part.id === "sso" && <SingleSignOnTab />}
+      {part.id === "general" && <GeneralTab />}
     </>
   );
 }
