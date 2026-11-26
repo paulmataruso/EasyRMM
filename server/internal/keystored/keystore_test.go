@@ -119,6 +119,22 @@ func TestPassphraseLifecycle(t *testing.T) {
 	if st := k2.Status(); st.State != keystore.StateUnsealed {
 		t.Fatalf("after unseal: %+v", st)
 	}
+	// Once open, another passphrase is refused and the wrap key is kept: a new
+	// KEK version made now is still sealed under the right one.
+	if err := k2.Unseal([]byte("the wrong passphrase, long enough")); code(t, err) != keystore.CodeRefused {
+		t.Fatalf("unseal of an open keystore: %v", err)
+	}
+	if _, _, err := k2.NewVersion(); err != nil {
+		t.Fatal(err)
+	}
+	k2.Close()
+	k2 = openPass(t, dir)
+	if err := k2.Unseal([]byte(testPass)); err != nil {
+		t.Fatalf("a version made after the refused unseal does not open with the real passphrase: %v", err)
+	}
+	if st := k2.Status(); len(st.Versions) != 2 || !st.Versions[1].Open {
+		t.Fatalf("after reopening: %+v", st)
+	}
 	// What was wrapped before the restart still opens.
 	enc, ct, _ := escrowcrypto.Seal(pub, ctxOf("org1", "d", "v", "p", "key1"), []byte(blPassword))
 	fp := escrowcrypto.Fingerprint("p", []byte(blPassword))
@@ -421,12 +437,27 @@ func TestServerSocketsAndPeerCredentials(t *testing.T) {
 		t.Error("an org key was made on the admin socket")
 	}
 
-	// A user the keystore does not list gets no answer at all.
-	srv.ServiceUIDs, srv.AdminUID = []uint32{uid + 1}, uid+1
-	if _, err := sc.Status(context.Background()); !errors.Is(err, keystore.ErrUnavailable) {
+	// A user the keystore does not list gets no answer at all: a second server
+	// that lists another user ID, on its own sockets.
+	svc2, err := Listen(filepath.Join(dir, "s2.sock"), 0o660)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adm2, err := Listen(filepath.Join(dir, "a2.sock"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := &Server{KS: k, ServiceUIDs: []uint32{uid + 1}, AdminUID: uid + 1, ReadTimeout: 5 * time.Second}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() { _ = other.Serve(ctx2, svc2, adm2); close(done2) }()
+	t.Cleanup(func() { cancel2(); <-done2 })
+	sc2 := &keystore.Client{Path: filepath.Join(dir, "s2.sock"), Timeout: 5 * time.Second}
+	ac2 := &keystore.Client{Path: filepath.Join(dir, "a2.sock"), Timeout: 5 * time.Second}
+	if _, err := sc2.Status(context.Background()); !errors.Is(err, keystore.ErrUnavailable) {
 		t.Errorf("an unlisted user was answered: %v", err)
 	}
-	if _, err := ac.Status(context.Background()); !errors.Is(err, keystore.ErrUnavailable) {
+	if _, err := ac2.Status(context.Background()); !errors.Is(err, keystore.ErrUnavailable) {
 		t.Errorf("an unlisted admin was answered: %v", err)
 	}
 }

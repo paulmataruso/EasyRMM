@@ -378,6 +378,11 @@ func (k *Keystore) Unseal(passphrase []byte) error {
 	if !ok {
 		return fail(keystore.CodeRefused, "this keystore is in %s mode and unseals by itself", k.st.Mode)
 	}
+	if len(k.keks) > 0 {
+		// Never replace the wrap key of an open keystore: a wrong passphrase
+		// would then seal the next KEK version under the wrong key.
+		return fail(keystore.CodeRefused, "the keystore is already unsealed")
+	}
 	if err := p.Unlock(passphrase); err != nil {
 		return err
 	}
