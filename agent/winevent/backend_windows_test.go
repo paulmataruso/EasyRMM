@@ -43,7 +43,7 @@ func runReal(t *testing.T, be Backend, in eventrules.Input) (*eventrules.Result,
 	in.V, in.Rules = 1, eventrules.Version
 	var b bytes.Buffer
 	start := time.Now()
-	if err := Run(context.Background(), in, be, &b, Options{AgentVersion: "test"}); err != nil {
+	if err := Run(context.Background(), in, be, &b, Options{AgentVersion: "test", Arch: archName()}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	took := time.Since(start)

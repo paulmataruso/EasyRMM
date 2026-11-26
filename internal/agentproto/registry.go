@@ -591,6 +591,9 @@ func EncodeRegValue(name string, typ uint32, data []byte, masked, withRaw bool, 
 			return v
 		}
 	default:
+		// The bytes are sent once: a second copy in Raw would double a 1 MiB
+		// value past the result file's bound.
+		v.Raw = ""
 		v.Base64 = base64.StdEncoding.EncodeToString(data)
 		return v
 	}

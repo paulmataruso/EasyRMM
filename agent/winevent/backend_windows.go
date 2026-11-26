@@ -113,6 +113,7 @@ const (
 	errNoMoreItems        = 259
 	errTimeout            = 1460
 	errCancelled          = 1223
+	errFileNotFound       = 2 // an unregistered publisher
 	errAccessDenied       = 5
 	errServiceNotActive   = 1062
 	errRPCUnavailable     = 1722
@@ -749,7 +750,7 @@ func (b *winBackend) Provider(name string) (*eventrules.ProviderLine, error) {
 	}
 	r, err := call(procEvtOpenPublisherMetadata, 0, uintptr(unsafe.Pointer(p)), 0, 0, 0)
 	if err != nil {
-		if errnoOf(err) == errEvtPublisherMeta || errnoOf(err) == errEvtChannelNotFound {
+		if e := errnoOf(err); e == errEvtPublisherMeta || e == errEvtChannelNotFound || e == errFileNotFound {
 			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
 		}
 		return nil, mapErr(err)
