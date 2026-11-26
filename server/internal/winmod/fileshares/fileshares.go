@@ -322,25 +322,25 @@ func Actions() []winmod.Action {
 		winmod.Param{Name: "description", Type: winmod.Text, Max: 256},
 		winmod.Param{Name: "enumeration", Type: winmod.Enum, Values: []string{"AccessBased", "Unrestricted"}},
 		winmod.Param{Name: "caching", Type: winmod.Enum, Values: []string{"Manual", "Documents", "Programs", "BranchCache", "None"}})
-	create.Guard = createGuard
+	create.Check = createGuard
 	set := entry(tier2, "share_set", "Change a share", 30, winmod.Typed[Done](), device(), shareName(true),
 		winmod.Param{Name: "description", Type: winmod.Text, Max: 256},
 		winmod.Param{Name: "enumeration", Type: winmod.Enum, Values: []string{"AccessBased", "Unrestricted"}},
 		winmod.Param{Name: "caching", Type: winmod.Enum, Values: []string{"Manual", "Documents", "Programs", "BranchCache", "None"}},
 		winmod.Param{Name: "concurrentLimit", Type: winmod.Int, Min: 0, Max: 1000000},
 		winmod.Param{Name: "encrypt", Type: winmod.Bool})
-	set.Guard = protectedGuard("name")
+	set.Check = protectedGuard("name")
 	grant := entry(tier2, "share_access_grant", "Grant share access", 30, winmod.Typed[Done](), device(), shareName(true), acct(),
 		winmod.Param{Name: "right", Type: winmod.Enum, Required: true, Values: []string{"Read", "Change", "Full"}})
-	grant.Guard = grantGuard
+	grant.Check = grantGuard
 	revoke := entry(tier2, "share_access_revoke", "Revoke share access", 30, winmod.Typed[Done](), device(), shareName(true), acct())
-	revoke.Guard = protectedGuard("name")
+	revoke.Check = protectedGuard("name")
 	block := entry(tier2, "share_access_block", "Block an account from a share", 30, winmod.Typed[Done](), device(), shareName(true), acct())
-	block.Guard = blockGuard
+	block.Check = blockGuard
 	unblock := entry(tier2, "share_access_unblock", "Unblock an account", 30, winmod.Typed[Done](), device(), shareName(true), acct())
-	unblock.Guard = protectedGuard("name")
+	unblock.Check = protectedGuard("name")
 	remove := entry(tier3, "share_remove", "Remove a share (not its files)", 60, winmod.Typed[Done](), device(), shareName(true))
-	remove.Guard = protectedGuard("name")
+	remove.Check = protectedGuard("name")
 
 	return []winmod.Action{
 		status, list,

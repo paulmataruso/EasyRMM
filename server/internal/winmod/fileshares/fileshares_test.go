@@ -54,8 +54,8 @@ func TestCatalogLint(t *testing.T) {
 		if a.Changes && strings.Contains(a.Name, "share_") && !strings.Contains(a.Script, "Assert-Unprotected") {
 			t.Errorf("%s: the script does not refuse protected shares", a.Name)
 		}
-		if a.Guard == nil && strings.Contains(a.Name, "share_") && a.Changes {
-			t.Errorf("%s: no server-side guard", a.Name)
+		if a.Check == nil && strings.Contains(a.Name, "share_") && a.Changes {
+			t.Errorf("%s: no server-side check", a.Name)
 		}
 	}
 	for _, n := range tier2 {

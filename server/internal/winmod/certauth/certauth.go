@@ -294,7 +294,7 @@ func Actions() []winmod.Action {
 		winmod.Param{Name: "fromId", Type: winmod.Int, Min: 0}))
 	list.CountField = "requests"
 	get := sensitive(entry(tier0, "request_get", "Read one request or certificate", 30, winmod.Typed[RequestOne](), requestID(false), serial(false)))
-	get.Guard = oneOf("id", "serial")
+	get.Check = oneOf("id", "serial")
 	activity := sensitive(entry(tier0, "activity", "Read the certificate services audit events", 60, winmod.Typed[Activity]()))
 	activity.CountField = "events"
 

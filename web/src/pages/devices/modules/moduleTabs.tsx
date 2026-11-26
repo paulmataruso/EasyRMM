@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import type { Device, DeviceRoles, Permission } from "../../../api/types";
 import { BackupTab } from "../backup/BackupTab";
 import { SecurityTab } from "./SecurityTab";
+import { RolesTab } from "./roles/RolesTab";
+import { ROLE_VIEWS } from "./roles/registry";
 
 // The Windows management modules' tabs on the device page (ADR-0073, section 7). A module is one line in
 // DEVICE_MODULE_TABS. What a tab does with the device's roles and the module's toggle is `moduleTabState`, one rule
@@ -14,6 +16,8 @@ export interface DeviceModuleTab {
   module: string;
   permission: Permission;
   component: ComponentType<{ device: Device }>;
+  /** A tab with a view per module (the Roles tab, ADR-0076): shown when any of them is, with the view's own rule. */
+  views?: readonly { module: string; permission: Permission }[];
 }
 
 /** The registry. A later module (ADR-0075 to 0077) adds one line here and one file beside this one. */
@@ -32,6 +36,15 @@ export const DEVICE_MODULE_TABS: readonly DeviceModuleTab[] = [
     permission: "backup.view",
     component: BackupTab,
   },
+  // Server roles (ADR-0076): one tab, a view per role; a role adds its line to roles/registry.ts, not here.
+  {
+    id: "roles",
+    label: "Roles",
+    module: "roles",
+    permission: "dns.view",
+    views: ROLE_VIEWS,
+    component: RolesTab,
+  },
 ];
 
 /**
@@ -47,8 +60,10 @@ export function moduleTabState(
   roles: DeviceRoles | undefined,
   can: (p: Permission) => boolean,
 ): ModuleTabState {
-  if (!can(tab.permission) || !roles?.known) return "absent";
-  const role = roles.roles.find((r) => r.module === tab.module);
-  if (!role) return "absent";
-  return role.enabled ? "shown" : "off";
+  if (!roles?.known) return "absent";
+  const states = (tab.views ?? [{ module: tab.module, permission: tab.permission }]).map((v): ModuleTabState => {
+    const role = can(v.permission) ? roles.roles.find((r) => r.module === v.module) : undefined;
+    return !role ? "absent" : role.enabled ? "shown" : "off";
+  });
+  return states.includes("shown") ? "shown" : states.includes("off") ? "off" : "absent";
 }

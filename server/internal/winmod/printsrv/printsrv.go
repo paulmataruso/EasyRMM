@@ -231,7 +231,7 @@ func Actions() []winmod.Action {
 	port := entry(tier2, "port_add", "Add a TCP/IP printer port", 30, winmod.Typed[Count](), device(), nameParam("name", true),
 		winmod.Param{Name: "address", Type: winmod.Text, Required: true, Max: 45},
 		winmod.Param{Name: "port", Type: winmod.Int, Required: true, Min: 1, Max: 65535})
-	port.Guard = portGuard
+	port.Check = portGuard
 
 	return []winmod.Action{
 		scheduled(entry(tier0, "status", "Read the print server state", 60, winmod.Typed[Status]())),
