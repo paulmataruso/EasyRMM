@@ -170,6 +170,10 @@ type ChannelReport struct {
 	// Since is when the connection began, in Unix seconds on the agent's
 	// clock.
 	Since int64 `json:"since"`
+	// LastReplayed is when, in Unix seconds on the agent's clock, an upgrade
+	// of the agent's was answered 401 replayed: someone else used its
+	// request. Zero for never. A report with no ConnID says only this.
+	LastReplayed int64 `json:"lastReplayed,omitempty"`
 }
 
 // Errors from the channel's verification.

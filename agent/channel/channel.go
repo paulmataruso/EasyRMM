@@ -38,6 +38,26 @@ type Wake struct {
 	Reason string
 }
 
+// Handlers are what the agent does with the instructions the server pushes
+// (ADR-0059, M1 to M5). Each is the function that applies the same
+// instruction when a heartbeat answer or a poll answer carries it, so there
+// is one implementation. A handler that is nil makes its message type
+// unlisted. Logs runs on the reader's goroutine, in order; the others run on
+// goroutines of their own.
+type Handlers struct {
+	// Jobs takes a poll's answer: signed jobs and cancellations.
+	Jobs func(ctx context.Context, p *agentproto.PollResponse)
+	// Logs takes the log instructions (nil means none, which ends them).
+	Logs func(*agentproto.LogInstructions)
+	// Repair takes a signed repair step.
+	Repair func(ctx context.Context, r *agentproto.SignedRepair)
+	// PollNow takes a "jobs" wake: one ordinary poll now. Without it a jobs
+	// wake is a check-in.
+	PollNow func()
+	// Settings takes the settings of a heartbeat answer.
+	Settings func(ctx context.Context, s agentproto.ChannelSettings)
+}
+
 // Timing is the channel's clocks, shortened by tests.
 type Timing struct {
 	Hello      time.Duration // the hello after the 101 (10 s)
@@ -71,6 +91,9 @@ func (t *Timing) defaults() {
 // maxRetryAfter caps the server's Retry-After, which is not signed.
 const maxRetryAfter = 30 * time.Minute
 
+// replayedFor is how long the heartbeat reports a replayed upgrade.
+const replayedFor = 15 * time.Minute
+
 // stopAfter is how many verified messages the agent did not list it takes
 // from one server instance before it stops connecting.
 const stopAfter = 3
@@ -86,12 +109,18 @@ type Config struct {
 	// whatever the server lists.
 	Off    bool
 	Timing Timing
+	// Device signs the log batches the agent sends; nil sends none.
+	Device ed25519.PrivateKey
+	// Handlers apply what the server pushes.
+	Handlers Handlers
 }
 
 // Channel is one agent's channel.
 type Channel struct {
 	cfg   Config
 	wakes chan Wake
+	// liveChanged is signaled when a connection comes up or ends.
+	liveChanged chan struct{}
 	// changed wakes the loop when Answered changed what it waits for.
 	changed chan struct{}
 
@@ -103,6 +132,9 @@ type Channel struct {
 	instance string // the instance of the last heartbeat answer
 	unlisted map[string]int
 	live     *agentproto.ChannelReport
+	replayed int64 // Unix seconds of the last upgrade answered replayed
+	out      *sender
+	life     context.Context    // Run's, the agent's own
 	cancel   context.CancelFunc // ends the current session
 	fails    int
 }
@@ -113,12 +145,22 @@ func New(cfg Config) *Channel {
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Channel{cfg: cfg, wakes: make(chan Wake, 8), changed: make(chan struct{}, 1), unlisted: map[string]int{}}
+	return &Channel{cfg: cfg, wakes: make(chan Wake, 8), liveChanged: make(chan struct{}, 1), changed: make(chan struct{}, 1), unlisted: map[string]int{}}
 }
 
 // Wakes delivers the wakes the server sent. A wake that finds the buffer
 // full is dropped: whatever it asked for, one check-in does.
 func (c *Channel) Wakes() <-chan Wake { return c.wakes }
+
+// LiveChanged is signaled when a connection comes up or ends.
+func (c *Channel) LiveChanged() <-chan struct{} { return c.liveChanged }
+
+func (c *Channel) signalLive() {
+	select {
+	case c.liveChanged <- struct{}{}:
+	default:
+	}
+}
 
 // Live says whether a verified connection is up.
 func (c *Channel) Live() bool {
@@ -132,10 +174,18 @@ func (c *Channel) Live() bool {
 func (c *Channel) Report() *agentproto.ChannelReport {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var replayed int64
+	if c.replayed != 0 && time.Since(time.Unix(c.replayed, 0)) < replayedFor {
+		replayed = c.replayed
+	}
 	if c.live == nil {
-		return nil
+		if replayed == 0 {
+			return nil
+		}
+		return &agentproto.ChannelReport{LastReplayed: replayed}
 	}
 	r := *c.live
+	r.LastReplayed = replayed
 	return &r
 }
 
@@ -187,6 +237,9 @@ func (c *Channel) ready() bool {
 
 // Run connects, and connects again, until ctx ends.
 func (c *Channel) Run(ctx context.Context) {
+	c.mu.Lock()
+	c.life = ctx
+	c.mu.Unlock()
 	for ctx.Err() == nil {
 		if !c.ready() {
 			select {
@@ -252,8 +305,9 @@ func (c *Channel) session(parent context.Context) time.Duration {
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
-		c.cancel, c.live = nil, nil
+		c.cancel, c.live, c.out = nil, nil, nil
 		c.mu.Unlock()
+		c.signalLive()
 	}()
 
 	began := time.Now()
@@ -287,6 +341,9 @@ func (c *Channel) refused(ctx context.Context, err error) time.Duration {
 			return min(e.RetryAfter, maxRetryAfter)
 		case e.Status == 401 && e.Code == "replayed":
 			c.cfg.Log.Warn("the channel's upgrade request was used by someone else; the connection is not trusted")
+			c.mu.Lock()
+			c.replayed = time.Now().Unix()
+			c.mu.Unlock()
 		}
 	}
 	c.cfg.Log.Info("connecting the channel failed; the agent keeps checking in", "error", err)
@@ -329,8 +386,12 @@ func (c *Channel) serve(ctx context.Context, ws *websocket.Conn, nonce string, b
 	}
 	c.instance = hello.Instance
 	c.live = &agentproto.ChannelReport{ConnID: connID, Since: began.Unix()}
+	if c.cfg.Device != nil {
+		c.out = newSender(ws, connID, c.cfg.Device)
+	}
 	c.mu.Unlock()
 	c.resetFailures()
+	c.signalLive()
 	c.cfg.Log.Info("the channel is up")
 	// Check in at once: the heartbeat names the connection and confirms it.
 	c.emit(Wake{What: agentproto.WakeCheckin, Reason: "connected"})
@@ -341,6 +402,9 @@ func (c *Channel) serve(ctx context.Context, ws *websocket.Conn, nonce string, b
 	wg.Add(2)
 	go func() { defer wg.Done(); c.ping(gctx, ws) }()
 	go func() { defer wg.Done(); c.watchSleep(gctx, ws, slept) }()
+	// Handlers outlive the connection: a job accepted over it must not be
+	// canceled when it ends, so they run under the agent's own context.
+	pushed := func(f func()) { go f() }
 	defer wg.Wait()
 	defer func() { _ = ws.CloseNow() }()
 	defer gcancel()
@@ -382,7 +446,15 @@ func (c *Channel) serve(ctx context.Context, ws *websocket.Conn, nonce string, b
 			if m.What != agentproto.WakeCheckin && m.What != agentproto.WakeJobs {
 				return c.unlistedMessage(hello.Instance, m)
 			}
+			if m.What == agentproto.WakeJobs && c.cfg.Handlers.PollNow != nil {
+				c.cfg.Handlers.PollNow()
+				continue
+			}
 			c.emit(Wake{What: m.What, Reason: m.Reason})
+		case agentproto.TypeJobs, agentproto.TypeLogs, agentproto.TypeRepair, agentproto.TypeSettings, agentproto.TypeLogsAck:
+			if !c.push(c.runCtx(), m, pushed) {
+				return c.unlistedMessage(hello.Instance, m)
+			}
 		case agentproto.TypeClosing:
 			if d, ok := c.closing(m); ok {
 				return d
@@ -506,4 +578,15 @@ func (c *Channel) watchSleep(ctx context.Context, ws *websocket.Conn, slept chan
 		}
 		last = now
 	}
+}
+
+// runCtx is the agent's own context, which a connection's end does not
+// cancel.
+func (c *Channel) runCtx() context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.life == nil {
+		return context.Background()
+	}
+	return c.life
 }

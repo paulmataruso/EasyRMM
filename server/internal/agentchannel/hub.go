@@ -119,6 +119,10 @@ type Hub struct {
 	waiting  map[uuid.UUID]struct{}
 	heldSeen bool
 
+	wakeMu  sync.Mutex
+	wakeQ   []uuid.UUID
+	wakeSet map[uuid.UUID]string
+
 	fd fdGate
 }
 
@@ -155,6 +159,11 @@ func New(o Options) *Hub {
 // SetHeld tells the hub how to tell that the updater holds the server. Call
 // it before Run.
 func (h *Hub) SetHeld(f func() bool) { h.opt.Held = f }
+
+// UseClaim sets the claim loop's function and UseLogBatch the one that stores
+// a log batch; both are for the code that decides, and are set before Run.
+func (h *Hub) UseClaim(f ClaimFunc)       { h.opt.Claim = f }
+func (h *Hub) UseLogBatch(f LogBatchFunc) { h.opt.OnLogBatch = f }
 
 // Enabled says whether the channel is on. False for a nil hub.
 func (h *Hub) Enabled() bool { return h != nil && h.opt.Enabled }
@@ -211,7 +220,7 @@ func (h *Hub) Heartbeat(device uuid.UUID, rep *agentproto.ChannelReport, signedA
 		return
 	}
 	e.lastHeartbeat = signedAt
-	if rep == nil {
+	if rep == nil || rep.ConnID == "" { // no connection held: nothing to confirm or contradict
 		h.mu.Unlock()
 		return
 	}
@@ -385,6 +394,9 @@ func (h *Hub) Run(ctx context.Context) {
 	held := time.NewTicker(h.tm.HeldCheck)
 	defer sweep.Stop()
 	defer held.Stop()
+	wctx, stopWakes := context.WithCancel(ctx)
+	defer stopWakes()
+	go h.releaseWakes(wctx)
 	for {
 		select {
 		case <-ctx.Done():

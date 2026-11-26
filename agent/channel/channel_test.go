@@ -34,6 +34,8 @@ type fake struct {
 	refuse func(w http.ResponseWriter) bool
 	// script runs after the hello; the frames it sends are numbered from 2.
 	script func(s *session)
+	// onAgent, if set, sees each frame the agent sends.
+	onAgent func(s *session, data []byte)
 	// helloNonce, if set, replaces the upgrade's nonce in the hello.
 	helloNonce string
 	instance   string
@@ -81,8 +83,12 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	// Count the agent's pings: reading is what answers them.
 	go func() {
 		for {
-			if _, _, err := ws.Read(context.Background()); err != nil {
+			_, data, err := ws.Read(context.Background())
+			if err != nil {
 				return
+			}
+			if f.onAgent != nil {
+				f.onAgent(s, data)
 			}
 		}
 	}()
