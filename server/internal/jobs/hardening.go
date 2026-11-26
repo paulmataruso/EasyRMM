@@ -305,7 +305,7 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 			sp.details["guardMinutes"] = change.guard
 		}
 	}
-	return s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
+	job, err := s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
 		ts, err := s.targets(ctx, tx, c, ids, r)
 		if err != nil {
 			return nil, err
@@ -315,6 +315,14 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 		}
 		return ts, nil
 	})
+	if err == nil && h.platform() == HardeningWindows && h.Mode == HardeningUndo {
+		// An undo comes first: the device's daily check that has not
+		// started is canceled.
+		if cerr := s.cancelDailyChecks(ctx, ids); cerr != nil {
+			s.log.Warn("jobs: canceling daily checks for an undo failed", "error", cerr)
+		}
+	}
+	return job, err
 }
 
 // States a module can be in.

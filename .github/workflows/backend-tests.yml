@@ -414,6 +414,25 @@ jobs:
         if: matrix.runner == 'windows-2025'
         shell: pwsh
         run: ./scripts/ci/check-powershell.ps1
+      # Windows PowerShell 5.1, which runs on every matrix runner (this
+      # job's shell), must parse the scripts the agent runs: the hardening
+      # script, the ownership reader and the software script. The hardening
+      # script's apply and undo logic also runs here on a registry that is a
+      # hashtable (TestWindowsApplyUndoFlowOnWindows); the AsSystem tests
+      # below run it for real, with TestWindowsHardeningApplyUndoAsSystem.
+      - name: Windows PowerShell 5.1 parses the scripts
+        run: |
+          $bad = 0
+          foreach ($f in (Get-ChildItem -Recurse -Filter '*.ps1' -Path server/internal/jobs, internal/winpolicy)) {
+            $t = $null; $e = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$t, [ref]$e)
+            foreach ($x in $e) { Write-Host "$($f.FullName):$($x.Extent.StartLineNumber): $($x.Message)"; $bad++ }
+          }
+          Write-Host "PowerShell $($PSVersionTable.PSVersion): $bad parse error(s)"
+          if ($PSVersionTable.PSVersion.Major -ne 5) { Write-Error 'This step is to run Windows PowerShell 5.1.'; exit 1 }
+          exit $bad
+      - name: Apply and undo logic of the hardening script on PowerShell 5.1
+        run: go test -count=1 -v -run 'TestWindowsApplyUndoFlowOnWindows' ./server/internal/jobs/
       - name: Build the tests
         run: |
           go test -c -o "$env:RUNNER_TEMP\winpolicy.test.exe" ./internal/winpolicy

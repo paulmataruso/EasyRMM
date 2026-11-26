@@ -43,8 +43,16 @@ function Set-ErRegistryData {
 }
 function Remove-ErRegistryData { param([string]$Path, [string]$Name) $script:Reg.Remove("$Path|$Name") }
 function Resolve-ErRegistryOwner { return $null }
+function Resolve-ErSecurityOwner { return $null }
 function Get-ErModuleGate { return $null }
 function Save-ErManifest { param($Manifest) $script:Saved = ($Manifest | ConvertTo-Json -Depth 10) }
+$script:Sec = @{ MinimumPasswordLength = '7'; LockoutBadCount = '0'; PasswordComplexity = '0' }
+$script:Smb = @{ 'server|EnableSMB1Protocol' = $true; 'server|RequireSecuritySignature' = $false }
+function Get-ErSecurityPolicy { return $script:Sec }
+function Set-ErSecurityValue { param([string]$Key, $Data) $script:Sec[$Key] = [string]$Data }
+function Get-SmbServerConfiguration { [CmdletBinding()] param() return [pscustomobject]@{ EnableSMB1Protocol = $script:Smb['server|EnableSMB1Protocol']; RequireSecuritySignature = $script:Smb['server|RequireSecuritySignature']; EnableSecuritySignature = $true } }
+function Set-ErSmbValue { param([string]$Side, [string]$Property, $Data) $script:Smb["$Side|$Property"] = [bool]$Data }
+function Get-ErExposure { return @{ Read = $true; Exposed = $false; Accounts = @(); Addresses = @(); Bursts = @(); Since = $null; SinceReason = 'none' } }
 function Test-ErFeatureSetting { param($Def) return New-ErSetting $Def 'not_in_place' 'present' 'absent' }
 function Show { param($Name, $Value) "${Name}: $Value" }
 function Get-Reg { param($Name) $m = $script:Reg.Keys | Where-Object { $_ -like "*|$Name" }; if ($m) { return [string]$script:Reg[$m].Data } return 'absent' }
@@ -161,3 +169,56 @@ $ErCannotTell = @('mdm')
 $m = Invoke-ErUndo 'autoplay' @() $man $now
 Show 'cannot outcome' $m.outcome
 Show 'cannot NoAutorun' (Get-Reg 'NoAutorun')
+
+# 13. Security policy values: written through secedit, read back, put back.
+$script:Reg.Clear(); $ErCannotTell = @()
+$man = New-ErManifest
+$c10 = New-Object System.Collections.ArrayList
+$m = Invoke-ErApply 'accounts' @('accounts-min-length', 'accounts-complexity', 'accounts-lockout-threshold') $man $now $c10
+Show 'sec outcome' $m.outcome
+Show 'sec changed' ($c10 -join ',')
+Show 'sec length' $script:Sec['MinimumPasswordLength']
+Show 'sec lockout' $script:Sec['LockoutBadCount']
+$man2 = ConvertTo-ErPlain (ConvertFrom-Json (ConvertTo-Json $man -Depth 10))
+$m = Invoke-ErUndo 'accounts' @() $man2 $now
+Show 'sec undo' $m.outcome
+Show 'sec length undone' $script:Sec['MinimumPasswordLength']
+Show 'sec lockout undone' $script:Sec['LockoutBadCount']
+
+# 14. SMB's configuration, and Schannel and WinRM as registry values.
+$man = New-ErManifest
+$c11 = New-Object System.Collections.ArrayList
+$m = Invoke-ErApply 'smb' @('smb-server-smb1') $man $now $c11
+Show 'smb outcome' $m.outcome
+Show 'smb value' $script:Smb['server|EnableSMB1Protocol']
+$m = Invoke-ErUndo 'smb' @() $man $now
+Show 'smb undo' $m.outcome
+Show 'smb undone' $script:Smb['server|EnableSMB1Protocol']
+$script:Reg.Clear()
+$ErPlatform.Build = 20348
+$man = New-ErManifest
+$c12 = New-Object System.Collections.ArrayList
+$m = Invoke-ErApply 'tls' @('tls-tls10-server') $man $now $c12
+Show 'tls outcome' $m.outcome
+Show 'tls restart' $m.restart
+Show 'tls value' (Get-Reg 'Enabled')
+$m = Invoke-ErUndo 'tls' @() $man $now
+Show 'tls undone' (Get-Reg 'Enabled')
+
+# 15. An owner may set it again: restored with a note; Group Policy preferences leave it.
+$script:Reg.Clear()
+$man = New-ErManifest
+$c13 = New-Object System.Collections.ArrayList
+[void](Invoke-ErApply 'autoplay' @('autoplay-autorun') $man $now $c13)
+$ErCannotTell = @('dsc')
+$m = Invoke-ErUndo 'autoplay' @() $man $now
+Show 'dsc outcome' $m.outcome
+Show 'dsc note' (Get-Setting $m 'autoplay-autorun').note
+$man = New-ErManifest
+[void](Invoke-ErApply 'autoplay' @('autoplay-autorun') $man $now $c13)
+$ErCannotTell = @('group_policy_preferences')
+$m = Invoke-ErUndo 'autoplay' @() $man $now
+Show 'prefs outcome' $m.outcome
+$ErCannotTell = @('group_policy_record_off')
+$m = Invoke-ErUndo 'autoplay' @() $man $now
+Show 'record-off policy key' $m.outcome

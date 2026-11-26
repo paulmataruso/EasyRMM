@@ -124,6 +124,9 @@ func (s *Service) Run(ctx context.Context) {
 		if _, err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
 			s.log.Error("jobs: sweeping runs failed", "error", err)
 		}
+		if _, err := s.QueueDailyChecks(ctx); err != nil && ctx.Err() == nil {
+			s.log.Error("jobs: queueing daily hardening checks failed", "error", err)
+		}
 		if time.Since(lastPurge) >= time.Hour {
 			if p, err := s.Purge(ctx); err != nil && ctx.Err() == nil {
 				s.log.Error("jobs: retention failed", "error", err)
@@ -207,7 +210,16 @@ func (s *Service) Purge(ctx context.Context) (Purged, error) {
 		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.created_at < now() - make_interval(secs => $1)
 			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
 			s.retention.Seconds())
+		if err != nil {
+			return err
+		}
 		p.Jobs = tag.RowsAffected()
+		// Daily checks are kept for seven days only (ADR-0054's amendment
+		// of ADR-0017); the last result per device and module stays.
+		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.batch_id IS NOT NULL AND j.created_at < now() - make_interval(secs => $1)
+			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
+			DailyCheckRetention.Seconds())
+		p.Jobs += tag.RowsAffected()
 		return err
 	})
 	return p, err

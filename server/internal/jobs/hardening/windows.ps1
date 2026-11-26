@@ -1596,6 +1596,72 @@ function ConvertTo-ErValueRecord {
     return @{ exists = $false; kind = ''; data = $null }
 }
 
+# The stores apply writes. A record (in the manifest, and as built from a
+# setting) names one: registry (path, name), secedit (key: a value of the
+# security policy's System Access) or smb (side, property: a value of the
+# SMB server's or client's configuration). Reads return Exists, Data, Kind
+# and Error as Get-ErRegistryValue does.
+function Read-ErStore {
+    param($Rec)
+    switch ([string]$Rec.store) {
+        'registry' { return Get-ErRegistryValue $Rec.path $Rec.name }
+        'secedit' {
+            $null = $ErCache.Remove('secedit')
+            $p = Get-ErSecurityPolicy
+            if ($null -eq $p) { return @{ Exists = $false; Data = $null; Kind = ''; Error = 'secedit did not export the security policy.' } }
+            if ($p.ContainsKey([string]$Rec.key)) { return @{ Exists = $true; Data = $p[[string]$Rec.key]; Kind = 'Secedit'; Error = '' } }
+            return @{ Exists = $false; Data = $null; Kind = ''; Error = '' }
+        }
+        'smb' {
+            try {
+                $null = $ErCache.Remove('smb-' + $Rec.side)
+                $c = $(if ($Rec.side -eq 'server') { Get-SmbServerConfiguration -ErrorAction Stop } else { Get-SmbClientConfiguration -ErrorAction Stop })
+                return @{ Exists = $true; Data = $c.($Rec.property); Kind = 'Smb'; Error = '' }
+            } catch {
+                return @{ Exists = $false; Data = $null; Kind = ''; Error = "SMB's configuration could not be read: $($_.Exception.Message)" }
+            }
+        }
+    }
+    return @{ Exists = $false; Data = $null; Kind = ''; Error = 'unknown store' }
+}
+
+function Set-ErSecurityValue {
+    param([string]$Key, $Data)
+    $inf = Join-Path $ErWork 'apply.inf'
+    $db = Join-Path $ErWork 'apply.sdb'
+    $lines = @('[Unicode]', 'Unicode=yes', '[Version]', 'signature="$CHICAGO$"', 'Revision=1', '[System Access]', "$Key = $Data")
+    [IO.File]::WriteAllText($inf, (($lines -join "`r`n") + "`r`n"), [Text.Encoding]::Unicode)
+    try {
+        $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\secedit.exe') @('/configure', '/db', $db, '/cfg', $inf, '/areas', 'SECURITYPOLICY', '/quiet') 120
+        if ($run.ExitCode -ne 0) { throw "secedit /configure exited with $($run.ExitCode)." }
+    } finally {
+        Remove-Item -LiteralPath $inf, $db -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Set-ErSmbValue {
+    param([string]$Side, [string]$Property, $Data)
+    $a = @{ Force = $true }
+    $a[$Property] = [bool]$Data
+    if ($Side -eq 'server') { Set-SmbServerConfiguration @a } else { Set-SmbClientConfiguration @a }
+}
+
+# Write-ErStore: a value; Restore-ErStore: what the record held before.
+function Write-ErStore {
+    param($Rec, $Data, [string]$Kind = 'DWord')
+    switch ([string]$Rec.store) {
+        'registry' { Set-ErRegistryData $Rec.path $Rec.name $Kind $Data }
+        'secedit' { Set-ErSecurityValue $Rec.key $Data }
+        'smb' { Set-ErSmbValue $Rec.side $Rec.property $Data }
+    }
+}
+
+function Restore-ErStore {
+    param($Rec, $Before)
+    if ([string]$Rec.store -eq 'registry' -and -not $Before.exists) { Remove-ErRegistryData $Rec.path $Rec.name; return }
+    Write-ErStore $Rec $Before.data $Before.kind
+}
+
 # Whether a read value is the manifest's value record.
 function Test-ErValueIs {
     param($Read, $Record)
@@ -1603,19 +1669,31 @@ function Test-ErValueIs {
     return ($Read.Exists -and "$($Read.Data)" -eq "$($Record.data)")
 }
 
-function Restore-ErValue {
-    param([string]$Path, [string]$Name, $Before)
-    if ($Before.exists) { Set-ErRegistryData $Path $Name $Before.kind $Before.data } else { Remove-ErRegistryData $Path $Name }
+# The record apply makes of a setting that is not in place, with what it
+# would write: $null where this release writes nothing for it (the second
+# value says why).
+function Get-ErStoreRecord {
+    param($Def)
+    switch ([string]$Def.kind) {
+        'registry' { return @{ store = 'registry'; path = [string]$Def.path; name = [string]$Def.name } }
+        'winrm' { return @{ store = 'registry'; path = [string]$Def.path; name = [string]$Def.name } }
+        'schannel' { return @{ store = 'registry'; path = [string]$Def.path; name = 'Enabled' } }
+        'secedit' { return @{ store = 'secedit'; key = [string]$Def.key } }
+        'smb' { return @{ store = 'smb'; side = [string]$Def.side; property = [string]$Def.property } }
+    }
+    return $null
 }
 
-# What apply writes for a registry setting, from what it holds now.
-function Get-ErRegistryTarget {
+# What apply writes for a setting, from what it holds now.
+function Get-ErTarget {
     param($Def, $Current)
     $d = $Def.data
+    if ([string]$Def.kind -eq 'schannel') { return 0 }
     switch ([string]$Def.want) {
         'eq' { return $d }
         'min' { return $d }
         'in' { return @($d)[0] }
+        'range' { return $Def.max }
         'bits' {
             if ($Current.Exists) { return [uint32](([int64]$Current.Data) -bor ([int64]$d)) }
             return $d
@@ -1645,10 +1723,9 @@ function Add-ErSettingOutcome {
     }
 }
 
-# Invoke-ErApply: one module. Reads it, writes each registry setting that
-# is not in place and that no other owner holds, reads each back, and
-# reads the module again for its state. Returns the module's result, with
-# Changed (the ids written) in the $Changed list.
+# Invoke-ErApply: one module. Reads it, writes each setting that is not in
+# place and that no other owner holds, reads each back, and reads the
+# module again for its state. The ids written are added to $Changed.
 function Invoke-ErApply {
     param([string]$Name, [string[]]$Only, $Manifest, [string]$Now, [System.Collections.ArrayList]$Changed)
     if ($ErReportOnly -contains $Name) {
@@ -1665,6 +1742,7 @@ function Invoke-ErApply {
     $plans = @()
     $skipped = 0
     $readFailed = 0
+    $lockoutHeld = [bool]($pre.exposure -and $pre.exposure.exposed -and -not (Test-ErOption 'lockout-exposed'))
     foreach ($s in @($pre.settings)) {
         if ($s.state -eq 'in_place') { continue }
         $def = @($ErSettings | Where-Object { $_.id -eq $s.id })[0]
@@ -1676,29 +1754,36 @@ function Invoke-ErApply {
             continue
         }
         $d = Get-ErOptionDef $def
-        if ([string]$d.kind -ne 'registry') {
+        $rec = Get-ErStoreRecord $d
+        if ($null -eq $rec) {
             $skipped++
-            Add-ErSettingOutcome $pre $s.id 'skipped' "This release does not write settings of kind $($d.kind); change it by hand or by policy."
+            Add-ErSettingOutcome $pre $s.id 'skipped' "This release only checks settings of kind $($d.kind) (ADR-0054, W2): each needs its machine test before it is written."
             continue
         }
-        $cur = Get-ErRegistryValue $d.path $d.name
+        if ($lockoutHeld -and [string]$d.id -like 'accounts-lockout-*') {
+            $skipped++
+            Add-ErSettingOutcome $pre $s.id 'skipped' 'Failed sign-ins from public addresses were seen: no lockout is set here without lockout-exposed.'
+            continue
+        }
+        $cur = Read-ErStore $rec
         if ($cur.Error) {
             $readFailed++
             Add-ErSettingOutcome $pre $s.id 'failed' $cur.Error
             continue
         }
-        if ($cur.Exists -and @('DWord', 'String') -notcontains [string]$cur.Kind) {
+        if ($rec.store -eq 'registry' -and $cur.Exists -and @('DWord', 'String') -notcontains [string]$cur.Kind) {
             $skipped++
             Add-ErSettingOutcome $pre $s.id 'skipped' "The value holds a $($cur.Kind), which this release does not restore."
             continue
         }
-        $target = Get-ErRegistryTarget $d $cur
+        $target = Get-ErTarget $d $cur
         if ($null -eq $target) {
             $skipped++
             Add-ErSettingOutcome $pre $s.id 'skipped' 'What to write is not defined for this setting.'
             continue
         }
-        $plans += @{ id = [string]$d.id; path = [string]$d.path; name = [string]$d.name; cur = $cur; target = $target; kind = $(if ($target -is [string]) { 'String' } else { 'DWord' }) }
+        $rec.kind = $rec.store
+        $plans += @{ id = [string]$d.id; rec = $rec; cur = $cur; target = $target; vkind = $(if ($target -is [string]) { 'String' } else { 'DWord' }) }
     }
     $mod = $pre
     if ($plans.Count -gt 0) {
@@ -1707,7 +1792,14 @@ function Invoke-ErApply {
         $entry = @{ intent = $Now; done = $null; settings = @{} }
         if ($had -and $had.settings) { foreach ($k in $had.settings.Keys) { $entry.settings[$k] = $had.settings[$k] } }
         foreach ($p in $plans) {
-            $entry.settings[$p.id] = @{ kind = 'registry'; path = $p.path; name = $p.name; before = (ConvertTo-ErValueRecord $p.cur); target = $p.target; after = $null; at = $null }
+            $r = @{}
+            foreach ($k in $p.rec.Keys) { $r[$k] = $p.rec[$k] }
+            $r.before = ConvertTo-ErValueRecord $p.cur
+            $r.target = $p.target
+            $r.vkind = $p.vkind
+            $r.after = $null
+            $r.at = $null
+            $entry.settings[$p.id] = $r
         }
         $Manifest.modules[$Name] = $entry
         Save-ErManifest $Manifest
@@ -1715,8 +1807,8 @@ function Invoke-ErApply {
             $rec = $entry.settings[$p.id]
             $note = ''
             try {
-                Set-ErRegistryData $p.path $p.name $p.kind $p.target
-                $back = Get-ErRegistryValue $p.path $p.name
+                Write-ErStore $rec $p.target $p.vkind
+                $back = Read-ErStore $rec
                 if ($back.Exists -and "$($back.Data)" -eq "$($p.target)") {
                     $rec.after = ConvertTo-ErValueRecord $back
                     $rec.at = $Now
@@ -1727,13 +1819,14 @@ function Invoke-ErApply {
             } catch {
                 $note = 'Writing failed: ' + $_.Exception.Message
             }
-            try { Restore-ErValue $p.path $p.name $rec.before } catch { $note += ' It could not be put back: ' + $_.Exception.Message }
+            try { Restore-ErStore $rec $rec.before } catch { $note += ' It could not be put back: ' + $_.Exception.Message }
             $entry.settings.Remove($p.id)
             $p.failed = $note
         }
         $entry.done = $Now
         if ($entry.settings.Count -eq 0) { $Manifest.modules.Remove($Name) }
         Save-ErManifest $Manifest
+        $null = $ErCache.Remove('smb-server'), $ErCache.Remove('smb-client')
         $mod = Invoke-ErModule $Name $Only
         foreach ($p in $plans) {
             if ($p.failed) {
@@ -1745,6 +1838,8 @@ function Invoke-ErApply {
         foreach ($s in @($pre.settings)) {
             if ($s.outcome -and -not ($plans | Where-Object { $_.id -eq $s.id })) { Add-ErSettingOutcome $mod $s.id $s.outcome $s.note }
         }
+        # A change that waits for a restart (Schannel's protocols).
+        if ($Name -eq 'tls' -and @($plans | Where-Object { -not $_.failed }).Count -gt 0) { $mod.restart = $true }
     } else {
         foreach ($s in @($pre.settings)) {
             if ($s.state -eq 'in_place' -and -not $s.outcome) { $s.outcome = 'unchanged' }
@@ -1764,18 +1859,33 @@ function Invoke-ErApply {
     return Set-ErOutcome $mod 'unchanged' ''
 }
 
-# Whether undo leaves a value because an owner the reader cannot read may
-# write it again (ADR-0054, Before anything changes).
-function Get-ErLeaveReason {
-    param([string]$Path)
+# Get-ErLeave: whether undo leaves a value because an owner the reader
+# cannot read may write it again (ADR-0054, Before anything changes), and
+# a note where it restores one that an owner may set again.
+#   Store   registry or secedit (or smb, which no owner but an MDM sets)
+#   returns @{ Leave = $bool; Why = text }
+function Get-ErLeave {
+    param([string]$Store, [string]$Path)
     $r = @($ErCannotTell)
-    if ($r -contains 'group_policy_preferences' -or $r -contains 'mdm' -or $r -contains 'osconfig' -or $r -contains 'unreadable') {
-        return 'An owner this script cannot read (' + ($r -join ', ') + ') may write it.'
+    # Group Policy's preference items set any registry value; an MDM, an
+    # OSConfig scenario or a reader that failed may set any value no other
+    # owner holds.
+    if ($r -contains 'mdm' -or $r -contains 'osconfig' -or $r -contains 'unreadable') {
+        return @{ Leave = $true; Why = 'An owner this script cannot read (' + (($r | Where-Object { @('mdm', 'osconfig', 'unreadable') -contains $_ }) -join ', ') + ') may write it.' }
     }
-    if ($r -contains 'group_policy_record_off' -and $Path -match '\\Policies\\') {
-        return 'Group Policy, whose record is turned off, may write it.'
+    if ($Store -eq 'registry' -and $r -contains 'group_policy_preferences') {
+        return @{ Leave = $true; Why = 'A Group Policy preference item may set it.' }
     }
-    return ''
+    # Group Policy with its record turned off: every value it can set, the
+    # registry policy values and the security policy.
+    if ($r -contains 'group_policy_record_off' -and ($Store -eq 'secedit' -or ($Store -eq 'registry' -and $Path -match '\\Policies\\'))) {
+        return @{ Leave = $true; Why = 'Group Policy, whose record is turned off, may write it.' }
+    }
+    # DSC and Azure machine configuration: nothing is left; the owner may
+    # set the value again. Configuration Manager's baselines too.
+    $again = @($r | Where-Object { @('dsc', 'azure_machine_configuration', 'configmgr') -contains $_ })
+    if ($again.Count -gt 0) { return @{ Leave = $false; Why = 'Restored; ' + ($again -join ', ') + ' may set it again.' } }
+    return @{ Leave = $false; Why = '' }
 }
 
 # Invoke-ErUndo: one module, from the manifest.
@@ -1793,24 +1903,25 @@ function Invoke-ErUndo {
     $failed = @()
     foreach ($id in $ids) {
         $rec = $e.settings[$id]
+        if (-not $rec.store) { $rec.store = 'registry' }
         $note = ''
-        $cur = Get-ErRegistryValue $rec.path $rec.name
+        $cur = Read-ErStore $rec
         if ($cur.Error) {
             $left += $id
             $note = 'Left: ' + $cur.Error
         } elseif ($cur.Exists -and "$($cur.Data)" -eq "$($rec.target)") {
-            $why = Get-ErLeaveReason $rec.path
-            if ($why) {
+            $lv = Get-ErLeave ([string]$rec.store) ([string]$rec.path)
+            if ($lv.Leave) {
                 $left += $id
-                $note = "Left: $why"
+                $note = 'Left: ' + $lv.Why
             } else {
                 try {
-                    Restore-ErValue $rec.path $rec.name $rec.before
-                    $back = Get-ErRegistryValue $rec.path $rec.name
+                    Restore-ErStore $rec $rec.before
+                    $back = Read-ErStore $rec
                     if (Test-ErValueIs $back $rec.before) {
                         $restored += $id
                         $e.settings.Remove($id)
-                        Add-ErSettingOutcome $mod $id 'restored' '' $null $Now
+                        Add-ErSettingOutcome $mod $id 'restored' $lv.Why $null $Now
                         continue
                     }
                     $failed += $id
@@ -1835,6 +1946,7 @@ function Invoke-ErUndo {
     }
     if ($e.settings.Count -eq 0) { $Manifest.modules.Remove($Name) }
     Save-ErManifest $Manifest
+    $null = $ErCache.Remove('smb-server'), $ErCache.Remove('smb-client')
     $fresh = Invoke-ErModule $Name $Only
     foreach ($s in @($mod.settings)) { if ($s.outcome) { Add-ErSettingOutcome $fresh $s.id $s.outcome $s.note } }
     $mod = $fresh

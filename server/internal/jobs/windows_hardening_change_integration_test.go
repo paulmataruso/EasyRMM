@@ -188,3 +188,67 @@ func TestWindowsHardeningGuardOutsideScope(t *testing.T) {
 		t.Errorf("a guard outside the scope: %s", n)
 	}
 }
+
+// The daily check: one a day per device with EasyRMM's values in place, at
+// the device's time, never beside a change, and an undo cancels it.
+func TestWindowsHardeningDailyCheck(t *testing.T) {
+	f := newFixture(t)
+	admin := f.user("admin@example.com", rbac.Assignment{Role: rbac.RoleSiteAdmin, OrganizationID: f.acme, SiteID: f.hq})
+	win := f.device(f.hq, "HQ-WIN", "windows")
+	other := f.device(f.hq, "HQ-NOREC", "windows")
+	f.exec(`INSERT INTO device_hardening (device_id, module, state, detail, checked_at)
+		VALUES ($1, 'autoplay', 'in_place', '{"recorded": true}', now()), ($2, 'autoplay', 'in_place', '{}', now())`, win, other)
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	at := func(d time.Duration) { f.svc.now = func() time.Time { return day.Add(d) } }
+	count := func() string {
+		return f.str(`SELECT count(*)::text FROM job_runs r JOIN jobs j ON j.id = r.job_id WHERE r.device_id = $1 AND j.batch_id IS NOT NULL`, win)
+	}
+	off := dailyOffset(win)
+	if off == dailyOffset(other) {
+		t.Skip("two devices with one time")
+	}
+	// Before its time, and after its hour: nothing. The device with no
+	// record never has one.
+	at(off - time.Minute)
+	if n, err := f.svc.QueueDailyChecks(f.ctx); err != nil || n != 0 {
+		t.Fatalf("before its time: %d, %v", n, err)
+	}
+	at(off + dailyCheckWindow + time.Minute)
+	if n, _ := f.svc.QueueDailyChecks(f.ctx); n != 0 {
+		t.Errorf("a missed day was caught up: %d", n)
+	}
+	at(off + time.Minute)
+	if n, err := f.svc.QueueDailyChecks(f.ctx); err != nil || n != 1 {
+		t.Fatalf("at its time: %d, %v", n, err)
+	}
+	if n, _ := f.svc.QueueDailyChecks(f.ctx); n != 0 || count() != "1" {
+		t.Errorf("a second check the same day: %d, %s", n, count())
+	}
+	if m := f.str(`SELECT j.hardening->>'mode' || ' ' || (j.hardening->'modules')::text FROM jobs j WHERE j.batch_id IS NOT NULL`); m != `check ["autoplay"]` {
+		t.Errorf("the job: %s", m)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'device.hardening_daily_check' AND actor_type = 'system'`); n != "1" {
+		t.Errorf("audit rows %s", n)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'device.hardening' AND device_id = $1`, win); n != "0" {
+		t.Errorf("a per-run audit row was written: %s", n)
+	}
+
+	// An undo cancels it, with the system as its actor.
+	if _, err := f.svc.CreateHardeningJob(f.ctx, admin, HardeningInput{DeviceIDs: []uuid.UUID{win}, Confirm: HardeningConfirmation{Agreed: true},
+		Hardening: Hardening{Platform: HardeningWindows, Mode: HardeningUndo, Modules: []string{"autoplay"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.str(`SELECT r.status || ' ' || r.error FROM job_runs r JOIN jobs j ON j.id = r.job_id WHERE j.batch_id IS NOT NULL`); st != "canceled Replaced by an undo." {
+		t.Errorf("the check after an undo: %s", st)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'job.cancel' AND actor_type = 'system'`); n != "1" {
+		t.Errorf("cancel audit rows %s", n)
+	}
+
+	// Retention: seven days.
+	f.asOwner(`UPDATE jobs SET created_at = now() - interval '8 days' WHERE batch_id IS NOT NULL`)
+	if p, err := f.svc.Purge(f.ctx); err != nil || p.Jobs != 1 {
+		t.Errorf("purge %+v, %v", p, err)
+	}
+}

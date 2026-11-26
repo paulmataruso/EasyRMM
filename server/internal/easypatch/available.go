@@ -254,6 +254,13 @@ func (s *Service) installAvailable(ctx context.Context, c access.Caller, cl *Cli
 			items[i].Message = "Not sent: the request ended before this device was sent."
 			return
 		}
+		if held, err := s.hardeningHeld(ctx, d.id); err != nil || held {
+			items[i].Message = heldMessage
+			if err != nil {
+				items[i].Message = "Not sent: a hardening change on this computer could not be ruled out: " + cut(message(err), 200)
+			}
+			return
+		}
 		sctx, cancel := detached(ctx)
 		defer cancel()
 		actx := s.as(sctx, c, RoleAdmin, orgOf(d)...)

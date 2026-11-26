@@ -1272,6 +1272,14 @@ func (s *Service) installChosen(ctx context.Context, c access.Caller, cl *Client
 		return nil
 	}
 	d := devices[0]
+	if held, err := s.hardeningHeld(ctx, d.id); err != nil || held {
+		msg := heldMessage
+		if err != nil {
+			msg = "Not sent: a hardening change on this computer could not be ruled out: " + cut(message(err), 200)
+		}
+		res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: msg})
+		return nil
+	}
 	ctx, cancel := detached(ctx)
 	defer cancel()
 	j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)

@@ -610,3 +610,24 @@ func TestWindowsHardeningApplyUndoAsSystem(t *testing.T) {
 		t.Errorf("no note of the rollback: %v %s", err, b)
 	}
 }
+
+// The apply and undo logic of the script on Windows PowerShell 5.1, which
+// the agent runs it with, against a registry that is a hashtable (the same
+// harness and expected output as the PowerShell 7 test).
+func TestWindowsApplyUndoFlowOnWindows(t *testing.T) {
+	dir, _ := filepath.Abs("hardening")
+	harness, _ := filepath.Abs(filepath.Join("testdata", "windows-flow-harness.ps1"))
+	out, err := exec.Command(windowsPowerShell(), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", harness,
+		"-Script", filepath.Join(dir, "windows.ps1"), "-Settings", filepath.Join(dir, "windows-settings.json")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "windows-flow-expected.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	norm := func(b []byte) string { return strings.ReplaceAll(strings.TrimSpace(string(b)), "\r\n", "\n") }
+	if norm(out) != norm(want) {
+		t.Errorf("the flow printed\n%s\nwant\n%s", out, want)
+	}
+}

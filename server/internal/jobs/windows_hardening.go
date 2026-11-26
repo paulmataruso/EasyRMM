@@ -511,8 +511,10 @@ type WindowsFinding struct {
 	Notes   []string           `json:"notes,omitempty"`
 	// SettingsOmitted is in_place or all when the result had to leave
 	// settings out to stay within its limit.
-	SettingsOmitted string             `json:"settingsOmitted,omitempty"`
-	Exposure        *HardeningExposure `json:"exposure,omitempty"`
+	SettingsOmitted string `json:"settingsOmitted,omitempty"`
+	// Restart: a change this apply made waits for a restart.
+	Restart  bool               `json:"restart,omitempty"`
+	Exposure *HardeningExposure `json:"exposure,omitempty"`
 }
 
 // HardeningSetting is one setting as the check found it.
