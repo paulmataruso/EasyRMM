@@ -113,20 +113,20 @@ func decodeParams(raw json.RawMessage) (map[string]any, error) {
 var contentChange = map[string]bool{"gpo_rename": true, "gpo_delete": true, "gpo_status": true, "sec_filter_add": true, "sec_filter_remove": true, "wmi_set": true, "gpo_restore": true}
 
 // linkedSensitive says, from what the console last read of the GPO on this controller, whether it is linked at the domain
-// root, to the Domain Controllers OU or to a site. A GPO the console never read is not known here (the script reports
-// it, and the audit says so).
+// root, to the Domain Controllers OU or to a site. A GPO the console has no readable record of counts as linked there:
+// the guard fails closed (decided in review), and the console reads a GPO before it offers to change it.
 func linkedSensitive(ctx context.Context, tx pgx.Tx, device uuid.UUID, id string) bool {
 	key, err := winmod.ParamsKey([]byte(`{"id":"` + id + `"}`))
 	if err != nil {
-		return false
+		return true
 	}
 	var data []byte
 	if err := tx.QueryRow(ctx, `SELECT data FROM windows_module_snapshots WHERE device_id = $1 AND action = 'group_policy.gpo_get' AND params_hash = $2`, device, key).Scan(&data); err != nil {
-		return false
+		return true
 	}
 	var d GPODetail
 	if json.Unmarshal(data, &d) != nil {
-		return false
+		return true
 	}
 	for _, l := range d.ReportLinks {
 		if l.Sensitive {

@@ -14,9 +14,9 @@ ALTER TABLE alert_policies ADD CONSTRAINT alert_policies_module_check
     CHECK (module IN ('defender', 'active_directory', 'certificate_authority', 'dns', 'dhcp', 'file_shares', 'print', 'windows_backup', 'bitlocker', 'group_policy'));
 
 -- +goose Down
-DELETE FROM windows_module_settings WHERE module = 'group_policy';
-DELETE FROM windows_module_snapshots WHERE module = 'group_policy';
-DELETE FROM alert_policies WHERE module = 'group_policy';
+DELETE FROM windows_module_settings WHERE module IN ('group_policy', 'bitlocker');
+DELETE FROM windows_module_snapshots WHERE module IN ('group_policy', 'bitlocker');
+DELETE FROM alert_policies WHERE module IN ('group_policy', 'bitlocker');
 ALTER TABLE alert_policies DROP CONSTRAINT alert_policies_module_check;
 ALTER TABLE alert_policies ADD CONSTRAINT alert_policies_module_check
     CHECK (module IN ('defender', 'active_directory', 'certificate_authority', 'dns', 'dhcp', 'file_shares', 'print', 'windows_backup'));
