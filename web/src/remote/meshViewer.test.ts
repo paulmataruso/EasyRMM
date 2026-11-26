@@ -513,6 +513,29 @@ describe("MeshCentral session view tuning", () => {
       expect(m.sent.at(-1)).toBe(960);
     });
 
+    it("re-fits to one display chosen from several, by the view's height rather than the whole desktop's width", () => {
+      const page = new Page();
+      const m = page.desktop();
+      // Two 1920×1080 displays side by side: 3840×1080 is width-limited,
+      // 1024 × min(945/3840, 479/1080) = 252 → 256.
+      m.ProcessScreenMsg(3840, 1080);
+      expect(m.sent).toEqual([256]);
+      // The agent keeps its scaling when one display is chosen, so it reports
+      // that display at 256: 480×270, which is not the desktop at any scaling
+      // asked for. The remote screen is now 1920×1080, height-limited:
+      // 1024 × min(945/1920, 479/1080) = 454.2 → 480.
+      m.ProcessScreenMsg(480, 270);
+      expect(m.sent).toEqual([256, 480]);
+      // At 480 the picture is 900×506: it covers the 945×479 view's height,
+      // so the view shows all of it, not the top three quarters.
+      m.ProcessScreenMsg(900, 506);
+      expect(m.sent.at(-1)).toBe(480);
+      expect(Math.floor((1080 * 480) / 1024)).toBeGreaterThanOrEqual(479);
+      // Back to both displays.
+      m.ProcessScreenMsg(1800, 506);
+      expect(m.sent.at(-1)).toBe(256);
+    });
+
     it("sends the full size in MeshCentral's 1:1 zoom mode", () => {
       const page = new Page();
       page.win.deskAspectRatio = 1;
