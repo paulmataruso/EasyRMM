@@ -3,6 +3,7 @@
 package remote
 
 import (
+	"crypto/tls"
 	"net"
 	"syscall"
 
@@ -61,4 +62,20 @@ func smallUpstream(_, _ string, c syscall.RawConn) error {
 		return err
 	}
 	return serr
+}
+
+// tcpConn returns the TCP connection under c, if there is one.
+func tcpConn(c net.Conn) *net.TCPConn {
+	for {
+		switch v := c.(type) {
+		case *net.TCPConn:
+			return v
+		case *tls.Conn:
+			c = v.NetConn()
+		case interface{ NetConn() net.Conn }:
+			c = v.NetConn()
+		default:
+			return nil
+		}
+	}
 }

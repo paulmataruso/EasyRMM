@@ -1,10 +1,5 @@
 package remote
 
-import (
-	"crypto/tls"
-	"net"
-)
-
 // desktopSendQueue bounds how much of a desktop stream may wait unsent in
 // the kernel on the browser's connection (ADR-0025). Without a bound the
 // kernel queues as much as its send buffer grows to (megabytes) when the
@@ -42,19 +37,3 @@ const (
 	relayUpstreamUnsent  = 32 << 10
 	meshUnreadLimit      = 32 << 10
 )
-
-// tcpConn returns the TCP connection under c, if there is one.
-func tcpConn(c net.Conn) *net.TCPConn {
-	for {
-		switch v := c.(type) {
-		case *net.TCPConn:
-			return v
-		case *tls.Conn:
-			c = v.NetConn()
-		case interface{ NetConn() net.Conn }:
-			c = v.NetConn()
-		default:
-			return nil
-		}
-	}
-}

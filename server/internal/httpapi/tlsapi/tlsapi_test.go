@@ -34,7 +34,7 @@ func TestErrorsAreTranslated(t *testing.T) {
 		t.Error("an unknown name is not found")
 	}
 	other := errors.New("boom")
-	if mapErr(other) != other {
+	if !errors.Is(mapErr(other), other) {
 		t.Error("other errors pass through")
 	}
 }
