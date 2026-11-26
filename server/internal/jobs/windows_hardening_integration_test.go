@@ -19,6 +19,8 @@ import (
 // script's check of every module, as LocalSystem, on a Windows Server 2025
 // Server Core guest (evaluation media) that is a member of a test domain
 // with the policies of internal/winpolicy/testdata/domain-gpos.ps1 linked.
+// The seven modules of ADR-0078's C3 (session to office) were added to it by
+// hand in the script's form; the Windows tests record real runs of them.
 func TestWindowsHardeningJobs(t *testing.T) {
 	f := newFixture(t)
 	tech := f.user("tech@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme, SiteID: f.hq})

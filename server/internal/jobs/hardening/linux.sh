@@ -20,7 +20,7 @@
 #   <modules>           all, or a comma-separated list of ssh, firewall,
 #                       fail2ban, kernel, audit, permissions, services,
 #                       kernel-modules, sudo, time, shared-memory,
-#                       usb-storage, mac and integrity
+#                       usb-storage, mac, integrity and lockout
 #   allow-tcp=LIST      ports or ranges (8080,9000-9100) the firewall leaves
 #   allow-udp=LIST      open besides those in use
 #   trusted=LIST        IPv4 or IPv6 addresses or CIDR ranges fail2ban never
@@ -95,7 +95,7 @@ unset CDPATH
 
 RESULT_TAG=EASYRMM-HARDENING-RESULT-V1
 # The modules in the order they are checked and reported.
-ALL_MODULES='ssh firewall fail2ban kernel audit permissions services kernel-modules sudo time shared-memory usb-storage mac integrity'
+ALL_MODULES='ssh firewall fail2ban kernel audit permissions services kernel-modules sudo time shared-memory usb-storage mac integrity lockout'
 STATE_DIR=/var/lib/easyrmm-hardening
 # EasyRMM's own files, which apply writes and undo removes.
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-easyrmm-hardening.conf
@@ -1208,6 +1208,17 @@ check_ssh() {
 		set_bad ssh-client-alive-count-max "$cs_v" 3 "ClientAliveCountMax 3 (now $cs_v)"
 		change 'ClientAliveCountMax 3'
 		todo 'ClientAliveCountMax 3'
+		cs_changes=yes
+	fi
+
+	# MaxSessions 10 or fewer (ADR-0078, C3): the sessions one connection may
+	# open; sshd's own default is 10, and 0 would refuse every session.
+	cs_v=$(sshd_val maxsessions)
+	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
+	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 10 ]; then set_ok ssh-max-sessions "$cs_v" 10; else
+		set_bad ssh-max-sessions "$cs_v" 10 "MaxSessions 10 (now $cs_v)"
+		change 'MaxSessions 10'
+		todo 'MaxSessions 10'
 		cs_changes=yes
 	fi
 
@@ -2428,6 +2439,36 @@ check_time() {
 		esac
 		ct_p=${M_TODO#install }
 		change "Install ${ct_p%% *}, and start it at boot"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# lockout (ADR-0078, C3): account lockout after failed sign-ins, which only
+# reports: a wrong change to the sign-in stack can lock everyone out, so
+# the person makes it (authselect on RHEL and Fedora, pam-auth-update or
+# the files on Debian and Ubuntu).
+
+check_lockout() {
+	if [ ! -d /etc/pam.d ]; then
+		not_applicable 'This computer has no /etc/pam.d.'
+		return
+	fi
+	# The auth line that loads pam_faillock, with its own deny= if it has one.
+	cl_line=$(grep -hs '^[[:space:]]*auth[[:space:]].*pam_faillock\.so' /etc/pam.d/* | head -n 1)
+	if [ -z "$cl_line" ]; then
+		set_bad lockout-faillock-active 'not in the sign-in stack' 'pam_faillock in the sign-in stack' 'Failed sign-ins counted by pam_faillock'
+		set_bad lockout-deny-threshold 'no lockout' '1 to 10 failures' 'Lockout after 10 failed sign-ins or fewer'
+		change 'Left as it is: no pam_faillock in /etc/pam.d. Turn it on with authselect (RHEL, Fedora) or pam-auth-update (Debian, Ubuntu) and set deny in /etc/security/faillock.conf'
+		return
+	fi
+	set_ok lockout-faillock-active 'in the sign-in stack' 'pam_faillock in the sign-in stack'
+	cl_v=$(printf '%s\n' "$cl_line" | sed -n 's/.*[[:space:]]deny=\([0-9][0-9]*\).*/\1/p' | head -n 1)
+	[ -n "$cl_v" ] || cl_v=$(sed -n 's/^[[:space:]]*deny[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' /etc/security/faillock.conf 2>/dev/null | tail -n 1)
+	# pam_faillock's own default is 3.
+	[ -n "$cl_v" ] || cl_v=3
+	if [ "$cl_v" -ge 1 ] && [ "$cl_v" -le 10 ]; then set_ok lockout-deny-threshold "$cl_v" '1 to 10 failures'; else
+		set_bad lockout-deny-threshold "$cl_v" '1 to 10 failures' "Lockout after 10 failed sign-ins or fewer (now $cl_v)"
+		change "Left as it is: deny is $cl_v; set 1 to 10 in /etc/security/faillock.conf"
 	fi
 }
 
@@ -5160,6 +5201,7 @@ check_module() {
 	usb-storage) check_usb_storage ;;
 	mac) check_mac ;;
 	integrity) check_integrity ;;
+	lockout) check_lockout ;;
 	esac
 }
 

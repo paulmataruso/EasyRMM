@@ -88,6 +88,13 @@ export const MODULES: ModuleInfo[] = [
     does: "AIDE installed, with a baseline of the system's files checked daily.",
     risk: "Building the baseline and each daily check read the whole filesystem, which loads the disk.",
   },
+  {
+    id: "lockout",
+    name: "Account lockout",
+    recommended: false,
+    does: "Reports whether failed sign-ins are counted by pam_faillock and lock the account after 10 or fewer. Changes nothing.",
+    risk: "It changes nothing: a wrong change to the sign-in stack can lock everyone out, so the person makes it.",
+  },
 ];
 
 const BY_ID = new Map(MODULES.map((m) => [m.id, m]));

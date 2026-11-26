@@ -64,6 +64,10 @@ var windowsModules = map[string]moduleInfo{
 	"winrm": {severity: "medium"}, "printing": {severity: "medium"}, "features": {severity: "medium"},
 	"tls": {severity: "high"}, "audit": {severity: "medium"}, "device-guard": {severity: "medium"},
 	"bitlocker": {severity: "high"}, "laps": {severity: "high"},
+	// ADR-0078, C3.
+	"session": {severity: "medium"}, "removable": {severity: "medium"}, "mobile-code": {severity: "medium"},
+	"rights": {severity: "medium"}, "time": {severity: "medium"}, "app-control": {severity: "high"},
+	"office": {severity: "medium"},
 }
 
 var linuxModules = map[string]moduleInfo{
@@ -74,9 +78,32 @@ var linuxModules = map[string]moduleInfo{
 	"sudo": {"medium", compliance.TierWorkflow}, "time": {"low", compliance.TierReversible},
 	"shared-memory": {"medium", compliance.TierWorkflow}, "usb-storage": {"medium", compliance.TierWorkflow},
 	"mac": {"high", compliance.TierDangerous}, "integrity": {"low", compliance.TierReversible},
+	"lockout": {"medium", compliance.TierReport},
 }
 
 var windowsTiers = [...]string{compliance.TierReport, compliance.TierReversible, compliance.TierWorkflow, compliance.TierDangerous}
+
+// reportOnlyAdvice is what to do about a Windows control that has no setting
+// to change, in place of the general text (ADR-0078, C3).
+var reportOnlyAdvice = map[string]string{
+	"session-legal-caption":   "Write the title your organization's policy requires and set it in Group Policy (Interactive logon: message title for users attempting to log on). EasyRMM does not write the text for you.",
+	"session-legal-text":      "Write the text your organization's policy requires and set it in Group Policy (Interactive logon: message text for users attempting to log on). EasyRMM does not write the text for you.",
+	"rights-debug":            "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). A wrong change can lock people out, so EasyRMM only reports it.",
+	"rights-take-ownership":   "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+	"rights-load-driver":      "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+	"rights-act-as-os":        "Remove every account from this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+	"rights-remote-logon":     "Narrow the groups allowed to sign in through Remote Desktop in Group Policy (User Rights Assignment). A wrong change can lock people out, so EasyRMM only reports it.",
+	"rights-security-log":     "Remove the accounts that should not manage the auditing and security log in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+	"rights-audit-generate":   "Remove the accounts that should not generate security audits in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+	"rights-local-admins":     "Remove the accounts that do not need administrator rights from the local Administrators group, or manage the group with Restricted Groups or an account protection policy. EasyRMM only reports it.",
+	"time-service-running":    "Start the Windows Time service and set it to start on its own, or run another time service on purpose and record it. EasyRMM only reports it.",
+	"time-source-configured":  "Point the computer at a time source: the domain hierarchy on a domain member, or NTP servers on other computers. EasyRMM only reports it.",
+	"time-synchronized":       "Find why the computer has not synchronized (a blocked UDP port 123, a stopped service or an unreachable source) and fix it. EasyRMM only reports it.",
+	"app-control-enforced":    "Write an App Control for Business or AppLocker policy in audit mode first, review what it would block, then enforce it. EasyRMM only reports it.",
+	"lockout-faillock-active": "Turn pam_faillock on with authselect (RHEL, Fedora) or pam-auth-update (Debian, Ubuntu). A wrong change to the sign-in stack can lock everyone out, so EasyRMM only reports it.",
+	"lockout-deny-threshold":  "Set deny to a number from 1 to 10 in /etc/security/faillock.conf. EasyRMM only reports it.",
+	"office-internet-macros":  "Block macros in files from the internet for each Office application (Group Policy, Office administrative templates). EasyRMM only reports it.",
+}
 
 // GenerateWindows builds the Windows library from windows-settings.json.
 func GenerateWindows() File {
@@ -98,7 +125,10 @@ func GenerateWindows() File {
 			platform["min_build"] = s.MinBuild
 		}
 		c.Platforms = raw(platform)
-		c.NeedsRestart = s.Module == "lsa-protection" || s.Module == "device-guard"
+		if t, ok := reportOnlyAdvice[s.ID]; ok {
+			c.Remediation = t
+		}
+		c.NeedsRestart = s.Module == "lsa-protection" || s.Module == "device-guard" || s.ID == "session-fips"
 		if s.Option != "" {
 			c.Preconditions = []string{"option:" + s.Option}
 		}
@@ -118,6 +148,9 @@ func GenerateLinux() File {
 		m := linuxModules[s.Module]
 		rest := strings.TrimPrefix(s.ID, s.Module+"-")
 		c := base("linux."+s.Module+"."+rest, s, m.tier, compliance.PlatformLinux, m.severity)
+		if t, ok := reportOnlyAdvice[s.ID]; ok {
+			c.Remediation = t
+		}
 		c.Scopes = []string{"any"}
 		c.Platforms = raw(map[string]any{"os": "linux"})
 		f.Controls = append(f.Controls, c)

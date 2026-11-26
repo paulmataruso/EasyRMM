@@ -195,7 +195,7 @@ func TestLoadContentStoresTheLibraryAndPacks(t *testing.T) {
 		}
 	}
 	for q, want := range map[string]int{
-		`SELECT count(*) FROM compliance_controls`:                                            234,
+		`SELECT count(*) FROM compliance_controls`:                                            260,
 		`SELECT count(*) FROM compliance_controls WHERE apply_supported`:                      -1,
 		`SELECT count(*) FROM compliance_frameworks`:                                          13,
 		`SELECT count(*) FROM compliance_requirements WHERE framework_key = 'nist-800-171r2'`: 110,
@@ -344,7 +344,7 @@ func TestSecurityOfTheTables(t *testing.T) {
 			t.Errorf("%s as system: %d, want 2", q, got)
 		}
 	}
-	if count(acme, `SELECT count(*) FROM compliance_controls`) != 234 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
+	if count(acme, `SELECT count(*) FROM compliance_controls`) != 260 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
 		t.Error("the library is not readable by every scope")
 	}
 	// The library is read-only to a user's scope; a user's scope writes nothing at all.
@@ -479,7 +479,7 @@ func TestScanOfStoredResults(t *testing.T) {
 			t.Errorf("%s on the computer with no per-setting result: %s", id, st)
 		}
 	}
-	if n := f.n(`SELECT count(*) FROM compliance_results_history WHERE scan_id = $1`, sc.ID); n != 2*106 {
+	if n := f.n(`SELECT count(*) FROM compliance_results_history WHERE scan_id = $1`, sc.ID); n != 2*109 {
 		t.Errorf("%d results, want one per device and control", n)
 	}
 	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.scan_start' AND organization_id = $1`, f.acme) != 1 {
@@ -488,7 +488,7 @@ func TestScanOfStoredResults(t *testing.T) {
 
 	// What the device and the framework show.
 	dr, err := f.svc.DeviceResults(f.ctx, tech, lnx)
-	if err != nil || len(dr) != 106 {
+	if err != nil || len(dr) != 109 {
 		t.Fatalf("%d results, %v", len(dr), err)
 	}
 	words := map[string]string{}
@@ -605,7 +605,7 @@ func TestFrameworkRollUpFromScans(t *testing.T) {
 			t.Errorf("%+v", p.Coverage)
 		}
 	}
-	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 128 {
+	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 151 {
 		t.Errorf("%d windows controls, %v", len(cs), err)
 	}
 	if ps, err := f.svc.Profiles(f.ctx, admin); err != nil || len(ps) != 5 {
@@ -896,4 +896,74 @@ func slicesContains(l []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// TestC3ControlsAreInTheLibrary: slice C3's controls are stored with the
+// check they read, their tier, and the requirements they bear on, and a
+// control that has no fix says so.
+func TestC3ControlsAreInTheLibrary(t *testing.T) {
+	f := newFixture(t).loaded()
+	type want struct {
+		id, module, setting, tier string
+		apply                     bool
+		reqs                      []string
+	}
+	for _, w := range []want{
+		{"win.rights.debug", "rights", "rights-debug", "T0", false, []string{"3.1.5"}},
+		{"win.rights.local-admins", "rights", "rights-local-admins", "T0", false, []string{"3.1.5"}},
+		{"win.rights.remote-logon", "rights", "rights-remote-logon", "T0", false, []string{"3.1.2"}},
+		{"win.rights.security-log", "rights", "rights-security-log", "T0", false, []string{"3.3.9"}},
+		{"win.session.legal-caption", "session", "session-legal-caption", "T0", false, []string{"3.1.9"}},
+		{"win.session.inactivity-lock", "session", "session-inactivity-lock", "T2", true, []string{"3.1.10"}},
+		{"win.session.credential-feedback", "session", "session-credential-feedback", "T2", true, []string{"3.5.11"}},
+		{"win.session.fips", "session", "session-fips", "T3", true, []string{"3.13.11"}},
+		{"win.rdp.idle-limit", "rdp", "rdp-idle-limit", "T2", true, []string{"3.1.11", "3.13.9"}},
+		{"win.rdp.disconnected-limit", "rdp", "rdp-disconnected-limit", "T2", true, []string{"3.1.11", "3.13.9"}},
+		{"win.removable.deny-write", "removable", "removable-deny-write", "T2", true, []string{"3.1.21", "3.8.7"}},
+		{"win.time.synchronized", "time", "time-synchronized", "T0", false, []string{"3.3.7"}},
+		{"win.app-control.enforced", "app-control", "app-control-enforced", "T0", false, []string{"3.4.8"}},
+		{"win.mobile-code.script-host", "mobile-code", "mobile-code-script-host", "T2", true, []string{"3.13.13"}},
+		{"win.office.internet-macros", "office", "office-internet-macros", "T0", false, []string{"3.13.13"}},
+		{"linux.ssh.max-sessions", "ssh", "ssh-max-sessions", "T2", true, []string{"3.13.9"}},
+		{"linux.lockout.deny-threshold", "lockout", "lockout-deny-threshold", "T0", false, []string{"3.1.8"}},
+	} {
+		var module, setting, tier, licence, review string
+		var apply bool
+		if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(f.ctx, `SELECT executor_ref->>'module', executor_ref->>'setting', risk_tier, apply_supported, licence_class, review_state
+				FROM compliance_controls WHERE id = $1`, w.id).Scan(&module, &setting, &tier, &apply, &licence, &review)
+		}); err != nil {
+			t.Errorf("%s: %v", w.id, err)
+			continue
+		}
+		if module != w.module || setting != w.setting || tier != w.tier || apply != w.apply || licence != "ORIGINAL" || review != "none" {
+			t.Errorf("%s: %s %s %s %v %s %s", w.id, module, setting, tier, apply, licence, review)
+		}
+		for _, r := range w.reqs {
+			if f.n(`SELECT count(*) FROM compliance_mappings WHERE framework_key = 'nist-800-171r2' AND req_id = $1 AND control_id = $2`, r, w.id) != 1 {
+				t.Errorf("%s is not mapped to 800-171 %s", w.id, r)
+			}
+		}
+	}
+	// A control with no fix has advice in its own words, and a fix that
+	// restarts the computer says so.
+	if got := f.str(`SELECT remediation_text FROM compliance_controls WHERE id = 'win.session.legal-text'`); !strings.Contains(got, "does not write the text") {
+		t.Errorf("legal text advice: %q", got)
+	}
+	if !f.exists(`SELECT needs_restart FROM compliance_controls WHERE id = 'win.session.fips'`) {
+		t.Error("FIPS mode needs a restart")
+	}
+	// Each control a profile names exists, and the baselines carry C3's.
+	if n := f.n(`SELECT count(*) FROM compliance_profile_controls pc WHERE NOT EXISTS (SELECT 1 FROM compliance_controls c WHERE c.id = pc.control_id)`); n != 0 {
+		t.Errorf("%d profile controls name no control", n)
+	}
+}
+
+func (f *fixture) exists(sql string) bool {
+	f.t.Helper()
+	var b bool
+	if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error { return tx.QueryRow(f.ctx, sql).Scan(&b) }); err != nil {
+		f.t.Fatal(err)
+	}
+	return b
 }

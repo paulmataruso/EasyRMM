@@ -26,7 +26,8 @@
 #                          wdigest, lsa-protection, name-resolution,
 #                          powershell, rdp, uac, autoplay, anonymous, winrm,
 #                          printing, features, tls, audit, device-guard,
-#                          bitlocker and laps
+#                          bitlocker, laps, session, removable, mobile-code,
+#                          rights, time, app-control and office
 #   allow-tcp=LIST         ports or ranges (8080,9000-9100) the firewall would
 #   allow-udp=LIST         allow besides those in use
 #   asr-block=LIST         attack surface reduction rules (GUIDs) to block
@@ -93,7 +94,7 @@ $ErScriptArgs = @($args)
 $ErResultTag = 'EASYRMM-HARDENING-RESULT-V1'
 $ErAllModules = @('accounts', 'firewall', 'defender', 'asr', 'smb', 'smb-signing', 'ntlm', 'wdigest', 'lsa-protection',
     'name-resolution', 'powershell', 'rdp', 'uac', 'autoplay', 'anonymous', 'winrm', 'printing', 'features', 'tls',
-    'audit', 'device-guard', 'bitlocker', 'laps')
+    'audit', 'device-guard', 'bitlocker', 'laps', 'session', 'removable', 'mobile-code', 'rights', 'time', 'app-control', 'office')
 # Each option and the module it belongs to; domain-controller belongs to
 # every module.
 $ErOptionModule = @{
@@ -680,6 +681,7 @@ function Test-ErWant {
         'range' { return [int64]$Value -ge [int64]$d -and [int64]$Value -le [int64]$Def.max }
         'in' { return @($d | ForEach-Object { "$_" }) -contains "$Value" }
         'bits' { return ([int64]$Value -band [int64]$d) -eq [int64]$d }
+        'nonempty' { return "$Value".Trim() -ne '' }
     }
     return $false
 }
@@ -692,6 +694,7 @@ function Get-ErWantText {
         'range' { return "$($Def.data) to $($Def.max)" }
         'in' { return (@($Def.data) -join ' or ') }
         'bits' { return "bits $($Def.data)" }
+        'nonempty' { return 'a text' }
     }
     return ''
 }
@@ -1010,12 +1013,171 @@ function Test-ErCustomSetting {
         'bitlocker-preboot-pin' { return Test-ErBitLocker $Def 'pin' }
         'bitlocker-recovery-password' { return Test-ErBitLocker $Def 'recovery' }
         'laps-managed' { return Test-ErLaps $Def }
+        'rights-local-admins' { return Test-ErLocalAdmins $Def }
+        'rights-debug' { return Test-ErUserRight $Def }
+        'rights-take-ownership' { return Test-ErUserRight $Def }
+        'rights-load-driver' { return Test-ErUserRight $Def }
+        'rights-act-as-os' { return Test-ErUserRight $Def }
+        'rights-remote-logon' { return Test-ErUserRight $Def }
+        'rights-security-log' { return Test-ErUserRight $Def }
+        'rights-audit-generate' { return Test-ErUserRight $Def }
+        'time-service-running' { return Test-ErTimeService $Def }
+        'time-synchronized' { return Test-ErTimeSync $Def }
+        'app-control-enforced' { return Test-ErAppControl $Def }
+        'office-internet-macros' { return Test-ErOfficeMacros $Def }
         'audit-subcategories' { return Test-ErAuditSubcategories $Def $Module }
         'audit-legacy-overridden' { return Test-ErAuditValue $Def $Module 'legacy-categories-overridden' }
         'audit-command-lines' { return Test-ErAuditValue $Def $Module 'process-command-lines' }
         'audit-log-sizes' { return Test-ErAuditLogs $Def $Module }
     }
     throw "no check for $($Def.id)"
+}
+
+# ---------------------------------------------------------------------------
+# ADR-0078, C3: user rights, local administrators, the time source,
+# application control and Office. Each only reads.
+
+# secedit's export of the user rights assignments: each right's holders, as
+# SIDs (or names where Windows has no SID), without their asterisks; $null
+# where secedit failed.
+function Get-ErUserRights {
+    if ($ErCache.ContainsKey('rights')) { return $ErCache.rights }
+    $file = Join-Path $ErWork 'rights.inf'
+    $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\secedit.exe') @('/export', '/cfg', $file, '/areas', 'USER_RIGHTS', '/quiet') 120
+    $r = $null
+    if ($run.ExitCode -eq 0 -and (Test-Path -LiteralPath $file)) {
+        $r = @{}
+        foreach ($line in [IO.File]::ReadAllLines($file)) {
+            if ($line -match '^\s*(Se[A-Za-z]+)\s*=\s*(.*?)\s*$') {
+                $r[$Matches[1]] = @($Matches[2].Split(',') | ForEach-Object { $_.Trim().Trim('"').TrimStart('*') } | Where-Object { $_ -ne '' })
+            }
+        }
+        Remove-Item -LiteralPath $file -Force
+    }
+    $ErCache.rights = $r
+    return $r
+}
+
+# One right: in place where everyone who holds it is among the setting's
+# data (SIDs); nobody holding it is in place.
+function Test-ErUserRight {
+    param($Def)
+    $r = Get-ErUserRights
+    if ($null -eq $r) { return New-ErSetting $Def 'unknown' $null '' 'secedit did not export the user rights assignments.' }
+    $names = @{ 'S-1-5-32-544' = 'Administrators'; 'S-1-5-32-555' = 'Remote Desktop Users'; 'S-1-5-19' = 'LOCAL SERVICE'; 'S-1-5-20' = 'NETWORK SERVICE' }
+    $allowed = @($Def.data | ForEach-Object { "$_" })
+    $held = @()
+    if ($r.ContainsKey([string]$Def.key)) { $held = @($r[[string]$Def.key]) }
+    $others = @($held | Where-Object { $allowed -notcontains $_ })
+    $want = $(if ($allowed.Count -eq 0) { 'no one' } else { 'only ' + ((@($allowed | ForEach-Object { if ($names[$_]) { $names[$_] } else { $_ } })) -join ', ') })
+    $shown = $(if ($held.Count -eq 0) { 'no one' } elseif ($others.Count -eq 0) { 'only those' } else { "$($others.Count) other account(s)" })
+    return New-ErSetting $Def $(if ($others.Count -eq 0) { 'in_place' } else { 'not_in_place' }) $shown $want
+}
+
+# The direct members of the local Administrators group, counted; no names
+# leave the computer.
+function Test-ErLocalAdmins {
+    param($Def)
+    $max = [int]$Def.data
+    try {
+        $name = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544').Translate([System.Security.Principal.NTAccount]).Value
+        $name = $name.Substring($name.LastIndexOf('\') + 1)
+        $group = [ADSI]"WinNT://./$name,group"
+        $count = @($group.psbase.Invoke('Members')).Count
+    } catch {
+        return New-ErSetting $Def 'unknown' $null '' "The Administrators group could not be read: $($_.Exception.Message)"
+    }
+    return New-ErSetting $Def $(if ($count -le $max) { 'in_place' } else { 'not_in_place' }) "$count members" "at most $max"
+}
+
+function Test-ErTimeService {
+    param($Def)
+    $svc = Get-ErServiceState 'W32Time'
+    if (-not $svc.Read) { return New-ErSetting $Def 'unknown' $null '' "The Windows Time service could not be read: $($svc.Error)" }
+    if (-not $svc.Installed) { return New-ErSetting $Def 'not_in_place' 'not installed' 'running' }
+    $ok = $svc.Status -eq 'Running' -and $svc.StartType -ne 'Disabled'
+    return New-ErSetting $Def $(if ($ok) { 'in_place' } else { 'not_in_place' }) "$($svc.Status), $($svc.StartType)" 'running'
+}
+
+# The last successful synchronization, from w32tm's status: the one line
+# whose text is a date in the computer's own format, whatever the language
+# of its label.
+function Test-ErTimeSync {
+    param($Def)
+    $max = [int]$Def.data
+    $want = "within $max hours"
+    $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\w32tm.exe') @('/query', '/status') 30
+    if ($run.ExitCode -ne 0) {
+        $svc = Get-ErServiceState 'W32Time'
+        if ($svc.Read -and $svc.Installed -and $svc.Status -ne 'Running') { return New-ErSetting $Def 'not_in_place' 'the Windows Time service is not running' $want }
+        return New-ErSetting $Def 'unknown' $null '' (Limit-ErText "w32tm did not report its status (exit $($run.ExitCode)): $($run.Error) $($run.Output)" 300)
+    }
+    $when = $null
+    foreach ($line in ([string]$run.Output -split "`r?`n")) {
+        $i = $line.IndexOf(':')
+        if ($i -lt 1) { continue }
+        $t = [datetime]::MinValue
+        if ([datetime]::TryParse($line.Substring($i + 1).Trim(), [ref]$t)) { $when = $t; break }
+    }
+    if ($null -eq $when) { return New-ErSetting $Def 'not_in_place' 'no successful synchronization reported' $want }
+    $hours = [int][math]::Floor(([datetime]::Now - $when).TotalHours)
+    return New-ErSetting $Def $(if ($hours -le $max) { 'in_place' } else { 'not_in_place' }) "$([math]::Max($hours, 0)) hours ago" $want
+}
+
+# Application control: App Control for Business (Device Guard's code
+# integrity enforcement status: 1 audit, 2 enforced) or AppLocker's
+# executable rules enforcing, with its service running. Audit mode is not
+# enforcing and says so.
+function Test-ErAppControl {
+    param($Def)
+    $want = 'enforced'
+    $dg = Get-ErDeviceGuard
+    $wdac = $(if ($dg.State) { [int]$dg.State.CodeIntegrityPolicyEnforcementStatus } else { -1 })
+    if ($wdac -eq 2) { return New-ErSetting $Def 'in_place' 'App Control for Business enforced' $want }
+    $mode = Get-ErRegistryValue 'HKLM\SOFTWARE\Policies\Microsoft\Windows\SrpV2\Exe' 'EnforcementMode'
+    $svc = Get-ErServiceState 'AppIDSvc'
+    $enforced = $mode.Exists -and "$($mode.Data)" -eq '1'
+    if ($enforced -and $svc.Read -and $svc.Installed -and $svc.Status -eq 'Running') { return New-ErSetting $Def 'in_place' 'AppLocker enforced' $want }
+    if ($mode.Error -or ($null -eq $dg.State -and $wdac -lt 0 -and -not $mode.Exists)) {
+        $why = $(if ($mode.Error) { $mode.Error } else { $dg.Error })
+        return New-ErSetting $Def 'unknown' $null '' (Limit-ErText "Application control could not be read: $why" 300)
+    }
+    if ($enforced) { return New-ErSetting $Def 'not_in_place' 'AppLocker rules set, its service is not running' $want }
+    if ($wdac -eq 1 -or ($mode.Exists -and "$($mode.Data)" -eq '0')) {
+        return New-ErSetting $Def 'not_in_place' 'audit mode' $want 'A policy only logs what it would block; it blocks nothing.'
+    }
+    return New-ErSetting $Def 'not_in_place' 'no policy' $want
+}
+
+# Office's block on macros in files from the internet, for each of Word,
+# Excel and PowerPoint that is installed, from the machine policy; a policy
+# set per user is not seen.
+function Test-ErOfficeMacros {
+    param($Def)
+    $apps = @(
+        @{ Exe = 'WINWORD.EXE'; Key = 'word' },
+        @{ Exe = 'EXCEL.EXE'; Key = 'excel' },
+        @{ Exe = 'POWERPNT.EXE'; Key = 'powerpoint' })
+    $installed = 0
+    $open = 0
+    $reads = @()
+    foreach ($a in $apps) {
+        $found = $false
+        foreach ($root in 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths', 'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths') {
+            $p = Get-ErRegistryValue "$root\$($a.Exe)" ''
+            $reads += $p
+            if ($p.Exists) { $found = $true }
+        }
+        if (-not $found) { continue }
+        $installed++
+        $v = Get-ErRegistryValue "HKLM\SOFTWARE\Policies\Microsoft\Office\16.0\$($a.Key)\security" 'BlockContentExecutionFromInternet'
+        $reads += $v
+        if (-not ($v.Exists -and "$($v.Data)" -eq '1')) { $open++ }
+    }
+    $unread = Get-ErUnread $Def $reads
+    if ($unread) { return $unread }
+    if ($installed -eq 0) { return New-ErSetting $Def 'not_applicable' $null '' }
+    return New-ErSetting $Def $(if ($open -eq 0) { 'in_place' } else { 'not_in_place' }) "$open of $installed applications allow them" 'none allow them' 'Reads the machine policy only; a policy set per user is not seen.'
 }
 
 # Remote Desktop's setting in effect, from its WMI provider; from the
@@ -1101,8 +1263,8 @@ function Test-ErSpooler {
     return New-ErSetting $Def $(if ($off) { 'in_place' } else { 'not_in_place' }) $shown 'stopped and disabled'
 }
 
-function Test-ErDeviceGuard {
-    param($Def, $What)
+# Device Guard's state, read once: State, or Error where it could not be read.
+function Get-ErDeviceGuard {
     if (-not $ErCache.ContainsKey('dg')) {
         try {
             $ErCache.dg = @{ State = (Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard -ErrorAction Stop); Error = '' }
@@ -1110,8 +1272,14 @@ function Test-ErDeviceGuard {
             $ErCache.dg = @{ State = $null; Error = "Device Guard's state could not be read: $($_.Exception.Message)" }
         }
     }
-    $dg = $ErCache.dg.State
-    if ($null -eq $dg) { return New-ErSetting $Def 'unknown' $null '' $(if ($ErCache.dg.Error) { $ErCache.dg.Error } else { 'Windows did not report Device Guard''s state.' }) }
+    return $ErCache.dg
+}
+
+function Test-ErDeviceGuard {
+    param($Def, $What)
+    $read = Get-ErDeviceGuard
+    $dg = $read.State
+    if ($null -eq $dg) { return New-ErSetting $Def 'unknown' $null '' $(if ($read.Error) { $read.Error } else { 'Windows did not report Device Guard''s state.' }) }
     if ($What -eq 'vbs') {
         $v = [int]$dg.VirtualizationBasedSecurityStatus
         $names = @{ 0 = 'off'; 1 = 'on, not running'; 2 = 'running' }
@@ -1499,7 +1667,7 @@ function Invoke-ErModule {
 #     before = {exists, kind, data}, target, after = {exists, kind, data}, at } }
 # Only registry settings are written in this release.
 
-$ErReportOnly = @('audit', 'device-guard', 'bitlocker', 'laps')
+$ErReportOnly = @('audit', 'device-guard', 'bitlocker', 'laps', 'rights', 'time', 'app-control', 'office')
 $ErTaskName = 'EasyRMM Hardening Rollback'
 $ErTaskPath = '\EasyRMM\'
 

@@ -102,6 +102,13 @@ export const WINDOWS_MODULES: WindowsModuleInfo[] = [
   { id: "device-guard", name: "Device Guard", does: "Reports virtualization-based security, memory integrity and Credential Guard. Changes nothing." },
   { id: "bitlocker", name: "BitLocker", does: "Reports whether the system volume is protected, and by which protectors. Changes nothing." },
   { id: "laps", name: "Windows LAPS", does: "Reports whether Windows LAPS manages the local administrator's password. Changes nothing." },
+  { id: "session", name: "Sign-in screen and cryptography", does: "A legal notice before sign-in (reported), the sign-in screen after 15 idle minutes, no password reveal button, and FIPS mode (a restart).", risk: "A person idle for 15 minutes is signed out of the screen. FIPS mode stops programs that use other algorithms and can lock out a computer that depends on them." },
+  { id: "removable", name: "Removable disks", does: "Removable disks refuse writes and programs on them cannot start.", risk: "Backups to USB disks and copying files to a stick stop working." },
+  { id: "mobile-code", name: "Windows Script Host", does: "The Windows Script Host (.vbs and .js files) turned off.", risk: "Logon scripts and tools written as .vbs or .js files stop running." },
+  { id: "rights", name: "User rights", does: "Reports who holds the powerful rights (debugging, ownership, drivers, remote sign-in, the security log) and how many local administrators there are. Changes nothing." },
+  { id: "time", name: "Time", does: "Reports the Windows Time service, its source and the last synchronization. Changes nothing." },
+  { id: "app-control", name: "Application control", does: "Reports whether App Control for Business or AppLocker enforces a policy, or only audits. Changes nothing." },
+  { id: "office", name: "Office macros", does: "Reports whether Office blocks macros in files from the internet (the machine policy). Changes nothing." },
 ];
 
 const BY_ID = new Map(WINDOWS_MODULES.map((m) => [m.id, m]));

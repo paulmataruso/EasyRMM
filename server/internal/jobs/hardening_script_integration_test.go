@@ -51,6 +51,7 @@ func TestCheckInContainers(t *testing.T) {
 			scriptUsageErrors(t, c)
 			scriptOptions(t, c)
 			scriptSSHGuards(t, c)
+			scriptC3Linux(t, c)
 			scriptListeningPorts(t, c)
 			scriptJournal(t, c)
 			scriptApplyUndo(t, c)

@@ -287,8 +287,11 @@ device. The modules, in the order they run:
 `accounts`, `firewall`, `defender`, `asr` (attack surface reduction),
 `smb`, `smb-signing`, `ntlm`, `wdigest`, `lsa-protection`,
 `name-resolution`, `powershell`, `rdp`, `uac`, `autoplay`, `anonymous`,
-`winrm`, `printing`, `features`, `tls`, and four that only ever report:
-`audit`, `device-guard`, `bitlocker`, `laps`.
+`winrm`, `printing`, `features`, `tls`, four that only ever report:
+`audit`, `device-guard`, `bitlocker`, `laps`; then (ADR-0078) `session`,
+`removable`, `mobile-code`, which can change settings, and four that only
+report: `rights`, `time`, `app-control`, `office`. On Linux, `lockout` only
+reports.
 
 The options change what a check compares with, as they will change what
 apply does; each needs its module: `allowTcp` and `allowUdp` (ports and

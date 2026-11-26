@@ -88,6 +88,10 @@
      "params": {}
     },
     {
+     "control_id": "win.app-control.enforced",
+     "params": {}
+    },
+    {
      "control_id": "win.asr.adobe-child",
      "params": {}
     },
@@ -324,6 +328,10 @@
      "params": {}
     },
     {
+     "control_id": "win.mobile-code.script-host",
+     "params": {}
+    },
+    {
      "control_id": "win.name-resolution.llmnr",
      "params": {}
     },
@@ -360,6 +368,10 @@
      "params": {}
     },
     {
+     "control_id": "win.office.internet-macros",
+     "params": {}
+    },
+    {
      "control_id": "win.powershell.script-block-logging",
      "params": {}
     },
@@ -384,7 +396,15 @@
      "params": {}
     },
     {
+     "control_id": "win.rdp.disconnected-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.idle-limit",
      "params": {}
     },
     {
@@ -397,6 +417,66 @@
     },
     {
      "control_id": "win.rdp.secure-rpc",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-execute",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-write",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.act-as-os",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.audit-generate",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.debug",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.load-driver",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.local-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.remote-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.security-log",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.take-ownership",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.credential-feedback",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.fips",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.inactivity-lock",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-caption",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-text",
      "params": {}
     },
     {
@@ -433,6 +513,18 @@
     },
     {
      "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.source-configured",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.synchronized",
      "params": {}
     },
     {
@@ -609,6 +701,10 @@
     },
     {
      "control_id": "win.anonymous.shares",
+     "params": {}
+    },
+    {
+     "control_id": "win.app-control.enforced",
      "params": {}
     },
     {
@@ -844,6 +940,10 @@
      "params": {}
     },
     {
+     "control_id": "win.mobile-code.script-host",
+     "params": {}
+    },
+    {
      "control_id": "win.name-resolution.llmnr",
      "params": {}
     },
@@ -880,6 +980,10 @@
      "params": {}
     },
     {
+     "control_id": "win.office.internet-macros",
+     "params": {}
+    },
+    {
      "control_id": "win.powershell.script-block-logging",
      "params": {}
     },
@@ -904,7 +1008,15 @@
      "params": {}
     },
     {
+     "control_id": "win.rdp.disconnected-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.idle-limit",
      "params": {}
     },
     {
@@ -917,6 +1029,66 @@
     },
     {
      "control_id": "win.rdp.secure-rpc",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-execute",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-write",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.act-as-os",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.audit-generate",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.debug",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.load-driver",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.local-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.remote-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.security-log",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.take-ownership",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.credential-feedback",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.fips",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.inactivity-lock",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-caption",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-text",
      "params": {}
     },
     {
@@ -953,6 +1125,18 @@
     },
     {
      "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.source-configured",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.synchronized",
      "params": {}
     },
     {
@@ -1299,6 +1483,14 @@
      "params": {}
     },
     {
+     "control_id": "linux.lockout.deny-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "linux.lockout.faillock-active",
+     "params": {}
+    },
+    {
      "control_id": "linux.mac.apparmor",
      "params": {}
     },
@@ -1443,6 +1635,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.ssh.max-sessions",
+     "params": {}
+    },
+    {
      "control_id": "linux.ssh.password-authentication",
      "params": {}
     },
@@ -1530,6 +1726,14 @@
      "params": {}
     },
     {
+     "control_id": "linux.lockout.deny-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "linux.lockout.faillock-active",
+     "params": {}
+    },
+    {
      "control_id": "linux.services.finger",
      "params": {}
     },
@@ -1574,6 +1778,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.ssh.max-sessions",
+     "params": {}
+    },
+    {
      "control_id": "linux.time.service-enabled",
      "params": {}
     },
@@ -1611,6 +1819,10 @@
     },
     {
      "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.app-control.enforced",
      "params": {}
     },
     {
@@ -1722,11 +1934,79 @@
      "params": {}
     },
     {
+     "control_id": "win.rdp.disconnected-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.encryption",
      "params": {}
     },
     {
+     "control_id": "win.rdp.idle-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-execute",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-write",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.act-as-os",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.audit-generate",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.debug",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.load-driver",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.local-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.remote-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.security-log",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.take-ownership",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.credential-feedback",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.fips",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.inactivity-lock",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-caption",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-text",
      "params": {}
     },
     {
@@ -1743,6 +2023,18 @@
     },
     {
      "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.source-configured",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.synchronized",
      "params": {}
     },
     {
@@ -1829,6 +2121,14 @@
      "params": {}
     },
     {
+     "control_id": "linux.lockout.deny-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "linux.lockout.faillock-active",
+     "params": {}
+    },
+    {
      "control_id": "linux.services.finger",
      "params": {}
     },
@@ -1873,6 +2173,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.ssh.max-sessions",
+     "params": {}
+    },
+    {
      "control_id": "linux.time.service-enabled",
      "params": {}
     },
@@ -1910,6 +2214,10 @@
     },
     {
      "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.app-control.enforced",
      "params": {}
     },
     {
@@ -2021,11 +2329,79 @@
      "params": {}
     },
     {
+     "control_id": "win.rdp.disconnected-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.encryption",
      "params": {}
     },
     {
+     "control_id": "win.rdp.idle-limit",
+     "params": {}
+    },
+    {
      "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-execute",
+     "params": {}
+    },
+    {
+     "control_id": "win.removable.deny-write",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.act-as-os",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.audit-generate",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.debug",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.load-driver",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.local-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.remote-logon",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.security-log",
+     "params": {}
+    },
+    {
+     "control_id": "win.rights.take-ownership",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.credential-feedback",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.fips",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.inactivity-lock",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-caption",
+     "params": {}
+    },
+    {
+     "control_id": "win.session.legal-text",
      "params": {}
     },
     {
@@ -2042,6 +2418,18 @@
     },
     {
      "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.source-configured",
+     "params": {}
+    },
+    {
+     "control_id": "win.time.synchronized",
      "params": {}
     },
     {

@@ -8877,6 +8877,1324 @@
       },
       "licence_class": "ORIGINAL",
       "review_state": "none"
+    },
+    {
+      "id": "win.rdp.idle-limit",
+      "version": 1,
+      "title": "Idle Remote Desktop sessions disconnected within 15 minutes",
+      "description": "Idle Remote Desktop sessions disconnected within 15 minutes.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rdp",
+        "setting": "rdp-idle-limit"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rdp, setting rdp-idle-limit."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Idle Remote Desktop sessions disconnected within 15 minutes. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "rdp"
+        ],
+        "platform": "windows",
+        "settings": [
+          "rdp-idle-limit"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "rdp"
+        ],
+        "platform": "windows",
+        "settings": [
+          "rdp-idle-limit"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rdp-idle-limit"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rdp.disconnected-limit",
+      "version": 1,
+      "title": "Disconnected Remote Desktop sessions ended within 15 minutes",
+      "description": "Disconnected Remote Desktop sessions ended within 15 minutes.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rdp",
+        "setting": "rdp-disconnected-limit"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rdp, setting rdp-disconnected-limit."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Disconnected Remote Desktop sessions ended within 15 minutes. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "rdp"
+        ],
+        "platform": "windows",
+        "settings": [
+          "rdp-disconnected-limit"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "rdp"
+        ],
+        "platform": "windows",
+        "settings": [
+          "rdp-disconnected-limit"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rdp-disconnected-limit"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.session.legal-caption",
+      "version": 1,
+      "title": "A legal notice title shown before sign-in",
+      "description": "A legal notice title shown before sign-in.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "session",
+        "setting": "session-legal-caption"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module session, setting session-legal-caption."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Write the title your organization's policy requires and set it in Group Policy (Interactive logon: message title for users attempting to log on). EasyRMM does not write the text for you.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting session-legal-caption"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.session.legal-text",
+      "version": 1,
+      "title": "A legal notice text shown before sign-in",
+      "description": "A legal notice text shown before sign-in.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "session",
+        "setting": "session-legal-text"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module session, setting session-legal-text."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Write the text your organization's policy requires and set it in Group Policy (Interactive logon: message text for users attempting to log on). EasyRMM does not write the text for you.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting session-legal-text"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.session.inactivity-lock",
+      "version": 1,
+      "title": "The sign-in screen returns after at most 15 minutes of inactivity",
+      "description": "The sign-in screen returns after at most 15 minutes of inactivity.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "session",
+        "setting": "session-inactivity-lock"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module session, setting session-inactivity-lock."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: The sign-in screen returns after at most 15 minutes of inactivity. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-inactivity-lock"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-inactivity-lock"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting session-inactivity-lock"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.session.credential-feedback",
+      "version": 1,
+      "title": "The sign-in password reveal button is off",
+      "description": "The sign-in password reveal button is off.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "session",
+        "setting": "session-credential-feedback"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module session, setting session-credential-feedback."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: The sign-in password reveal button is off. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-credential-feedback"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-credential-feedback"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting session-credential-feedback"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.session.fips",
+      "version": 1,
+      "title": "FIPS-compliant cryptographic algorithms required",
+      "description": "FIPS-compliant cryptographic algorithms required.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "session",
+        "setting": "session-fips"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module session, setting session-fips."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: FIPS-compliant cryptographic algorithms required. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-fips"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "session"
+        ],
+        "platform": "windows",
+        "settings": [
+          "session-fips"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T3",
+      "warning_id": "warn.t3.v1",
+      "needs_restart": true,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting session-fips"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.removable.deny-write",
+      "version": 1,
+      "title": "Removable disks refuse writes",
+      "description": "Removable disks refuse writes.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "removable",
+        "setting": "removable-deny-write"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module removable, setting removable-deny-write."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Removable disks refuse writes. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "removable"
+        ],
+        "platform": "windows",
+        "settings": [
+          "removable-deny-write"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "removable"
+        ],
+        "platform": "windows",
+        "settings": [
+          "removable-deny-write"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting removable-deny-write"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.removable.deny-execute",
+      "version": 1,
+      "title": "Programs on removable disks cannot start",
+      "description": "Programs on removable disks cannot start.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "removable",
+        "setting": "removable-deny-execute"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module removable, setting removable-deny-execute."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Programs on removable disks cannot start. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "removable"
+        ],
+        "platform": "windows",
+        "settings": [
+          "removable-deny-execute"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "removable"
+        ],
+        "platform": "windows",
+        "settings": [
+          "removable-deny-execute"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting removable-deny-execute"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.mobile-code.script-host",
+      "version": 1,
+      "title": "Windows Script Host (.vbs and .js files) off",
+      "description": "Windows Script Host (.vbs and .js files) off.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "mobile-code",
+        "setting": "mobile-code-script-host"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module mobile-code, setting mobile-code-script-host."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Windows Script Host (.vbs and .js files) off. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "mobile-code"
+        ],
+        "platform": "windows",
+        "settings": [
+          "mobile-code-script-host"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "mobile-code"
+        ],
+        "platform": "windows",
+        "settings": [
+          "mobile-code-script-host"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting mobile-code-script-host"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.debug",
+      "version": 1,
+      "title": "Only Administrators may debug programs",
+      "description": "Only Administrators may debug programs.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-debug"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-debug."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). A wrong change can lock people out, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-debug"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.take-ownership",
+      "version": 1,
+      "title": "Only Administrators may take ownership of files",
+      "description": "Only Administrators may take ownership of files.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-take-ownership"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-take-ownership."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-take-ownership"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.load-driver",
+      "version": 1,
+      "title": "Only Administrators may load device drivers",
+      "description": "Only Administrators may load device drivers.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-load-driver"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-load-driver."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that should not hold this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-load-driver"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.act-as-os",
+      "version": 1,
+      "title": "No account may act as part of the operating system",
+      "description": "No account may act as part of the operating system.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-act-as-os"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-act-as-os."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove every account from this right in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-act-as-os"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.remote-logon",
+      "version": 1,
+      "title": "Only Administrators and Remote Desktop Users may sign in through Remote Desktop",
+      "description": "Only Administrators and Remote Desktop Users may sign in through Remote Desktop.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-remote-logon"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-remote-logon."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Narrow the groups allowed to sign in through Remote Desktop in Group Policy (User Rights Assignment). A wrong change can lock people out, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-remote-logon"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.security-log",
+      "version": 1,
+      "title": "Only Administrators may manage the auditing and security log",
+      "description": "Only Administrators may manage the auditing and security log.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-security-log"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-security-log."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that should not manage the auditing and security log in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-security-log"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.audit-generate",
+      "version": 1,
+      "title": "Only the system service accounts may generate security audits",
+      "description": "Only the system service accounts may generate security audits.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-audit-generate"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-audit-generate."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that should not generate security audits in Group Policy (User Rights Assignment). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-audit-generate"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.rights.local-admins",
+      "version": 1,
+      "title": "At most 4 members in the local Administrators group",
+      "description": "At most 4 members in the local Administrators group.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "rights",
+        "setting": "rights-local-admins"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module rights, setting rights-local-admins."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Remove the accounts that do not need administrator rights from the local Administrators group, or manage the group with Restricted Groups or an account protection policy. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting rights-local-admins"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.time.service-running",
+      "version": 1,
+      "title": "The Windows Time service running",
+      "description": "The Windows Time service running.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "time",
+        "setting": "time-service-running"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module time, setting time-service-running."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Start the Windows Time service and set it to start on its own, or run another time service on purpose and record it. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting time-service-running"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.time.source-configured",
+      "version": 1,
+      "title": "A time source set: NTP servers, or the domain hierarchy",
+      "description": "A time source set: NTP servers, or the domain hierarchy.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "time",
+        "setting": "time-source-configured"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module time, setting time-source-configured."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Point the computer at a time source: the domain hierarchy on a domain member, or NTP servers on other computers. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting time-source-configured"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.time.synchronized",
+      "version": 1,
+      "title": "Synchronized with a time source within the last 24 hours",
+      "description": "Synchronized with a time source within the last 24 hours.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "time",
+        "setting": "time-synchronized"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module time, setting time-synchronized."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Find why the computer has not synchronized (a blocked UDP port 123, a stopped service or an unreachable source) and fix it. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting time-synchronized"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.app-control.enforced",
+      "version": 1,
+      "title": "App Control for Business or AppLocker enforcing a policy",
+      "description": "App Control for Business or AppLocker enforcing a policy.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "app-control",
+        "setting": "app-control-enforced"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module app-control, setting app-control-enforced."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Write an App Control for Business or AppLocker policy in audit mode first, review what it would block, then enforce it. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting app-control-enforced"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.office.internet-macros",
+      "version": 1,
+      "title": "Office blocks macros in files from the internet",
+      "description": "Office blocks macros in files from the internet.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "office",
+        "setting": "office-internet-macros"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module office, setting office-internet-macros."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Block macros in files from the internet for each Office application (Group Policy, Office administrative templates). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting office-internet-macros"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
     }
   ]
 }
