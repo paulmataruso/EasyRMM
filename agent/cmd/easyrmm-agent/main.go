@@ -225,6 +225,7 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 			err = state.ErrNotEnrolled
 		}
 	}
+	fresh := false
 	switch {
 	case err == nil && waiting != nil:
 		if waiting.Server != mustServer(*server) {
@@ -250,6 +251,7 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		if cfg, waiting, err = e.register(ctx, *server, tok, *caFile, service); err != nil {
 			return err
 		}
+		fresh = true
 		if waiting != nil {
 			_, _ = fmt.Fprintf(e.stdout, "Waiting for approval in the EasyRMM console at %s. Device code: %s\n", waiting.Server, waiting.Code)
 			if !service {
@@ -268,6 +270,11 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	// (ADR-0070).
 	e.defenderInstall(ctx)
 	if err := e.putService(ctx); err != nil {
+		// A failed install leaves no service, process or file it made: on a
+		// machine this run enrolled, take back what putService may have put.
+		if fresh {
+			e.rollbackInstall(ctx)
+		}
 		return err
 	}
 	svc := e.paths.AgentService()
@@ -280,6 +287,18 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		_, _ = fmt.Fprintln(e.stdout, "It finishes enrolling on its own once the device is approved.")
 	}
 	return nil
+}
+
+// rollbackInstall undoes a failed install on a machine this run enrolled:
+// the service stopped and deleted, then the agent's files. Failures are
+// logged; the install's own error is the one reported.
+func (e *env) rollbackInstall(ctx context.Context) {
+	if err := e.sd.Remove(ctx, e.paths.AgentService().Name); err != nil {
+		e.log.Warn("could not remove the service of the failed install", "error", err)
+	}
+	if _, err := e.removeFiles(); err != nil {
+		e.log.Warn("could not remove the files of the failed install", "error", err)
+	}
 }
 
 // putService puts this executable in the program directory, registers the
@@ -364,6 +383,13 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 			return nil, nil, err
 		}
 	}
+	// A failed enrollment keeps nothing: not the copy of the CA either.
+	done := false
+	defer func() {
+		if !done && cfg.CAFile != "" {
+			_ = os.Remove(cfg.CAFile)
+		}
+	}()
 	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
 	if err != nil {
 		return nil, nil, err
@@ -384,6 +410,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 		if err := e.store.SavePending(p, key); err != nil {
 			return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 		}
+		done = true
 		return nil, p, nil
 	}
 	if resp.DeviceID == "" {
@@ -393,6 +420,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 	if err := e.store.Save(cfg, key); err != nil {
 		return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 	}
+	done = true
 	return cfg, nil, nil
 }
 

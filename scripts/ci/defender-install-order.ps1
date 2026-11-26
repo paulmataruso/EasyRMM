@@ -64,6 +64,10 @@ function Invoke-Install([string]$FailAt) {
     $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ps1 -Token 'ert_ci' 2>&1 | Out-String
     $code = $LASTEXITCODE
     Remove-Item Env:EASYRMM_INSTALL_TRACE, Env:EASYRMM_INSTALL_FAIL_AT -ErrorAction SilentlyContinue
+    # Shown always: the next failure explains itself.
+    Write-Output "--- install.ps1 (fail at '$FailAt'), exit code $code ---"
+    Write-Output $out
+    Write-Output '--- end ---'
     $steps = [ordered]@{}
     if (Test-Path -LiteralPath $trace) {
         foreach ($l in Get-Content -LiteralPath $trace) { $n, $t = $l -split ' '; $steps[$n] = [int64]$t }
@@ -74,7 +78,12 @@ function Invoke-Install([string]$FailAt) {
 
 function Assert-Clean([string]$When) {
     foreach ($p in @($dataRoot, $filesRoot)) {
-        if (Test-Path -LiteralPath $p) { throw "${When}: the script left $p behind" }
+        if (Test-Path -LiteralPath $p) {
+            $left = Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } | Out-String
+            $svc = Get-Service -Name 'EasyRMMAgent' -ErrorAction SilentlyContinue | Out-String
+            $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'easyrmm*' -or $_.Name -like 'meshagent*' } | Out-String
+            throw "${When}: the script left $p behind`nleft in it:`n$left`nservice:`n$svc`nprocesses:`n$procs"
+        }
     }
     if ($active) {
         $pref = Get-MpPreference
