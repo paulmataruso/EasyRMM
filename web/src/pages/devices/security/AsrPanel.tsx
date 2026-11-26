@@ -23,7 +23,7 @@ function RuleRow({ device, r, canManage, canWeaken, reload }: { device: Device; 
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2">
       <span className="min-w-64 flex-1 text-sm">
-        {r.known ? r.name : <Badge tone="warn">Unrecognised rule</Badge>}
+        {r.known ? r.name : <Badge tone="warn">Unrecognized rule</Badge>}
         <span className="ml-2 font-mono text-xs text-muted">{r.id}</span>
       </span>
       <span className="w-24 text-sm text-muted">{r.mode}</span>

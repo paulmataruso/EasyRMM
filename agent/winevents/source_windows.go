@@ -70,7 +70,8 @@ func render(ev syscall.Handle) (string, error) {
 		if r != 0 {
 			return syscall.UTF16ToString(buf), nil
 		}
-		if errno, ok := e.(syscall.Errno); ok && errno == syscall.ERROR_INSUFFICIENT_BUFFER && int(used) > len(buf)*2 {
+		var errno syscall.Errno
+		if errors.As(e, &errno) && errno == syscall.ERROR_INSUFFICIENT_BUFFER && int(used) > len(buf)*2 {
 			buf = make([]uint16, used/2+1)
 			continue
 		}
@@ -84,7 +85,8 @@ func render(ev syscall.Handle) (string, error) {
 func readAll(ctx context.Context, channel, xpath string, flags uintptr, limit int) ([]string, error) {
 	h, err := evtQuery(channel, xpath, flags|evtQueryChannelPath)
 	if err != nil {
-		if errno, ok := err.(syscall.Errno); ok && (errno == errorChannelNotFound || errno == errorEvtChannelNotFound) {
+		var errno syscall.Errno
+		if errors.As(err, &errno) && (errno == errorChannelNotFound || errno == errorEvtChannelNotFound) {
 			return nil, errNoRecords
 		}
 		return nil, fmt.Errorf("winevents: EvtQuery: %w", err)
@@ -99,7 +101,8 @@ func readAll(ctx context.Context, channel, xpath string, flags uintptr, limit in
 		var returned uint32
 		r, _, e := procNext.Call(uintptr(h), uintptr(len(handles)), uintptr(unsafe.Pointer(&handles[0])), 1000, 0, uintptr(unsafe.Pointer(&returned)))
 		if r == 0 {
-			if errno, ok := e.(syscall.Errno); ok && errno == errorNoMoreItems {
+			var errno syscall.Errno
+			if errors.As(e, &errno) && errno == errorNoMoreItems {
 				break
 			}
 			return out, fmt.Errorf("winevents: EvtNext: %w", e)

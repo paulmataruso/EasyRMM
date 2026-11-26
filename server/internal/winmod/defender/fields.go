@@ -157,7 +157,7 @@ func (f Field) Weakens(canonical string) bool {
 // checkPreference is the Check of preferences_set and preferences_weaken:
 // the field is settable, the value is of its type, and the action is the one
 // of the value's direction, so a weakening value can never ride a tier 1
-// request. ADR-0074 allows 8 fields per call; the catalogue's parameters are
+// request. ADR-0074 allows 8 fields per call; the catalog's parameters are
 // single values, so one field is set per call.
 func checkPreference(weaken bool) func(map[string]any) error {
 	return func(p map[string]any) error {

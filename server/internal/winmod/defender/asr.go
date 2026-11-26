@@ -9,8 +9,8 @@ type ASRRule struct {
 	Name string
 }
 
-// ASRRules is the catalogue of rule GUIDs the module may set. A GUID not in
-// it is shown as "unrecognised rule" and cannot be set.
+// ASRRules is the catalog of rule GUIDs the module may set. A GUID not in
+// it is shown as "unrecognized rule" and cannot be set.
 var ASRRules = []ASRRule{
 	{"56a863a9-875e-4185-98a7-b882c64b5ce5", "Block abuse of exploited vulnerable signed drivers"},
 	{"7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c", "Block Adobe Reader from creating child processes"},
@@ -37,7 +37,7 @@ var ASRRules = []ASRRule{
 // protection; AuditMode and Disabled do.
 var ASRModes = []string{"Disabled", "Enabled", "AuditMode", "Warn"}
 
-// ASRRuleName is the catalogue's name for a rule, or "" for one it does not know.
+// ASRRuleName is the catalog's name for a rule, or "" for one it does not know.
 func ASRRuleName(id string) string {
 	for _, r := range ASRRules {
 		if strings.EqualFold(r.ID, id) {

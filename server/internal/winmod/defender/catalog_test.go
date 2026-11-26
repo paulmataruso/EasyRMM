@@ -12,7 +12,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 )
 
-// The catalogue lint of ADR-0074 section 9: permission, version, timeout,
+// The catalog lint of ADR-0074 section 9: permission, version, timeout,
 // tier rules, and the script pins, for every action.
 func TestCatalogLint(t *testing.T) {
 	acts := Actions()
@@ -50,12 +50,12 @@ func TestCatalogLint(t *testing.T) {
 			t.Errorf("%s: a change drops the module's snapshots", a.Name)
 		}
 	}
-	// Every script in the package is in the catalogue, and the other way round.
+	// Every script in the package is in the catalog, and the other way round.
 	entries, _ := scriptFS.ReadDir(".")
 	for _, e := range entries {
 		n := strings.TrimSuffix(e.Name(), ".ps1")
 		if !seen[n] {
-			t.Errorf("%s.ps1 is not in the catalogue", n)
+			t.Errorf("%s.ps1 is not in the catalog", n)
 		}
 	}
 	for n := range scriptPins {

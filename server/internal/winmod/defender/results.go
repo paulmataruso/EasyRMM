@@ -40,14 +40,14 @@ type asrWire struct {
 	Rules     []ASRState `json:"rules"`
 }
 
-// ASRRead is defender.asr_read's result, joined to the catalogue's names.
+// ASRRead is defender.asr_read's result, joined to the catalog's names.
 type ASRRead struct {
 	Supported bool           `json:"supported"`
 	Rules     []ASRRuleState `json:"rules"`
 }
 
 // ASRRuleState is a rule with its name; Known is false for a GUID the
-// catalogue does not list ("unrecognised rule").
+// catalog does not list ("unrecognized rule").
 type ASRRuleState struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
@@ -170,7 +170,7 @@ type Change struct {
 	After   any    `json:"after"`
 }
 
-// Cancelled is scan_cancel's result.
-type Cancelled struct {
-	Cancelled bool `json:"cancelled"`
+// Canceled is scan_cancel's result.
+type Canceled struct {
+	Canceled bool `json:"canceled"`
 }

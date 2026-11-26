@@ -102,13 +102,6 @@ var securityKeys = []string{
 	`puaprotection`, `enablenetworkprotection`, `\controlled folder access`, `\attack surface reduction`,
 }
 
-func nullIf(m map[string]string) any {
-	if len(m) == 0 {
-		return nil
-	}
-	return m
-}
-
 // row is an event ready to store.
 type row struct {
 	e       agentproto.DefenderLogEvent

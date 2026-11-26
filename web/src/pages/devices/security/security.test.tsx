@@ -224,7 +224,7 @@ describe("the Exclusions panel", () => {
 });
 
 describe("the other panels", () => {
-  it("turns an ASR rule on, and treats an unrecognised rule as unrecognised", async () => {
+  it("turns an ASR rule on, and treats an unrecognized rule as unrecognized", async () => {
     const api = installFakeApi(
       routes(SITE_ADMIN, {
         asr_read: {
@@ -238,7 +238,7 @@ describe("the other panels", () => {
     );
     renderApp("/devices/d1?tab=security");
     await userEvent.click(await screen.findByRole("button", { name: "Read rules" }));
-    await screen.findByText("Unrecognised rule");
+    await screen.findByText("Unrecognized rule");
     const select = await screen.findByLabelText(/Block credential stealing.* mode/);
     await userEvent.selectOptions(select, "Enabled");
     await userEvent.click(within(select.closest("li")!).getByRole("button", { name: "Apply" }));

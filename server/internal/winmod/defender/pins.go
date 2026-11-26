@@ -21,7 +21,7 @@ var scriptPins = map[string]string{
 	"preferences_weaken": "5d788d952790121b00a2b09e8e5726ef13336cb5f29d954aaa078a38a67246e5",
 	"quarantine_read":    "ad23741c9d921aef76eaa4a09adc488ad6d464144f8f0e78a6acc4777abedcee",
 	"quarantine_restore": "76351360024d16823029da725971e34cd9a1d0b7df3687b45176d8e254c30ae7",
-	"scan_cancel":        "e3d597cb8b5d00d8ad7687cfcafa24c81be4399046acdeddb0699d0391a3ebaa",
+	"scan_cancel":        "35faea7c1b13879cf57213184059d71607b85bf6bc796f6d55cad1e74bccd3b9",
 	"scan_custom":        "a8426518387c9978b4a8b1986d2a94f2382f3a9d72c381cae03ee6d2d32dac08",
 	"scan_full":          "32f8361069315cf5b2aae35114c8b6b64d8dcbcd2940a48b8cf8b4958a869fb6",
 	"scan_quick":         "e6e4f484b6a88fe04ca345526b990377a780aa958512a3970b7b7c4eb2e24675",

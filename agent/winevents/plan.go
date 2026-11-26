@@ -61,7 +61,7 @@ func size(events []agentproto.DefenderLogEvent) int {
 	return len(b)
 }
 
-// Plan builds a batch from events in record order: storms are summarised,
+// Plan builds a batch from events in record order: storms are summarized,
 // and the batch is cut to the longest run of events whose records fit the
 // caps (25 records, 24 KiB), so a backlog drains over several heartbeats.
 // Through is the last record the batch covers. A run that needs more than the

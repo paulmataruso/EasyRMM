@@ -61,7 +61,8 @@ func TestDefenderActionsAPI(t *testing.T) {
 	notAllowed := func(r response, what string) {
 		t.Helper()
 		// A person who may not use an action on the device is told so as a field of the request.
-		if r.status != http.StatusNotFound && r.status != http.StatusForbidden && !(r.status == http.StatusUnprocessableEntity && strings.Contains(string(r.body), "You cannot use")) {
+		refusedAsField := r.status == http.StatusUnprocessableEntity && strings.Contains(string(r.body), "You cannot use")
+		if r.status != http.StatusNotFound && r.status != http.StatusForbidden && !refusedAsField {
 			t.Errorf("%s: status %d, want a refusal: %s", what, r.status, r.body)
 		}
 	}

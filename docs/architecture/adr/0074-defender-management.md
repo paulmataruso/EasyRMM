@@ -912,6 +912,22 @@ no Defender work to an agent below the protocol level that reports it
 * **Section 6:** the Defender event log is read by an agent-side reader with a
   bookmark, not by ADR-0068's job-based builtin, to avoid a job per minute.
 
+## Amendments made while building (decided in review)
+
+Amended 2026-11-26 (decided in review), while building the module. Each is what the code proved or what a slice left for later, not an owner decision.
+
+* **Parameters are single values.** ADR-0073's parameter types have no list or map, so `preferences_set` takes one `field` and one `value` (not up to 8 fields), `asr_set` one rule (not up to 20). The direction decides the action: `preferences_set` (tier 1) refuses a value that lowers protection, `preferences_weaken` (tier 3) refuses one that does not; likewise `asr_set` (Enabled, Warn) and `asr_weaken` (AuditMode, Disabled), `cfa_set` (Enabled) and `cfa_weaken` (Disabled, AuditMode). The refusal is a `422` that names the other action, so a weakening value can never ride a tier 1 request.
+* **Tier 3 is one permission.** A tier 3 action carries `defender.weaken` alone; everyone who holds it also holds `defender.manage` (a test checks it), so "manage and weaken" holds. A tier 2 action is a new framework flag `Confirm` (the typed confirmation without a step-up); the framework also gained `Check`, a module's own check of the validated parameters.
+* **The confirmation subject is the value**, such as the exclusion or the field, and for `threats_remove`, which has no value, empty (`defender.threats_remove:`), not the device name: ADR-0073's subject is a parameter.
+* **Scans** are three actions, `scan_quick` (2 hours), `scan_full` (24 hours) and `scan_custom` (6 hours), design B until R2. The `scan_running` refusal beyond Defender's own refusal of a second scan is not built.
+* **`quarantine_restore` takes the threat `name` only**; the script checks the name is in the quarantine list on the computer. There is no `filePath` variant.
+* **Sensitive reads are served whole**: `exclusions_read`, `cfa_read` and `quarantine_read` are sensitive actions, so a holder of `defender.view` without `defender.view_sensitive` gets none of them (the console hides the panels), not a version with our own entries marked.
+* **Managed by policy** is decided by the script on the computer (the registry owner reader, Tamper Protection, `unknown_owner` writable); the server's earlier `409 managed_by_policy` from a stored snapshot is not built. The script's refusal comes back as the run's failure `managed_by_policy`.
+* **State** comes from the hourly `defender.status` snapshot, not from a `detail` object in Facts: the Facts `detail`, its hourly agent timer and `DefenderPolicy.module` are not built. The fleet table and the cards read that snapshot.
+* **Events** ride the heartbeat (about every 60 seconds) instead of a separate timer. A log incarnation is an `epoch` the agent names (a cleared log starts a new one) instead of `log_created`; a gap is told by the channel's oldest and newest record IDs. The `defender_events` table has `epoch` for that and `severity` as a rank.
+* **Event alert kinds** are judged from a derived snapshot, `defender.events`, which the server rebuilds from `defender_events` when a batch arrives and at least every 30 minutes while the module is on, so the monitoring engine's existing snapshot path evaluates them (no new pass in `Evaluate`). An alert is therefore one per policy and device, not per threat; its detail names up to three threats. The best-match rule was already in the engine. The grace of `defender_update_failed` counts from the server's first reading of the failure. `defender_protection_off` stays status-based (event 5001 adds no input). `defender_unhealthy` and `defender_out_of_support` end after 24 hours and 3 days without a repeat, not by Facts. The ours window of ADR-0070's own reconcile events is not built; the window of a Defender change job is.
+* **Not built:** the protection-state column and filter on the device group page, and the e2e spec. Not verified: everything marked *to confirm* above (the `Policy Manager` key, `TamperProtectionSource` values, `Add-MpPreference` for ASR, the 5007 key list, event field names, MpCmdRun's quarantine listing format), and Server Core.
+
 ## References
 
 Read on 2026-11-26 unless marked *not re-read* (cited from the knowledge the

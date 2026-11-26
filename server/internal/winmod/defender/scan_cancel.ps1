@@ -31,7 +31,7 @@ try {
     Import-Module Defender
 
     & 'C:\Program Files\Windows Defender\MpCmdRun.exe' -Scan -Cancel | Out-Null
-    Write-Result $true ([ordered]@{ cancelled = ($LASTEXITCODE -eq 0) }) $null $null
+    Write-Result $true ([ordered]@{ canceled = ($LASTEXITCODE -eq 0) }) $null $null
 } catch {
     Write-Result $false $null 'command_failed' ('The Defender action failed: ' + $_.Exception.GetType().Name)
 }

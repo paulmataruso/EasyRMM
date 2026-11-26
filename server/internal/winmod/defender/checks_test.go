@@ -237,8 +237,8 @@ func TestExclusionAuditHoldsNoValue(t *testing.T) {
 	}
 }
 
-// ASR results are joined to the catalogue's names; an unknown GUID is
-// "unrecognised".
+// ASR results are joined to the catalog's names; an unknown GUID is
+// "unrecognized".
 func TestASRReadNames(t *testing.T) {
 	a, _ := catalog(t).Lookup("defender.asr_read")
 	out, err := a.Decode(json.RawMessage(`{"supported":true,"rules":[{"id":"9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2","mode":"Enabled","managedBy":null},{"id":"00000000-0000-0000-0000-000000000000","mode":"AuditMode","managedBy":"group_policy"}]}`))
@@ -272,7 +272,7 @@ func TestResultDecoders(t *testing.T) {
 		"quarantine_restore": `{"name":"x","restored":true}`,
 		"exclusion_add":      `{"applied":false,"reason":"blocked","before":false,"after":false}`,
 		"preferences_set":    `{"applied":true,"reason":"","before":"1","after":"2"}`,
-		"scan_cancel":        `{"cancelled":true}`,
+		"scan_cancel":        `{"canceled":true}`,
 	}
 	for n, data := range good {
 		a, _ := c.Lookup("defender." + n)

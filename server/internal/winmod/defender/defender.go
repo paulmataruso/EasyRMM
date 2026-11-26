@@ -158,7 +158,7 @@ func Actions() []winmod.Action {
 		change("scan_full", "Run a Defender full scan", secs(24*time.Hour), nil, winmod.Typed[ScanDone]()),
 		checked(change("scan_custom", "Run a Defender scan of one path", secs(6*time.Hour),
 			[]winmod.Param{{Name: "path", Type: winmod.Text, Required: true, Max: 260}}, winmod.Typed[ScanDone]()), checkScanPath),
-		change("scan_cancel", "Cancel the running Defender scan", 60, nil, winmod.Typed[Cancelled]()),
+		change("scan_cancel", "Cancel the running Defender scan", 60, nil, winmod.Typed[Canceled]()),
 		change("signatures_update", "Update Defender's signatures", secs(10*time.Minute), nil, winmod.Typed[SignaturesUpdated]()),
 		confirmed(change("threats_remove", "Remove Defender's active threats", secs(10*time.Minute), nil, winmod.Typed[ThreatsRemoved]()), ""),
 		weakening(checked(change("quarantine_restore", "Restore a quarantined item to its original place", secs(2*time.Minute),
@@ -226,7 +226,7 @@ func checkScanPath(p map[string]any) error {
 var scanPath = regexp.MustCompile(`^([A-Za-z]:\\|\\\\[^\\]+\\[^\\]+)`)
 
 // checkASR is the Check of asr_set and asr_weaken: the rule is in the
-// catalogue, and the mode is that action's direction.
+// catalog, and the mode is that action's direction.
 func checkASR(weaken bool) func(map[string]any) error {
 	return func(p map[string]any) error {
 		id, _ := p["id"].(string)
