@@ -142,19 +142,39 @@ type SessionView struct {
 	// GlobalPermissions are those held platform-wide, not only in some
 	// organizations or sites.
 	GlobalPermissions []rbac.Permission `json:"globalPermissions"`
-	IsSuperAdmin      bool              `json:"isSuperAdmin"`
-	Features          Features          `json:"features"`
+	// ScopedPermissions says where each permission that is not platform-wide
+	// holds, so a page can check it at its own organization or site.
+	ScopedPermissions map[rbac.Permission]ScopeView `json:"scopedPermissions"`
+	IsSuperAdmin      bool                          `json:"isSuperAdmin"`
+	Features          Features                      `json:"features"`
+}
+
+// ScopeView is the organizations (every site in them) and individual sites
+// where a permission holds.
+type ScopeView struct {
+	Organizations []uuid.UUID `json:"organizations"`
+	Sites         []uuid.UUID `json:"sites"`
 }
 
 func (a *API) view(id *httpapi.Identity) SessionView {
 	v := SessionView{State: id.Session.State, User: id.User, CSRFToken: id.CSRFToken, ExpiresAt: id.Session.ExpiresAt,
-		Permissions: []rbac.Permission{}, GlobalPermissions: []rbac.Permission{}, Features: a.features}
+		Permissions: []rbac.Permission{}, GlobalPermissions: []rbac.Permission{}, ScopedPermissions: map[rbac.Permission]ScopeView{}, Features: a.features}
 	if id.Principal != nil {
 		v.Permissions = id.Principal.Permissions()
 		v.GlobalPermissions = id.Principal.GlobalPermissions()
+		for perm, sc := range id.Principal.ScopedPermissions() {
+			v.ScopedPermissions[perm] = ScopeView{Organizations: nonNil(sc.Orgs), Sites: nonNil(sc.Sites)}
+		}
 		v.IsSuperAdmin = id.Principal.IsSuperAdmin()
 	}
 	return v
+}
+
+func nonNil(ids []uuid.UUID) []uuid.UUID {
+	if ids == nil {
+		return []uuid.UUID{}
+	}
+	return ids
 }
 
 func (a *API) options(w http.ResponseWriter, r *http.Request) error {

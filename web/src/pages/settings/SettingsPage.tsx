@@ -39,6 +39,9 @@ export function SettingsPage() {
   const first = parts[0];
   if (!first) return <Navigate to="/" replace />;
   const requested = url.get("tab");
+  // The organization's own people are its People tab (ADR-0072); the old filtered link goes there.
+  const peopleOf = url.get("organizationId");
+  if (requested === "users" && peopleOf) return <Navigate to={`/organizations/${encodeURIComponent(peopleOf)}?tab=people`} replace />;
   const part = parts.find((p) => p.id === requested) ?? first;
 
   return (

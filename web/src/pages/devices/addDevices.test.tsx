@@ -70,10 +70,9 @@ describe("add devices", () => {
         },
       }),
     );
-    // Arriving from a site page picks the site.
-    renderApp("/devices/add?siteId=s2");
+    renderApp("/devices/add");
     const siteField = await screen.findByLabelText(/^Site/);
-    expect(siteField).toHaveValue("s2");
+    await user.selectOptions(siteField, "s2");
     // Sites are grouped by organization.
     expect(within(siteField).getByRole("group", { name: "Contoso Dental Group" })).toBeInTheDocument();
 
@@ -307,7 +306,36 @@ describe("add devices", () => {
       "GET /organizations/:id": ok({ id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" }),
     });
     renderApp("/sites/s2");
-    expect(await screen.findByRole("link", { name: "Add devices" })).toHaveAttribute("href", "/devices/add?siteId=s2");
+    expect(await screen.findByRole("link", { name: "Add devices" })).toHaveAttribute("href", "/sites/s2?tab=install");
+  });
+
+  it("sends /devices/add?siteId= to the site's Install tab", async () => {
+    installFakeApi({
+      ...routes(),
+      "GET /sites/:id": ok(site("s2", "o1", "Warehouse")),
+      "GET /organizations/:id": ok({ id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" }),
+    });
+    renderApp("/devices/add?siteId=s2");
+    expect(await screen.findByRole("tab", { name: "Install" })).toHaveAttribute("aria-selected", "true");
+    // The site is fixed: no picker, no approval choice, and only this site's tokens.
+    expect(screen.queryByLabelText(/^Site/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Approval tokens")).not.toBeInTheDocument();
+    await screen.findByText("Deployment tokens");
+    expect(screen.queryByText("Head office rollout")).not.toBeInTheDocument();
+  });
+
+  it("shows the organization's tokens on its Install tab, and hides the tab from someone who holds enrollment elsewhere", async () => {
+    const org = { id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" };
+    const scoped = (organizations: string[]) =>
+      sessionView({ ...ADMIN, scopedPermissions: { "enrollment.manage": { organizations, sites: [] } } });
+    installFakeApi({ ...routes(), ...baseRoutes(scoped(["o1"])), "GET /organizations/:id": ok(org), "GET /organizations/:id/sites": ok({ items: [] }), "GET /enrollment-tokens": ok({ items: TOKENS }) });
+    const { unmount } = renderApp("/organizations/o1?tab=install");
+    expect(await screen.findByText("Head office rollout")).toBeInTheDocument();
+    unmount();
+    installFakeApi({ ...routes(), ...baseRoutes(scoped(["o2"])), "GET /organizations/:id": ok(org), "GET /organizations/:id/sites": ok({ items: [] }) });
+    renderApp("/organizations/o1");
+    await screen.findByRole("heading", { name: "Northwind Traders" });
+    expect(screen.queryByRole("tab", { name: "Install" })).not.toBeInTheDocument();
   });
 });
 

@@ -128,7 +128,7 @@ export function SiteDetailPage() {
             )}
             {can("enrollment.manage") && (
               <Link
-                to={`/devices/add?siteId=${s.id}`}
+                to="?tab=install"
                 className={buttonClasses("secondary")}
               >
                 <MonitorDown className="size-4" aria-hidden />
@@ -159,6 +159,7 @@ export function SiteDetailPage() {
       <LevelTabs
         level="site"
         id={s.id}
+        organizationId={s.organizationId}
         overview={
           <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
             <div className="flex flex-col gap-5 xl:col-span-2">
