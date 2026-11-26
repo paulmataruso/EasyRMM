@@ -705,9 +705,17 @@ Amended 2026-11-26 (decided in review, while building slices 8 and 9):
   (`winmod.MarshalParams`); the document decodes to the same values. The
   hostile-value test sends quotes, `$()`, backticks, newlines, typographic
   quotes and Unicode through this path and fails if a canary file appears.
-  A script's *output* is read in the same code page: a script that returns
-  non-ASCII text must escape it the same way (the fixture does); a module
-  that needs this adds the helper to its library.
+  Amended 2026-11-26 (decided in review): scripts do not escape their own
+  output. Before a PowerShell script that takes parameters runs, the Windows
+  agent puts `agentproto.ParamsPrologue` in front of it (after the signature
+  was checked on the script as sent):
+  `[Console]::InputEncoding = [Console]::OutputEncoding = New-Object
+  System.Text.UTF8Encoding $false`, so standard input and output are UTF-8
+  without a byte order mark, and the agent decodes the output as UTF-8 (a name
+  such as "José Müller" or "日本語" survives both ways). The hostile-value
+  test runs the fixture with that prologue and checks Latin accents and CJK in
+  the output; the ASCII `params` stay, as they are harmless. The prologue
+  applies only to PowerShell jobs with params; other jobs are unchanged.
 * **UI (slice 8).** The device page's module tabs are one registry
   (`pages/devices/modules/moduleTabs.tsx`), shown when the role is detected, the
   module is on for the site and the viewer holds the view permission; off keeps
