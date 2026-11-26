@@ -56,7 +56,7 @@ test("a requirement is written up, evidence is stored encrypted and comes back u
   const page = admin;
   await page.getByRole("button", { name: /3\.1\.1 / }).first().click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Statement").fill("Accounts are limited to named people, reviewed each quarter.");
+  await dialog.getByRole("textbox", { name: "Statement", exact: true }).fill("Accounts are limited to named people, reviewed each quarter.");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Saved.")).toBeVisible();
 
@@ -77,7 +77,7 @@ test("a requirement is written up, evidence is stored encrypted and comes back u
   expect(list.items[0]!.size).toBe(EVIDENCE.length);
   expect(list.items[0]!.sha256).toHaveLength(64);
 
-  await dialog.getByLabel("Your statement").fill("We limit accounts to named people.");
+  await dialog.getByRole("textbox", { name: "Your statement" }).fill("We limit accounts to named people.");
   await dialog.getByRole("button", { name: "Sign the attestation" }).click();
   const stepUp = page.getByRole("dialog", { name: "Confirm it is you" });
   await expect(stepUp).toBeVisible();
