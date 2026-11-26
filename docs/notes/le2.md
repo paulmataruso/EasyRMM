@@ -6,7 +6,7 @@
 - A device's page shows what its agent verified ("Certificate trust") and, for a device cut off by a certificate it cannot verify, **Reinstall through a remote session**.
 
 ## IMPLEMENTATION_STATUS rows
-- 5b1 agent trust: built; Go unit tests (agentproto, agent, client, runner), PostgreSQL integration (service, migration down/up, end to end through the real server with the real agent code), vitest and an e2e spec. Unverified: Windows platform verifier (tests are in `agent/trust/verify_windows_test.go`, run by the Windows CI job, not yet run), a real agent binary against Pebble, a real Linux EasyPatch (.NET) bundle check, the e2e spec against `make e2e` (see report).
+- 5b1 agent trust: built; Go unit tests (agentproto, agent, client, runner), PostgreSQL integration (service, migration down/up, end to end through the real server with the real agent code), vitest and an e2e spec. e2e: `web/e2e/tls-trust.spec.ts` passed against a real server (with the console specs it needs). Unverified: Windows platform verifier (tests are in `agent/trust/verify_windows_test.go`, run by the Windows CI job, not yet run), a real agent binary against Pebble, a real Linux EasyPatch (.NET) bundle check.
 
 ## Privacy
 Chains are public certificates; nothing secret is stored or sent. The server stores, per device, what its agent said it trusts ("system", "ca-file", "system+ca-file"), its build hash and the origin it connects to.
@@ -26,3 +26,7 @@ Chains are public certificates; nothing secret is stored or sent. The server sto
 
 ## Not done in 5b1
 - The expiry alert listing unprotected devices, an ask-again button, the .NET bundle check, the Pebble end-to-end run with a real agent binary.
+
+## Other findings
+- In the full `make e2e` run, `console.spec.ts` "a domain controller's Directory tab reads the domain..." (another slice) timed out at its agent poll; its worker restart then lost the TOTP state later specs need. Not this slice's: this spec passed when run after the two console specs that create its data.
+- `server/internal/httpapi/agentapi` `TestAgentOfTheReleaseBefore` needs `EASYRMM_TEST_AGENT_RELEASE_BEFORE` (`make agent-release-before`); not run here.
