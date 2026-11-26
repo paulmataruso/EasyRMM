@@ -1181,7 +1181,7 @@ test("a device's Security tab follows the Defender module: shown, then off for i
   const dev = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { organizationId: string };
   await page.goto(`/devices/${agent.deviceId}?tab=security`);
   await expect(page.getByRole("tab", { name: "Security" })).toBeVisible();
-  await expect(page.getByText("Not read yet")).toBeVisible();
+  await expect(page.getByText("Not read yet", { exact: true })).toBeVisible();
 
   await page.goto(`/organizations/${dev.organizationId}?tab=windows-modules`);
   const defender = page.getByRole("checkbox", { name: "Microsoft Defender" });
