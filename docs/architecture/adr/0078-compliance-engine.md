@@ -891,6 +891,48 @@ published schema in CI (the schema is fetched at a pinned version and
 checksum, or vendored as public-domain data); RLS across organizations;
 audit event per state change; export hash recorded.
 
+*Amended 2026-11-26 (decided in review, C5 as built):*
+
+* **SPRS weights verified.** The weights were checked, requirement by requirement, against
+  *NIST SP 800-171 DoD Assessment Methodology, Version 1.2.1* (June 24, 2020), Annex A, retrieved
+  as a PDF (SHA-256 `9efdc8b0...6fae5`, recorded in `content/sources.json`) and read with
+  `pdftotext`. One value was wrong: **3.7.5 is 5, not 3**; the total is now 313. 3.12.4 has no
+  value in the methodology (NA) and is stored as 0. 3.5.3 and 3.13.11 are 5 with a partial case of
+  3 (`flags.partial_points`). The fixture
+  `server/internal/compliance/packs/testdata/dod-sprs-weights-v1.2.1.json` is EasyRMM's own
+  transcription of the numbers (no wording), cross-checked against the PDF's lists of five- and
+  three-point requirements; the pack tests compare both packs against it. Both packs are now
+  `weights_verified`.
+* **32 CFR 170.21 re-read.** The paragraph was read from the eCFR (the version in force on
+  2025-01-01) and the ADR's reading stands: score divided by 110 of at least 0.8 (88), no item above
+  one point except 3.13.11 when encryption is employed but not FIPS-validated (3 points), the six
+  requirements barred, closeout within 180 days. It adds that Level 1 has no plan of action at all
+  (a Level 1 practice count is kept: `l1_count`).
+* **Evidence keys use `secrets.Sealer`, not the ADR-0081 keystore.** The keystore is an opt-in
+  separate daemon; evidence must work on every deployment, and this section's text (wrap with the
+  Sealer; "if the keystore lands, wrapping moves to it") is followed as written. Moving the wrapping
+  to the keystore's `service` purpose later changes `dataKey` only.
+* **Objectives.** `compliance_objectives` holds none yet (the generated 171A objectives are not in
+  the packs), so a requirement has one whole-requirement objective (`obj_id` `*`). The workspace,
+  the roll-up and the tables already work per objective. A scan alone never makes a requirement that
+  is not wholly technical met, even with one objective.
+* **Not built in C5.** The generated OSCAL catalogue and profile for Revision 2, and OSCAL
+  assessment-results; the SSP and POA&M export reference the Revision 2 publication
+  (`import-profile`) and name controls `sp800-171r2_<number>`. The retention purge action (the
+  trigger allows only a purge that says so). Group scope entries are accepted by the API but the
+  console edits computers only. Evidence data-key rotation, as stated above.
+* **Added to the data model.** `compliance_implementations.partial` (the two partial-credit cases),
+  `compliance_objective_results.attestation_id` and `.note`, `compliance_evidence.file_name`,
+  `compliance_poam_items.basis`, `compliance_documents.UNIQUE (assessment_id, kind, template_id)`,
+  `compliance_document_sections.section_id`. The freeze is a set of triggers (an approved or
+  archived assessment and everything under it cannot change; only approved to archived is allowed),
+  and evidence and attestations are immutable by trigger.
+* **OSCAL validation.** NIST's OSCAL 1.1.2 SSP and POA&M JSON schemas are vendored unchanged under
+  `assess/oscal/testdata` at pinned SHA-256s; a Go test validates exports against them (the validator
+  needs the draft-07 plain-name ids turned into anchors, done in the test, not in the file). A POA&M
+  with no items cannot be valid OSCAL (the schema needs one), so that export is refused and the ZIP
+  leaves the file out.
+
 ### Evidence storage
 
 *Amended 2026-11-26 (decided in review):* evidence is **encrypted at rest**.

@@ -52,12 +52,13 @@ type fixture struct {
 	other  access.Caller
 	viewer access.Caller
 	dev    uuid.UUID
+	super  string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, step: &stepUp{}, now: time.Now()}
+	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, step: &stepUp{}, now: time.Now(), super: inst.SuperDSN}
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	sealer, err := secrets.NewSealer(secrets.Key{ID: "test", Raw: key})
@@ -324,7 +325,7 @@ func TestAttestationNeedsStepUpAStatementAndExpires(t *testing.T) {
 	if r := f.req(a, nist); r.Status != assess.Met || r.Origin != "attested" {
 		t.Errorf("after attestation: %s / %s", r.Status, r.Origin)
 	}
-	if f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.attestation.sign' AND details->>'stepUp' = 'true'`) != 1 {
+	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.attestation.sign' AND details->>'stepUp' = 'true'`) != 1 {
 		t.Error("the attestation is not in the audit log with its step-up")
 	}
 	f.now = f.now.Add(400 * 24 * time.Hour)
@@ -366,6 +367,7 @@ func TestFreezeAndCopyOnWrite(t *testing.T) {
 	if _, err := f.svc.Transition(f.ctx, f.admin, f.acme, a.ID, assess.Approved); err == nil {
 		t.Fatal("a draft was approved without review")
 	}
+	f.must(`INSERT INTO compliance_objective_results (organization_id, assessment_id, req_id, obj_id, determination, source) VALUES ($1, $2, $3, '*', 'met', 'interview')`, f.acme, a.ID, req)
 	f.approve(a)
 	if f.n(`SELECT count(*) FROM compliance_score_snapshots WHERE assessment_id = $1`, a.ID) != 1 {
 		t.Error("approval took no snapshot of the score")
@@ -414,7 +416,7 @@ func TestFreezeAndCopyOnWrite(t *testing.T) {
 	if _, err := f.svc.Transition(f.ctx, f.admin, f.acme, a.ID, assess.Archived); err != nil {
 		t.Fatal(err)
 	}
-	if f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.assessment.transition' AND organization_id = $1`, f.acme) != 3 {
+	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.assessment.transition' AND organization_id = $1`, f.acme) != 3 {
 		t.Error("each state change is not in the audit log")
 	}
 }
@@ -451,8 +453,8 @@ func TestEvidenceIsEncryptedHashedAndNeverDeleted(t *testing.T) {
 	if err != nil || !bytes.Equal(dl.Body, plain) {
 		t.Fatalf("download: %v", err)
 	}
-	if f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.evidence.download' AND details->>'sha256' = $1 AND actor_label = 'tech@acme.test'`, ev.SHA256) != 1 ||
-		f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.evidence.upload' AND details->>'sha256' = $1`, ev.SHA256) != 1 {
+	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.evidence.download' AND details->>'sha256' = $1 AND actor_label = 'tech@acme.test'`, ev.SHA256) != 1 ||
+		f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.evidence.upload' AND details->>'sha256' = $1`, ev.SHA256) != 1 {
 		t.Error("the upload and the download are not both in the audit log with the hash")
 	}
 	// Another organization's administrator cannot see it, and the row-level policy agrees.
@@ -527,23 +529,24 @@ func TestEvidenceBlobCannotMoveToAnotherRow(t *testing.T) {
 	f := newFixture(t)
 	e1, _ := f.svc.AddEvidence(f.ctx, f.admin, f.acme, assess.EvidenceInput{Title: "one", Body: strings.NewReader("first")})
 	e2, _ := f.svc.AddEvidence(f.ctx, f.admin, f.acme, assess.EvidenceInput{Title: "two", Body: strings.NewReader("second")})
-	// A blob copied onto another row (done as the table's owner, around the trigger) does not open.
-	err := f.db.InTx(f.ctx, database.System, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(f.ctx, `ALTER TABLE compliance_evidence DISABLE TRIGGER compliance_evidence_no_change`); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(f.ctx, `UPDATE compliance_evidence t SET body = s.body, nonce = s.nonce, sha256 = s.sha256 FROM compliance_evidence s WHERE s.id = $1 AND t.id = $2`, e1.ID, e2.ID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(f.ctx, `ALTER TABLE compliance_evidence ENABLE TRIGGER compliance_evidence_no_change`)
-		return err
-	})
+	// A blob copied onto another row (done as the database's owner, around the trigger) does not open.
+	conn, err := pgx.Connect(f.ctx, f.super)
 	if err != nil {
-		t.Skipf("the test database role cannot move a blob around the trigger: %v", err)
+		t.Fatal(err)
+	}
+	defer conn.Close(f.ctx)
+	for _, q := range []string{
+		`ALTER TABLE compliance_evidence DISABLE TRIGGER compliance_evidence_no_change`,
+		`UPDATE compliance_evidence t SET body = s.body, nonce = s.nonce, sha256 = s.sha256 FROM compliance_evidence s WHERE s.id = '` + e1.ID.String() + `' AND t.id = '` + e2.ID.String() + `'`,
+		`ALTER TABLE compliance_evidence ENABLE TRIGGER compliance_evidence_no_change`,
+	} {
+		if _, err := conn.Exec(f.ctx, q); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_, err = f.svc.DownloadEvidence(f.ctx, f.admin, f.acme, e2.ID)
 	code(t, err, "evidence_unreadable")
-	if f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.evidence.download' AND outcome = 'failure'`) != 1 {
+	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.evidence.download' AND outcome = 'failure'`) != 1 {
 		t.Error("the refused download is not in the audit log")
 	}
 }
@@ -674,7 +677,7 @@ func TestSSPAndExports(t *testing.T) {
 		if file.SHA256 != hex.EncodeToString(h[:]) || len(file.Body) == 0 {
 			t.Errorf("%s: hash", format)
 		}
-		if f.n(`SELECT count(*) FROM audit_events WHERE action = 'compliance.export' AND details->>'format' = $1 AND details->>'sha256' = $2`, format, file.SHA256) != 1 {
+		if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.export' AND details->>'format' = $1 AND details->>'sha256' = $2`, format, file.SHA256) != 1 {
 			t.Errorf("%s: the export hash is not in the audit log", format)
 		}
 		low := strings.ToLower(string(file.Body))

@@ -464,6 +464,8 @@ are insert-only (a trigger like `easyrmm_audit_immutable`), as is
 
 ## The assessment workspace (C5)
 
+As built, the tables differ from this sketch in small ways, listed in ADR-0078's C5 amendment (a `partial` flag, an attestation link and a note on objective results, a file name on evidence, a `basis` on plan-of-action items, a `section_id` on document sections). The migration is the source of truth.
+
 ```sql
 CREATE TABLE compliance_assessments (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -593,6 +595,6 @@ second chain is added.
 | `90780_compliance_library.sql` | C1 | sources, packs, controls, refs, profiles, frameworks, requirements, objectives, mappings, org settings and org packs | drop in reverse order |
 | `90781_compliance_results.sql` | C1 | scans, scan jobs, results history and the latest-result view | drop; no data outside the compliance tables is touched |
 | `90782_compliance_fix_queue.sql` | C2 | fix items, agreements, declines; new audit event names need no schema | drop |
-| `90783_compliance_assessment.sql` | C5 | assessment workspace tables | drop |
+| `90783_compliance_assessment.sql` (built as `90391`) | C5 | assessment workspace tables, freeze and immutability triggers | drop |
 
 The integrator renumbers these. C3 and C4 add content, not tables.
