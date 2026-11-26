@@ -29,7 +29,7 @@
 
 ## For the integrator
 
-* Migration `server/migrations/90171_rdp_credentials.sql` (renumber).
+* Migration `server/migrations/00055_rdp_credentials.sql` (renumber).
 * `docs/security/rbac.md` and `web/src/api/types.ts` list the new permission.
 * The shared level and re-sealing need `rdpcreds` to join the key-rotation job (ADR-0057) when that lands.
 * Coverage floors for `server/internal/rdpcreds` and `server/internal/httpapi/rdpcredsapi` are added in

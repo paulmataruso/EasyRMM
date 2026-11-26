@@ -390,10 +390,10 @@ func (s *Service) mayUse(ctx context.Context, u Use) (string, error) {
 	var steppedUp *time.Time
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT u.status, s.stepped_up_at FROM sessions s JOIN users u ON u.id = s.user_id
-			WHERE s.id = $1 AND u.id = $2`, u.Session, u.User).Scan(&status, &steppedUp)
+			WHERE s.id = $1 AND u.id = $2 AND s.revoked_at IS NULL AND s.expires_at > now() AND s.idle_expires_at > now()`, u.Session, u.User).Scan(&status, &steppedUp)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "session is not the person's", nil
+		return "session is not the person's, or has ended", nil
 	}
 	if err != nil {
 		return "", err
