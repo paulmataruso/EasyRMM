@@ -499,6 +499,21 @@ func (p *Principal) Permissions() []Permission {
 	return out
 }
 
+// ScopedPermissions returns, for each permission held in some organizations or
+// sites but not platform-wide, where it holds: the organizations with a grant
+// over all their sites, and the individual sites outside those. The frontend
+// checks a permission at the page's own scope with it.
+func (p *Principal) ScopedPermissions() map[Permission]Scope {
+	out := map[Permission]Scope{}
+	for _, perm := range p.Permissions() {
+		if p.global[perm] {
+			continue
+		}
+		out[perm] = p.Scope(perm)
+	}
+	return out
+}
+
 // GlobalPermissions returns the permissions the principal holds
 // platform-wide, for the frontend to show what only those may do: deciding
 // on devices that wait for approval and belong to no organization yet.

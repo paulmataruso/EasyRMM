@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/paulmataruso/easyrmm/agent/channel"
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -86,6 +87,19 @@ type Removal interface {
 	Apply(ctx context.Context, u *agentproto.SignedUninstall) bool
 }
 
+// Channel is the agent's WebSocket channel (package channel, ADR-0059). The
+// runner only feeds it each heartbeat answer, reports the connection it
+// holds, and checks in at once when it is woken; the heartbeat's own timer
+// keeps running whatever the channel does.
+type Channel interface {
+	// Answered receives each heartbeat answer.
+	Answered(resp *agentproto.HeartbeatResponse, reported bool)
+	// Report names the connection held, nil for none.
+	Report() *agentproto.ChannelReport
+	// Wakes delivers the server's verified wakes.
+	Wakes() <-chan channel.Wake
+}
+
 // ErrRestart ends Run when the agent must restart into another build of
 // itself.
 var ErrRestart = errors.New("runner: the agent must restart into another build")
@@ -141,6 +155,14 @@ type Runner struct {
 	// delays a heartbeat.
 	Hardware func(ctx context.Context) agentproto.HardwareReport
 
+	// Channel is the WebSocket channel (ADR-0059); nil never uses one.
+	Channel Channel
+	// Every, if set, replaces the heartbeat interval the server names (tests).
+	Every time.Duration
+	// MinWake is the least time between a wake's heartbeat and the one
+	// before it (1 s).
+	MinWake time.Duration
+
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
 	MaxRetry    time.Duration // longest retry interval (5 min)
@@ -186,6 +208,9 @@ type Runner struct {
 func (r *Runner) RefreshInventory() { r.invStale.Store(true) }
 
 func (r *Runner) defaults() {
+	if r.MinWake == 0 {
+		r.MinWake = time.Second
+	}
 	if r.MinRetry == 0 {
 		r.MinRetry = 5 * time.Second
 	}
@@ -239,7 +264,12 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Log.Error("starting MeshAgent failed", "error", err)
 		}
 	}
+	var wakes <-chan channel.Wake
+	if r.Channel != nil {
+		wakes = r.Channel.Wakes()
+	}
 	for {
+		beatAt := time.Now()
 		wait, err := r.beat(ctx)
 		if err != nil && ctx.Err() == nil {
 			return err
@@ -248,6 +278,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(wait):
+		case <-wakes:
+			// A wake brings the next heartbeat forward, never past MinWake.
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(max(0, r.MinWake-time.Since(beatAt))):
+			}
 		}
 	}
 }
@@ -291,6 +328,10 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		req.Repair = r.repair.report(time.Now())
 		r.defendRequest(ctx, &req)
 	}
+	if r.Channel != nil && r.Client.Level() >= 2 {
+		req.Channel = []string{agentproto.ChannelCapability}
+		req.Transport = r.Channel.Report()
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -302,6 +343,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		return r.failed(err), nil
 	}
 	r.failures = 0
+	if r.Channel != nil {
+		r.Channel.Answered(resp, len(req.Channel) > 0)
+	}
 	r.defendAnswered(resp.Defender)
 	if resp.RescanRoles && r.Roles != nil {
 		r.Roles.Rescan()
@@ -320,6 +364,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
 	next := jitter(heartbeatInterval(resp.HeartbeatSeconds))
+	if r.Every > 0 {
+		next = r.Every
+	}
 	if resp.Uninstall != nil {
 		// The device is being removed: nothing else is done (ADR-0050).
 		r.save()

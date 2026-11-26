@@ -70,10 +70,9 @@ describe("add devices", () => {
         },
       }),
     );
-    // Arriving from a site page picks the site.
-    renderApp("/devices/add?siteId=s2");
+    renderApp("/devices/add");
     const siteField = await screen.findByLabelText(/^Site/);
-    expect(siteField).toHaveValue("s2");
+    await user.selectOptions(siteField, "s2");
     // Sites are grouped by organization.
     expect(within(siteField).getByRole("group", { name: "Contoso Dental Group" })).toBeInTheDocument();
 
@@ -264,13 +263,13 @@ describe("add devices", () => {
     const row = await screen.findByRole("row", { name: /Head office rollout/ });
     // A token made before secrets were kept says so, and offers nothing to show.
     const oldRow = screen.getByRole("row", { name: /Before the upgrade/ });
-    expect(within(oldRow).getByText("Made before EasyRMM kept tokens; make a new one.")).toBeInTheDocument();
-    expect(within(oldRow).getByRole("button", { name: "Show install command for Before the upgrade" })).toBeDisabled();
-    expect(screen.getByText(/their install commands cannot be shown again/)).toBeInTheDocument();
+    expect(within(oldRow).getByText("This token was made before EasyRMM kept tokens, so its install commands cannot be shown. Replace it: make a new token, then revoke this one.")).toBeInTheDocument();
+    expect(within(oldRow).getByRole("button", { name: "Show install commands for Before the upgrade" })).toBeDisabled();
+    expect(screen.getByText(/their install commands cannot be shown/)).toBeInTheDocument();
     // The button carries a visible label, not only an icon.
-    expect(within(row).getByRole("button", { name: "Show install command for Head office rollout" })).toHaveTextContent("Show install command");
+    expect(within(row).getByRole("button", { name: "Show install commands for Head office rollout" })).toHaveTextContent("Show install commands");
 
-    await user.click(within(row).getByRole("button", { name: "Show install command for Head office rollout" }));
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
     expect(await screen.findByRole("heading", { name: "Install the agent" })).toBeInTheDocument();
     expect(server.call("POST /enrollment-tokens/:id/reveal").params.id).toBe("t1");
     expect(screen.getByText(/Until then, Deployment tokens below shows it again/)).toBeInTheDocument();
@@ -289,7 +288,7 @@ describe("add devices", () => {
     );
     renderApp("/devices/add");
     const row = await screen.findByRole("row", { name: /Head office rollout/ });
-    await user.click(within(row).getByRole("button", { name: "Show install command for Head office rollout" }));
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
     expect(await screen.findByText(/can no longer add devices, so there is nothing to show/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Install the agent" })).not.toBeInTheDocument();
   });
@@ -307,7 +306,36 @@ describe("add devices", () => {
       "GET /organizations/:id": ok({ id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" }),
     });
     renderApp("/sites/s2");
-    expect(await screen.findByRole("link", { name: "Add devices" })).toHaveAttribute("href", "/devices/add?siteId=s2");
+    expect(await screen.findByRole("link", { name: "Add devices" })).toHaveAttribute("href", "/sites/s2?tab=install");
+  });
+
+  it("sends /devices/add?siteId= to the site's Install tab", async () => {
+    installFakeApi({
+      ...routes(),
+      "GET /sites/:id": ok(site("s2", "o1", "Warehouse")),
+      "GET /organizations/:id": ok({ id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" }),
+    });
+    renderApp("/devices/add?siteId=s2");
+    expect(await screen.findByRole("tab", { name: "Install" })).toHaveAttribute("aria-selected", "true");
+    // The site is fixed: no picker, no approval choice, and only this site's tokens.
+    expect(screen.queryByLabelText(/^Site/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Approval tokens")).not.toBeInTheDocument();
+    await screen.findByText("Deployment tokens");
+    expect(screen.queryByText("Head office rollout")).not.toBeInTheDocument();
+  });
+
+  it("shows the organization's tokens on its Install tab, and hides the tab from someone who holds enrollment elsewhere", async () => {
+    const org = { id: "o1", name: "Northwind Traders", notes: "", siteCount: 2, canManage: true, createdAt: "2026-11-01T10:00:00Z", updatedAt: "2026-11-01T10:00:00Z" };
+    const scoped = (organizations: string[]) =>
+      sessionView({ ...ADMIN, scopedPermissions: { "enrollment.manage": { organizations, sites: [] } } });
+    installFakeApi({ ...routes(), ...baseRoutes(scoped(["o1"])), "GET /organizations/:id": ok(org), "GET /organizations/:id/sites": ok({ items: [] }), "GET /enrollment-tokens": ok({ items: TOKENS }) });
+    const { unmount } = renderApp("/organizations/o1?tab=install");
+    expect(await screen.findByText("Head office rollout")).toBeInTheDocument();
+    unmount();
+    installFakeApi({ ...routes(), ...baseRoutes(scoped(["o2"])), "GET /organizations/:id": ok(org), "GET /organizations/:id/sites": ok({ items: [] }) });
+    renderApp("/organizations/o1");
+    await screen.findByRole("heading", { name: "Northwind Traders" });
+    expect(screen.queryByRole("tab", { name: "Install" })).not.toBeInTheDocument();
   });
 });
 

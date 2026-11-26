@@ -89,6 +89,8 @@ export interface SessionView {
   permissions: Permission[];
   /** Permissions held platform-wide, not only in some organizations or sites. */
   globalPermissions: Permission[];
+  /** Where each permission that is not platform-wide holds: whole organizations, and individual sites. */
+  scopedPermissions?: Partial<Record<Permission, { organizations: string[]; sites: string[] }>>;
   isSuperAdmin: boolean;
   /** Optional parts of the server that are turned on. */
   features: Features;

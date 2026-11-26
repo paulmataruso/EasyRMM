@@ -118,6 +118,7 @@ floors=(
   "updater/cmd/easyrmm-updater             75"
   # The endpoint agent. Its end-to-end run in a container is not
   # instrumented; these floors come from its unit tests.
+  "agent/channel                           90"
   "agent/client                            90"
   "agent/runner                            90"
   "agent/host                              85"

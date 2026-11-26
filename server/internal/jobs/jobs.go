@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -331,7 +332,11 @@ type spec struct {
 	pwshFallback bool
 	body         string
 	args         []string
-	timeout      int
+	// params is a JSON object for the script's standard input (ADR-0073),
+	// without secrets; the job requires agentproto.CapJobParams, and the
+	// audit gets its hash, never its content.
+	params  json.RawMessage
+	timeout int
 	// auditAction and details describe each run in the audit log, with the
 	// device, job, script hash and timeout added.
 	auditAction string
@@ -349,15 +354,39 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		if err != nil {
 			return err
 		}
+		if len(sp.params) > 0 {
+			// A job with params goes only to an agent that lists
+			// CapJobParams: one from before them would refuse it.
+			var unable []string
+			for _, t := range targets {
+				if !slices.Contains(t.accepts, agentproto.CapJobParams) {
+					unable = append(unable, t.name)
+				}
+			}
+			if len(unable) > 0 {
+				return apperr.Invalid("deviceIds", "The agents of "+names(unable)+" are too old to take parameters; update them.")
+			}
+		}
 		now := s.now()
 		expires := now.Add(time.Duration(wait) * time.Hour)
 		sum := sha256.Sum256([]byte(sp.body))
+		requires := agentproto.ShellRequires(sp.shell)
+		var params, paramsSum []byte
+		if len(sp.params) > 0 {
+			if params, err = agentproto.CanonicalParams(sp.params); err != nil {
+				return apperr.Invalid("params", "The parameters must be a JSON object of at most 16 KiB.")
+			}
+			h := sha256.Sum256(params)
+			paramsSum = h[:]
+			requires = append(slices.Clone(requires), agentproto.CapJobParams)
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
-				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires,
+				params, params_sha256)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
 			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening, sp.pwshFallback,
-			agentproto.ShellRequires(sp.shell)); err != nil {
+			requires, params, paramsSum); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -368,6 +397,9 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 			}
 			details := map[string]any{
 				"device": t.name, "jobId": jobID.String(), "sha256": hex.EncodeToString(sum[:]), "timeoutSeconds": sp.timeout,
+			}
+			if paramsSum != nil {
+				details["paramsSha256"] = hex.EncodeToString(paramsSum)
 			}
 			for k, v := range sp.details {
 				details[k] = v

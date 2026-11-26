@@ -151,10 +151,10 @@ test("invites a technician to one organization; the link is shown once", async (
   await invite.getByLabel(/^Name/).fill(TECH.name);
   await invite.getByLabel("Role").selectOption({ label: "Technician" });
   await invite.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
-  await invite.getByRole("button", { name: "Create invitation link" }).click();
+  await invite.getByRole("button", { name: "Create user" }).click();
 
   // This server has no SMTP, so the console hands over the link instead of emailing it.
-  const notice = page.getByRole("dialog", { name: "Send this invitation link" });
+  const notice = page.getByRole("dialog", { name: "Copy the sign-up link" });
   await expect(notice.getByText("Copy this link now. It is shown only once.")).toBeVisible();
   inviteLink = (await notice.locator("pre").innerText()).trim();
   expect(inviteLink).toMatch(/^https:\/\/rmm\.localhost\/welcome#token=[\w-]+$/);
@@ -558,8 +558,8 @@ test("a script's output and arguments reach only those who may see them, and eve
   await invite.getByLabel(/^Name/).fill(READER.name);
   await invite.getByLabel("Role").selectOption({ label: "Read-Only" });
   await invite.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
-  await invite.getByRole("button", { name: "Create invitation link" }).click();
-  const notice = page.getByRole("dialog", { name: "Send this invitation link" });
+  await invite.getByRole("button", { name: "Create user" }).click();
+  const notice = page.getByRole("dialog", { name: "Copy the sign-up link" });
   const readerLink = (await notice.locator("pre").innerText()).trim();
   await notice.getByRole("button", { name: "Done" }).click();
 
@@ -1060,7 +1060,7 @@ test("the one Repair button says what it would do, and refuses what it cannot or
 
   // Once it checks in, the EasyPatch agent the earlier steps linked to this device is the one that is silent (the
   // stand-in engine has not heard from it): the EasyRMM agent repairs it, and the dialog says so before it asks.
-  await agent.heartbeat({ facts: { hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" } });
+  await agent.heartbeat({ hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" });
   await page.reload();
   await repair.click();
   await expect(dialog.getByTestId("repair-plan")).toHaveText(
@@ -1077,7 +1077,7 @@ test("a Windows agent's Defender state and installed hashes show on the device, 
   const page = admin;
   // The device's agent reports as a Windows one (the suite's only device: nothing after this needs it as a Linux one).
   const facts = { hostname: "dt-reception-01", os: "Windows 11 Pro 24H2", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
-  const answer = await agent.heartbeat({ facts });
+  const answer = await agent.heartbeatWith({ facts });
   // The server tells the agent it may act (no development scope is set here).
   expect(answer.defender?.enabled).toBe(true);
 
@@ -1107,7 +1107,7 @@ test("a Windows agent's Defender state and installed hashes show on the device, 
     observedAt: new Date().toISOString(),
     files: [{ program: "easyrmm-agent", name: "easyrmm-agent.exe", size: 1, md5, sha256: sha }],
   });
-  await agent.heartbeat({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, defender: report, installedFiles: files(build!.sha256) });
+  await agent.heartbeatWith({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, defender: report, installedFiles: files(build!.sha256) });
 
   await page.goto(`/devices/${agent.deviceId}`);
   const card = page.locator("section", { has: page.getByRole("heading", { name: "Microsoft Defender exclusions" }) });
@@ -1119,7 +1119,7 @@ test("a Windows agent's Defender state and installed hashes show on the device, 
   if (build?.version) await expect(installed).toContainText("Matches the list");
 
   // A different byte shows as a difference, and nothing is done about it.
-  await agent.heartbeat({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, installedFiles: files("f".repeat(64)) });
+  await agent.heartbeatWith({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, installedFiles: files("f".repeat(64)) });
   await page.reload();
   if (build?.version) await expect(page.locator("section", { has: page.getByRole("heading", { name: "Installed files" }) })).toContainText("Differs from the list");
 });
@@ -1155,10 +1155,10 @@ test("a Windows agent's roles are stored, and an organization turns a Windows mo
   const page = admin;
   const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
   // Never reported: unknown, not absent. Then a report, with a name the server does not know dropped.
-  await agent.heartbeat({ facts });
+  await agent.heartbeatWith({ facts });
   const before = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}/roles`)).json()) as { known: boolean };
   expect(before.known).toBe(false);
-  await agent.heartbeat({ facts: { ...facts, roles: [{ name: "dns", state: "present" }, { name: "made_up", state: "present" }] } });
+  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "dns", state: "present" }, { name: "made_up", state: "present" }] } });
   const after = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}/roles`)).json()) as { known: boolean; roles: { name: string; module: string; enabled: boolean }[] };
   expect(after.known).toBe(true);
   expect(after.roles.map((r) => r.name)).toEqual(["dns"]);

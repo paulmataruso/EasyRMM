@@ -1,6 +1,6 @@
 # ADR-0059: The agent's WebSocket channel
 
-* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). C0 and S1 built (see *Amended 2026-11-26 (decided in review): as built in C0 and S1*); the rest not built yet.
+* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). C0, S1 and A1 built (see *Amended 2026-11-26 (decided in review): as built in C0 and S1* and *as built in A1*); the rest not built yet.
   after ADR-0069 and the dev-scope guard (see *Refresh, 2026-11-26*, which
   wins where it disagrees with what follows). Not implemented.
 * Revised 2026-11-21 after an independent review: features the server
@@ -401,6 +401,25 @@ and poll still work.
   connection, a small bounded outbound queue, no database connection held,
   all as in *Server limits*.
 * **Per organization**: no limit of its own until ADR-0058.
+
+### Amended 2026-11-26 (decided in review): as built in A1
+* **Package `agent/channel`**, started beside the runner by `main.go`; the runner
+  only feeds it each heartbeat answer (`Answered(resp, reported)`), sends the
+  `channel: ["v1"]` capability and its `transport` report, and checks in when a
+  wake arrives (never sooner than `MinWake`, 1 s, after the last heartbeat).
+  The heartbeat's own timer never stops, so a channel that is down changes nothing.
+* **The agent connects only on an answer to a heartbeat that carried the
+  capability.** The first heartbeat of a process cannot (level not yet known); when
+  its answer lists `channel` the agent checks in again at once instead of
+  connecting, so the second heartbeat carries it.
+* **Dedupe by id is the sequence**: a repeated or skipped `seq` closes the
+  connection, so a frame is acted on at most once.
+* **Agent-side off switch**: `EASYRMM_AGENT_CHANNEL=off` in the agent's
+  environment; the agent then never connects.
+* **Not built in A1**: reporting `replayed` in the heartbeat (the contract has no
+  field for it; it is logged), and acting on `jobs`, `logs`, `repair` and `settings`
+  frames (M1 to M5); the agent treats them as unlisted for now. The sleep check is
+  unit-tested with a forced jump, not on a real suspend.
 
 ## Decision
 

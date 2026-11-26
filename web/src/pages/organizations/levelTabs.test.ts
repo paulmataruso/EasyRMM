@@ -43,6 +43,18 @@ describe("visibleTabs", () => {
     ]);
   });
 
+  it("shows People at the organization only and Install at both, each by its own permission", () => {
+    expect(ids("organization", ["user.view", "enrollment.manage", "doc.view"])).toEqual([
+      "overview",
+      "contacts",
+      "people",
+      "install",
+    ]);
+    expect(ids("organization", ["enrollment.manage"])).toEqual(["overview", "install"]);
+    expect(ids("site", ["user.view", "enrollment.manage"])).toEqual(["overview", "install"]);
+    expect(ids("site", ["user.view"])).toEqual(["overview"]);
+  });
+
   it("shows Contacts at the organization only, and Patch policy at the site only with the engine set up", () => {
     expect(ids("site", ["doc.view", "patch.view"], true)).toEqual([
       "overview",

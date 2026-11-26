@@ -180,6 +180,8 @@ func scriptCheckAll(t *testing.T, c *scriptContainer) {
 		}
 	}
 
+	scriptSettingIDs(t, c, r)
+
 	// The same result from every shell the image has: dash (sh on Debian
 	// and Ubuntu) and bash (sh on Rocky Linux and Fedora).
 	for _, shell := range []string{"bash", "dash"} {
@@ -1120,4 +1122,84 @@ func dockerRun(timeout time.Duration, args ...string) (string, string, error) {
 		err = errors.Join(ctx.Err(), err)
 	}
 	return out.String(), errOut.String(), err
+}
+
+// scriptSettingIDs: every module that checked something lists its settings
+// by ID beside the text lists (ADR-0078, slice C0), on each distribution:
+// a module in place has none not in place, one that is not has some, and the
+// IDs the distribution is known to have are there.
+func scriptSettingIDs(t *testing.T, c *scriptContainer, r *hardeningResult) {
+	t.Helper()
+	ids := func(m HardeningModuleResult) []string {
+		var l []string
+		for _, s := range m.Settings {
+			l = append(l, s.ID)
+		}
+		return l
+	}
+	for _, m := range r.Modules {
+		if m.SettingsOmitted != "" {
+			t.Errorf("%s: a short result left settings out (%s)", m.Module, m.SettingsOmitted)
+		}
+		bad := 0
+		for _, s := range m.Settings {
+			if s.State == "not_in_place" {
+				bad++
+			}
+		}
+		switch m.State {
+		case HardeningNotApplicable, HardeningManagedElsewhere, HardeningFailed, HardeningHalfApplied:
+			continue
+		case HardeningInPlace:
+			if bad != 0 {
+				t.Errorf("%s is in place with %d settings not in place: %v", m.Module, bad, m.Settings)
+			}
+		default:
+			if bad == 0 {
+				t.Errorf("%s is %s, and no setting is not in place: %v", m.Module, m.State, m.Settings)
+			}
+		}
+		if len(m.Settings) == 0 && m.Module != "ssh" && m.Module != "fail2ban" && m.Module != "firewall" {
+			t.Errorf("%s: no settings", m.Module)
+		}
+		// Each missing line has a setting not in place behind it, unless the
+		// module lists one line for many (ports, AppArmor profiles).
+		if bad == 0 && len(m.Missing) > 0 && m.Module != "firewall" && m.Module != "mac" {
+			t.Errorf("%s: missing %v, and no setting says so", m.Module, m.Missing)
+		}
+	}
+	want := map[string][]string{
+		"services":    {"services-telnet", "services-rsh", "services-rlogin", "services-rexec", "services-finger", "services-talk", "services-ypserv"},
+		"permissions": {"permissions-etc-passwd", "permissions-etc-group", "permissions-etc-shadow", "permissions-etc-gshadow"},
+		"sudo":        {"sudo-use-pty"},
+	}
+	if c.has(t, "sshd") {
+		want["ssh"] = []string{"ssh-permit-root-login", "ssh-permit-empty-passwords", "ssh-login-grace-time", "ssh-x11-forwarding", "ssh-client-alive-interval", "ssh-client-alive-count-max"}
+		want["fail2ban"] = []string{"fail2ban-installed", "fail2ban-sshd-jail"}
+	}
+	for mod, list := range want {
+		m := scriptModule(t, r, mod)
+		if m.State == HardeningNotApplicable {
+			continue
+		}
+		for _, id := range list {
+			if !slices.Contains(ids(m), id) {
+				t.Errorf("%s: no setting %s in %v", mod, id, ids(m))
+			}
+		}
+	}
+	// A container's own kernel settings are the network's only.
+	for _, id := range ids(scriptModule(t, r, "kernel")) {
+		if !strings.HasPrefix(id, "kernel-net-") {
+			t.Errorf("kernel in a container reports %s", id)
+		}
+	}
+	// No ID twice in a module.
+	for _, m := range r.Modules {
+		l := ids(m)
+		slices.Sort(l)
+		if len(slices.Compact(slices.Clone(l))) != len(l) {
+			t.Errorf("%s lists an ID twice: %v", m.Module, l)
+		}
+	}
 }
