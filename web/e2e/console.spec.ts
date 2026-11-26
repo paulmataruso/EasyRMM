@@ -151,10 +151,10 @@ test("invites a technician to one organization; the link is shown once", async (
   await invite.getByLabel(/^Name/).fill(TECH.name);
   await invite.getByLabel("Role").selectOption({ label: "Technician" });
   await invite.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
-  await invite.getByRole("button", { name: "Create invitation link" }).click();
+  await invite.getByRole("button", { name: "Create user" }).click();
 
   // This server has no SMTP, so the console hands over the link instead of emailing it.
-  const notice = page.getByRole("dialog", { name: "Send this invitation link" });
+  const notice = page.getByRole("dialog", { name: "Copy the sign-up link" });
   await expect(notice.getByText("Copy this link now. It is shown only once.")).toBeVisible();
   inviteLink = (await notice.locator("pre").innerText()).trim();
   expect(inviteLink).toMatch(/^https:\/\/rmm\.localhost\/welcome#token=[\w-]+$/);
@@ -558,8 +558,8 @@ test("a script's output and arguments reach only those who may see them, and eve
   await invite.getByLabel(/^Name/).fill(READER.name);
   await invite.getByLabel("Role").selectOption({ label: "Read-Only" });
   await invite.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
-  await invite.getByRole("button", { name: "Create invitation link" }).click();
-  const notice = page.getByRole("dialog", { name: "Send this invitation link" });
+  await invite.getByRole("button", { name: "Create user" }).click();
+  const notice = page.getByRole("dialog", { name: "Copy the sign-up link" });
   const readerLink = (await notice.locator("pre").innerText()).trim();
   await notice.getByRole("button", { name: "Done" }).click();
 
