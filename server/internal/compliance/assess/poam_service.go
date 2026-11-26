@@ -102,7 +102,7 @@ func (s *Service) poamItems(ctx context.Context, tx pgx.Tx, a *Assessment) ([]PO
 	if err != nil {
 		return nil, err
 	}
-	var out []POAMView
+	out := []POAMView{}
 	for rows.Next() {
 		var v POAMView
 		var closes time.Time

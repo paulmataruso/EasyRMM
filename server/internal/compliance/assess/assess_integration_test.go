@@ -219,6 +219,9 @@ func TestNewAssessmentHasEveryRequirementUnassessed(t *testing.T) {
 	if d.Gate.Outcome != "outside" && d.Gate.Outcome != "possible" {
 		t.Errorf("gate %q", d.Gate.Outcome)
 	}
+	if b, err := f.svc.POAM(f.ctx, f.admin, f.acme, a.ID); err != nil || b.Items == nil {
+		t.Errorf("an empty plan of action must be an empty list, not null: %v", err)
+	}
 	rows, _ := f.svc.Requirements(f.ctx, f.admin, f.acme, a.ID)
 	if len(rows) != 110 {
 		t.Fatalf("%d requirements", len(rows))

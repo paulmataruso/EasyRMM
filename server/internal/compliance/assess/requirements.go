@@ -234,7 +234,7 @@ func (s *Service) Requirement(ctx context.Context, c access.Caller, org, id uuid
 			}
 			d.Text = r.Text
 			for _, o := range r.Objectives {
-				v := ObjectiveView{ID: o.ID, Text: o.Text, Methods: o.Methods, Controls: nz(o.Controls), Whole: r.Whole, Determination: NotAssessed, Method: meth[ObjectiveKey{req, o.ID}]}
+				v := ObjectiveView{ID: o.ID, Text: o.Text, Methods: nz(o.Methods), Controls: nz(o.Controls), Whole: r.Whole, Determination: NotAssessed, Method: meth[ObjectiveKey{req, o.ID}]}
 				if sr, ok := stored[ObjectiveKey{req, o.ID}]; ok {
 					v.Determination, v.Source, v.Note = sr.Determination, sr.Source, sr.Note
 					t := sr.DecidedAt
