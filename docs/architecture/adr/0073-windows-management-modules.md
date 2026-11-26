@@ -82,32 +82,27 @@ What exists today:
   additive to the heartbeat; an older server ignores it and an older agent
   sends none, which the server reads as *unknown*, not *absent* (modules then
   show "not detected yet", not "not installed").
-* **How, without PowerShell.** The agent does not start PowerShell to detect.
-  Detection is Go code in the agent that is cheap and has no process to hang:
-  * **Servers.** The installed state of the Windows features comes from the
-    Component-Based Servicing registry keys and the service control manager,
-    both direct reads: service present (`NTDS`, `CertSvc`, `DNS`, `DHCPServer`,
-    `LanmanServer` with at least one non-administrative share found through
-    `NetShareEnum`, `Spooler` with the role's print-server feature key,
-    `wbengine`). A running service is not enough on its own (the print spooler
-    runs on every desktop), so each role pairs its service with the feature's
-    key under `HKLM\SYSTEM\CurrentControlSet\Services` or its servicing state.
-  * **Domain controller.** `NTDS` present and the `ProductType` value equal to 2
-    (a domain controller), from the registry. This is also F1's domain
-    controller flag, so there is one source.
-  * **Defender.** The `WinDefend` service, and `MSFT_MpComputerStatus` through
-    WMI (`root\Microsoft\Windows\Defender`) for the engine and signature
-    versions, in a child process with a deadline (below). Defender in passive
-    mode, or replaced by another product, is reported with its state.
-  * **Windows Backup.** Server: the `wbengine` service and the
-    `Windows-Server-Backup` feature key. Desktop: the File History and
-    Backup and Restore settings are always present, so `windows_backup` is
-    reported on every Windows computer, with its state (*not configured* or
-    *configured*) from the registry.
-  * **Client or server.** `ProductType` 1 or not decides which of the
-    server-only roles can be reported at all; a desktop never reports `dns`
-    and the like.
-* **When.** At enrollment, at agent start, and then at most once every 6
+* **How, without PowerShell.** Detection is Go code in the agent: direct
+  registry and service-control reads, no process to hang. A role is
+  reported `present` only when **its service is running or installed and a
+  role-specific marker exists**; a service alone is not enough (the print
+  spooler runs on every desktop). `ProductType` below is the string value
+  at `HKLM\SYSTEM\CurrentControlSet\Control\ProductOptions\ProductType`:
+  `WinNT` (client), `ServerNT` (server or member) or `LanmanNT` (domain
+  controller), as ADR-0060 and `agent/host/system_windows.go` use it.
+
+  | Role | Service | Marker |
+  |---|---|---|
+  | `ad_ds` | `NTDS` running | `ProductType` = `LanmanNT`. A former domain controller (NTDS present, `ProductType` not `LanmanNT`) is **not** detected |
+  | `ad_cs` | `CertSvc` running | the key `HKLM\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration\<CA name>` exists (a configured CA, not just the installed role) |
+  | `dns` | `DNS` running | `ProductType` is `ServerNT` or `LanmanNT` |
+  | `dhcp` | `DHCPServer` running | the same server check; a server whose DHCP role is installed but unconfigured still reports it, with `state: "unconfigured"` when the `DHCPServer\Parameters` key is absent |
+  | `file_server` | `LanmanServer` running | at least one non-administrative, non-IPC share from `NetShareEnum` (*decided in review*: a share is the configured role) |
+  | `print_server` | `Spooler` running | server `ProductType` **and** at least one shared printer (`Print$` share present or a printer with the shared flag in `HKLM\SYSTEM\CurrentControlSet\Control\Print\Printers\<name>\Attributes`) (*decided in review*: the installed-feature test is not read, a shared printer is) |
+  | `windows_backup` | server: `wbengine` | server: `ProductType` is a server type. Desktop (`WinNT`): reported always, with the state from File History and Backup and Restore settings. `wbengine` exists on desktops too, so the two are told apart by `ProductType`, not by the service |
+  | `defender` | `WinDefend` | `MSFT_MpComputerStatus` through WMI in a child process, with deadline; passive mode or another product is the state |
+
+  Server-only roles are never reported on `WinNT`.* **When.** At enrollment, at agent start, and then at most once every 6
   hours, or at once when the server asks (the Repair path, an "Rescan roles"
   action that requires `device.edit`). Not every heartbeat; the heartbeat
   carries the last result unchanged. A changed result is sent with the next
@@ -119,6 +114,10 @@ What exists today:
   breaks the heartbeat. A computer where detection cannot run reports no
   `roles`, and the server keeps the last known list for 7 days before
   marking it *unknown*.
+* **A role that disappears** (uninstalled, a DC demoted) is dropped from
+  `roles` on the next report. The server then clears that module's
+  snapshots for the device and **resolves its open alerts** with the reason
+  `role removed`, the same path as a module turned off (section 6).
 * **Safe.** Read-only; no cmdlet loads a module (`Get-WindowsFeature` loads
   ServerManager and takes seconds, and is not used); nothing is written. The
   list is data the server stores per device and never executes.
@@ -177,14 +176,28 @@ Built-in roles (*decided in review*):
   certificates, backup paths) is more than a status light; this follows
   `log.view`, which Read-Only also lacks. The Overview cards from ADR-0072
   show counts and health only, through the existing view permissions.
-* **Technician**: every `*.view` except `ad.view_sensitive`, plus the
-  reversible, low-blast-radius `defender.manage`, `backup.manage` and
-  `print.manage`. No Active Directory management.
+* **Technician**: every `*.view` **except** `ad.view_sensitive`, `ca.view`,
+  `dns.view` and `shares.view` (those four go to Site Administrator and
+  above; *decided in review*), plus the reversible, low-blast-radius
+  `defender.manage`, `backup.manage` and `print.manage`. No Active
+  Directory management.
 * **Site Administrator**: everything a Technician has, plus `dns.manage`,
-  `dhcp.manage`, `shares.manage`, `ad.manage`, `ad.view_sensitive`.
-* **Organization Administrator**: Site Administrator plus `ca.manage` and
-  `ad.reset_password`.
+  `dhcp.manage`, `shares.manage`, `ca.view`, `dns.view`, `shares.view`, `ad.view`, `ad.view_sensitive`.
+  Site Administrators hold **no** `ad.manage`, `ad.reset_password` or
+  `ca.manage`.
+* **Organization Administrator**: Site Administrator plus `ca.manage`,
+  `ad.manage` and `ad.reset_password`. **Every `ad.manage` write requires
+  Organization Administrator** (*decided in review*).
 * **Super Administrator**: all, as today.
+
+**Plainly: Active Directory permission is power over the whole domain.**
+RBAC scope is the domain controller's site or organization, but a
+domain controller's directory is not scoped to that site: `ad.manage` on one
+DC changes users and groups of the entire domain and forest-wide
+replication carries it. That is why writes need Organization Administrator
+and why the protected-target guard (section 4) exists. The same holds for
+`ca.manage` (a CA issues for the whole forest) and, less, `dhcp.manage` and
+`dns.manage`.
 
 Row-by-row, the same rules the other permissions use apply: each is checked
 at the device's site through `access`, so a site administrator acts only on
@@ -218,28 +231,71 @@ Custom roles, if they exist by then, see them in the same list.
   allowed character class; paths: absolute, no `..`, no device paths; IDs:
   GUID or SID parsed; enumerations from a fixed list). The server rejects a
   value that does not match with 400 and the reason. Then:
-  * the validated parameters are encoded as **one JSON document passed on
-    standard input**, and the script's first line reads it with
-    `$p = [Console]::In.ReadToEnd() | ConvertFrom-Json`; each value is used
-    only as an argument *value* to a cmdlet (`-Identity $p.name`), never
-    interpolated into a string, a `-Filter` expression, an LDAP filter or
-    `Invoke-Expression`. Where a cmdlet takes a filter language (AD's
-    `-Filter`, `Get-WinEvent -FilterXPath`), the script uses the form that
-    takes the value as a parameter (`-Identity`, `-LDAPFilter` built by
-    the script from an escaped value with RFC 4515 escaping in a tested
-    helper) and the unit tests fuzz it.
-  * Secrets (a new password) travel in the same stdin document, **never in
-    the command line, an environment variable, the job's stored arguments
-    or the audit row**. The server seals such a parameter in the job row
-    (`secrets` package), deletes it when the job is delivered, and the
-    script clears the variable. The password is generated by the console and
-    shown once, or typed by the operator; the audit row records that a
-    password was reset, not what.
+  * the validated parameters travel in a new **`params` field of the job**
+    (the agent change below), which the agent writes to the script's
+    standard input; the script's first line reads it with
+    `$p = [Console]::In.ReadToEnd() | ConvertFrom-Json`. Each value is used
+    only as a cmdlet argument *value* (`-Identity $p.name`), never joined
+    into a string, a `-Filter`, `Invoke-Expression` or a command line.
+  * **No LDAP or other filter is built from a user value.** Scripts use
+    `-Identity` and typed parameters only (a user is found by SID or GUID
+    the server already holds, or by `-Identity` with the sAMAccountName as a
+    value). `-Filter`, `-LDAPFilter`, `-FilterXPath` from user values are
+    banned, not escaped.
   * Scripts start with `Set-StrictMode -Version Latest`,
-    `$ErrorActionPreference = 'Stop'`, and run in the PowerShell ADR-0064
-    chose for the computer, with the module they need imported by name from
-    the system path (`-ErrorAction Stop` on the import; a missing module is a
-    typed error, `module_missing`, not a stack trace).
+    `$ErrorActionPreference = 'Stop'`, run in the PowerShell ADR-0064 chose,
+    and import the module they need by name from the system path (a missing
+    module is the typed error `module_missing`).
+* **The agent protocol change (new).** Today the agent runs
+  `-File script args` (`agent/jobs/exec_windows.go:160`) with no stdin. This
+  ADR adds, as a feature under ADR-0009's protocol levels:
+  * a `params` field (a JSON object, at most 16 KiB) on the job the agent
+    receives, and a `paramsSha256`; the job's Ed25519 signature now covers
+    the **script hash and the params hash** (a canonical encoding of both,
+    versioned so an older agent that does not know the field refuses the
+    job instead of running it without its parameters);
+  * the agent writes `params` to the child's standard input and closes it
+    (a pipe, never a file, never the command line), caps it, and the
+    output capture redacts nothing it does not know, so scripts must not
+    echo it (the catalogue's redaction rules, below);
+  * the agent advertises the level that supports it in its poll; the server
+    sends a `winmod` job only to agents of that level, and the console shows
+    "update the agent" otherwise.
+* **Secrets** (a new password, a restore key). The server never puts them
+  in `jobs.args`, `jobs.body`, audit, logs or output:
+  * on accepting the request the server seals the secret with the server
+    key (the `secrets` package, AAD `easyrmm:winmod:<jobID>:<name>`) into
+    a short-lived row `winmod_job_secrets(job_id, name, sealed, expires_at)`,
+    expiry 10 minutes or the job's own expiry if shorter;
+  * the signed job payload built at **delivery** unseals it and places it in
+    `params` for that one delivery; the signature covers the params with the
+    secret inside, so the agent can verify them, and the job row keeps only
+    the params *without* the secret and its hash for the audit;
+  * the secret row is **deleted on delivery** or at expiry (a sweep), and a
+    job never delivered fails with `expired`; a redelivery after a lost
+    response is refused (the operator re-issues), so a password is never
+    held waiting;
+  * the transport is the agent's TLS channel; nothing logs `params`
+    (a test greps server logs and the audit row for the test secret).
+* **Embedded scripts are pinned.** Each action's catalogue entry carries the
+  SHA-256 of its script, computed at build time and checked by a test; the
+  job carries that hash and the **agent verifies the script body against
+  the hash in the signed job** before running it (the signature already
+  binds them; the check is a second, cheap guard against a mis-built
+  payload). A script cannot change without the catalogue's hash changing in
+  review.
+* **Protected targets (Active Directory).** The catalogue marks AD actions
+  `GuardsProtected`. A target is protected when it is a member (directly or
+  by nesting) of Domain Admins, Enterprise Admins, Schema Admins or
+  Administrators, has `adminCount=1`, or is `krbtgt` or the built-in
+  Administrator (RID 500). The guard runs **twice**: on the computer inside
+  the script, which resolves the target and refuses with `protected_target`
+  before changing anything, and on the server, which refuses a request whose
+  name is on a fixed denylist and which rejects a result of `protected_target`
+  as a failure. **No action can add anyone to a protected group**, and the
+  catalogue has none that does. Changing protected accounts from the console
+  is **out of scope** (*decided in review*): an administrator uses the
+  directory's own tools.
 * **Results are typed JSON.** The last line is
   `EASYRMM-WINMOD-RESULT-V1 {json}`; the JSON is `{ok, version, data, error}`
   where `data` follows the action's schema. The server decodes it into a Go
@@ -248,6 +304,14 @@ Custom roles, if they exist by then, see them in the same list.
   the typed value, not the text. Limits are F2's: 64 KiB structured result,
   and an action that can be long (a user list) pages by an opaque cursor the
   script returns.
+* **Redaction of raw output, per action.** The catalogue lists, for each
+  action, which fields of the raw stdout and stderr are removed before
+  storage, even for `job.view_sensitive` holders: **a password-reset
+  result never contains the password** (the script returns only
+  `{ok, mustChange}` and the server drops any line matching the secret's
+  value before storing output; a test proves it), quarantine paths and
+  privileged membership are redacted from raw output and kept only in the
+  typed result, which is gated by the module's `view_sensitive`.
 * **Sensitive by kind.** Each action says whether its result is sensitive.
   Sensitive results are served only to callers with the module's
   `view_sensitive` (or `job.view_sensitive` for the job's raw output), are
@@ -267,10 +331,35 @@ Custom roles, if they exist by then, see them in the same list.
   subject's name and the effect and the request carries
   `confirm: "<action>:<subject>"` that the server compares, so a stray
   request or script cannot do it by omission. Password resets, account
-  disabling on a privileged account and anything on a domain controller's
-  own computer account need the existing step-up (the second factor
-  re-check) as well. The confirmation is part of the action's catalogue
+  disabling and every destructive action need a **step-up**: a sign-in
+  re-check within the last 10 minutes. It is **not built**
+  (`auth/service.go` only records the AMR and `AuthenticatedAt`), so it is
+  its own slice below (or F5, if that lands first; whichever is first builds
+  it and the other uses it). The confirmation is part of the action's catalogue
   entry, not of each handler, so no action forgets it.
+* **The job kind in the server (new).** `jobs.go` allows only `script`,
+  `software` and `hardening` (the insert at line 579 and the kind filter at
+  735), and the `jobs` table has a column per kind (`software`,
+  `hardening`). The migration `server/migrations/9xxxx_winmod.sql` (number
+  from the integrator; goose up and down, down working):
+  * adds `winmod jsonb` (module, action, version, validated params without
+    secrets, params SHA-256, confirmation subject) and `hidden boolean NOT
+    NULL DEFAULT false`, and widens the kind check to `winmod`;
+  * creates `winmod_job_secrets` and `windows_module_settings` and
+    `windows_module_snapshots` (sections 2 and 5);
+  * indexes `jobs (kind, created_at)` for the retention sweep.
+  `KindWinmod` is added to the allowed kinds in the create and list paths;
+  the run list and the Jobs list **exclude `kind = 'winmod'` by default**
+  (the list query at `jobs.go:601` gets `AND NOT j.hidden` unless a caller
+  with `job.view_sensitive` passes `kind=winmod`, which shows only the
+  compact row, never params); the module's own tab shows its runs.
+  **Retention** per action: reads 1 hour, changes 7 days, sensitive
+  results minutes, then job body, params and output are deleted and only
+  the audit row and the compact run row remain; results are excluded from
+  backups of job output. The agent's run list filters the same way. This
+  uses F2's per-kind retention and visibility; **if ADR-0054 W2 (retention
+  per kind, batches) has not landed, this slice builds the part it needs
+  and says so**, and W2 extends it.
 * **Dry run.** Where a cmdlet supports `-WhatIf`, a destructive action's
   confirmation dialog can ask for a preview first; the result of that is a
   typed list of what would change. Not required of every action.
@@ -325,11 +414,13 @@ Custom roles, if they exist by then, see them in the same list.
   detected, and resolves the open alert when a module is turned off, with
   the reason `module off`.
 * **Default policies.** A module ships default policies as data: a list of
-  `{kind, params, severity, name}` it asks the server to create at the
-  *shared* level when the module's first device is detected, owned by the
-  module and marked `default`. They respect everything a policy does:
+  `{kind, params, severity, name}` it asks the server to create **per organization, idempotently, when the
+  module is first enabled there** (keyed by module and policy name, so
+  re-enabling or an upgrade never duplicates), owned by the module and
+  marked `default`. They are organization-level rows, so an organization
+  that never enables a module has none. They respect everything a policy does:
   an administrator can disable one or override it at organization or site
-  level, but the shared defaults cannot be edited or deleted by a normal
+  level, but a default cannot be edited or deleted by a normal
   user, only turned off (*decided in review*, so an upgrade can refresh the
   defaults and an organization can still opt out). A new version of a module's
   defaults adds policies and changes ones the user has not edited.
@@ -338,29 +429,26 @@ Custom roles, if they exist by then, see them in the same list.
 
 ### 7. UI
 
-Each module is one tab or card per ADR-0072's "How later modules slot in"
-table; this ADR adds the contract:
+Each module is one tab or card per ADR-0072, at every level. This ADR adds
+the contract and fixes the placement:
 
-* **Device**: a tab named for the module (or one "Roles" tab holding a
-  view per role, for ADR-0076's five roles), shown only when offered
-  (section 2). It shows the snapshot's time, a Refresh, and the module's
-  forms.
-* **Site and group**: a group has no tab of its own (ADR-0072 gives group
-  pages no module tab); the group's device list gets a column or filter
-  where it makes sense (Defender protection state, backup state), from
-  Facts. A site gets a card on its Overview with counts and health, from
-  Facts and snapshots only: **a site or organization page never sends a job
-  to a device to draw a card**.
-* **Organization**: the same cards, plus the "Windows modules" toggles
-  card (section 2) and the module's policies in the organization's alert
-  policies.
-* **Settings**: only server-wide parts, as ADR-0072 says (Defender's hash
-  list).
+| Module | Device | Group | Site | Organization |
+|---|---|---|---|---|
+| Defender (0074) | "Security" tab | column and filter: protection state, from Facts | Security card on Overview, counts from Facts | Security tab (organization switch) and its alert policies |
+| Active Directory (0075) | "Roles" tab, a Directory view, on a domain controller | none | none | Directory health card on Overview (from snapshots, no job), toggle |
+| CA, DNS, DHCP, shares, print (0076) | one "Roles" tab, a view per role found | none | none | one count card per role on Overview |
+| Windows Backup (0077) | "Backup" tab | column and filter: last result, from Facts | Backup card on Overview | Backup status card; alert policy kinds in Alert policies |
+
+* **Rule for cards.** A site or organization page never sends a job to a
+  device to draw a card; cards come from Facts and stored snapshots.
+* **Toggles** live in a "Windows modules" card on the organization and site
+  pages (section 2), not in Settings. Settings holds server-wide parts
+  only (Defender's hash list).
 * **One component.** A shared `ModuleTab` frame draws the header (name,
-  as-of time, refresh, why-unavailable), so a module only supplies its
-  panels. A module that is not offered is absent from the tab strip, and its
-  URL shows "this module is off for this site" with a link to the toggle for
-  someone who may change it.
+  as-of time, refresh, why-unavailable); a module supplies its panels. A
+  module that is not offered is absent from the tab strip, and its URL shows
+  "this module is off for this site" with a link to the toggle for someone
+  who may change it.
 
 ### 8. Tests
 
@@ -370,9 +458,8 @@ table; this ADR adds the contract:
   backticks, newlines and `;` arrives unchanged and unevaluated), the
   result decoder (good, truncated, wrong version, unknown fields), the
   catalogue lint (every action has a permission, a version, a timeout, and
-  every `Destructive` action requires confirmation; a test fails if a
-  script contains `Invoke-Expression`, `iex`, `-Command` built from a
-  parameter, or string-interpolates `$p.`), and the role-detection
+  every `Destructive` action requires confirmation; a script's SHA-256
+  matches the catalogue's), and the role-detection
   mapping from a table of registry and service states.
 * **Integration (server, real PostgreSQL).** The toggle resolution (site
   over organization over default), the 404 for a module not offered, the
@@ -382,6 +469,13 @@ table; this ADR adds the contract:
   sensitive results hidden from a caller without the permission, alert kinds
   skipped while a module is off, default policies created and refreshed.
   No mocks of our own code.
+* **PowerShell AST check (Windows runner CI).** Every embedded script is
+  parsed with `[System.Management.Automation.Language.Parser]::ParseFile`;
+  the check fails on `Invoke-Expression`/`iex`, `-Command`, `Add-Type`
+  with strings from parameters, `-Filter`, `-LDAPFilter` or `-FilterXPath`
+  whose argument is not a literal, and any expandable string (`"...$p..."`)
+  or `+` concatenation that includes `$p`. A grep is not used: the AST sees
+  through spacing and aliases.
 * **Windows runner CI.** Each module's scripts run on a `windows-latest`
   runner for what that runner has: Defender (present), Windows Backup
   cmdlets that load, the registry and service detection, the stdin
@@ -408,34 +502,41 @@ table; this ADR adds the contract:
 
 ### Organization scope
 
-The detection and toggles act on a device only when asked. Everything the
-framework starts by itself (scheduled snapshot reads, alert evaluation,
-default-policy creation, rescans) checks `devscope.Allowed(orgID)` once
-the guard has landed; this ADR predates its use in these paths, so each
-slice's PR adds the check with a test that a disallowed organization gets no
-job.
+`devscope.Allowed(orgID)` is a **framework gate (slice 1), not left to each
+module**: one function in the framework, `modules.Allowed(ctx, org)`, wraps
+the toggle check and `devscope.Allowed`, and is the only way the framework
+dispatches a scheduled read, rescan, alert evaluation or default-policy
+creation. A test in the framework's catalogue lint fails any code path that
+dispatches without it, and an integration test shows a disallowed
+organization gets no job. The guard has not landed everywhere yet, so until
+it has, the function calls `devscope.Allowed` and the toggle only.
 
 ## Slices
 
-1. **Roles in Facts.** The `roles` field, the agent's detection (Go, tests
-   on a table), the server's storage and a read API, the 6-hour rescan.
+1. **Roles in Facts and the gate.** The `roles` field, the agent's
+   detection (Go, tests on a table of registry and service states),
+   storage, read API, 6-hour rescan, role-removal clearing, and
+   `modules.Allowed` (the `devscope` gate).
 2. **Toggles and permissions.** The table, resolution, the "Windows
-   modules" card, the permissions in `rbac.go` and the role unions, the 404
-   rule.
-3. **Actions.** The `winmod` kind, the catalogue type, the stdin parameter
-   pattern, the typed result, confirmation and step-up, audit, F2 retention
-   and sensitivity; one real action (`defender.status`) as proof. Depends on
-   the F2 work being in (ADR-0054 W2 / feature 7) or builds the part it
-   needs and says so.
-4. **Snapshots.** The table, freshness, refresh, retention.
-5. **Alerts.** The kind registry for modules, default policies, skipping
-   while off.
-6. **UI frame.** `ModuleTab`, the tab-strip rule, site and organization
-   cards, "this module is off" page.
-7. **CI.** The lint, the Windows runner job, the hostile-value fixtures.
+   modules" card, the permissions and role unions in `rbac.go`, the 404 rule.
+3. **Agent protocol: `params`.** The `params` field, signature over the
+   script and params hashes, stdin delivery, the protocol level; the agent
+   refuses a job whose hash it cannot verify.
+4. **Step-up.** Re-authentication within 10 minutes for destructive and
+   credential actions (or F5, by name, if it lands first).
+5. **The `winmod` kind.** The migration, catalogue type, pinned script
+   hashes, validation, typed results, secret rows, confirmation, audit,
+   retention, Jobs-list exclusion; one real action (`defender.status`) as
+   proof. Depends on 2, 3 and 4 (and ADR-0054 W2 if not landed).
+6. **Snapshots.** Table, freshness, refresh, retention.
+7. **Alerts.** The kind registry, per-organization default policies,
+   skipping while off, resolving on role removal.
+8. **UI frame.** `ModuleTab`, the tab-strip rule, cards, "module off" page.
+9. **CI.** The PowerShell AST check, the hostile-value fixtures, the Windows
+   runner job.
 
-Slices 1 and 2 are independent; 3 needs 2; 4 and 5 need 3; 6 needs 1 and 2
-and can start on mock-free fixtures once 1 lands; 7 grows with each.
+Slices 1, 2, 3 and 4 are independent; 5 needs 2, 3 and 4; 6 and 7 need 5; 8 needs
+1 and 2; 9 grows with each.
 
 ### How ADR-0074 to 0077 plug in
 
@@ -447,7 +548,7 @@ and its tab's panels. None adds a job kind, an endpoint style, a toggle
 mechanism or a cache. Order: Defender first (it needs the alert and
 default-policy parts, so it proves slices 3 to 5 on a role every Windows
 computer has); then Windows Backup (same, with scheduled reads); then Active
-Directory (the sensitive and destructive paths, secrets in stdin); then the
+Directory (the sensitive and destructive paths, secrets in `params`); then the
 server roles (many catalogues, no new framework). A module is merged only
 when its catalogue passes the lint and its own Windows-runner tests.
 
@@ -469,12 +570,19 @@ None are required to start. Two are worth the owner's eye, with defaults
 chosen in review:
 
 1. Server-role modules are **on by default where the role is found**.
-2. Read-Only gets no module permissions, and Technicians do not get
-   Active Directory management.
+2. Read-Only gets no module permissions; Technicians get no Active
+   Directory management and no `ca.view`, `dns.view` or `shares.view`
+   (decided in review). Active Directory writes need Organization
+   Administrator (decided in review), and protected accounts are
+   console-out-of-scope (decided in review).
 
 ## Amendments
 
-None yet.
+Amended 2026-11-26 (decided in review, after independent review): the `params`
+protocol change and secret mechanism, step-up as its own slice, detection
+markers per role, the `winmod` migration and list exclusion, the AD
+protected-target guard, AST-based injection checks, per-organization default
+policies and the framework `devscope` gate.
 
 ## References
 
