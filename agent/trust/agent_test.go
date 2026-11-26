@@ -211,9 +211,6 @@ func TestVerifiedTargetWidensTrust(t *testing.T) {
 	if len(f.client.calls) != 1 || !strings.HasSuffix(f.client.calls[0], "|system") {
 		t.Errorf("the running client was not told: %v", f.client.calls)
 	}
-	// Written to disk, for the builds that read it later.
-	saved, _, _ := f.store.Load()
-	_ = saved
 }
 
 func TestWideningSurvivesInTheSavedConfiguration(t *testing.T) {
@@ -344,8 +341,7 @@ func TestRefusals(t *testing.T) {
 	leaf := f.public.leaf(t, testHost)
 	good := f.payload("m1", chainOf("t", agentproto.TrustTarget, leaf))
 
-	attacker, attackerKey, _ := ed25519.GenerateKey(rand.Reader)
-	_ = attacker
+	_, attackerKey, _ := ed25519.GenerateKey(rand.Reader)
 	forged, _ := agentproto.SignTrust(attackerKey, good)
 
 	// A signature made for another instruction, over the same bytes.
@@ -397,7 +393,7 @@ func TestRefusals(t *testing.T) {
 		}), true, "future"},
 		{"valid for a day", mod(func(p *agentproto.TrustPayload) { p.ExpiresAt = p.IssuedAt.Add(24 * time.Hour) }), true, "malformed"},
 		{"a wrong version", mod(func(p *agentproto.TrustPayload) { p.V = 2 }), true, "malformed"},
-		{"an IP address as origin", mod(func(p *agentproto.TrustPayload) { p.Origin = "203.0.113.5" }), true, "another origin"},
+		{"an IP address as origin", mod(func(p *agentproto.TrustPayload) { p.Origin = "203.0.113.5" }), true, "malformed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

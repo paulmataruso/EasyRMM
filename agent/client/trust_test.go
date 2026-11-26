@@ -163,7 +163,7 @@ func TestWidenedTrustChecksTheHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Dialled at the test server, but the client was made for another name.
+	// Dialed at the test server, but the client was made for another name.
 	elsewhere.http.Load().Transport.(*http.Transport).DialContext = func(ctx context.Context, n, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, n, s.Listener.Addr().String())
 	}

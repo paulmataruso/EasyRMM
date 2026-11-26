@@ -1,7 +1,9 @@
 # ADR-0055: Let's Encrypt in one step
 
-* Status: Proposed (2026-11-21). Not implemented. Revised after an
-  independent review the same day.
+* Status: Proposed (2026-11-21). Revised after an independent review the
+  same day. Slice 5a is built (see its amendment below). Slice 5b1, agent
+  trust, is built (2026-11-26; its amendment below); 5b2 to 5b4 and 5c are
+  not.
 * Builds on: [ADR-0003](0003-go-edge-host-networking.md) (the TLS edge),
   [ADR-0004](0004-meshcentral-dedicated-origin.md) and
   [ADR-0014](0014-remote-access-gateway-and-device-discovery.md)
@@ -973,6 +975,68 @@ describes it. TLS never stops the server from starting.
 * Step-up authentication is not needed in 5a: **Retry now** and **Order
   anyway** act on `.env` names only, which the ADR's list does not cover.
 
+*Amended 2026-11-26 (decided in review), slice 5b1 as built:*
+
+* **The capability** is `tls.trust.v1` (`agentproto.CapTrust`), listed in the
+  heartbeat's `caps`, which a build sends only to a server of level 2 or
+  higher; the report (`HeartbeatRequest.Trust`) goes the same way. The
+  instruction is `HeartbeatResponse.Trust`, signed with the job key under
+  `EASYRMM-TRUST-SIG-V1`, valid at most 10 minutes (an agent refuses a longer
+  claim), for DNS names only: an agent whose origin is an IP address is never
+  asked, since 5b3 covers those installs.
+* **A request's ID is derived from what it asks**, so the same question keeps
+  its ID until a result arrives and the agent carries it out once; a chain that
+  changed is another question. The agent reports until an answer no longer
+  carries that ID.
+* **Refusals and replay.** The agent refuses, logs and changes nothing for an
+  instruction that is unsigned, signed under another context (an update's, an
+  uninstall's, an escrow key's), for another device or origin, expired, issued
+  in the future, valid longer than 10 minutes, malformed or with unknown
+  fields, from a server below level 2, and whenever it has pinned no job key (it
+  never trusts on first use). A refusal after the signature verified is
+  reported by ID; one before is not echoed to the server. The agent keeps the
+  newest issue time it handled and its last eight IDs in `trust.json`: a
+  known ID is answered from memory and carried out once, and a new ID issued
+  before the newest handled is refused.
+* **What is verified.** Each chain, for the origin, against the system's roots
+  (the platform's verifier on Windows) or the pool of its CA file and the
+  instruction's certificates. Added certificates must be certificate
+  authorities' (at most 4). Only when every target chain of the agent's own
+  origin passes does the agent widen: `state.Config.TrustSystem` is set and
+  the CA bundle in its state folder gains the added certificates, written
+  before the configuration points at it; the running client follows
+  (`Client.Retrust`) and later builds read it. A served or fallback chain
+  never widens anything. An agent with no CA file and nothing to add already
+  trusts the system alone: nothing changes. The widened client verifies
+  against the host it was made for, not the connection's server name, which
+  is empty for an IP address.
+* **The trust is handled after the heartbeat confirmed the running build**
+  (ADR-0027's `Reached`), so a probation rollback cannot lose it.
+* **The server** keeps `device_tls_trust` (one row per device, scope, host and
+  purpose) and `device_tls_state` (migration 90491). It asks when a device first
+  announces the capability, when its build's hash changes (an update or a
+  rollback), and when a chain it asks about changed; it drops the rows of a
+  purpose a name no longer has. The source of chains is the edge's own
+  certificate function (`edgeSource`), so in 5b1 a name has its served chain
+  only: the fallback and target chains, and the move that sends them
+  (`Service.Ask`, built and tested), come with 5b2. In `offload` mode the edge
+  serves no certificate, so nothing is asked. The EasyPatch host is the
+  engine's public URL for a device with a linked EasyPatch agent, checked
+  against the system's roots alone and marked as a stand-in on Linux. Every
+  step is gated by `devscope.Allowed`, and each answer is audited as
+  `device.tls_trust` (a refusal once per instruction and reason).
+* **Reinstall through a remote session** is offered on a device's page when
+  its agent reported a failure and the device is not connected, or when a move's
+  question has gone unanswered for an hour by a device that is not connected.
+  The page shows the reason, the fix for the reported error, a terminal
+  button (MeshAgent) and **Create install command**, which makes a deployment
+  token of one use and one day through the existing token route. The offer is a
+  read of the state: nothing is sent to the device.
+* **Not in 5b1:** the expiry alert that lists unprotected devices, a button to
+  ask again by hand, the .NET bundle check of the EasyPatch agent itself, and
+  the end-to-end run with a real agent binary against Pebble (the le1 harness
+  runs Pebble but has no agent binary).
+
 ### Slices
 * **5a. CertMagic, status and alerts.** For the names in `.env`:
   CertMagic with ARI and the managed list, EasyRMM's scheduler and gate
@@ -985,7 +1049,7 @@ describes it. TLS never stops the server from starting.
 * **5b1. Agent trust**, released first: the trust instruction, the
   agent's verification and widening, `device_tls_trust`, the re-checks,
   and **Reinstall through a remote session**. It changes no name. It
-  needs ADR-0009's protocol levels (pull request #52).
+  needs ADR-0009's protocol levels (pull request #52). *Built 2026-11-26.*
 * **5b2. Sources and moves**: per-name sources, challenges in `internal`
   and `manual` modes, account registration and the staging trial, the
   move and its waiting on devices, moving back, ADR-0042's widening and

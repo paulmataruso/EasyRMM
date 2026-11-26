@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -544,6 +543,3 @@ func (s *Service) auditReport(ctx context.Context, tx pgx.Tx, d Device, b Beat, 
 		TargetType: "device", TargetID: d.ID.String(), Outcome: outcome, Details: details,
 	})
 }
-
-// EncodeDER is a helper for callers that hold certificates as DER.
-func EncodeDER(der []byte) string { return base64.StdEncoding.EncodeToString(der) }

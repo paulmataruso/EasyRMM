@@ -2,6 +2,7 @@ package tlstrust
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (*V
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT capable, origin, trusts, widened, reported_at, refused FROM device_tls_state WHERE device_id = $1`, id).
 			Scan(&v.Capable, &v.Origin, &v.Trusts, &v.Widened, &v.ReportedAt, &v.Refused)
-		if err != nil && err != pgx.ErrNoRows {
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT scope, host, purpose, state, error, requested_at, checked_at, sent_at FROM device_tls_trust
