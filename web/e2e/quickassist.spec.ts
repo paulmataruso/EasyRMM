@@ -39,7 +39,7 @@ test("a link, the real program, acceptance by the code, the active list, and a v
   await dialog.getByLabel("Name the user sees").fill("Support for Northwind");
   await expect(dialog.getByRole("option", { name: /Permanent/ })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Make link" }).click();
-  const link = await page.getByLabel("Link").inputValue();
+  const link = await page.getByRole("textbox", { name: "Link", exact: true }).inputValue();
   await page.getByRole("button", { name: "Done" }).click();
 
   // The user opens the page, and downloads the program.
