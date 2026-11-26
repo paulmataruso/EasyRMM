@@ -1,6 +1,6 @@
 # ADR-0079: Saved RDP credentials per device
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner on 2026-11-26: "meshcenter needs to be able to save
   RDP creds for each device, if a user wants". Everything marked *decided in
   review* is the writer's call; everything marked *owner decision* is open.
@@ -91,13 +91,12 @@ browser that reaches the relay set `savepass` itself.
 * One personal and at most one shared credential per device and person.
   When both exist the personal one wins; the dialog shows which will be used
   (its label and username, never the password).
-* **Owner decision:** whether the shared level ships in the first release or
-  waits. The design below supports both; slice 4 is the shared level.
+* Decided in review: the shared level ships later (slice 4).
 
 ### 2. Storage
 
 * A new table `device_rdp_credentials` (migration `9xxxx_rdp_credentials`
-  when built; goose up and down): `id`, `device_id`, `org_id`,
+  when built; goose up and down): `id`, `device_id`, `organization_id`,
   `scope` (`user` or `device`), `user_id` (null for `device`),
   `label`, `domain`, `username`, `sealed_password` (the Sealer's wire
   format), `created_by`, `created_at`, `updated_at`, `last_used_at`,
@@ -105,8 +104,14 @@ browser that reaches the relay set `savepass` itself.
 * The **username and domain are stored in clear** (they are needed for the
   label and the audit row and are not secrets); **only the password is
   sealed**. Associated data is
-  `rdp-credential:<id>:<device_id>:<scope>:<user_id>`, so a sealed value
+  `rdp-credential:<id>:<device_id>:<scope>:<user_id>`, where `<user_id>` is the person's UUID for `user` scope and the literal `-` for `device` scope (the column is NULL there), so a sealed value
   copied to another row, device or person fails to open (`ErrDecrypt`).
+* **Row-level security** on `organization_id`, as the other per-organization
+  tables (`ENABLE` and `FORCE ROW LEVEL SECURITY`, a policy on
+  `easyrmm_scope_all() OR organization_id = ANY (easyrmm_scope_ids('easyrmm.scope_orgs'))`
+  with a matching `WITH CHECK`, as `devices_tenant` in
+  `00002_remote_access.sql`); a test proves another organization's scope
+  sees no row.
 * **Today: `secrets.Sealer`.** Decided in review: it is built, rotatable
   and reviewed, and the keystore's design is for recovery keys the server
   must not use unattended, which is a different job.
@@ -149,8 +154,8 @@ step earlier, in the gateway, which already parses this message:
    on every first frame, saved credential or not, so MeshCentral can never
    store or load its own copy even if the setting changes.
 4. The gateway sends the frame to MeshCentral over the host-local
-   connection it already uses, and zeroes its copy. MeshCentral holds the
-   password in memory for the session, as it does for a typed one.
+   connection it already uses. MeshCentral holds the password in memory for
+   the session, as it does for a typed one.
 
 The browser holds only the credential's id. The resize reconnect
 (ADR-0026) sends the same id and the gateway injects again, so the page
@@ -159,17 +164,59 @@ credentials, which the page keeps for the reconnect).
 
 * **Residual exposure, stated plainly:** the password exists in clear in the
   gateway's and MeshCentral's process memory during the session, and on the
-  loopback hop between them. That is the same as a typed password today.
+  loopback hop between them. Go cannot zero strings or the buffers JSON
+  decoding makes, and `g.payload` and `g.held` keep the browser's message
+  until the garbage collector frees them, so **this ADR does not claim the
+  gateway erases the password**. It minimises the exposure: the opened
+  password and the rewritten frame are built in byte slices the gateway
+  owns, with no conversion to a string, and those slices are zeroed after
+  the frame is written; the message the browser sent holds only an id and
+  empty fields. A heap dump of the gateway during a session can still show
+  the password. This is the same as a typed password today.
   **MeshCentral cannot be made to take a credential it does not hold
   without storing it**, so injecting through the gateway is the safest
   option available; the alternative (writing `node.rdp` into MeshCentral)
   would store it unsealed in a second database.
-* The gateway today forwards frames; rewriting one frame is a change to the
-  guard, and slice 1 must prove it does not break the frame size or the
-  message order the relay expects (a Windows RDP session in the tests).
+
+**The rewrite is new plumbing, not a tweak.** Today `wsGuard.next`
+(`relayguard.go`, about lines 225-320) forwards the browser's original
+masked bytes (`g.held`) and the check is `func([]byte) error`: it can only
+admit, drop or pass the rest. To inject, this ADR adds:
+
+* **A transform hook.** A second kind of check, `func(msg []byte) ([]byte,
+  error)`, for the first RDP message only. When it returns replacement
+  bytes, `next` forwards those instead of `g.held`; every other check is
+  unchanged.
+* **A rebuilt frame.** The replacement is sent as one new text frame
+  (FIN set, opcode 1, no reserved bits): a fresh header with the new
+  payload length in the 7-bit, 16-bit (126) or 64-bit (127) form that
+  length needs, **a fresh random mask key** (never the browser's), and the
+  payload masked with it. A long password or domain can push the message
+  across 125 or 65535 bytes, so the form is chosen from the new length.
+* **Fragmented and continuation frames.** `next` already joins fragments
+  into `g.payload` before the check runs (it refuses a continuation outside
+  a message); the transform sees the whole joined message, and its
+  replacement is one frame regardless of how many the browser sent. The
+  original fragments are not forwarded. The size cap
+  (`maxControlMessage`) applies to the replacement too.
+* **Where the identity comes from.** `rdpCheck` is built per connection
+  with the session and device from the relay's authenticated request
+  context (the redeemed grant). The same context supplies the user id, the
+  organization id and the session's `stepped_up_at`; none of them is read
+  from the message. The transform receives them as closure values.
+* **New code with its own tests** (see Tests): none of this exists today.
+
+**Bypass.** The browser must reach MeshCentral's RDP relay only through
+the gateway. Slice 1 asserts it with a test: a request to
+`mstscrelay.ashx` that does not pass the gateway (straight at
+MeshCentral's port, or with the edge's grant cookie missing) is refused,
+and a first message that skips the transform is never forwarded.
 
 ### 5. Step-up
 
+* **Prerequisite:** step-up is being built in `ws/f5-stepup` (ADR-0055).
+  No slice that saves a credential or injects one ships before it has
+  merged; the slices are ordered so (below).
 * **To save, replace or delete:** step-up (ADR-0055, 5 minutes).
 * **On first use in a session:** the first redeem of a saved credential in a
   console session needs a step-up not older than 5 minutes; later uses in
@@ -198,9 +245,12 @@ username (never the password):
 
 * **Device removal:** deleting or retiring a device deletes its credentials
   in the same transaction (`ON DELETE CASCADE` plus an audit row per
-  credential). Moving a device to another organization or site deletes
-  **shared** credentials (the new owner of the device did not agree to
-  them) and keeps personal ones.
+  credential). One rule for a move between organizations
+  (decided in review): **all** the device's credentials, shared and
+  personal, are deleted in the move's transaction, each with an audit row,
+  and `organization_id` is never rewritten. A move between sites of the
+  same organization keeps them. (Simpler and safer than checking each
+  person's new access; people save again.)
 * **User removal or deactivation:** the person's personal credentials are
   deleted with the user. A deactivated user keeps none usable: the
   gateway refuses a credential whose user is not active.
@@ -226,16 +276,20 @@ username (never the password):
 
 ### 8. Permissions (`server/internal/rbac/rbac.go`)
 
-Added to the hotspot, additively:
+Three permissions are added, additively. One table says what each action
+needs; the gateway and the API check exactly this, on every call:
 
-| Permission | Meaning | Default roles |
-| --- | --- | --- |
-| `device.rdp_credentials.save` | save and delete one's own credential | those that hold `device.remote_desktop` |
-| `device.rdp_credentials.use` | start sessions with a shared credential | technicians and above |
-| `device.rdp_credentials.manage_shared` | create, replace, delete shared credentials, with step-up | administrators |
+| Action | Needs |
+| --- | --- |
+| Save, replace or delete one's own credential | `device.rdp_credentials.save` and `device.remote_desktop` |
+| Use one's own credential | `device.remote_desktop` and being its owner |
+| Use a shared credential | `device.remote_desktop` and `device.rdp_credentials.use` |
+| Create, replace or delete a shared credential | `device.rdp_credentials.manage_shared` and `device.remote_desktop`, with step-up |
+| Turn the shared level on or off | organization administrator, with step-up |
 
-Personal saving needs `device.remote_desktop` as well as
-`.save`; nobody can use a credential for a device they cannot reach.
+Default roles: `.save` goes to every role that holds
+`device.remote_desktop`; `.use` to technicians and above;
+`.manage_shared` to administrators.
 
 ### 9. Where it shows (ADR-0072)
 
@@ -276,6 +330,16 @@ anyway.
   device, user and organization move; step-up required to save and on the
   first use per session and not within 5 minutes; every audit row; devscope
   refusal; re-seal after Sealer key rotation.
+* **Frame rewrite (new tests in `relayguard_test.go`):** a long password
+  that moves the message across 125 and 65535 bytes, so each length form
+  (7-bit, 126, 127) is built and read back by a standard WebSocket reader;
+  a fresh mask key on every rewrite; an `infos` frame the browser sent in
+  several fragments; a replacement over the size cap refused; and a fuzz
+  test that feeds random frame splits, mask keys and JSON bodies and
+  checks that the output is a valid WebSocket stream, that the stream
+  after the first message is byte-identical to the input, and that a
+  password never appears outside the rewritten frame.
+* **Bypass:** the direct-to-MeshCentral request is refused (slice 1).
 * **Gateway (`relayguard_test.go`):** a saved id of another user or device
   is refused; a second `infos` is refused; a message after the first passes.
 * **A real RDP session to a Windows test server, by hand and in the
@@ -293,15 +357,18 @@ anyway.
 
 ## Slices
 
-1. **Storage and gateway injection, personal only:** migration, sealed
-   store, the rewrite in the guard, forced `savepass` false, audit rows, and
-   the real Windows session. No UI beyond an API.
-2. **Step-up on save and first use** (needs 5b2's `stepped_up_at`).
+Order (step-up first, so nothing saves or injects without it):
+
+0. **Prerequisite, not ours:** step-up (ADR-0055, `ws/f5-stepup`) merged.
+1. **Storage, API and audit, personal only, no injection:** migration with
+   row-level security, the sealed store, the permissions, save, replace and
+   delete behind step-up, the audit rows, the cascades.
+2. **Gateway injection:** the transform hook, the rebuilt frame, forced
+   `savepass` false, first-use step-up, the bypass test, the frame tests and
+   fuzz, and the real Windows session.
 3. **UI:** the RDP dialog and the Remote menu (ADR-0072).
-4. **Shared level:** the organization switch, the permissions, the move
-   rule.
-5. **Cleanup and rotation:** cascades, the re-seal job, the keystore
-   migration if built.
+4. **Shared level:** the organization switch, `.use` and `.manage_shared`.
+5. **Rotation:** the re-seal job, and the keystore migration if built.
 
 ## Consequences
 
@@ -315,7 +382,6 @@ anyway.
 
 ## Owner decisions
 
-1. Does the shared (organization) level ship in the first release, or
-   later? The writer's call is later (slice 4).
-2. Should saved credentials move to the keystore once it exists, or stay
-   with the Sealer? The writer's call is to stay.
+None. Decided in review: the shared level comes later (slice 4), and
+credentials stay with `secrets.Sealer` now, moving to the keystore only if
+it is built for this.
