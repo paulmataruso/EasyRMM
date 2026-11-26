@@ -1,0 +1,2293 @@
+{
+ "pack": {
+  "key": "cmmc-l2",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "CMMC 2.0 Level 2",
+  "licence_class": "PUBLIC_DOMAIN",
+  "source_id": "cmmc-32cfr170",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "cmmc-l2",
+  "version": "2.0",
+  "title": "CMMC 2.0 Level 2 (the 110 practices of NIST SP 800-171 Revision 2)",
+  "publisher": "U.S. Department of Defense (32 CFR part 170)",
+  "source_id": "cmmc-32cfr170",
+  "text_policy": "full",
+  "weights_source": "dod-sprs-methodology",
+  "weights_verified": false
+ },
+ "requirements": [
+  {
+   "req_id": "AC.L1-3.1.1",
+   "parent_id": null,
+   "title_own": "Authorized access only",
+   "text_full": "Limit system access to authorized users, processes acting on behalf of authorized users, and devices (including other systems).",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": true,
+    "nist": "3.1.1"
+   }
+  },
+  {
+   "req_id": "AC.L1-3.1.2",
+   "parent_id": null,
+   "title_own": "Limit permitted functions",
+   "text_full": "Limit system access to the types of transactions and functions that authorized users are permitted to execute.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": true,
+    "nist": "3.1.2"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.3",
+   "parent_id": null,
+   "title_own": "CUI flow control",
+   "text_full": "Control the flow of CUI in accordance with approved authorizations.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.3"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.4",
+   "parent_id": null,
+   "title_own": "Separation of duties",
+   "text_full": "Separate the duties of individuals to reduce the risk of malevolent activity without collusion.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.4"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.5",
+   "parent_id": null,
+   "title_own": "Least privilege",
+   "text_full": "Employ the principle of least privilege, including for specific security functions and privileged accounts.",
+   "class": "technical",
+   "weight": 3,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.5"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.6",
+   "parent_id": null,
+   "title_own": "Non-privileged accounts for ordinary work",
+   "text_full": "Use non-privileged accounts or roles when accessing nonsecurity functions.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.6"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.7",
+   "parent_id": null,
+   "title_own": "Block and log privileged functions",
+   "text_full": "Prevent non-privileged users from executing privileged functions and capture the execution of such functions in audit logs.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.7"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.8",
+   "parent_id": null,
+   "title_own": "Limit failed sign-ins",
+   "text_full": "Limit unsuccessful logon attempts.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.8"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.9",
+   "parent_id": null,
+   "title_own": "Security and privacy notices",
+   "text_full": "Provide privacy and security notices consistent with applicable CUI rules.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.9"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.10",
+   "parent_id": null,
+   "title_own": "Session lock",
+   "text_full": "Use session lock with pattern-hiding displays to prevent access and viewing of data after a period of inactivity.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.1.10"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.11",
+   "parent_id": null,
+   "title_own": "Automatic session end",
+   "text_full": "Terminate (automatically) a user session after a defined condition.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.1.11"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.12",
+   "parent_id": null,
+   "title_own": "Monitor remote access",
+   "text_full": "Monitor and control remote access sessions.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.12"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.13",
+   "parent_id": null,
+   "title_own": "Encrypt remote access",
+   "text_full": "Employ cryptographic mechanisms to protect the confidentiality of remote access sessions.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.13"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.14",
+   "parent_id": null,
+   "title_own": "Managed access points",
+   "text_full": "Route remote access via managed access control points.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.14"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.15",
+   "parent_id": null,
+   "title_own": "Authorize remote privileged commands",
+   "text_full": "Authorize remote execution of privileged commands and remote access to security-relevant information.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.15"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.16",
+   "parent_id": null,
+   "title_own": "Authorize wireless access",
+   "text_full": "Authorize wireless access prior to allowing such connections.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.16"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.17",
+   "parent_id": null,
+   "title_own": "Protect wireless access",
+   "text_full": "Protect wireless access using authentication and encryption.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.1.17"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.18",
+   "parent_id": null,
+   "title_own": "Control mobile devices",
+   "text_full": "Control connection of mobile devices.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.18"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.19",
+   "parent_id": null,
+   "title_own": "Encrypt CUI on mobile devices",
+   "text_full": "Encrypt CUI on mobile devices and mobile computing platforms.",
+   "class": "technical",
+   "weight": 3,
+   "flags": {
+    "family": "AC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.1.19"
+   }
+  },
+  {
+   "req_id": "AC.L1-3.1.20",
+   "parent_id": null,
+   "title_own": "Control external connections",
+   "text_full": "Verify and control/limit connections to and use of external systems.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": true,
+    "nist": "3.1.20"
+   }
+  },
+  {
+   "req_id": "AC.L2-3.1.21",
+   "parent_id": null,
+   "title_own": "Limit portable storage on external systems",
+   "text_full": "Limit use of portable storage devices on external systems.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": false,
+    "nist": "3.1.21"
+   }
+  },
+  {
+   "req_id": "AC.L1-3.1.22",
+   "parent_id": null,
+   "title_own": "Public posting of CUI",
+   "text_full": "Control CUI posted or processed on publicly accessible systems.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "AC",
+    "l1": true,
+    "nist": "3.1.22"
+   }
+  },
+  {
+   "req_id": "AT.L2-3.2.1",
+   "parent_id": null,
+   "title_own": "Security risk awareness",
+   "text_full": "Ensure that managers, systems administrators, and users of organizational systems are made aware of the security risks associated with their activities and of the applicable policies, standards, and procedures related to the security of those systems.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "AT",
+    "l1": false,
+    "nist": "3.2.1"
+   }
+  },
+  {
+   "req_id": "AT.L2-3.2.2",
+   "parent_id": null,
+   "title_own": "Role-based training",
+   "text_full": "Ensure that personnel are trained to carry out their assigned information security-related duties and responsibilities.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "AT",
+    "l1": false,
+    "nist": "3.2.2"
+   }
+  },
+  {
+   "req_id": "AT.L2-3.2.3",
+   "parent_id": null,
+   "title_own": "Insider threat awareness",
+   "text_full": "Provide security awareness training on recognizing and reporting potential indicators of insider threat.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "AT",
+    "l1": false,
+    "nist": "3.2.3"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.1",
+   "parent_id": null,
+   "title_own": "Create and keep audit logs",
+   "text_full": "Create and retain system audit logs and records to the extent needed to enable the monitoring, analysis, investigation, and reporting of unlawful or unauthorized system activity.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.1"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.2",
+   "parent_id": null,
+   "title_own": "Trace actions to users",
+   "text_full": "Ensure that the actions of individual system users can be uniquely traced to those users, so they can be held accountable for their actions.",
+   "class": "technical",
+   "weight": 3,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.2"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.3",
+   "parent_id": null,
+   "title_own": "Review logged events",
+   "text_full": "Review and update logged events.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.3"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.4",
+   "parent_id": null,
+   "title_own": "Alert on logging failure",
+   "text_full": "Alert in the event of an audit logging process failure.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.4"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.5",
+   "parent_id": null,
+   "title_own": "Correlate log review",
+   "text_full": "Correlate audit record review, analysis, and reporting processes for investigation and response to indications of unlawful, unauthorized, suspicious, or unusual activity.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.5"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.6",
+   "parent_id": null,
+   "title_own": "Log reduction and reports",
+   "text_full": "Provide audit record reduction and report generation to support on-demand analysis and reporting.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.6"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.7",
+   "parent_id": null,
+   "title_own": "Synchronized clocks",
+   "text_full": "Provide a system capability that compares and synchronizes internal system clocks with an authoritative source to generate time stamps for audit records.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.7"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.8",
+   "parent_id": null,
+   "title_own": "Protect audit information",
+   "text_full": "Protect audit information and audit logging tools from unauthorized access, modification, and deletion.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "l1": false,
+    "nist": "3.3.8"
+   }
+  },
+  {
+   "req_id": "AU.L2-3.3.9",
+   "parent_id": null,
+   "title_own": "Limit audit management",
+   "text_full": "Limit management of audit logging functionality to a subset of privileged users.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "AU",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.3.9"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.1",
+   "parent_id": null,
+   "title_own": "Baselines and inventories",
+   "text_full": "Establish and maintain baseline configurations and inventories of organizational systems (including hardware, software, firmware, and documentation) throughout the respective system development life cycles.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.1"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.2",
+   "parent_id": null,
+   "title_own": "Enforce configuration settings",
+   "text_full": "Establish and enforce security configuration settings for information technology products employed in organizational systems.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.2"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.3",
+   "parent_id": null,
+   "title_own": "Change control",
+   "text_full": "Track, review, approve or disapprove, and log changes to organizational systems.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.3"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.4",
+   "parent_id": null,
+   "title_own": "Change impact analysis",
+   "text_full": "Analyze the security impact of changes prior to implementation.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.4"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.5",
+   "parent_id": null,
+   "title_own": "Change access restrictions",
+   "text_full": "Define, document, approve, and enforce physical and logical access restrictions associated with changes to organizational systems.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.5"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.6",
+   "parent_id": null,
+   "title_own": "Least functionality",
+   "text_full": "Employ the principle of least functionality by configuring organizational systems to provide only essential capabilities.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.6"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.7",
+   "parent_id": null,
+   "title_own": "Disable nonessential functions",
+   "text_full": "Restrict, disable, or prevent the use of nonessential programs, functions, ports, protocols, and services.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.7"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.8",
+   "parent_id": null,
+   "title_own": "Software allow or deny listing",
+   "text_full": "Apply deny-by-exception (blacklisting) policy to prevent the use of unauthorized software or deny-all, permit-by-exception (whitelisting) policy to allow the execution of authorized software.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "CM",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.4.8"
+   }
+  },
+  {
+   "req_id": "CM.L2-3.4.9",
+   "parent_id": null,
+   "title_own": "User-installed software",
+   "text_full": "Control and monitor user-installed software.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "CM",
+    "l1": false,
+    "nist": "3.4.9"
+   }
+  },
+  {
+   "req_id": "IA.L1-3.5.1",
+   "parent_id": null,
+   "title_own": "Identify users and devices",
+   "text_full": "Identify system users, processes acting on behalf of users, and devices.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "IA",
+    "no_check_yet": true,
+    "l1": true,
+    "nist": "3.5.1"
+   }
+  },
+  {
+   "req_id": "IA.L1-3.5.2",
+   "parent_id": null,
+   "title_own": "Authenticate users and devices",
+   "text_full": "Authenticate (or verify) the identities of users, processes, or devices, as a prerequisite to allowing access to organizational systems.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "IA",
+    "no_check_yet": true,
+    "l1": true,
+    "nist": "3.5.2"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.3",
+   "parent_id": null,
+   "title_own": "Multifactor authentication",
+   "text_full": "Use multifactor authentication for local and network access to privileged accounts and for network access to non-privileged accounts.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "IA",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.5.3"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.4",
+   "parent_id": null,
+   "title_own": "Replay-resistant authentication",
+   "text_full": "Employ replay-resistant authentication mechanisms for network access to privileged and non-privileged accounts.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.5.4"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.5",
+   "parent_id": null,
+   "title_own": "Identifier reuse",
+   "text_full": "Prevent reuse of identifiers for a defined period.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.5"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.6",
+   "parent_id": null,
+   "title_own": "Disable inactive identifiers",
+   "text_full": "Disable identifiers after a defined period of inactivity.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.6"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.7",
+   "parent_id": null,
+   "title_own": "Password complexity",
+   "text_full": "Enforce a minimum password complexity and change of characters when new passwords are created.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.7"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.8",
+   "parent_id": null,
+   "title_own": "Password reuse",
+   "text_full": "Prohibit password reuse for a specified number of generations.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.8"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.9",
+   "parent_id": null,
+   "title_own": "Temporary passwords",
+   "text_full": "Allow temporary password use for system logons with an immediate change to a permanent password.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.9"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.10",
+   "parent_id": null,
+   "title_own": "Protected passwords",
+   "text_full": "Store and transmit only cryptographically-protected passwords.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "IA",
+    "l1": false,
+    "nist": "3.5.10"
+   }
+  },
+  {
+   "req_id": "IA.L2-3.5.11",
+   "parent_id": null,
+   "title_own": "Obscured authentication feedback",
+   "text_full": "Obscure feedback of authentication information.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "IA",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.5.11"
+   }
+  },
+  {
+   "req_id": "IR.L2-3.6.1",
+   "parent_id": null,
+   "title_own": "Incident handling capability",
+   "text_full": "Establish an operational incident-handling capability for organizational systems that includes preparation, detection, analysis, containment, recovery, and user response activities.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "IR",
+    "l1": false,
+    "nist": "3.6.1"
+   }
+  },
+  {
+   "req_id": "IR.L2-3.6.2",
+   "parent_id": null,
+   "title_own": "Incident reporting",
+   "text_full": "Track, document, and report incidents to designated officials and/or authorities both internal and external to the organization.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "IR",
+    "l1": false,
+    "nist": "3.6.2"
+   }
+  },
+  {
+   "req_id": "IR.L2-3.6.3",
+   "parent_id": null,
+   "title_own": "Incident response testing",
+   "text_full": "Test the organizational incident response capability.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "IR",
+    "l1": false,
+    "nist": "3.6.3"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.1",
+   "parent_id": null,
+   "title_own": "System maintenance",
+   "text_full": "Perform maintenance on organizational systems.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.1"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.2",
+   "parent_id": null,
+   "title_own": "Maintenance controls",
+   "text_full": "Provide controls on the tools, techniques, mechanisms, and personnel used to conduct system maintenance.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.2"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.3",
+   "parent_id": null,
+   "title_own": "Sanitize equipment for repair",
+   "text_full": "Ensure equipment removed for off-site maintenance is sanitized of any CUI.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.3"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.4",
+   "parent_id": null,
+   "title_own": "Check maintenance media",
+   "text_full": "Check media containing diagnostic and test programs for malicious code before the media are used in organizational systems.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.4"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.5",
+   "parent_id": null,
+   "title_own": "Multifactor for remote maintenance",
+   "text_full": "Require multifactor authentication to establish nonlocal maintenance sessions via external network connections and terminate such connections when nonlocal maintenance is complete.",
+   "class": "partly",
+   "weight": 3,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.5"
+   }
+  },
+  {
+   "req_id": "MA.L2-3.7.6",
+   "parent_id": null,
+   "title_own": "Supervise maintenance staff",
+   "text_full": "Supervise the maintenance activities of maintenance personnel without required access authorization.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "MA",
+    "l1": false,
+    "nist": "3.7.6"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.1",
+   "parent_id": null,
+   "title_own": "Protect media",
+   "text_full": "Protect (i.e., physically control and securely store) system media containing CUI, both paper and digital.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.1"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.2",
+   "parent_id": null,
+   "title_own": "Limit media access",
+   "text_full": "Limit access to CUI on system media to authorized users.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.2"
+   }
+  },
+  {
+   "req_id": "MP.L1-3.8.3",
+   "parent_id": null,
+   "title_own": "Sanitize media",
+   "text_full": "Sanitize or destroy system media containing CUI before disposal or release for reuse.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "MP",
+    "l1": true,
+    "nist": "3.8.3"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.4",
+   "parent_id": null,
+   "title_own": "Mark media",
+   "text_full": "Mark media with necessary CUI markings and distribution limitations.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.4"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.5",
+   "parent_id": null,
+   "title_own": "Media accountability",
+   "text_full": "Control access to media containing CUI and maintain accountability for media during transport outside of controlled areas.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.5"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.6",
+   "parent_id": null,
+   "title_own": "Encrypt media in transport",
+   "text_full": "Implement cryptographic mechanisms to protect the confidentiality of CUI stored on digital media during transport unless otherwise protected by alternative physical safeguards.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.6"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.7",
+   "parent_id": null,
+   "title_own": "Control removable media",
+   "text_full": "Control the use of removable media on system components.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.7"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.8",
+   "parent_id": null,
+   "title_own": "Unowned portable storage",
+   "text_full": "Prohibit the use of portable storage devices when such devices have no identifiable owner.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.8"
+   }
+  },
+  {
+   "req_id": "MP.L2-3.8.9",
+   "parent_id": null,
+   "title_own": "Protect backups",
+   "text_full": "Protect the confidentiality of backup CUI at storage locations.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "MP",
+    "l1": false,
+    "nist": "3.8.9"
+   }
+  },
+  {
+   "req_id": "PS.L2-3.9.1",
+   "parent_id": null,
+   "title_own": "Screen personnel",
+   "text_full": "Screen individuals prior to authorizing access to organizational systems containing CUI.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "PS",
+    "l1": false,
+    "nist": "3.9.1"
+   }
+  },
+  {
+   "req_id": "PS.L2-3.9.2",
+   "parent_id": null,
+   "title_own": "Personnel actions",
+   "text_full": "Ensure that organizational systems containing CUI are protected during and after personnel actions such as terminations and transfers.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "PS",
+    "l1": false,
+    "nist": "3.9.2"
+   }
+  },
+  {
+   "req_id": "PE.L1-3.10.1",
+   "parent_id": null,
+   "title_own": "Limit physical access",
+   "text_full": "Limit physical access to organizational systems, equipment, and the respective operating environments to authorized individuals.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "PE",
+    "l1": true,
+    "nist": "3.10.1"
+   }
+  },
+  {
+   "req_id": "PE.L2-3.10.2",
+   "parent_id": null,
+   "title_own": "Protect the facility",
+   "text_full": "Protect and monitor the physical facility and support infrastructure for organizational systems.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "PE",
+    "l1": false,
+    "nist": "3.10.2"
+   }
+  },
+  {
+   "req_id": "PE.L1-3.10.3",
+   "parent_id": null,
+   "title_own": "Escort visitors",
+   "text_full": "Escort visitors and monitor visitor activity.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "PE",
+    "l1": true,
+    "nist": "3.10.3"
+   }
+  },
+  {
+   "req_id": "PE.L1-3.10.4",
+   "parent_id": null,
+   "title_own": "Physical access logs",
+   "text_full": "Maintain audit logs of physical access.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "PE",
+    "l1": true,
+    "nist": "3.10.4"
+   }
+  },
+  {
+   "req_id": "PE.L1-3.10.5",
+   "parent_id": null,
+   "title_own": "Physical access devices",
+   "text_full": "Control and manage physical access devices.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "PE",
+    "l1": true,
+    "nist": "3.10.5"
+   }
+  },
+  {
+   "req_id": "PE.L2-3.10.6",
+   "parent_id": null,
+   "title_own": "Alternate work sites",
+   "text_full": "Enforce safeguarding measures for CUI at alternate work sites.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "PE",
+    "l1": false,
+    "nist": "3.10.6"
+   }
+  },
+  {
+   "req_id": "RA.L2-3.11.1",
+   "parent_id": null,
+   "title_own": "Risk assessment",
+   "text_full": "Periodically assess the risk to organizational operations (including mission, functions, image, or reputation), organizational assets, and individuals, resulting from the operation of organizational systems and the associated processing, storage, or transmission of CUI.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "RA",
+    "l1": false,
+    "nist": "3.11.1"
+   }
+  },
+  {
+   "req_id": "RA.L2-3.11.2",
+   "parent_id": null,
+   "title_own": "Vulnerability scanning",
+   "text_full": "Scan for vulnerabilities in organizational systems and applications periodically and when new vulnerabilities affecting those systems and applications are identified.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "RA",
+    "l1": false,
+    "nist": "3.11.2"
+   }
+  },
+  {
+   "req_id": "RA.L2-3.11.3",
+   "parent_id": null,
+   "title_own": "Remediate vulnerabilities",
+   "text_full": "Remediate vulnerabilities in accordance with risk assessments.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "RA",
+    "l1": false,
+    "nist": "3.11.3"
+   }
+  },
+  {
+   "req_id": "CA.L2-3.12.1",
+   "parent_id": null,
+   "title_own": "Assess security controls",
+   "text_full": "Periodically assess the security controls in organizational systems to determine if the controls are effective in their application.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "CA",
+    "l1": false,
+    "nist": "3.12.1"
+   }
+  },
+  {
+   "req_id": "CA.L2-3.12.2",
+   "parent_id": null,
+   "title_own": "Plans of action",
+   "text_full": "Develop and implement plans of action designed to correct deficiencies and reduce or eliminate vulnerabilities in organizational systems.",
+   "class": "organisational",
+   "weight": 3,
+   "flags": {
+    "family": "CA",
+    "l1": false,
+    "nist": "3.12.2"
+   }
+  },
+  {
+   "req_id": "CA.L2-3.12.3",
+   "parent_id": null,
+   "title_own": "Monitor security controls",
+   "text_full": "Monitor security controls on an ongoing basis to ensure the continued effectiveness of the controls.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "CA",
+    "l1": false,
+    "nist": "3.12.3"
+   }
+  },
+  {
+   "req_id": "CA.L2-3.12.4",
+   "parent_id": null,
+   "title_own": "System security plan",
+   "text_full": "Develop, document, and periodically update system security plans that describe system boundaries, system environments of operation, how security requirements are implemented, and the relationships with or connections to other systems.",
+   "class": "organisational",
+   "weight": 0,
+   "flags": {
+    "family": "CA",
+    "l1": false,
+    "nist": "3.12.4"
+   }
+  },
+  {
+   "req_id": "SC.L1-3.13.1",
+   "parent_id": null,
+   "title_own": "Boundary protection",
+   "text_full": "Monitor, control, and protect communications (i.e., information transmitted or received by organizational systems) at the external boundaries and key internal boundaries of organizational systems.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "l1": true,
+    "nist": "3.13.1"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.2",
+   "parent_id": null,
+   "title_own": "Secure design principles",
+   "text_full": "Employ architectural designs, software development techniques, and systems engineering principles that promote effective information security within organizational systems.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.2"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.3",
+   "parent_id": null,
+   "title_own": "Separate user and management functions",
+   "text_full": "Separate user functionality from system management functionality.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.3"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.4",
+   "parent_id": null,
+   "title_own": "No information leaks through shared resources",
+   "text_full": "Prevent unauthorized and unintended information transfer via shared system resources.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.4"
+   }
+  },
+  {
+   "req_id": "SC.L1-3.13.5",
+   "parent_id": null,
+   "title_own": "Separate public subnetworks",
+   "text_full": "Implement subnetworks for publicly accessible system components that are physically or logically separated from internal networks.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "no_check_yet": true,
+    "l1": true,
+    "nist": "3.13.5"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.6",
+   "parent_id": null,
+   "title_own": "Deny by default",
+   "text_full": "Deny network communications traffic by default and allow network communications traffic by exception (i.e., deny all, permit by exception).",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.6"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.7",
+   "parent_id": null,
+   "title_own": "No split tunneling",
+   "text_full": "Prevent remote devices from simultaneously establishing non-remote connections with organizational systems and communicating via some other connection to resources in external networks (i.e., split tunneling).",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.7"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.8",
+   "parent_id": null,
+   "title_own": "Encrypt CUI in transit",
+   "text_full": "Implement cryptographic mechanisms to prevent unauthorized disclosure of CUI during transmission unless otherwise protected by alternative physical safeguards.",
+   "class": "technical",
+   "weight": 3,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.8"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.9",
+   "parent_id": null,
+   "title_own": "End idle connections",
+   "text_full": "Terminate network connections associated with communications sessions at the end of the sessions or after a defined period of inactivity.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.13.9"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.10",
+   "parent_id": null,
+   "title_own": "Cryptographic key management",
+   "text_full": "Establish and manage cryptographic keys for cryptography employed in organizational systems.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.10"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.11",
+   "parent_id": null,
+   "title_own": "FIPS-validated cryptography",
+   "text_full": "Employ FIPS-validated cryptography when used to protect the confidentiality of CUI.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "no_check_yet": true,
+    "l1": false,
+    "nist": "3.13.11"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.12",
+   "parent_id": null,
+   "title_own": "Collaborative devices",
+   "text_full": "Prohibit remote activation of collaborative computing devices and provide indication of devices in use to users present at the device.",
+   "class": "partly",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.12"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.13",
+   "parent_id": null,
+   "title_own": "Mobile code",
+   "text_full": "Control and monitor the use of mobile code.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.13"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.14",
+   "parent_id": null,
+   "title_own": "VoIP",
+   "text_full": "Control and monitor the use of Voice over Internet Protocol (VoIP) technologies.",
+   "class": "organisational",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.14"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.15",
+   "parent_id": null,
+   "title_own": "Session authenticity",
+   "text_full": "Protect the authenticity of communications sessions.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.15"
+   }
+  },
+  {
+   "req_id": "SC.L2-3.13.16",
+   "parent_id": null,
+   "title_own": "Encrypt CUI at rest",
+   "text_full": "Protect the confidentiality of CUI at rest.",
+   "class": "technical",
+   "weight": 1,
+   "flags": {
+    "family": "SC",
+    "l1": false,
+    "nist": "3.13.16"
+   }
+  },
+  {
+   "req_id": "SI.L1-3.14.1",
+   "parent_id": null,
+   "title_own": "Flaw remediation",
+   "text_full": "Identify, report, and correct system flaws in a timely manner.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "SI",
+    "l1": true,
+    "nist": "3.14.1"
+   }
+  },
+  {
+   "req_id": "SI.L1-3.14.2",
+   "parent_id": null,
+   "title_own": "Malicious code protection",
+   "text_full": "Provide protection from malicious code at designated locations within organizational systems.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SI",
+    "l1": true,
+    "nist": "3.14.2"
+   }
+  },
+  {
+   "req_id": "SI.L2-3.14.3",
+   "parent_id": null,
+   "title_own": "Security alerts and advisories",
+   "text_full": "Monitor system security alerts and advisories and take action in response.",
+   "class": "organisational",
+   "weight": 5,
+   "flags": {
+    "family": "SI",
+    "l1": false,
+    "nist": "3.14.3"
+   }
+  },
+  {
+   "req_id": "SI.L1-3.14.4",
+   "parent_id": null,
+   "title_own": "Update malicious code protection",
+   "text_full": "Update malicious code protection mechanisms when new releases are available.",
+   "class": "technical",
+   "weight": 5,
+   "flags": {
+    "family": "SI",
+    "l1": true,
+    "nist": "3.14.4"
+   }
+  },
+  {
+   "req_id": "SI.L1-3.14.5",
+   "parent_id": null,
+   "title_own": "Scan systems and files",
+   "text_full": "Perform periodic scans of organizational systems and real-time scans of files from external sources as files are downloaded, opened, or executed.",
+   "class": "technical",
+   "weight": 3,
+   "flags": {
+    "family": "SI",
+    "l1": true,
+    "nist": "3.14.5"
+   }
+  },
+  {
+   "req_id": "SI.L2-3.14.6",
+   "parent_id": null,
+   "title_own": "Monitor for attacks",
+   "text_full": "Monitor organizational systems, including inbound and outbound communications traffic, to detect attacks and indicators of potential attacks.",
+   "class": "partly",
+   "weight": 5,
+   "flags": {
+    "family": "SI",
+    "l1": false,
+    "nist": "3.14.6"
+   }
+  },
+  {
+   "req_id": "SI.L2-3.14.7",
+   "parent_id": null,
+   "title_own": "Identify unauthorized use",
+   "text_full": "Identify unauthorized use of organizational systems.",
+   "class": "partly",
+   "weight": 3,
+   "flags": {
+    "family": "SI",
+    "l1": false,
+    "nist": "3.14.7"
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "IA.L2-3.5.7",
+   "control_ids": [
+    "win.accounts.complexity",
+    "win.accounts.min-length"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the local password policy asks for complexity and length; it says nothing of domain accounts."
+  },
+  {
+   "req_id": "IA.L2-3.5.8",
+   "control_ids": [
+    "win.accounts.history"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the local password policy remembers old passwords."
+  },
+  {
+   "req_id": "IA.L2-3.5.10",
+   "control_ids": [
+    "win.accounts.reversible",
+    "win.ntlm.no-lm-hash",
+    "win.wdigest.logon-credential"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows passwords are not stored in reversible or weak forms on the computer."
+  },
+  {
+   "req_id": "AC.L2-3.1.8",
+   "control_ids": [
+    "win.accounts.lockout-threshold",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the local lockout policy; it says nothing of domain accounts."
+  },
+  {
+   "req_id": "SC.L1-3.13.1",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.private-enabled",
+    "win.firewall.public-enabled",
+    "linux.firewall.unit-enabled"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the host firewall is on; boundary devices are not seen."
+  },
+  {
+   "req_id": "SC.L2-3.13.6",
+   "control_ids": [
+    "win.firewall.domain-inbound",
+    "win.firewall.private-inbound",
+    "win.firewall.public-inbound",
+    "linux.firewall.table"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the host firewall blocks inbound traffic by default."
+  },
+  {
+   "req_id": "SC.L2-3.13.8",
+   "control_ids": [
+    "win.tls.tls10-client",
+    "win.tls.tls10-server",
+    "win.tls.tls11-client",
+    "win.tls.tls11-server",
+    "win.tls.ssl3-client",
+    "win.tls.ssl3-server",
+    "linux.ssh.ciphers",
+    "linux.ssh.kex",
+    "linux.ssh.macs"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows weak protocols and ciphers are off on the computer; data in transit elsewhere is not seen."
+  },
+  {
+   "req_id": "SC.L2-3.13.15",
+   "control_ids": [
+    "win.smb-signing.client-required",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows SMB sessions must be signed."
+  },
+  {
+   "req_id": "SC.L2-3.13.16",
+   "control_ids": [
+    "win.bitlocker.protected"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows volumes are protected by BitLocker; media and backups are not seen."
+  },
+  {
+   "req_id": "AC.L2-3.1.13",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "linux.ssh.ciphers",
+    "linux.ssh.crypto-policy"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows remote sessions to this computer are encrypted and authenticated first."
+  },
+  {
+   "req_id": "CM.L2-3.4.6",
+   "control_ids": [
+    "win.features.telnet",
+    "win.features.tftp",
+    "win.features.simple-tcp",
+    "win.features.ftp-server",
+    "win.features.fax-server",
+    "win.features.pnrp",
+    "win.smb.server-smb1",
+    "win.smb.client-smb1",
+    "win.powershell.v2",
+    "linux.services.telnet",
+    "linux.services.rsh",
+    "linux.services.rlogin",
+    "linux.services.rexec",
+    "linux.services.finger",
+    "linux.services.talk",
+    "linux.services.ypserv"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows named nonessential features and services are off."
+  },
+  {
+   "req_id": "CM.L2-3.4.7",
+   "control_ids": [
+    "win.features.telnet",
+    "win.features.tftp",
+    "win.features.ftp-server",
+    "win.smb.server-smb1",
+    "win.printing.spooler",
+    "linux.services.telnet",
+    "linux.services.rsh",
+    "linux.services.rlogin",
+    "linux.services.rexec"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows named nonessential features, protocols and services are off."
+  },
+  {
+   "req_id": "AU.L2-3.3.1",
+   "control_ids": [
+    "win.audit.subcategories",
+    "win.audit.command-lines",
+    "win.audit.log-sizes",
+    "win.powershell.script-block-logging",
+    "linux.audit.service",
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows audit logging is set up on the computer; retention elsewhere is not seen."
+  },
+  {
+   "req_id": "SI.L1-3.14.2",
+   "control_ids": [
+    "win.defender.realtime",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.pua"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows Defender's protection is on; third-party products are not seen."
+  },
+  {
+   "req_id": "SI.L1-3.14.5",
+   "control_ids": [
+    "win.defender.realtime"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows real-time scanning is on; periodic scans are not seen."
+  },
+  {
+   "req_id": "MP.L2-3.8.7",
+   "control_ids": [
+    "win.autoplay.autorun",
+    "win.autoplay.all-drives",
+    "win.autoplay.non-volume",
+    "linux.usb-storage.kept-from-loading"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the computer does not run or mount removable media automatically."
+  },
+  {
+   "req_id": "AC.L2-3.1.5",
+   "control_ids": [
+    "win.uac.on",
+    "win.uac.consent-admin",
+    "win.uac.secure-uia"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows elevation prompts are on; account design is not seen."
+  },
+  {
+   "req_id": "AU.L2-3.3.7",
+   "control_ids": [
+    "linux.time.service-running",
+    "linux.time.service-enabled"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows a time service runs on the computer."
+  },
+  {
+   "req_id": "AC.L2-3.1.3",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AC.L2-3.1.7",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AC.L2-3.1.8",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AC.L2-3.1.12",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AC.L2-3.1.13",
+   "control_ids": [
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AU.L2-3.3.1",
+   "control_ids": [
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-time",
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.audit.legacy-overridden",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AU.L2-3.3.2",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AU.L2-3.3.4",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "AU.L2-3.3.8",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "CM.L2-3.4.1",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.device-guard.credential-guard",
+    "win.device-guard.hvci",
+    "win.device-guard.vbs",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "CM.L2-3.4.2",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.device-guard.credential-guard",
+    "win.device-guard.hvci",
+    "win.device-guard.vbs",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "CM.L2-3.4.6",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.powershell.script-block-logging",
+    "win.printing.driver-admins",
+    "win.printing.http-drivers",
+    "win.printing.http-printing",
+    "win.printing.spooler",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.wdigest.logon-credential"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "CM.L2-3.4.7",
+   "control_ids": [
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "IA.L2-3.5.7",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.reversible",
+    "win.laps.managed",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "IA.L2-3.5.8",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.laps.managed",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "IA.L2-3.5.9",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.laps.managed",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "IA.L2-3.5.10",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.laps.managed",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "MA.L2-3.7.5",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SC.L2-3.13.4",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SC.L2-3.13.8",
+   "control_ids": [
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SC.L2-3.13.16",
+   "control_ids": [
+    "win.bitlocker.min-pin",
+    "win.bitlocker.preboot-pin",
+    "win.bitlocker.recovery-password"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SI.L1-3.14.1",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SI.L1-3.14.2",
+   "control_ids": [
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SI.L2-3.14.3",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SI.L1-3.14.4",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "SI.L1-3.14.5",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

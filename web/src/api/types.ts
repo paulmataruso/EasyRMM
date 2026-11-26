@@ -62,6 +62,16 @@ export type Permission =
   | "backup.destroy"
   | "print.view_sensitive"
   | "print.destroy"
+  | "compliance.view"
+  | "compliance.scan"
+  | "compliance.fix"
+  | "compliance.fix_high"
+  | "compliance.fix_approve"
+  | "compliance.edit"
+  | "compliance.attest"
+  | "compliance.approve"
+  | "compliance.export"
+  | "compliance.admin"
   | "settings.manage";
 
 export type Role =

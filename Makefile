@@ -70,6 +70,7 @@ vet: ## go vet (including integration-, contract-, bundle-, vm- and updatertest-
 .PHONY: lint
 lint: ## golangci-lint, also over the agent built for Windows and the updater's test build
 	golangci-lint run ./...
+	$(GO) run ./server/cmd/packlint
 	golangci-lint run --build-tags updatertest ./updater/...
 	GOOS=windows golangci-lint run ./agent/... ./internal/...
 
@@ -223,3 +224,7 @@ e2e-import: ## Import a standalone EasyPatch 1.10 server, with a real agent, int
 .PHONY: e2e-authentik
 e2e-authentik: ## The deployment with Authentik as its sign-in, end to end: invitation, second factor, refusal, recovery (needs Docker and root or sudo)
 	./scripts/e2e/authentik.sh
+
+.PHONY: packlint
+packlint: ## The compliance content check (ADR-0078): EDITION=commercial checks what a release may carry
+	$(GO) run ./server/cmd/packlint -edition $(or $(EDITION),dev)

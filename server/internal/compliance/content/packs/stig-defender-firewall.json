@@ -1,0 +1,666 @@
+{
+ "pack": {
+  "key": "stig-defender-firewall",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "DISA STIG for Windows Defender Firewall with Advanced Security, V2R2 (ids only)",
+  "licence_class": "PUBLIC_DOMAIN",
+  "source_id": "disa-stig",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "stig-defender-firewall",
+  "version": "V2R2",
+  "title": "DISA STIG for Windows Defender Firewall with Advanced Security, V2R2, rule ids",
+  "publisher": "DISA",
+  "source_id": "disa-stig",
+  "text_policy": "ids_only"
+ },
+ "requirements": [
+  {
+   "req_id": "WNFWA-000001",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000001 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000002",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000002 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000003",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000003 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000004",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000004 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000005",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000005 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000009",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000009 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000010",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000010 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000011",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000011 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNFWA-000012",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000012 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000013",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000013 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000017",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000017 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000018",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000018 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000019",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000019 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNFWA-000020",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000020 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000021",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000021 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000024",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000024 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNFWA-000025",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000025 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNFWA-000027",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000027 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000028",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000028 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "meets"
+   }
+  },
+  {
+   "req_id": "WNFWA-000029",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000029 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  },
+  {
+   "req_id": "WNFWA-000100",
+   "parent_id": null,
+   "title_own": "Rule WNFWA-000100 (EasyRMM module firewall)",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "stig_relation": "not_set"
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "WNFWA-000001",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000002",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000003",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000004",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000005",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000009",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000010",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000011",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000012",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000013",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000017",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000018",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000019",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000020",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000021",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000024",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000025",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000027",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000028",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (meets by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000029",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  },
+  {
+   "req_id": "WNFWA-000100",
+   "control_ids": [
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "DISA's rule and EasyRMM's module cover the same area (not set by the setting's value); related only."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

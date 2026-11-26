@@ -23,6 +23,10 @@ linters:
   settings:
     misspell:
       locale: US
+      # ADR-0078's names: the licence class, and the requirement class "organisational".
+      ignore-rules:
+        - licence
+        - organisational
   exclusions:
     presets:
       - std-error-handling

@@ -1,0 +1,1037 @@
+{
+ "pack": {
+  "key": "nist-800-53r5",
+  "version": "2026.1",
+  "kind": "framework",
+  "title": "NIST SP 800-53 Revision 5 (view)",
+  "licence_class": "PUBLIC_DOMAIN",
+  "source_id": "nist-800-53r5",
+  "review_state": "none"
+ },
+ "framework": {
+  "key": "nist-800-53r5",
+  "version": "r5",
+  "title": "NIST SP 800-53 Revision 5, the base controls EasyRMM's checks relate to",
+  "publisher": "NIST",
+  "source_id": "nist-800-53r5",
+  "text_policy": "ids_and_own_titles"
+ },
+ "requirements": [
+  {
+   "req_id": "AC-2",
+   "parent_id": null,
+   "title_own": "Account Management",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AC-4",
+   "parent_id": null,
+   "title_own": "Information Flow Enforcement",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AC-6",
+   "parent_id": null,
+   "title_own": "Least Privilege",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AC-7",
+   "parent_id": null,
+   "title_own": "Unsuccessful Logon Attempts",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AC-17",
+   "parent_id": null,
+   "title_own": "Remote Access",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AU-3",
+   "parent_id": null,
+   "title_own": "Content of Audit Records",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AU-4",
+   "parent_id": null,
+   "title_own": "Audit Log Storage Capacity",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AU-5",
+   "parent_id": null,
+   "title_own": "Response to Audit Logging Process Failures",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AU-9",
+   "parent_id": null,
+   "title_own": "Protection of Audit Information",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "AU-12",
+   "parent_id": null,
+   "title_own": "Audit Record Generation",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "CM-5",
+   "parent_id": null,
+   "title_own": "Access Restrictions for Change",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "CM-6",
+   "parent_id": null,
+   "title_own": "Configuration Settings",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "CM-7",
+   "parent_id": null,
+   "title_own": "Least Functionality",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "CM-11",
+   "parent_id": null,
+   "title_own": "User-installed Software",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "IA-5",
+   "parent_id": null,
+   "title_own": "Authenticator Management",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "IA-8",
+   "parent_id": null,
+   "title_own": "Identification and Authentication (Non-organizational Users)",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "IA-11",
+   "parent_id": null,
+   "title_own": "Re-authentication",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "MA-3",
+   "parent_id": null,
+   "title_own": "Maintenance Tools",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "MA-4",
+   "parent_id": null,
+   "title_own": "Nonlocal Maintenance",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-3",
+   "parent_id": null,
+   "title_own": "Security Function Isolation",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-4",
+   "parent_id": null,
+   "title_own": "Information in Shared System Resources",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-5",
+   "parent_id": null,
+   "title_own": "Denial-of-service Protection",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-7",
+   "parent_id": null,
+   "title_own": "Boundary Protection",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-8",
+   "parent_id": null,
+   "title_own": "Transmission Confidentiality and Integrity",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-11",
+   "parent_id": null,
+   "title_own": "Trusted Path",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-18",
+   "parent_id": null,
+   "title_own": "Mobile Code",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SC-28",
+   "parent_id": null,
+   "title_own": "Protection of Information at Rest",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SI-3",
+   "parent_id": null,
+   "title_own": "Malicious Code Protection",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  },
+  {
+   "req_id": "SI-11",
+   "parent_id": null,
+   "title_own": "Error Handling",
+   "text_full": null,
+   "class": "partly",
+   "weight": null,
+   "flags": {
+    "view": true
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "AC-2",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AC-4",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AC-6",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AC-7",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AC-17",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories",
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AU-3",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AU-4",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AU-5",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AU-9",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "AU-12",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "CM-5",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "CM-6",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.device-guard.credential-guard",
+    "win.device-guard.hvci",
+    "win.device-guard.vbs",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "CM-7",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.autoplay.all-drives",
+    "win.autoplay.autorun",
+    "win.autoplay.non-volume",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level",
+    "win.features.fax-server",
+    "win.features.ftp-server",
+    "win.features.pnrp",
+    "win.features.simple-tcp",
+    "win.features.telnet",
+    "win.features.tftp",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.powershell.script-block-logging",
+    "win.powershell.v2",
+    "win.printing.driver-admins",
+    "win.printing.http-drivers",
+    "win.printing.http-printing",
+    "win.printing.spooler",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1",
+    "win.wdigest.logon-credential"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "CM-11",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "IA-5",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.laps.managed",
+    "win.ntlm.audit-incoming",
+    "win.ntlm.client-session",
+    "win.ntlm.level",
+    "win.ntlm.no-lm-hash",
+    "win.ntlm.null-fallback",
+    "win.ntlm.server-session",
+    "win.smb.client-smb1",
+    "win.smb.feature",
+    "win.smb.plaintext",
+    "win.smb.server-smb1"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "IA-8",
+   "control_ids": [
+    "win.accounts.blank-passwords",
+    "win.accounts.complexity",
+    "win.accounts.guest",
+    "win.accounts.history",
+    "win.accounts.lockout-duration",
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold",
+    "win.accounts.max-age",
+    "win.accounts.min-age",
+    "win.accounts.min-length",
+    "win.accounts.reversible",
+    "win.bitlocker.min-pin",
+    "win.bitlocker.preboot-pin",
+    "win.bitlocker.protected",
+    "win.bitlocker.recovery-password"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "IA-11",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc",
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization",
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "MA-3",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "MA-4",
+   "control_ids": [
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-3",
+   "control_ids": [
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-4",
+   "control_ids": [
+    "win.anonymous.everyone",
+    "win.anonymous.name-lookup",
+    "win.anonymous.pipes-shares",
+    "win.anonymous.remote-sam",
+    "win.anonymous.sam",
+    "win.anonymous.shares"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-5",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size",
+    "win.name-resolution.llmnr",
+    "win.name-resolution.netbios-release",
+    "win.name-resolution.node-type"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-7",
+   "control_ids": [
+    "linux.firewall.ports-open",
+    "linux.firewall.rules-file",
+    "linux.firewall.table",
+    "linux.firewall.unit-enabled",
+    "win.firewall.domain-enabled",
+    "win.firewall.domain-inbound",
+    "win.firewall.domain-log-dropped",
+    "win.firewall.domain-log-size",
+    "win.firewall.private-enabled",
+    "win.firewall.private-inbound",
+    "win.firewall.private-log-dropped",
+    "win.firewall.private-log-size",
+    "win.firewall.public-enabled",
+    "win.firewall.public-inbound",
+    "win.firewall.public-log-dropped",
+    "win.firewall.public-log-size"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-8",
+   "control_ids": [
+    "win.smb-signing.client-enabled",
+    "win.smb-signing.client-required",
+    "win.smb-signing.guest",
+    "win.smb-signing.server-enabled",
+    "win.smb-signing.server-required"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-11",
+   "control_ids": [
+    "win.rdp.encryption",
+    "win.rdp.nla",
+    "win.rdp.password-saving",
+    "win.rdp.secure-rpc",
+    "win.uac.builtin-admin",
+    "win.uac.consent-admin",
+    "win.uac.deny-user-elevation",
+    "win.uac.installer-detection",
+    "win.uac.installer-elevated",
+    "win.uac.on",
+    "win.uac.secure-uia",
+    "win.uac.token-filter",
+    "win.uac.virtualization",
+    "win.winrm.client-basic",
+    "win.winrm.client-digest",
+    "win.winrm.client-unencrypted",
+    "win.winrm.service-basic",
+    "win.winrm.service-runas",
+    "win.winrm.service-unencrypted"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-18",
+   "control_ids": [
+    "win.asr.adobe-child",
+    "win.asr.email-executable",
+    "win.asr.lsass",
+    "win.asr.obfuscated-scripts",
+    "win.asr.office-child",
+    "win.asr.office-comms-child",
+    "win.asr.office-executable",
+    "win.asr.office-injection",
+    "win.asr.office-macro-api",
+    "win.asr.prevalence",
+    "win.asr.psexec-wmi",
+    "win.asr.ransomware",
+    "win.asr.script-downloads",
+    "win.asr.usb-untrusted",
+    "win.asr.vulnerable-drivers",
+    "win.asr.wmi-persistence",
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SC-28",
+   "control_ids": [
+    "win.bitlocker.min-pin",
+    "win.bitlocker.preboot-pin",
+    "win.bitlocker.protected",
+    "win.bitlocker.recovery-password"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SI-3",
+   "control_ids": [
+    "win.defender.behavior",
+    "win.defender.cloud",
+    "win.defender.cloud-block-level",
+    "win.defender.network-protection",
+    "win.defender.pua",
+    "win.defender.realtime",
+    "win.defender.smartscreen",
+    "win.defender.smartscreen-level"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  },
+  {
+   "req_id": "SI-11",
+   "control_ids": [
+    "linux.audit.rules-accounts",
+    "linux.audit.rules-kernel-modules",
+    "linux.audit.rules-mounts",
+    "linux.audit.rules-pam",
+    "linux.audit.rules-privileged-commands",
+    "linux.audit.rules-ssh",
+    "linux.audit.rules-sudoers",
+    "linux.audit.rules-time",
+    "linux.audit.service",
+    "win.audit.command-lines",
+    "win.audit.legacy-overridden",
+    "win.audit.log-sizes",
+    "win.audit.subcategories"
+   ],
+   "relation": "related",
+   "note": "Generated from NIST's mapping of the module's settings; related only."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

@@ -1,0 +1,207 @@
+{
+ "pack": {
+  "key": "cis-xref",
+  "version": "2026.1",
+  "kind": "xref",
+  "title": "Cross-reference to CIS recommendation numbers",
+  "licence_class": "ORIGINAL",
+  "source_id": "cis-xref",
+  "review_state": "needed"
+ },
+ "framework": {
+  "key": "cis-xref",
+  "version": "2026.1",
+  "title": "Cross-reference to CIS recommendation numbers (Windows desktop numbering; check the number against the benchmark version in use)",
+  "publisher": "EasyRMM",
+  "source_id": "cis-xref",
+  "text_policy": "ids_only"
+ },
+ "requirements": [
+  {
+   "req_id": "W:1.1.1",
+   "parent_id": null,
+   "title_own": "Password history",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.1"
+   }
+  },
+  {
+   "req_id": "W:1.1.2",
+   "parent_id": null,
+   "title_own": "Maximum password age",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.2"
+   }
+  },
+  {
+   "req_id": "W:1.1.3",
+   "parent_id": null,
+   "title_own": "Minimum password age",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.3"
+   }
+  },
+  {
+   "req_id": "W:1.1.4",
+   "parent_id": null,
+   "title_own": "Minimum password length",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.4"
+   }
+  },
+  {
+   "req_id": "W:1.1.5",
+   "parent_id": null,
+   "title_own": "Password complexity",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.5"
+   }
+  },
+  {
+   "req_id": "W:1.1.7",
+   "parent_id": null,
+   "title_own": "Reversible password encryption",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.1.7"
+   }
+  },
+  {
+   "req_id": "W:1.2.1",
+   "parent_id": null,
+   "title_own": "Account lockout duration",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.2.1"
+   }
+  },
+  {
+   "req_id": "W:1.2.2",
+   "parent_id": null,
+   "title_own": "Account lockout threshold",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.2.2"
+   }
+  },
+  {
+   "req_id": "W:1.2.4",
+   "parent_id": null,
+   "title_own": "Lockout counter reset",
+   "text_full": null,
+   "class": "technical",
+   "weight": null,
+   "flags": {
+    "xref": "1.2.4"
+   }
+  }
+ ],
+ "objectives": [],
+ "mappings": [
+  {
+   "req_id": "W:1.1.1",
+   "control_ids": [
+    "win.accounts.history"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.1.2",
+   "control_ids": [
+    "win.accounts.max-age"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.1.3",
+   "control_ids": [
+    "win.accounts.min-age"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.1.4",
+   "control_ids": [
+    "win.accounts.min-length"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.1.5",
+   "control_ids": [
+    "win.accounts.complexity"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.1.7",
+   "control_ids": [
+    "win.accounts.reversible"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.2.1",
+   "control_ids": [
+    "win.accounts.lockout-duration"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.2.2",
+   "control_ids": [
+    "win.accounts.lockout-threshold"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  },
+  {
+   "req_id": "W:1.2.4",
+   "control_ids": [
+    "win.accounts.lockout-reset"
+   ],
+   "relation": "related",
+   "note": "EasyRMM's own check of the same setting; not CIS content."
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

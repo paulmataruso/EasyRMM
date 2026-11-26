@@ -68,6 +68,17 @@ floors=(
   "server/internal/jobs/hardening/controls/extract 95"
   # Its command: run is tested, main only parses flags.
   "server/internal/jobs/hardening/controls/cmd/gencontrols 50"
+  # The compliance engine (ADR-0078): licence classes and the edition rule, the
+  # content check, the control library, the packs and their loader, the scan and the
+  # roll-up. Measured with the integration tests.
+  "server/internal/compliance              95"
+  "server/internal/compliance/content      80"
+  "server/internal/compliance/library      88"
+  "server/internal/compliance/packs        78"
+  "server/internal/compliance/rollup       95"
+  "server/internal/compliance/scan         92"
+  "server/internal/compliance/engine       70"
+  "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
   "server/internal/httpapi/jobsapi         90"

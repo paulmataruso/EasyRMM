@@ -29,9 +29,12 @@ COPY internal/ internal/
 COPY server/ server/
 COPY --from=web /src/web/dist/ server/internal/webui/dist/
 ARG VERSION=dev
+# The build edition (ADR-0078, section 10): commercial for releases. A commercial image
+# refuses restricted compliance content; the release script runs packlint -edition commercial.
+ARG EDITION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-      -ldflags "-s -w -X github.com/paulmataruso/easyrmm/server/internal/app.Version=${VERSION}" \
+      -ldflags "-s -w -X github.com/paulmataruso/easyrmm/server/internal/app.Version=${VERSION} -X github.com/paulmataruso/easyrmm/server/internal/compliance.Edition=${EDITION}" \
       -o /out/easyrmm-server ./server/cmd/easyrmm-server \
  && setcap cap_net_bind_service=+ep /out/easyrmm-server
 

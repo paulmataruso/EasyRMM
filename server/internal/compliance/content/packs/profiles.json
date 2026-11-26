@@ -1,0 +1,2102 @@
+{
+ "pack": {
+  "key": "profiles",
+  "version": "2026.1",
+  "kind": "profile",
+  "title": "Assessment profiles",
+  "licence_class": "ORIGINAL",
+  "source_id": "easyrmm-hardening",
+  "review_state": "none"
+ },
+ "profiles": [
+  {
+   "key": "win-workstation-baseline",
+   "version": "2026.1",
+   "title": "Windows workstation security baseline",
+   "platform": {
+    "os": "windows",
+    "role": "workstation"
+   },
+   "framework_key": null,
+   "controls": [
+    {
+     "control_id": "win.accounts.blank-passwords",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.guest",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.history",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-reset",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.max-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.everyone",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.name-lookup",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.pipes-shares",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.remote-sam",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.sam",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.shares",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.adobe-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.email-executable",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.lsass",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.obfuscated-scripts",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-comms-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-executable",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-injection",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-macro-api",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.prevalence",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.psexec-wmi",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.ransomware",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.script-downloads",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.usb-untrusted",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.vulnerable-drivers",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.wmi-persistence",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.command-lines",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.legacy-overridden",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.log-sizes",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.subcategories",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.all-drives",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.autorun",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.non-volume",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.min-pin",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.preboot-pin",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.protected",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.recovery-password",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.behavior",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud-block-level",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.network-protection",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.pua",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.realtime",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.smartscreen",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.smartscreen-level",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.credential-guard",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.hvci",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.vbs",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.fax-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.ftp-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.pnrp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.simple-tcp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.tftp",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.laps.managed",
+     "params": {}
+    },
+    {
+     "control_id": "win.lsa-protection.running",
+     "params": {}
+    },
+    {
+     "control_id": "win.lsa-protection.value",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.llmnr",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.netbios-release",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.node-type",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.audit-incoming",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.client-session",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.level",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.no-lm-hash",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.null-fallback",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.server-session",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.script-block-logging",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.v2",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.driver-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.http-drivers",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.http-printing",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.spooler",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.password-saving",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.secure-rpc",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.guest",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.client-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.feature",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.plaintext",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl2-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl2-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.builtin-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.consent-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.deny-user-elevation",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.installer-detection",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.installer-elevated",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.on",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.secure-uia",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.token-filter",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.virtualization",
+     "params": {}
+    },
+    {
+     "control_id": "win.wdigest.logon-credential",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-basic",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-digest",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-unencrypted",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-basic",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-runas",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-unencrypted",
+     "params": {}
+    }
+   ]
+  },
+  {
+   "key": "win-server-baseline",
+   "version": "2026.1",
+   "title": "Windows server security baseline",
+   "platform": {
+    "os": "windows",
+    "role": "server"
+   },
+   "framework_key": null,
+   "controls": [
+    {
+     "control_id": "win.accounts.blank-passwords",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.guest",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.history",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-reset",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.max-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-age",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.everyone",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.name-lookup",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.pipes-shares",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.remote-sam",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.sam",
+     "params": {}
+    },
+    {
+     "control_id": "win.anonymous.shares",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.adobe-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.email-executable",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.lsass",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.obfuscated-scripts",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-comms-child",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-executable",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-injection",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.office-macro-api",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.prevalence",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.psexec-wmi",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.ransomware",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.script-downloads",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.usb-untrusted",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.vulnerable-drivers",
+     "params": {}
+    },
+    {
+     "control_id": "win.asr.wmi-persistence",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.command-lines",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.legacy-overridden",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.log-sizes",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.subcategories",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.all-drives",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.autorun",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.non-volume",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.min-pin",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.preboot-pin",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.protected",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.recovery-password",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.behavior",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud-block-level",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.pua",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.realtime",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.smartscreen",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.smartscreen-level",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.credential-guard",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.hvci",
+     "params": {}
+    },
+    {
+     "control_id": "win.device-guard.vbs",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.fax-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.ftp-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.pnrp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.simple-tcp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.tftp",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-log-dropped",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-log-size",
+     "params": {}
+    },
+    {
+     "control_id": "win.laps.managed",
+     "params": {}
+    },
+    {
+     "control_id": "win.lsa-protection.running",
+     "params": {}
+    },
+    {
+     "control_id": "win.lsa-protection.value",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.llmnr",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.netbios-release",
+     "params": {}
+    },
+    {
+     "control_id": "win.name-resolution.node-type",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.audit-incoming",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.client-session",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.level",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.no-lm-hash",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.null-fallback",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.server-session",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.script-block-logging",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.v2",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.driver-admins",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.http-drivers",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.http-printing",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.spooler",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.password-saving",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.secure-rpc",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.guest",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.client-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.feature",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.plaintext",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl2-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl2-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.builtin-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.consent-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.deny-user-elevation",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.installer-detection",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.installer-elevated",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.on",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.secure-uia",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.token-filter",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.virtualization",
+     "params": {}
+    },
+    {
+     "control_id": "win.wdigest.logon-credential",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-basic",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-digest",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.client-unencrypted",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-basic",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-runas",
+     "params": {}
+    },
+    {
+     "control_id": "win.winrm.service-unencrypted",
+     "params": {}
+    }
+   ]
+  },
+  {
+   "key": "linux-server-baseline",
+   "version": "2026.1",
+   "title": "Linux server security baseline",
+   "platform": {
+    "os": "linux"
+   },
+   "framework_key": null,
+   "controls": [
+    {
+     "control_id": "linux.audit.rules-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-kernel-modules",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-mounts",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-pam",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-privileged-commands",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-ssh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-sudoers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-time",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.service",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.ban-action",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.bantime",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.bantime-increment",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.findtime",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.installed",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.maxretry",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.running",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.sshd-jail",
+     "params": {}
+    },
+    {
+     "control_id": "linux.fail2ban.trusted-ranges",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.ports-open",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.rules-file",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.table",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.unit-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.integrity.aide-baseline",
+     "params": {}
+    },
+    {
+     "control_id": "linux.integrity.aide-daily",
+     "params": {}
+    },
+    {
+     "control_id": "linux.integrity.aide-excludes",
+     "params": {}
+    },
+    {
+     "control_id": "linux.integrity.aide-installed",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.cramfs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.dccp",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.freevxfs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.hfs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.hfsplus",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.jffs2",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.rds",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.sctp",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel-modules.tipc",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.fs-protected-fifos",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.fs-protected-hardlinks",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.fs-protected-regular",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.fs-protected-symlinks",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.kernel-dmesg-restrict",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.kernel-kptr-restrict",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.kernel-unprivileged-bpf-disabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.kernel-yama-ptrace-scope",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-all-accept-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-all-accept-source-route",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-all-log-martians",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-all-rp-filter",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-all-send-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-default-accept-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-default-accept-source-route",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-default-log-martians",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-default-rp-filter",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-conf-default-send-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv4-tcp-syncookies",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv6-conf-all-accept-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv6-conf-all-accept-source-route",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv6-conf-default-accept-redirects",
+     "params": {}
+    },
+    {
+     "control_id": "linux.kernel.net-ipv6-conf-default-accept-source-route",
+     "params": {}
+    },
+    {
+     "control_id": "linux.mac.apparmor",
+     "params": {}
+    },
+    {
+     "control_id": "linux.mac.apparmor-profiles",
+     "params": {}
+    },
+    {
+     "control_id": "linux.mac.enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.mac.selinux-config",
+     "params": {}
+    },
+    {
+     "control_id": "linux.mac.selinux-mode",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-cron-d",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-cron-daily",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-cron-hourly",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-cron-monthly",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-cron-weekly",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-crontab",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-group",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-gshadow",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-passwd",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-shadow",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.etc-ssh-sshd-config",
+     "params": {}
+    },
+    {
+     "control_id": "linux.permissions.grub-cfg",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.finger",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rexec",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rlogin",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rsh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.talk",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.ypserv",
+     "params": {}
+    },
+    {
+     "control_id": "linux.shared-memory.fstab",
+     "params": {}
+    },
+    {
+     "control_id": "linux.shared-memory.nodev",
+     "params": {}
+    },
+    {
+     "control_id": "linux.shared-memory.noexec",
+     "params": {}
+    },
+    {
+     "control_id": "linux.shared-memory.nosuid",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.ciphers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.client-alive-count-max",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.client-alive-interval",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.crypto-policy",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.kbd-interactive-authentication",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.kex",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.login-grace-time",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.macs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.password-authentication",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.permit-empty-passwords",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.permit-root-login",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.x11-forwarding",
+     "params": {}
+    },
+    {
+     "control_id": "linux.sudo.file-mode",
+     "params": {}
+    },
+    {
+     "control_id": "linux.sudo.logfile",
+     "params": {}
+    },
+    {
+     "control_id": "linux.sudo.logrotate",
+     "params": {}
+    },
+    {
+     "control_id": "linux.sudo.use-pty",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "linux.usb-storage.kept-from-loading",
+     "params": {}
+    }
+   ]
+  },
+  {
+   "key": "nist-800-171-assessment",
+   "version": "2026.1",
+   "title": "NIST SP 800-171 assessment (the checks that bear on it)",
+   "platform": {
+    "os": "any"
+   },
+   "framework_key": "nist-800-171r2",
+   "controls": [
+    {
+     "control_id": "linux.audit.rules-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-pam",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-privileged-commands",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-ssh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-sudoers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.service",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.table",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.unit-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.finger",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rexec",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rlogin",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rsh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.talk",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.ypserv",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.ciphers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.crypto-policy",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.kex",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.macs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "linux.usb-storage.kept-from-loading",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.history",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-reset",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.command-lines",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.log-sizes",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.subcategories",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.all-drives",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.autorun",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.non-volume",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.protected",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.behavior",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.pua",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.realtime",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.fax-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.ftp-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.pnrp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.simple-tcp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.tftp",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.no-lm-hash",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.script-block-logging",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.v2",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.spooler",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.client-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.consent-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.on",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.secure-uia",
+     "params": {}
+    },
+    {
+     "control_id": "win.wdigest.logon-credential",
+     "params": {}
+    }
+   ]
+  },
+  {
+   "key": "cmmc-l2-assessment",
+   "version": "2026.1",
+   "title": "CMMC Level 2 assessment (the checks that bear on it)",
+   "platform": {
+    "os": "any"
+   },
+   "framework_key": "cmmc-l2",
+   "controls": [
+    {
+     "control_id": "linux.audit.rules-accounts",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-pam",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-privileged-commands",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-ssh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.rules-sudoers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.audit.service",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.table",
+     "params": {}
+    },
+    {
+     "control_id": "linux.firewall.unit-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.finger",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rexec",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rlogin",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.rsh",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.talk",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "linux.services.ypserv",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.ciphers",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.crypto-policy",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.kex",
+     "params": {}
+    },
+    {
+     "control_id": "linux.ssh.macs",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.time.service-running",
+     "params": {}
+    },
+    {
+     "control_id": "linux.usb-storage.kept-from-loading",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.complexity",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.history",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-duration",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-reset",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.lockout-threshold",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.min-length",
+     "params": {}
+    },
+    {
+     "control_id": "win.accounts.reversible",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.command-lines",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.log-sizes",
+     "params": {}
+    },
+    {
+     "control_id": "win.audit.subcategories",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.all-drives",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.autorun",
+     "params": {}
+    },
+    {
+     "control_id": "win.autoplay.non-volume",
+     "params": {}
+    },
+    {
+     "control_id": "win.bitlocker.protected",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.behavior",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.cloud",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.pua",
+     "params": {}
+    },
+    {
+     "control_id": "win.defender.realtime",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.fax-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.ftp-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.pnrp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.simple-tcp",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.telnet",
+     "params": {}
+    },
+    {
+     "control_id": "win.features.tftp",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.domain-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.private-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "win.firewall.public-inbound",
+     "params": {}
+    },
+    {
+     "control_id": "win.ntlm.no-lm-hash",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.script-block-logging",
+     "params": {}
+    },
+    {
+     "control_id": "win.powershell.v2",
+     "params": {}
+    },
+    {
+     "control_id": "win.printing.spooler",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.encryption",
+     "params": {}
+    },
+    {
+     "control_id": "win.rdp.nla",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.client-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb-signing.server-required",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.client-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.smb.server-smb1",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.ssl3-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls10-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-client",
+     "params": {}
+    },
+    {
+     "control_id": "win.tls.tls11-server",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.consent-admin",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.on",
+     "params": {}
+    },
+    {
+     "control_id": "win.uac.secure-uia",
+     "params": {}
+    },
+    {
+     "control_id": "win.wdigest.logon-credential",
+     "params": {}
+    }
+   ]
+  }
+ ],
+ "mapping_defaults": {
+  "licence_class": "ORIGINAL",
+  "provenance": {
+   "author": "EasyRMM",
+   "authored_on": "2026-11-26",
+   "method": "mapping written by EasyRMM from the framework's public requirement and the setting's vendor documentation; related mappings are generated from the module tables in controls/related.json",
+   "sources": [],
+   "derived_from_content": false,
+   "reviewer": "pending second-person review",
+   "licence_class": "ORIGINAL"
+  }
+ }
+}

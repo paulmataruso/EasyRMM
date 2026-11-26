@@ -118,6 +118,22 @@ const (
 	PermDefenderWeaken        Permission = "defender.weaken"
 )
 
+// The compliance engine's permissions (ADR-0078, section 8). The ones that
+// need step-up (fix_high, fix_approve, attest, approve, admin) exist, and
+// their actions are refused until step-up ships.
+const (
+	PermComplianceView       Permission = "compliance.view"
+	PermComplianceScan       Permission = "compliance.scan"
+	PermComplianceFix        Permission = "compliance.fix"
+	PermComplianceFixHigh    Permission = "compliance.fix_high"
+	PermComplianceFixApprove Permission = "compliance.fix_approve"
+	PermComplianceEdit       Permission = "compliance.edit"
+	PermComplianceAttest     Permission = "compliance.attest"
+	PermComplianceApprove    Permission = "compliance.approve"
+	PermComplianceExport     Permission = "compliance.export"
+	PermComplianceAdmin      Permission = "compliance.admin"
+)
+
 // AllPermissions lists every permission.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
@@ -132,11 +148,13 @@ var AllPermissions = []Permission{
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 	PermBackupViewSensitive, PermBackupDestroy, PermPrintViewSensitive, PermPrintDestroy,
+	PermComplianceView, PermComplianceScan, PermComplianceFix, PermComplianceFixHigh, PermComplianceFixApprove,
+	PermComplianceEdit, PermComplianceAttest, PermComplianceApprove, PermComplianceExport, PermComplianceAdmin,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
 // granted by an organization- or site-scoped assignment.
-var globalOnly = map[Permission]bool{PermOrgCreate: true, PermSettingsManage: true}
+var globalOnly = map[Permission]bool{PermOrgCreate: true, PermSettingsManage: true, PermComplianceAdmin: true}
 
 // Role identifies a built-in role.
 type Role string
@@ -215,6 +233,8 @@ var technicianPerms = union(viewPerms, []Permission{
 	// plus the reversible manage permissions. No Active Directory writes.
 	PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
 	PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
+	// Compliance (ADR-0078): view, scan and the fixes that need no step-up.
+	PermComplianceView, PermComplianceScan, PermComplianceFix,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
@@ -226,7 +246,10 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 })
 
 var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,
-	PermCAManage, PermADManage, PermADResetPassword})
+	PermCAManage, PermADManage, PermADResetPassword,
+	// Every compliance permission but compliance.admin, which is server-wide.
+	PermComplianceFixHigh, PermComplianceFixApprove, PermComplianceEdit, PermComplianceAttest, PermComplianceApprove,
+	PermComplianceExport})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{
