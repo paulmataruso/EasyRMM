@@ -141,7 +141,7 @@ func TestUnitContent(t *testing.T) {
 		t.Skip("systemd units name Linux paths")
 	}
 	agent := UnitContent(Paths{Root: "/", OS: "linux"}.AgentService())
-	want := "[Unit]\nDescription=EasyRMM agent\nDocumentation=https://github.com/paulmataruso/easyrmm\nAfter=network-online.target\nWants=network-online.target\n\n" +
+	want := "[Unit]\nDescription=EasyRMM agent\nDocumentation=https://github.com/paulmataruso/easyrmm\nAfter=network-online.target time-sync.target\nWants=network-online.target\n\n" +
 		"[Service]\nType=simple\nExecStart=/usr/local/bin/easyrmm-agent run\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n"
 	if agent != want {
 		t.Errorf("agent unit:\n%s", agent)

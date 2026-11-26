@@ -18,8 +18,12 @@ func InstallExecutable(src, dst string) (changed bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	if cur, err := os.ReadFile(dst); err == nil && bytes.Equal(cur, b) { //nolint:gosec // the installed agent
-		return false, nil
+	// A link at dst, to the package's copy, is no installed agent: it is
+	// replaced by the program itself, whatever it points to (ADR-0056).
+	if fi, err := os.Lstat(dst); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+		if cur, err := os.ReadFile(dst); err == nil && bytes.Equal(cur, b) { //nolint:gosec // the installed agent
+			return false, nil
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { //nolint:gosec // a program directory
 		return false, err

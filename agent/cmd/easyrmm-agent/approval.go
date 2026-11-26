@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/client"
@@ -128,6 +129,10 @@ func (e *env) idle(ctx context.Context, p *state.Pending) error {
 func (e *env) pendingStatus(ctx context.Context) error {
 	p, _, err := e.store.LoadPending()
 	if errors.Is(err, state.ErrNotPending) {
+		if e.packaged() {
+			e.waitingStatus(ctx)
+			return nil
+		}
 		_, _ = fmt.Fprintln(e.stdout, "Not enrolled.")
 		return nil
 	}
@@ -145,4 +150,28 @@ func (e *env) pendingStatus(ctx context.Context) error {
 		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, e.paths.AgentService().Name))
 	}
 	return nil
+}
+
+// waitingStatus prints the state of an agent a package installed without
+// input: it waits for the enrollment file (ADR-0056).
+func (e *env) waitingStatus(ctx context.Context) {
+	w := e.stdout
+	_, _ = fmt.Fprintf(w, "Not enrolled.\nWaiting:    for the enrollment file %s; the agent looks for it every %s and enrolls when it appears\n", e.paths.EnrollmentFile(), filePoll)
+	e.packageStatus()
+	if supported() && e.hasServices() {
+		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, e.paths.AgentService().Name))
+	}
+}
+
+// packageStatus prints the package that holds the agent, and what the agent
+// last said of the enrollment file.
+func (e *env) packageStatus() {
+	rec, err := e.store.LoadPackage()
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(e.stdout, "Package:    %s\n", strings.ToUpper(rec.Kind))
+	if rec.Note != "" {
+		_, _ = fmt.Fprintf(e.stdout, "File:       %s (%s)\n", rec.Note, rec.NoteAt.Local().Format(time.RFC1123))
+	}
 }

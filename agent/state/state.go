@@ -53,6 +53,7 @@ const (
 	escrowFile  = "escrow.json"
 	trustFile   = "trust.json"
 	caFile      = "ca.pem"
+	packageFile = "package.json"
 )
 
 // layout is what the agent reads and writes in its folder, for the check
@@ -69,6 +70,7 @@ var layout = [][]string{
 	{statusFile},
 	{escrowFile},
 	{trustFile},
+	{packageFile},
 	{".tmp-*"},                         // writeFile's
 	{"removal.json"},                   // removal.File
 	{"update.json", "update.json.tmp"}, // the update's probation marker
@@ -473,6 +475,73 @@ func (s Store) SaveTrustLog(l TrustLog) error {
 		return err
 	}
 	return s.write(trustFile, append(b, '\n'))
+}
+
+// Package records which package holds the agent (ADR-0056) and what the
+// agent says of its enrollment file for `status`. It holds no secret.
+type Package struct {
+	// Kind is the package that now holds the agent: deb, rpm or msi.
+	Kind string `json:"package"`
+	// Was is the package that held it before, "" for none: what a rollback
+	// of this package goes back to.
+	Was string `json:"was,omitempty"`
+	// Made says that the install of this package put the agent there, so
+	// that rolling it back removes the agent; false where it adopted one
+	// already installed.
+	Made bool      `json:"made,omitempty"`
+	At   time.Time `json:"at"`
+	// Note is what the agent last found about install.conf: a refusal, an
+	// answer that will not change, or a file it deleted that named another
+	// server. "" when there is nothing to say.
+	Note   string    `json:"note,omitempty"`
+	NoteAt time.Time `json:"noteAt,omitzero"`
+}
+
+// ErrNoPackage means no package holds the agent.
+var ErrNoPackage = errors.New("no package holds the agent")
+
+// SavePackage writes the package record.
+func (s Store) SavePackage(p *Package) error {
+	if err := s.protect(); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.write(packageFile, append(b, '\n'))
+}
+
+// LoadPackage reads the package record; ErrNoPackage when there is none.
+func (s Store) LoadPackage() (*Package, error) {
+	path, err := s.path(packageFile)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoPackage
+	}
+	if err != nil {
+		return nil, err
+	}
+	var p Package
+	if err := json.Unmarshal(b, &p); err != nil || p.Kind == "" {
+		return nil, fmt.Errorf("reading %s: damaged", packageFile)
+	}
+	return &p, nil
+}
+
+// RemovePackage deletes the package record.
+func (s Store) RemovePackage() error {
+	path, err := s.path(packageFile)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Remove deletes the agent's files. RemoveAll follows no link or junction

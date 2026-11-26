@@ -75,6 +75,33 @@ func (p Paths) Binary() string {
 	return p.unix("usr/local/bin/easyrmm-agent")
 }
 
+// PackageCopy is the package's own copy of the agent (ADR-0056): the file
+// a DEB, an RPM or the MSI ships, which hands over to the installed agent.
+func (p Paths) PackageCopy() string {
+	if p.Windows() {
+		return filepath.Join(p.programFiles(), "EasyRMM", "Package", "easyrmm-agent.exe")
+	}
+	return p.unix("usr/libexec/easyrmm-agent/easyrmm-agent")
+}
+
+// EnrollmentFile is where install.conf goes (ADR-0056): in a folder the
+// package ships and only administrators can change.
+func (p Paths) EnrollmentFile() string {
+	if p.Windows() {
+		return filepath.Join(p.programFiles(), "EasyRMM", "Package", "Enrollment", "install.conf")
+	}
+	return p.unix("etc/easyrmm-agent/install.conf")
+}
+
+// EnrollmentTop is the highest folder whose owner and access list are
+// checked before install.conf is read: /etc, or %ProgramFiles%\EasyRMM.
+func (p Paths) EnrollmentTop() string {
+	if p.Windows() {
+		return filepath.Join(p.programFiles(), "EasyRMM")
+	}
+	return p.unix("etc")
+}
+
 // Units is the systemd unit directory.
 func (p Paths) Units() string { return p.unix("etc/systemd/system") }
 

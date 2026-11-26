@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -64,6 +65,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
+	var ee exitError
+	if errors.As(err, &ee) {
+		os.Exit(ee.code)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "easyrmm-agent:", err)
 		os.Exit(1)
@@ -76,6 +81,11 @@ commands:
   install --server URL [--token TOKEN] [--ca-file FILE]
             enroll this machine and run the agent as a service: a systemd
             unit on Linux, the EasyRMMAgent service on Windows
+  install --package deb|rpm|msi
+            what a package's script runs: installs the agent and enrolls it
+            from install.conf (or EASYRMM_SERVER and EASYRMM_TOKEN on Linux),
+            or waits for that file; where an agent is installed, records the
+            package and changes nothing else
   enroll --server URL [--token TOKEN] [--ca-file FILE]
             enroll only; start the agent with "easyrmm-agent run"
   repair-install
@@ -91,7 +101,11 @@ commands:
             EASYRMM_JOB_INPUT and EASYRMM_JOB_RESULT
   run       run the agent in the foreground (what the service does)
   status    show the enrollment and the last heartbeat
-  uninstall stop and remove the agent and MeshAgent from this machine
+  uninstall [--package deb|rpm|msi [--rollback]]
+            stop and remove the agent and MeshAgent from this machine; while a
+            package holds the agent, remove the package instead
+  capabilities
+            list what this build can do, one word a line
   version   print the version
 
 The token can also be given in the EASYRMM_TOKEN environment variable.
@@ -112,6 +126,20 @@ type env struct {
 	// Checks of the machine, replaced by tests.
 	isRoot      func() bool
 	hasServices func() bool
+	// Checks of the machine for packages (ADR-0056), replaced by tests.
+	getenv           func(string) string
+	self             func() (string, error)
+	handoff          func(path string, args []string) error
+	clock            func() time.Time
+	startForbidden   func(ctx context.Context) bool
+	systemdInstalled func() bool
+	packageInstalled func(ctx context.Context, kind string) bool
+	// lastNote is the last thing said of the enrollment file, so that it is
+	// said once.
+	lastNote string
+	// fileUID is who must own the enrollment file and its folders: root.
+	// Tests set their own user.
+	fileUID uint32
 	// service: the Windows service manager runs the agent.
 	service bool //nolint:unused // set and read in the Windows-only files
 }
@@ -126,7 +154,24 @@ func newEnv(stdout, stderr io.Writer) *env {
 		command:     host.Exec,
 		isRoot:      host.IsAdmin,
 		hasServices: host.ServicesAvailable,
+		getenv:      os.Getenv,
+		self:        selfPath,
+		handoff:     handoffExec,
+		startForbidden: func(ctx context.Context) bool {
+			return host.StartForbidden(ctx, p, host.Exec)
+		},
+		systemdInstalled: func() bool { return host.SystemdInstalled(p) },
+		packageInstalled: func(ctx context.Context, kind string) bool { return host.PackageInstalled(ctx, host.Exec, kind) },
 	}
+}
+
+// selfPath is this executable's resolved path.
+func selfPath() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(self)
 }
 
 // supported reports whether this system runs the whole agent: health,
@@ -173,9 +218,17 @@ func (e *env) openStore() error {
 
 func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) error {
 	stdout := e.stdout
+	if done, err := e.handOver(ctx, args); done {
+		return err
+	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
+	case "capabilities":
+		return e.capabilities()
 	case "install":
+		if kind, ok := packageKind(rest); ok {
+			return e.installPackage(ctx, kind, rest)
+		}
 		return e.enroll(ctx, rest, true)
 	case "enroll":
 		return e.enroll(ctx, rest, false)
@@ -385,17 +438,29 @@ func mustServer(s string) string {
 // register enrolls with the server, or, with a token that needs approval,
 // records that the device waits for it.
 func (e *env) register(ctx context.Context, server, token, caFile string, service bool) (*state.Config, *state.Pending, error) {
+	var pem []byte
+	if caFile != "" {
+		// Keep a copy: the original may be a temporary file.
+		var err error
+		if pem, err = os.ReadFile(caFile); err != nil { //nolint:gosec // a path the administrator chose
+			return nil, nil, fmt.Errorf("reading the CA file: %w", err)
+		}
+	}
+	return e.registerPEM(ctx, server, token, pem, service)
+}
+
+// registerPEM is register with the certificate authority's PEM in hand.
+func (e *env) registerPEM(ctx context.Context, server, token string, caPEM []byte, service bool) (*state.Config, *state.Pending, error) {
+	if _, err := client.ParseServer(server); err != nil {
+		return nil, nil, permanent{err}
+	}
 	cfg := &state.Config{Server: mustServer(server), MeshAgentMode: string(meshagent.ModeChild)}
 	if service {
 		cfg.MeshAgentMode = string(meshagent.ModeService)
 	}
-	if caFile != "" {
-		// Keep a copy: the original may be a temporary file.
-		pem, err := os.ReadFile(caFile) //nolint:gosec // a path the administrator chose
-		if err != nil {
-			return nil, nil, fmt.Errorf("reading the CA file: %w", err)
-		}
-		if cfg.CAFile, err = e.store.SaveCA(pem); err != nil {
+	if len(caPEM) > 0 {
+		var err error
+		if cfg.CAFile, err = e.store.SaveCA(caPEM); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -459,9 +524,18 @@ func (e *env) run(ctx context.Context) error {
 	cfg, key, err := e.store.Load()
 	if errors.Is(err, state.ErrNotEnrolled) {
 		cfg, key, err = e.awaitApproval(ctx)
+		if errors.Is(err, state.ErrNotEnrolled) && e.packaged() {
+			// Installed by a package without input: wait for install.conf.
+			cfg, key, err = e.awaitFile(ctx)
+		}
 	}
 	if err != nil {
 		return err
+	}
+	if supported() {
+		// An enrolled agent looks for the file when it starts: what it left is
+		// deleted, never used.
+		e.sweepFile(cfg)
 	}
 	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, TrustSystem: cfg.TrustSystem, Version: Version})
 	if err != nil {
@@ -592,6 +666,7 @@ func (e *env) run(ctx context.Context) error {
 		send = ch.LogSender(ship.Following, send)
 	}
 	var g sync.WaitGroup
+	g.Go(func() { e.watchFile(ctx, cfg) })
 	g.Go(func() { _ = w.Run(ctx) })
 	g.Go(func() { ship.Run(ctx, send) })
 	if ship != nil && mesh != nil {
@@ -721,6 +796,7 @@ func (e *env) status(ctx context.Context) error {
 	}
 	w := e.stdout
 	_, _ = fmt.Fprintf(w, "Server:     %s\nDevice:     %s\nEnrolled:   %s\n", cfg.Server, cfg.DeviceID, cfg.EnrolledAt.Local().Format(time.RFC1123))
+	e.packageStatus()
 	if supported() && e.hasServices() {
 		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, e.paths.AgentService().Name))
 	}
@@ -756,6 +832,8 @@ func (e *env) status(ctx context.Context) error {
 func (e *env) uninstall(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	removal := fs.String("removal", "", "the server's uninstall instruction, as the agent saved it (ADR-0050)")
+	pkg := fs.String("package", "", "the package whose removal script runs this (deb, rpm or msi)")
+	rollback := fs.Bool("rollback", false, "with --package: undo only what the package's install did")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -768,6 +846,23 @@ func (e *env) uninstall(ctx context.Context, args []string) error {
 	if *removal != "" {
 		return e.removeOnRequest(ctx, *removal)
 	}
+	if *pkg != "" {
+		return e.uninstallPackage(ctx, *pkg, *rollback)
+	}
+	if *rollback {
+		return errors.New("--rollback goes with --package")
+	}
+	// While the package manager lists the package, removing the agent by hand
+	// would leave the package installed and out of step (ADR-0056).
+	if kind := e.packageHolds(ctx); kind != "" {
+		return fmt.Errorf("the %s package holds this agent; remove the package instead, which removes the agent: %s", strings.ToUpper(kind), host.PackageRemoveCommand(kind))
+	}
+	return e.uninstallAll(ctx)
+}
+
+// uninstallAll removes the agent: its service, MeshAgent, state, program and
+// enrollment file.
+func (e *env) uninstallAll(ctx context.Context) error {
 	// The recovery copy goes first: nothing may bring back an agent that is
 	// being removed (ADR-0069).
 	if err := e.store.RemoveRecovery(); err != nil {
@@ -813,6 +908,9 @@ func (e *env) removeFiles() (later bool, err error) {
 	if err := e.store.Remove(); err != nil {
 		return false, err
 	}
+	// The token goes with the agent: the file is deleted whatever installed it
+	// (ADR-0056).
+	e.removeEnrollmentFile()
 	later, err = host.RemoveExecutable(e.paths.Binary())
 	if err != nil {
 		return later, err

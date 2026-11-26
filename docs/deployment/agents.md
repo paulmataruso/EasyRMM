@@ -212,6 +212,59 @@ where browsers do not trust it). In an administrator PowerShell:
 Import-Certificate -FilePath .\easyrmm-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
 ```
 
+## Installing from a package: the enrollment file
+
+A package (DEB, RPM or MSI; the packages themselves arrive in later slices of
+[ADR-0056](../architecture/adr/0056-packages-for-the-agent.md)) runs
+`easyrmm-agent install --package <deb|rpm|msi>`. The command is available now.
+Where no agent is installed it installs one, as `install` does, and enrolls it
+from the enrollment file; where one is installed it records which package holds
+it and changes nothing else.
+
+The enrollment file is `/etc/easyrmm-agent/install.conf` on Linux and
+`%ProgramFiles%\EasyRMM\Package\Enrollment\install.conf` on Windows:
+
+```ini
+[enrollment]
+server=https://rmm.example.com
+token=ert_...
+ca=MIIC...
+```
+
+`ca` is optional: the server's own certificate authority, base64 DER on one
+line. On Linux, `EASYRMM_SERVER`, `EASYRMM_TOKEN` and `EASYRMM_CA_FILE` (a PEM
+file) in the environment win over the file.
+
+The file holds a token, so the agent reads it only when an administrator made
+it and no one else can read it. It opens the file first and checks the open
+file: on Linux a regular file with one link, owned by root, mode 0600 or
+stricter, in folders owned by root that no one else can write; on Windows a file
+that is not a link, with one link, whose owner is SYSTEM, Administrators or
+TrustedInstaller and whose access list allows only those. Anything else is left
+unread and `easyrmm-agent status` and the log say why; for a file others could
+read, they say to revoke the token. Create it with mode 0600 from the start
+(`install -m 0600`, `permissions: '0600'` in cloud-init, `mode: '0600'` in
+Ansible): `tee` followed by `chmod` passes through 0644. The file is read once it
+has been unchanged for 5 seconds, and deleted once the agent has enrolled (or
+saved its request for approval). `uninstall` deletes it too.
+
+Without input the agent waits: it installs, and its service looks for the file
+every 30 seconds and enrolls when it appears. This is the golden image: the
+device key and MeshAgent's identity are made at enrollment, so clones of an
+image captured before it do not share them. An address that is not HTTPS, a
+rejected token or a device key in use is asked once and again only when the
+file changes; an answer that may change (no answer, a server error, a
+certificate outside its validity period) is tried again after 5 seconds, up to
+5 minutes; a certificate from an unknown authority or for another name is tried
+again every hour and reported each time.
+
+Where systemd is installed but not running (an image built offline) the service
+is enabled and not started; where Debian's `policy-rc.d` forbids starting
+services, it is enabled only; with no systemd (a container) nothing is
+installed: run the agent's own executable. While the package manager lists the
+package, `easyrmm-agent uninstall` names the command that removes the package
+instead.
+
 ## What is installed
 
 On Windows:

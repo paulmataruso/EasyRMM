@@ -93,7 +93,7 @@ try {
         $xl = ConvertTo-UInt $fx_x.StartRange.IPAddressToString
         $xh = ConvertTo-UInt $fx_x.EndRange.IPAddressToString
         if ($xl -lt $lo -or $xh -gt $hi) {
-            Write-Result $false $null 'exclusion_outside' ('The exclusion ' + $fx_x.StartRange.IPAddressToString + ' to ' + $fx_x.EndRange.IPAddressToString + ' would fall outside the new range. Remove or change it first.')
+            Write-Result $false ([ordered]@{ exclusionStart = $fx_x.StartRange.IPAddressToString; exclusionEnd = $fx_x.EndRange.IPAddressToString }) 'exclusion_outside' 'An exclusion would fall outside the new range. Remove or change it first.'
             exit 0
         }
     }
