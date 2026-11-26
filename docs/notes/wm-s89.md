@@ -24,4 +24,5 @@ None: nothing new is stored or logged.
 - A module adds one line to `DEVICE_MODULE_TABS` and its scripts under `server/internal/winmod/<module>/`. ADR-0077's slice adds `scripts/ci/winmod-helper-pins.json` entry for `New-EasyRmmCredential`.
 - `baseRoutes` in `web/src/test/fakeApi.ts` now answers `GET /devices/:id/roles` (the device page asks for it on Windows devices).
 - `scripts/ci/check-powershell.ps1` now scans `server/internal/winmod` (PSScriptAnalyzer passes with PSUseDeclaredVarsMoreThanAssignments excluded there, because a script that takes no parameters still reads `$p`).
-- Script output is read in the console code page; ADR-0073 amendment says non-ASCII results must be escaped by the script.
+- The Windows agent puts a UTF-8 prologue (`agentproto.ParamsPrologue`) before PowerShell scripts with params, so input and output are UTF-8 (ADR-0073 amended); scripts do not escape output. Changelog: names with accents or CJK now survive in module results.
+- Not verified on Windows PowerShell 5.1: `TestParamsScriptIsUTF8InAndOutOnWindows` and the hostile test run on the Windows runner; they were only run here with PowerShell 7 in Docker (hostile) and compiled for Windows (agent test).

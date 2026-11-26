@@ -327,6 +327,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
+	d.wireChannel()
 	// The hash list of everything the server hands out or installs, kept
 	// current: on start, on a signed build, on a new agent version, on a
 	// timer (ADR-0070). Where the development scope takes effect: see

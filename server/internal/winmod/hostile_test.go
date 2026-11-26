@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+	"unicode/utf8"
+
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 // hostileValues are parameter values meant to break out of a string, a
@@ -84,24 +87,48 @@ func powerShell(t *testing.T) string {
 func TestHostileValuesOnWindows(t *testing.T) {
 	shell := powerShell(t)
 	values := hostileValues()
-	stdin, err := MarshalParams(map[string]any{"values": values})
+	// Both encodings of the same document: ASCII escapes (what the server
+	// sends) and raw UTF-8, which the agent's prologue must also read.
+	asciiDoc, err := MarshalParams(map[string]any{"values": values})
 	if err != nil {
 		t.Fatal(err)
 	}
+	utf8Doc, err := json.Marshal(map[string]any{"values": values})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, doc := range map[string][]byte{"ascii": asciiDoc, "utf8": utf8Doc} {
+		t.Run(name, func(t *testing.T) { runHostile(t, shell, values, doc) })
+	}
+}
+
+// runHostile runs the fixture as the agent does, with the agent's prologue in
+// front, and checks every value and the result's own non-ASCII text.
+func runHostile(t *testing.T, shell string, values []string, stdin []byte) {
+	t.Helper()
 	if len(stdin) > 16*1024*4 {
 		t.Fatalf("the test document is %d bytes", len(stdin))
 	}
-	script, err := filepath.Abs("testdata/hostile.ps1")
+	src, err := os.ReadFile("testdata/hostile.ps1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	work := t.TempDir()
+	scriptDir := t.TempDir()
+	script := filepath.Join(scriptDir, "script.ps1")
+	// The agent writes a PowerShell script as UTF-8 with a byte order mark.
+	if err := os.WriteFile(script, append([]byte("\xef\xbb\xbf"+agentproto.ParamsPrologue), src...), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script)
 	cmd.Dir = work
 	cmd.Stdin = strings.NewReader(string(stdin))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the script failed: %v\n%s", err, out)
+	}
+	if !utf8.Valid(out) {
+		t.Fatalf("the output is not UTF-8: %q", out)
 	}
 	var line string
 	for _, l := range strings.Split(string(out), "\n") {
@@ -137,6 +164,10 @@ func TestHostileValuesOnWindows(t *testing.T) {
 		case !it.ViaFunction || !it.ViaSplat || !it.ViaOutput || !it.ViaObject:
 			t.Errorf("value %d changed on its way through an argument: %+v", i, it)
 		}
+	}
+	// Accented Latin and CJK come back as they went in, as UTF-8 bytes.
+	if !strings.Contains(line, "Zo\u00eb") || !strings.Contains(line, "\u65e5\u672c\u8a9e") {
+		t.Errorf("the result line lost its non-ASCII text: %q", line)
 	}
 	left, err := os.ReadDir(work)
 	if err != nil {

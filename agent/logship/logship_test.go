@@ -382,3 +382,22 @@ func TestRecordRedactsAndTagsTheSource(t *testing.T) {
 		t.Errorf("record = %+v", recs)
 	}
 }
+
+func TestFollowingFollowsTheInstruction(t *testing.T) {
+	var none *Shipper
+	if none.Following() {
+		t.Fatal("a nil shipper follows")
+	}
+	s := New(nil)
+	if s.Following() {
+		t.Fatal("following before any instruction")
+	}
+	s.Apply(&agentproto.LogInstructions{FollowUntil: s.Now().Add(time.Minute).Unix()})
+	if !s.Following() {
+		t.Fatal("not following after the instruction")
+	}
+	s.Apply(nil)
+	if s.Following() {
+		t.Fatal("still following after the instruction ended")
+	}
+}

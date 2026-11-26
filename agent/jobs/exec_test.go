@@ -203,3 +203,11 @@ ls -l /proc/$$/fd/0 | sed 's/.*-> //'`, "x")
 		t.Errorf("stdin without params: %q", res.Stdout)
 	}
 }
+
+// On Unix a script is read as sent: the UTF-8 prologue of ADR-0073 is Windows only.
+func TestScriptBodyIsUnchangedOnUnix(t *testing.T) {
+	p := agentproto.JobPayload{Shell: agentproto.ShellPwsh, Script: "body", Params: []byte(`{}`)}
+	if got := scriptBody(p); got != "body" {
+		t.Errorf("scriptBody = %q", got)
+	}
+}

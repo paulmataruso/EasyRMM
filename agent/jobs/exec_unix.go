@@ -47,6 +47,9 @@ func environment(p agentproto.JobPayload, home string) []string {
 	}
 }
 
+// scriptBody is the script as the interpreter reads it: unchanged on Unix, where scripts read and write UTF-8.
+func scriptBody(p agentproto.JobPayload) string { return p.Script }
+
 // writeScript writes the script for the interpreter to read.
 func writeScript(dir, _ string, body string) (string, error) {
 	path := filepath.Join(dir, "script")

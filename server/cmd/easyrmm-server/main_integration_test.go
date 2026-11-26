@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -151,7 +150,7 @@ func TestServeCommandStopsOnSignal(t *testing.T) {
 	}
 
 	// The server traps SIGTERM (as sent by `docker stop`) and shuts down.
-	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+	if err := sendTerm(); err != nil {
 		t.Fatal(err)
 	}
 	select {

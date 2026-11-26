@@ -4,19 +4,14 @@ $p = [Console]::In.ReadToEnd() | ConvertFrom-Json
 
 # A catalogue script of the shape ADR-0073 requires, used by the hostile-value test: each value of $p.values is
 # only ever a cmdlet or function argument, and the result says what happened to it. If a value were evaluated,
-# the test's canary files would appear in the working folder.
+# the test's canary files would appear in the working folder. The agent puts agentproto.ParamsPrologue in front,
+# so standard input and output are UTF-8 and the result line carries names as they are.
 
 function Get-Echo([string]$Text) { return $Text }
 
 function Get-Sha256([string]$Text) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { return (($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text)) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $sha.Dispose() }
-}
-
-# The result line is plain ASCII, whatever the console's code page: a character above U+007F is a \uXXXX escape.
-function ConvertTo-AsciiJson($Value) {
-    $json = ConvertTo-Json -InputObject $Value -Compress -Depth 6
-    return [regex]::Replace($json, '[^\x00-\x7F]', { param($m) ('\u' + ([int][char]$m.Value).ToString('x4')) })
 }
 
 $items = @()
@@ -37,4 +32,4 @@ foreach ($v in @($p.values)) {
     }
 }
 $r = [ordered]@{ ok = $true; version = 1; data = [ordered]@{ items = $items }; error = $null }
-[Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-AsciiJson $r))
+[Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 6))
