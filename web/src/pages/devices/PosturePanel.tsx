@@ -33,7 +33,8 @@ export function PostureCell({ posture }: { posture: PostureSummary | null }) {
  * heaviest first. Hardening, patching and compliance results are judged by the same rules (ADR-0082).
  */
 export function PosturePanel({ deviceId }: { deviceId: string }) {
-  const q = useApi<DevicePosture>(`/devices/${deviceId}/posture`, undefined, { refetchInterval: 60_000 });
+  // A check finishing moves the posture; the card follows within seconds, as the Hardening tab beside it does.
+  const q = useApi<DevicePosture>(`/devices/${deviceId}/posture`, undefined, { refetchInterval: 10_000 });
   const p = q.data?.posture;
   if (!q.data || !p) return null;
   const b = postureBadge(p);
