@@ -115,7 +115,7 @@ func TestHelpers(t *testing.T) {
 	if round1(12.345) != 12.3 || timeOrNil(nil) != nil {
 		t.Error("round1 or timeOrNil")
 	}
-	if !slices.Equal(Names(), []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations", "contacts"}) {
+	if !slices.Equal(Names(), []string{"devices", "software", "health", "alerts", "security", "patch-compliance", "patch-installations", "contacts"}) {
 		t.Error("names")
 	}
 	for _, n := range Names() {

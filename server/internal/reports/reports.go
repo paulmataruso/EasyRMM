@@ -19,6 +19,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/posture"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -103,6 +104,8 @@ type Query struct {
 	// Category and Result are EasyPatch's update category and an update's
 	// result (patch-installations).
 	Category, Result string
+	// Posture is meets, does_not_meet or cannot_tell (security).
+	Posture string
 }
 
 // Defaults for the query fields that have them.
@@ -121,6 +124,7 @@ func (q *Query) check() error {
 	f.Check(q.Days >= 1 && q.Days <= MaxDays, "days", "Choose from 1 to 365 days.")
 	f.Check(q.OfflineDays >= 0 && q.OfflineDays <= 3650, "offlineDays", "Choose from 0 to 3650 days.")
 	f.Check(q.DiskPercent >= 0 && q.DiskPercent <= 100, "diskPercent", "Choose a percentage from 0 to 100.")
+	f.Check(posture.ValidFilter(q.Posture), "posture", "Choose meets, does_not_meet or cannot_tell.")
 	f.Check(q.Severity == "" || q.Severity == "warning" || q.Severity == "critical", "severity", "Choose warning or critical.")
 	return f.Err()
 }
@@ -152,6 +156,8 @@ var definitions = map[string]definition{
 	"health":   healthReport,
 	"alerts":   alertsReport,
 
+	"security": securityReport,
+
 	"patch-compliance":    patchComplianceReport,
 	"patch-installations": patchInstallationsReport,
 
@@ -160,7 +166,7 @@ var definitions = map[string]definition{
 
 // Names lists the reports there are.
 func Names() []string {
-	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations", "contacts"}
+	return []string{"devices", "software", "health", "alerts", "security", "patch-compliance", "patch-installations", "contacts"}
 }
 
 // Service runs reports.

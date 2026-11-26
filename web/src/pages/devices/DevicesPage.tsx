@@ -15,6 +15,8 @@ import { endDrag, startDrag } from "../../nav/move";
 import { DiskHealthCell } from "./DeviceDisks";
 import { deviceDiskHealth, DISK_FILTERS } from "./diskHealthText";
 import { HardeningCell } from "./hardeningParts";
+import { PostureCell } from "./PosturePanel";
+import { POSTURE_FILTERS } from "./postureText";
 import { FILTERS } from "./hardeningText";
 import { LeftBehindNotice } from "./leftBehind";
 import { platformName } from "./platform";
@@ -36,8 +38,9 @@ export function DevicesPage() {
   const hardening = url.get("hardening");
   const diskHealth = url.get("diskHealth");
   const compliance = url.get("compliance");
+  const posture = url.get("posture");
   const sort = parseSort(url.get("sort"));
-  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth || compliance);
+  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth || compliance || posture);
 
   const params = {
     q: search || undefined,
@@ -48,6 +51,7 @@ export function DevicesPage() {
     hardening: hardening || undefined,
     diskHealth: diskHealth || undefined,
     compliance: compliance || undefined,
+    posture: posture || undefined,
   };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
   // The server lists by name; sorting by disk health keeps that order among devices with the same label.
@@ -85,6 +89,8 @@ export function DevicesPage() {
   const linux = list.items.some((d) => d.platform === "linux");
   // Disk health comes from the EasyRMM agent (ADR-0065): its column shows when the list has a device with one, or when
   // it filters or sorts by it.
+  // Security posture (ADR-0082) shows when the list has a device it covers, or when it filters by it.
+  const showPosture = Boolean(posture) || list.items.some((d) => d.posture !== null);
   const showDiskHealth = Boolean(diskHealth) || sort !== null || list.items.some((d) => d.agent !== null || d.diskHealth !== null);
 
   return (
@@ -103,6 +109,7 @@ export function DevicesPage() {
         <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
+        <PostureSelect value={posture} onChange={(v) => url.set({ posture: v })} />
         <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />
         {can("compliance.view") && <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />}
         {picked.length > 0 && (
@@ -155,6 +162,7 @@ export function DevicesPage() {
                         <SortButton sort={sort} onChange={(next) => url.set({ sort: next })} />
                       </th>
                     )}
+                    {showPosture && <th className="hidden lg:table-cell">Security</th>}
                     {linux && <th className="hidden lg:table-cell">Hardening</th>}
                     {canMove && (
                       <th className="w-10">
@@ -210,6 +218,11 @@ export function DevicesPage() {
                       {showDiskHealth && (
                         <td className="hidden whitespace-nowrap lg:table-cell">
                           <DiskHealthCell device={d} />
+                        </td>
+                      )}
+                      {showPosture && (
+                        <td className="hidden whitespace-nowrap lg:table-cell">
+                          <PostureCell posture={d.posture} />
                         </td>
                       )}
                       {linux && (
@@ -268,6 +281,23 @@ function HardeningSelect({ value, onChange }: { value: string; onChange: (v: str
       <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">Any hardening</option>
         {FILTERS.map((f) => (
+          <option key={f.value} value={f.value}>
+            {f.label}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** Devices by whether they meet their security policy: hardening, patching and compliance results judged as one (ADR-0082). */
+function PostureSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <Field label="Security" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any security</option>
+        {POSTURE_FILTERS.map((f) => (
           <option key={f.value} value={f.value}>
             {f.label}
           </option>

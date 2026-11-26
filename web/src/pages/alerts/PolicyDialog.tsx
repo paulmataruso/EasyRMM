@@ -16,7 +16,7 @@ const SEVERITIES: { value: AlertSeverity; label: string }[] = [
   { value: "critical", label: "Critical" },
 ];
 
-const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90, disk_health: 0, remote_down: 0, agent_silent: 0, repair_failed: 0 };
+const DEFAULT_THRESHOLD: Record<AlertKind, number> = { offline: 0, cpu: 95, memory: 95, disk: 90, disk_health: 0, remote_down: 0, agent_silent: 0, repair_failed: 0, compliance_fix_failed: 0, compliance_scan_stale: 0 };
 
 const MINUTES_LABEL: Partial<Record<AlertKind, string>> = {
   offline: "Without a check-in for",

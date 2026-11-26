@@ -123,7 +123,7 @@ func RegisterModuleAlerts(m ModuleAlerts) error {
 		other, dup := registry.kinds[k.Name]
 		dup = dup && other.Module != m.Module
 		switch {
-		case !kindName.MatchString(k.Name) || validBuiltin(k.Name) || k.Name == KindRepairFailed:
+		case !kindName.MatchString(k.Name) || validBuiltin(k.Name) || k.Name == KindRepairFailed || k.Name == KindComplianceFixFailed || k.Name == KindComplianceScanStale:
 			return fmt.Errorf("monitoring: %q is not a valid module alert kind", k.Name)
 		case dup || local[k.Name].Name != "":
 			return fmt.Errorf("monitoring: alert kind %q is registered twice", k.Name)

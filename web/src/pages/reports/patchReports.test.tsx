@@ -142,7 +142,7 @@ describe("patch reports", () => {
     installFakeApi(routes(MANAGER, { "GET /patching": ok({ ...READY, configured: false }) }));
     renderApp("/reports");
     await screen.findByRole("table", { name: "Device inventory" });
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Device inventory", "Device health"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Device inventory", "Device health", "Security"]);
   });
 
   it("shows compliance with its trend, and narrows it by compliance", async () => {
@@ -154,6 +154,7 @@ describe("patch reports", () => {
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Device inventory",
       "Device health",
+      "Security",
       "Patch compliance",
       "Patch installations",
       "Monthly patch reports",
