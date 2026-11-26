@@ -1,6 +1,6 @@
 # ADR-0072: What each page shows, at each level of the tree
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-26). Everything marked *decided in review*
   is the writer's call and the owner can overturn it.
 * Builds on [ADR-0069](0069-recovery-agent-logs-and-one-device-tree.md) Part T
