@@ -58,6 +58,8 @@ type fx struct {
 	otherOrg, otherDev uuid.UUID
 	admin, admin2      access.Caller
 	site2, tech, ro    access.Caller
+	// unread makes run leave GPOs without a gpo_get record.
+	unread bool
 }
 
 func (f *fx) id(sql string, args ...any) uuid.UUID {
@@ -158,7 +160,24 @@ func newFx(t *testing.T) *fx {
 	return f
 }
 
+// known records that the console read a GPO as linked nowhere sensitive, which is what lets a content change run without
+// approval: a GPO with no readable record counts as linked at the domain root (fail closed).
+func (f *fx) known(dev uuid.UUID, gpo string) {
+	f.t.Helper()
+	key, _ := winmod.ParamsKey([]byte(`{"id":"` + gpo + `"}`))
+	detail := `{"id":"` + gpo + `","name":"A","status":"AllSettingsEnabled","description":"","owner":"o","created":null,"modified":null,"computer":{"directory":1,"sysvol":1},"user":{"directory":0,"sysvol":0},` +
+		`"wmiFilter":"","default":false,"linkCount":0,"links":[],"reportLinks":[],"trustees":[]}`
+	f.exec(`INSERT INTO windows_module_snapshots (device_id, module, action, params_hash, taken_at, sensitive, data) VALUES ($1, 'group_policy', 'group_policy.gpo_get', $2, now(), false, $3)
+		ON CONFLICT (device_id, action, params_hash) DO NOTHING`, dev, key, []byte(detail))
+}
+
 func (f *fx) run(c access.Caller, dev uuid.UUID, action, params, confirm string) (*jobs.WinmodRun, error) {
+	var p struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal([]byte(params), &p) == nil && p.ID != "" && !f.unread {
+		f.known(dev, p.ID)
+	}
 	return f.jobs.RunWinmod(f.ctx, c, jobs.WinmodInput{DeviceID: dev, Action: "group_policy." + action, Params: json.RawMessage(params), Confirm: confirm})
 }
 
@@ -564,5 +583,38 @@ func TestSummaryCard(t *testing.T) {
 	}
 	if s, _ := f.svc.Summary(f.ctx, f.tech, f.org); s.PendingApprovals != 0 {
 		t.Errorf("pending after a rejection: %d", s.PendingApprovals)
+	}
+}
+
+// A GPO the console never read has no record of where it is linked, so a content change to it needs approval (fail closed):
+// an API caller cannot get around the two-person rule by not reading.
+func TestNeverReadGPONeedsApproval(t *testing.T) {
+	f := newFx(t)
+	f.unread = true
+	for action, p := range map[string]string{
+		"gpo_rename": `{"id":"` + gpoID + `","newName":"Renamed",` + why + `}`,
+		"gpo_status": `{"id":"` + gpoID + `","status":"AllSettingsDisabled",` + why + `}`,
+		"wmi_set":    `{"id":"` + gpoID + `","filter":"",` + why + `}`,
+	} {
+		if _, err := f.run(f.admin, f.dev, action, p, ""); code(err) != "approval_required" {
+			t.Errorf("%s on a GPO never read: %v", action, err)
+		}
+	}
+	if _, err := f.run(f.admin, f.dev, "gpo_delete", `{"id":"`+gpoID+`","name":"A",`+why+`}`, "group_policy.gpo_delete:A"); code(err) != "approval_required" {
+		t.Errorf("delete: %v", err)
+	}
+	// Once read as linked nowhere sensitive, it runs; a read that is not one of this GPO's does not help.
+	f.unread = false
+	f.known(f.dev, uuid.NewString())
+	if _, err := f.run(f.admin, f.dev, "gpo_rename", `{"id":"`+gpoID+`","newName":"Renamed",`+why+`}`, ""); err != nil {
+		t.Errorf("after a read: %v", err)
+	}
+	// With the sensitive rule off, an unread GPO is not held.
+	f.unread = true
+	if err := f.svc.SetSettings(f.ctx, f.admin, f.org, Settings{ApprovalSensitive: false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run(f.admin, f.dev, "gpo_status", `{"id":"`+gpoID+`","status":"AllSettingsDisabled",`+why+`}`, ""); err != nil {
+		t.Errorf("rule off: %v", err)
 	}
 }

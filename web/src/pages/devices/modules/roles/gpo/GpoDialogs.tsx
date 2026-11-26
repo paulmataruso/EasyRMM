@@ -4,7 +4,7 @@ import { api } from "../../../../../api/client";
 import type { Device } from "../../../../../api/types";
 import { Dialog } from "../../../../../components/Dialog";
 import { Alert, Button, InlineError, SelectField, TextField, TextareaField } from "../../../../../components/ui";
-import { confirmText, runWinmod, failureText } from "../../winmod";
+import { confirmText, runWinmod, failureText, useWinmodRead } from "../../winmod";
 import { GpoChangeDialog } from "./GpoChange";
 import { MODULE, STATUS_LABEL } from "./gpoText";
 import type { Gpo, GpoBackup, GpoDetail, LinkTarget, Trustee } from "./types";
@@ -199,9 +199,12 @@ export function RestoreDialog({ device, backup, current, onClose }: Base & { bac
   const [defTyped, setDefTyped] = useState("");
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // The server holds a change to a GPO it has no read of until the console has read it: read it before offering the restore.
+  const read = useWinmodRead<GpoDetail>(device.id, `${MODULE}.gpo_get`, { id: backup.gpoId }, current !== null);
+  const loaded = current === null || read.data?.data != null || read.data?.failure != null;
   const defaultName = current?.default ? current.name : undefined;
   const name = current?.name ?? backup.gpoName;
-  const ok = reason.trim().length >= 10 && typed.trim().toLowerCase() === name.toLowerCase() && (defaultName === undefined || defTyped === defaultName);
+  const ok = loaded && reason.trim().length >= 10 && typed.trim().toLowerCase() === name.toLowerCase() && (defaultName === undefined || defTyped === defaultName);
 
   async function go() {
     setError(null);
@@ -242,6 +245,7 @@ export function RestoreDialog({ device, backup, current, onClose }: Base & { bac
           <TextField label={<>This is a Default policy. Type <strong>{defaultName}</strong> in full</>} value={defTyped} onChange={(e) => setDefTyped(e.target.value)} autoComplete="off" />
         )}
         <TextField label={<>Type <strong>{name}</strong> to confirm</>} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+        {!loaded && <p role="status" className="text-sm text-muted">Reading the GPO…</p>}
         {step && <p role="status" className="text-sm text-muted">{step}…</p>}
         <InlineError error={error} />
         <div className="flex justify-end gap-2">

@@ -616,7 +616,9 @@ Each is *Amended 2026-11-26 (decided in review)*: the code proved the plan wrong
 5. **Approval covers more than the ADR lists, and one thing less.** The gate (server, before a job exists) refuses without an
    approval: a change to a Default policy, a link, unlink, order, enabled, enforced or inheritance block at the domain root, the
    Domain Controllers OU or a site (judged from the target's distinguished name), and a content change to a GPO that the
-   console last read as linked at one of those (from the stored `gpo_get` result; a GPO never read is not known to the gate).
+   console last read as linked at one of those (from the stored `gpo_get` result). The gate **fails closed**
+   (*Amended 2026-11-26, decided in review*): a GPO with no readable `gpo_get` record on that controller counts as linked at a
+   sensitive place, so an API caller cannot skip the rule by never reading. The console reads a GPO before it offers any change.
    An organization can require approval for everything. An approval is used once, within an hour, for exactly the stored
    parameters. A request lapses after 24 hours and is closed when it is next read (no background job). Creating a GPO is held
    only when the organization requires approval for everything.
