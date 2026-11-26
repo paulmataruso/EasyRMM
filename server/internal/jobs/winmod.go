@@ -105,7 +105,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 	if err != nil {
 		return nil, err
 	}
-	if a.Destructive || a.Confirm {
+	if a.NeedsConfirm() {
 		f := apperr.Fields{}
 		f.Check(in.Confirm == a.ConfirmText(chk.Subject), "confirm", "Confirm the action by sending \""+a.ConfirmText(chk.Subject)+"\".")
 		if err := f.Err(); err != nil {
@@ -136,7 +136,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 		kind: KindWinmod, name: a.Label, shell: a.ShellName(), body: a.Script, args: []string{}, params: chk.Params,
 		timeout: a.Timeout, auditAction: "winmod." + a.Name, winmod: recJSON, ttl: ttl,
 		details: map[string]any{"module": string(a.Module), "action": a.Name, "version": a.Version, "params": chk.Audit,
-			"sensitive": a.Sensitive, "destructive": a.Destructive, "confirmed": a.Destructive || a.Confirm, "stepUp": a.NeedsStepUp()},
+			"sensitive": a.Sensitive, "destructive": a.Destructive, "confirmed": a.NeedsConfirm(), "stepUp": a.NeedsStepUp()},
 		inserted: func(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, expires time.Time) error {
 			for name, value := range chk.Secrets {
 				sealed, err := s.sealer.Seal([]byte(value), winmodAAD(jobID, name))

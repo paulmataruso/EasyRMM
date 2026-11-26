@@ -86,6 +86,9 @@ type Service struct {
 	// roles stores what a heartbeat reports of the device's Windows roles
 	// (ADR-0073); nil ignores them.
 	roles RoleStore
+	// dlog stores the Defender events an agent sends (ADR-0074); nil
+	// ignores them.
+	dlog DefenderLog
 }
 
 // RoleStore keeps the roles an agent reported (modules.Service). It runs in

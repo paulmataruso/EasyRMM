@@ -45,6 +45,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/update"
+	"github.com/paulmataruso/easyrmm/agent/winevents"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -461,6 +462,9 @@ func (e *env) run(ctx context.Context) error {
 		}
 		if dm := e.defenderManager(); dm != nil {
 			r.Defender = e.withEasyPatch(dm)
+			// The Defender event log, read once a heartbeat where the
+			// server asked for it (ADR-0074).
+			r.DefenderLog = &winevents.Collector{Source: winevents.NewDefenderSource(), File: winevents.BookmarkPath(e.paths.State())}
 		}
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)

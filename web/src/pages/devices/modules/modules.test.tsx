@@ -102,6 +102,7 @@ function routes(
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/disks": ok({ items: [] }),
     "GET /devices/:id/defender": fail(404, "not_found", "none"),
+    "GET /devices/:id/defender/events": ok({ items: [], gap: null }),
     "POST /devices/:id/winmod/defender.status": ok({
       jobId: "j1",
       runId: "r1",

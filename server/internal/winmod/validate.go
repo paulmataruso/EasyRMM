@@ -103,6 +103,11 @@ func (a Action) Validate(raw json.RawMessage) (*Checked, error) {
 	if err := f.Err(); err != nil {
 		return nil, err
 	}
+	if a.Check != nil {
+		if err := a.Check(plain); err != nil {
+			return nil, err
+		}
+	}
 	b, err := MarshalParams(plain)
 	if err != nil {
 		return nil, err

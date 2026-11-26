@@ -220,3 +220,34 @@ func TestSnapshotActionsAreChecked(t *testing.T) {
 		t.Errorf("an hourly snapshot read: %v", err)
 	}
 }
+
+// A module's own Check sees the validated values and may refuse them; Confirm
+// makes an action need the typed confirmation without a step-up, with or
+// without a subject.
+func TestCheckHookAndConfirm(t *testing.T) {
+	a := sample()
+	a.Check = func(p map[string]any) error {
+		if p["user"] == "blocked" {
+			return apperr.Conflict("blocked_user", "no")
+		}
+		p["note"] = "changed by the check"
+		return nil
+	}
+	chk, err := a.Validate([]byte(`{"user":"alice"}`))
+	if err != nil || !strings.Contains(string(chk.Params), "changed by the check") {
+		t.Fatalf("check: %v %s", err, chk.Params)
+	}
+	if _, err := a.Validate([]byte(`{"user":"blocked"}`)); !errors.Is(err, apperr.Conflict("blocked_user", "")) {
+		t.Errorf("a refusal from the check: %v", err)
+	}
+	if a.NeedsConfirm() || a.NeedsStepUp() {
+		t.Error("a plain action needs no confirmation")
+	}
+	a.Confirm, a.Subject = true, "user"
+	if _, err := NewCatalog(a); err != nil {
+		t.Fatalf("a confirmed action: %v", err)
+	}
+	if !a.NeedsConfirm() || a.NeedsStepUp() || a.ConfirmText("alice") != "defender.sample:alice" {
+		t.Errorf("confirm %v, step-up %v", a.NeedsConfirm(), a.NeedsStepUp())
+	}
+}

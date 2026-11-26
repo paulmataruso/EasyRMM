@@ -15,6 +15,11 @@ import (
 // the agent does nothing on a device it did not allow.
 type DefenderPolicy struct {
 	Enabled bool `json:"enabled"`
+	// Events says the agent may read the Defender event log and send it
+	// (ADR-0074): the Defender module is on for the site and the role is
+	// there. EventsAck is the highest record the server stored.
+	Events    bool            `json:"events,omitempty"`
+	EventsAck *DefenderLogAck `json:"eventsAck,omitempty"`
 }
 
 // States of a device's exclusions, as a whole and per kind.

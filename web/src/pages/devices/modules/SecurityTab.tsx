@@ -10,6 +10,15 @@ import type {
 import { Badge, Card, InlineError, KeyValueList, type Tone } from "../../../components/ui";
 import { formatDateTime } from "../../../lib/format";
 import { ModuleTab } from "./ModuleTab";
+import { useAuth } from "../../../auth/AuthContext";
+import { AsrPanel } from "../security/AsrPanel";
+import { CfaPanel } from "../security/CfaPanel";
+import { EventsPanel } from "../security/EventsPanel";
+import { ExclusionsPanel } from "../security/ExclusionsPanel";
+import { ProtectionPanel } from "../security/ProtectionPanel";
+import { ScansPanel } from "../security/ScansPanel";
+import { ThreatsPanel } from "../security/ThreatsPanel";
+import { TAMPER_NOTE } from "../security/text";
 
 const FINISHED = new Set(["succeeded", "failed", "timed_out", "canceled", "expired", "lost"]);
 
@@ -39,8 +48,13 @@ function age(days: number | null): string {
   return days === 0 ? "Today" : days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
-/** The device page's "Security" tab: the Defender module (ADR-0074), read-only for now. */
+/** The device page's "Security" tab: the Defender module (ADR-0074), one panel per area, each read on request. */
 export function SecurityTab({ device }: { device: Device }) {
+  const { canAt } = useAuth();
+  const scope = { organizationId: device.organizationId, siteId: device.siteId };
+  const canManage = canAt("defender.manage", scope);
+  const canWeaken = canAt("defender.weaken", scope);
+  const canSeeSensitive = canAt("defender.view_sensitive", scope);
   const [runId, setRunId] = useState<string | null>(null);
   const start = useApiMutation((_: void) =>
     api.post<WinmodRun>(`/devices/${device.id}/winmod/defender.status`, {}),
@@ -80,6 +94,12 @@ export function SecurityTab({ device }: { device: Device }) {
               })}
             />
           </Card>
+          <Card title="Tamper Protection">
+            <p className="text-sm text-muted">
+              {status.tamperProtected === null ? "The computer does not say whether Tamper Protection is on. " : status.tamperProtected ? "Tamper Protection is on. " : "Tamper Protection is off. "}
+              It is shown here and not changed here. {TAMPER_NOTE}
+            </p>
+          </Card>
           <Card title="Engine and signatures">
             <KeyValueList
               items={[
@@ -100,6 +120,13 @@ export function SecurityTab({ device }: { device: Device }) {
           </Card>
         </>
       )}
+      {canManage && <ScansPanel device={device} />}
+      <ProtectionPanel device={device} canManage={canManage} canWeaken={canWeaken} />
+      <AsrPanel device={device} canManage={canManage} canWeaken={canWeaken} />
+      <CfaPanel device={device} canManage={canManage} canWeaken={canWeaken} />
+      {canSeeSensitive && <ExclusionsPanel device={device} canWeaken={canWeaken} canSeeSensitive={canSeeSensitive} />}
+      <ThreatsPanel device={device} canManage={canManage} canWeaken={canWeaken} canSeeSensitive={canSeeSensitive} />
+      <EventsPanel device={device} />
     </ModuleTab>
   );
 }

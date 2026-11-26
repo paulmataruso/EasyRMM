@@ -167,8 +167,8 @@ func TestDefaultPoliciesAreCreatedOnce(t *testing.T) {
 	}
 	f.evaluate()
 	f.evaluate()
-	if n := count(f.acme); n != 4 {
-		t.Errorf("%d default policies after two evaluations, want 4", n)
+	if n := count(f.acme); n != 13 {
+		t.Errorf("%d default policies after two evaluations, want 13 (ADR-0074: thirteen rows, twelve kinds)", n)
 	}
 	if n := count(f.globex); n != 0 {
 		t.Errorf("an organization with no Defender computer has %d defaults", n)
@@ -189,8 +189,8 @@ func TestDefaultPoliciesAreCreatedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.evaluate()
-	if n := count(f.acme); n != 4 {
-		t.Errorf("%d default policies after off and on, want 4", n)
+	if n := count(f.acme); n != 13 {
+		t.Errorf("%d default policies after off and on, want 13 (ADR-0074: thirteen rows, twelve kinds)", n)
 	}
 	if got := f.str(`SELECT enabled::text FROM alert_policies WHERE default_key = 'tamper_off'`); got != "false" {
 		t.Errorf("re-enabling the module turned a default back on (%s)", got)

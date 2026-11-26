@@ -39,6 +39,8 @@ export type Permission =
   | "log.view"
   | "defender.view"
   | "defender.manage"
+  | "defender.view_sensitive"
+  | "defender.weaken"
   | "ad.view"
   | "ad.manage"
   | "ad.reset_password"

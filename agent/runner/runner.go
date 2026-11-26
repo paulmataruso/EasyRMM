@@ -187,6 +187,9 @@ type Runner struct {
 	// only where the server's last answer allowed it.
 	Defender  DefenderManager
 	Installed InstalledReporter
+	// DefenderLog reads Defender's event log for the server (ADR-0074); nil
+	// reads none. It runs only where the server's last answer said Events.
+	DefenderLog DefenderLogReader
 	// Roles detects the Windows roles reported with each heartbeat
 	// (ADR-0073); nil reports none.
 	Roles RoleScanner

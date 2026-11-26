@@ -42,9 +42,15 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		return nil, err
 	}
 	var (
-		before string
-		rescan bool
+		before   string
+		rescan   bool
+		logOn    bool
+		logAck   *agentproto.DefenderLogAck
+		logBatch = req.DefenderLog
 	)
+	if logBatch != nil && logBatch.Check() != nil {
+		logBatch = nil
+	}
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, '') FROM devices WHERE id = $1`, d.ID).Scan(&before)
 		// The name follows the hostname until someone renames the device.
@@ -66,6 +72,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 			if err := s.storeDefender(ctx, tx, d, f.hostname, ip, report); err != nil {
 				return err
 			}
+			logOn, logAck = s.storeDefenderLog(ctx, tx, d, logBatch)
 		}
 		// Like the update, the roles are an extra: a failure to store them
 		// never fails the heartbeat.
@@ -131,7 +138,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		JobKey:           s.jobKey,
 		Update:           update,
 		Uninstall:        uninstall,
-		Defender:         &agentproto.DefenderPolicy{Enabled: allowed},
+		Defender:         &agentproto.DefenderPolicy{Enabled: allowed, Events: logOn, EventsAck: logAck},
 		RescanRoles:      rescan,
 	}, nil
 }
