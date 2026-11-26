@@ -50,6 +50,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	}
 	r("GET /api/v1/quickassist/settings", a.getSettings)
 	r("PUT /api/v1/quickassist/settings", a.putSettings)
+	r("PUT /api/v1/quickassist/settings/default-life", a.putDefaultLife)
 	r("GET /api/v1/quickassist/waiting", a.waiting)
 	r("GET /api/v1/organizations/{id}/quickassist/links", a.listLinks)
 	r("POST /api/v1/organizations/{id}/quickassist/links", a.createLink)
@@ -67,7 +68,8 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 type modeBody struct {
-	Mode string `json:"mode"`
+	Mode               string `json:"mode"`
+	DefaultLifeMinutes int    `json:"defaultLifeMinutes,omitempty"`
 }
 
 func (a *API) getSettings(w http.ResponseWriter, r *http.Request) error {
@@ -75,7 +77,26 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, modeBody{Mode: m})
+	life, err := a.svc.DefaultLife(r.Context())
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, modeBody{Mode: m, DefaultLifeMinutes: int(life / time.Minute)})
+	return nil
+}
+
+// putDefaultLife sets the default lifetime of a new one-time link, for the whole app.
+func (a *API) putDefaultLife(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Minutes int `json:"minutes"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	if err := a.svc.SetDefaultLife(r.Context(), httpapi.Caller(r), in.Minutes); err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, in)
 	return nil
 }
 

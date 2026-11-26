@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, LifeBuoy, X } from "lucide-react";
+import { Check, Copy, LifeBuoy, Plus, X } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useOrganizations } from "../../api/hooks";
 import type { NewQuickAssistLink, QuickAssistLink, QuickAssistSession } from "../../api/types";
@@ -44,6 +44,7 @@ export function QuickAssistPage() {
   const view: View = VIEWS.includes(requested as View) ? (requested as View) : "requests";
   const list = orgs.data?.items ?? [];
   const org = url.get("organizationId") || list[0]?.id || "";
+  const [made, setMade] = useState<NewQuickAssistLink | null>(null);
 
   return (
     <>
@@ -51,17 +52,21 @@ export function QuickAssistPage() {
         title="Quick Assist"
         subtitle="Help a person whose computer is not enrolled: they open a link, read you a code, and you accept the request here. Nothing is installed, and the program removes itself when the session ends."
         actions={
-          list.length > 1 && (
-            <SelectField label="Organization" value={org} onChange={(e) => url.set({ organizationId: e.target.value })}>
-              {list.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </SelectField>
-          )
+          <>
+            {list.length > 1 && (
+              <SelectField label="Organization" value={org} onChange={(e) => url.set({ organizationId: e.target.value })}>
+                {list.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </SelectField>
+            )}
+            {org && <NewLinkButtons org={org} onMade={setMade} />}
+          </>
         }
       />
+      {made && <MadeDialog made={made} onClose={() => setMade(null)} />}
       {!can("quickassist.view") ? (
         <EmptyState title="Not available to your role" icon={<LifeBuoy className="size-8" aria-hidden />}>
           Quick Assist needs the permission to view it.
@@ -233,8 +238,6 @@ function Links({ org }: { org: string }) {
   const { can } = useAuth();
   const q = useApi<{ links: QuickAssistLink[] }>(`/organizations/${org}/quickassist/links`);
   const mode = useApi<{ mode: "own_test" | "open" }>("/quickassist/settings");
-  const [creating, setCreating] = useState(false);
-  const [made, setMade] = useState<NewQuickAssistLink | null>(null);
   const toast = useToast();
   const inval = ["/organizations", "/quickassist"];
   const revoke = useApiMutation((l: QuickAssistLink) => api.post(`/quickassist/links/${l.id}/revoke`), { invalidate: inval, onSuccess: () => toast.success("Link revoked.") });
@@ -252,13 +255,6 @@ function Links({ org }: { org: string }) {
       <Card
         padded={false}
         title={plural(links.length, "link")}
-        actions={
-          can("quickassist.link.create") && (
-            <Button size="sm" onClick={() => setCreating(true)}>
-              New link
-            </Button>
-          )
-        }
       >
         {links.length === 0 ? (
           <EmptyState title="No links yet" icon={<LifeBuoy className="size-8" aria-hidden />} compact>
@@ -304,54 +300,37 @@ function Links({ org }: { org: string }) {
           </TableWrap>
         )}
       </Card>
-      {creating && (
-        <NewLinkDialog
-          org={org}
-          permanentAllowed={mode.data?.mode === "open" && can("quickassist.link.permanent")}
-          onClose={() => setCreating(false)}
-          onMade={(m) => {
-            setCreating(false);
-            setMade(m);
-          }}
-        />
-      )}
-      {made && <MadeDialog made={made} onClose={() => setMade(null)} />}
     </>
   );
 }
 
-function NewLinkDialog({ org, permanentAllowed, onClose, onMade }: { org: string; permanentAllowed: boolean; onClose: () => void; onMade: (m: NewQuickAssistLink) => void }) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<"one_time" | "permanent">("one_time");
-  const create = useApiMutation((v: { name: string; kind: string }) => api.post<NewQuickAssistLink>(`/organizations/${org}/quickassist/links`, v), {
+/**
+ * One click makes a link (no name asked for: the server names it) and shows it. A permanent link, only while the link
+ * mode is open and for those who may make one, has its own button; the server asks for the second factor.
+ */
+function NewLinkButtons({ org, onMade }: { org: string; onMade: (m: NewQuickAssistLink) => void }) {
+  const { can } = useAuth();
+  const mode = useApi<{ mode: "own_test" | "open" }>("/quickassist/settings");
+  const make = useApiMutation((kind: "one_time" | "permanent") => api.post<NewQuickAssistLink>(`/organizations/${org}/quickassist/links`, { kind }), {
     invalidate: ["/quickassist", "/organizations"],
     onSuccess: onMade,
   });
+  const toast = useToast();
+  useEffect(() => {
+    if (make.error) toast.error(make.error instanceof Error ? make.error.message : "The link could not be made.");
+  }, [make.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!can("quickassist.link.create")) return null;
   return (
-    <Dialog open onClose={onClose} title="New Quick Assist link" description="The link works once, for 24 hours. You will see it only now.">
-      <form
-        className="space-y-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate({ name, kind });
-        }}
-      >
-        <TextField label="Name the user sees" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
-        <SelectField label="Kind" value={kind} onChange={(e) => setKind(e.target.value as "one_time" | "permanent")}>
-          <option value="one_time">One-time (24 hours)</option>
-          {permanentAllowed && <option value="permanent">Permanent (needs a second factor)</option>}
-        </SelectField>
-        {create.error && <InlineError error={create.error} />}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={create.isPending}>
-            Make link
-          </Button>
-        </div>
-      </form>
-    </Dialog>
+    <>
+      <Button onClick={() => make.mutate("one_time")} disabled={make.isPending}>
+        <Plus className="size-4" aria-hidden /> New link
+      </Button>
+      {mode.data?.mode === "open" && can("quickassist.link.permanent") && (
+        <Button variant="secondary" onClick={() => make.mutate("permanent")} disabled={make.isPending}>
+          New permanent link
+        </Button>
+      )}
+    </>
   );
 }
 
@@ -362,6 +341,7 @@ function MadeDialog({ made, onClose }: { made: NewQuickAssistLink; onClose: () =
   return (
     <Dialog open onClose={onClose} title="Send this link to the user" description="It is shown once. Stay on the phone: they will read you a six-digit code." size="lg">
       <div className="space-y-3">
+        <p className="text-sm text-muted">{made.link.expiresAt ? `Works once, until ${formatDateTime(made.link.expiresAt)}.` : "A permanent link: it does not expire."}</p>
         <input readOnly aria-label="Link" className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-sm" value={full} onFocus={(e) => e.currentTarget.select()} />
         <div className="flex justify-end gap-2">
           <Button
