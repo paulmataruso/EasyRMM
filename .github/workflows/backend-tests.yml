@@ -87,6 +87,12 @@ jobs:
       # reader's (ADR-0054), as the runner's administrator.
       - name: Windows software and hardening scripts
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/ ./internal/winpolicy/
+      # ADR-0073: defender.status's pinned script runs in Windows PowerShell on
+      # stdin params, and its output is decoded by the catalogue's schema.
+      # The runner's Defender may be in any state: the test logs what it says
+      # (-v) and accepts module_missing, so the job summary records it.
+      - name: Windows module scripts (defender.status)
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/winmod/...
       # ADR-0065: the disk reader on the runner's disks, through the same
       # IOCTLs the agent sends. They are Azure virtual disks: NVMe ones,
       # which the NVMe path reads, or, on some runners, Hyper-V's virtual

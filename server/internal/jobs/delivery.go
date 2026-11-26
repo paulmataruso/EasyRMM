@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -150,7 +151,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 			UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1
 			FROM due, jobs j
 			WHERE r.id = due.id AND j.id = r.job_id
-			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback, j.params`,
+			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback, j.params, j.winmod`,
 			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs, accepts)
 		if err != nil {
 			return err
@@ -158,6 +159,8 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		var (
 			payloads []agentproto.JobPayload
 			runIDs   []uuid.UUID
+			// winmods holds each payload's winmod record, nil for other kinds.
+			winmods []json.RawMessage
 		)
 		for rows.Next() {
 			var (
@@ -165,14 +168,15 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 				runID, jobID   uuid.UUID
 				expires        time.Time
 				timeoutSeconds int
+				wm             json.RawMessage
 			)
-			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback, &p.Params); err != nil {
+			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback, &p.Params, &wm); err != nil {
 				rows.Close()
 				return err
 			}
 			p.V, p.RunID, p.JobID, p.DeviceID = agentproto.JobPayloadVersion, runID.String(), jobID.String(), device.String()
 			p.TimeoutSeconds, p.IssuedAt, p.ExpiresAt = timeoutSeconds, now, expires.UTC()
-			payloads, runIDs = append(payloads, p), append(runIDs, runID)
+			payloads, runIDs, winmods = append(payloads, p), append(runIDs, runID), append(winmods, wm)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -182,8 +186,30 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		if err != nil {
 			return err
 		}
-		for _, p := range payloads {
+		for i, p := range payloads {
 			p.Args = args[p.RunID]
+			if len(winmods) > i && len(winmods[i]) > 0 {
+				// A winmod job's script is checked against its pin and its
+				// secrets are placed in the params, for this delivery only.
+				jobID, _ := uuid.Parse(p.JobID)
+				switch err := s.winmodDeliver(ctx, tx, jobID, &p, winmods[i]); {
+				case err == nil:
+				case errors.Is(err, errSecretGone):
+					if err := refuseDelivery(ctx, tx, uuid.MustParse(p.RunID), StatusExpired,
+						"The request's secret was already delivered or has expired. Ask for the action again."); err != nil {
+						return err
+					}
+					continue
+				case errors.Is(err, errWinmodPin):
+					s.log.Error("jobs: a winmod script does not match its pinned hash; the run was not sent", "run", p.RunID)
+					if err := refuseDelivery(ctx, tx, uuid.MustParse(p.RunID), StatusFailed, "The script does not match the hash the job pinned, so it was not sent."); err != nil {
+						return err
+					}
+					continue
+				default:
+					return err
+				}
+			}
 			signed, err := agentproto.SignJob(s.key, p)
 			if err != nil {
 				return err
@@ -339,6 +365,12 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started,
 			p.edition, p.version, p.arch, p.path, p.fallback).
 			Scan(&job, &ran)
+		if err == nil {
+			// A winmod run's result is kept typed, not as text (ADR-0073).
+			if handled, herr := s.recordWinmod(ctx, tx, device, run, in.Status, stdout); handled || herr != nil {
+				return herr
+			}
+		}
 		switch {
 		case err == nil && in.Status == StatusSucceeded:
 			// A hardening run's result is kept per module (ADR-0051).

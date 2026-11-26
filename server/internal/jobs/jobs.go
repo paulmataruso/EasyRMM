@@ -337,6 +337,13 @@ type spec struct {
 	// audit gets its hash, never its content.
 	params  json.RawMessage
 	timeout int
+	// winmod is a winmod job's record (ADR-0073); such a job is hidden from
+	// the Jobs list and expires after ttl, not after the wait in hours.
+	winmod json.RawMessage
+	ttl    time.Duration
+	// inserted runs in the job's transaction after its runs are written:
+	// a winmod job seals its secrets there.
+	inserted func(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, expires time.Time) error
 	// auditAction and details describe each run in the audit log, with the
 	// device, job, script hash and timeout added.
 	auditAction string
@@ -369,6 +376,9 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		}
 		now := s.now()
 		expires := now.Add(time.Duration(wait) * time.Hour)
+		if sp.ttl > 0 {
+			expires = now.Add(sp.ttl)
+		}
 		sum := sha256.Sum256([]byte(sp.body))
 		requires := agentproto.ShellRequires(sp.shell)
 		var params, paramsSum []byte
@@ -382,11 +392,11 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
 				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires,
-				params, params_sha256)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+				params, params_sha256, winmod, hidden)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
 			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening, sp.pwshFallback,
-			requires, params, paramsSum); err != nil {
+			requires, params, paramsSum, nullJSON(sp.winmod), sp.kind == KindWinmod); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -412,13 +422,26 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 				return err
 			}
 		}
+		if sp.inserted != nil {
+			if err := sp.inserted(ctx, tx, jobID, expires); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	s.hub.notify(ids...)
-	return s.GetJob(ctx, c, jobID)
+	return s.getJob(ctx, c, jobID, sp.kind == KindWinmod)
+}
+
+// nullJSON is NULL for an empty document.
+func nullJSON(b json.RawMessage) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return []byte(b)
 }
 
 // rule is who may start a job on which devices.
@@ -608,7 +631,7 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 		return nil, apperr.Invalid("status", "Use open or finished.")
 	}
 	switch q.Kind {
-	case "", KindScript, KindSoftware, KindHardening:
+	case "", KindScript, KindSoftware, KindHardening, KindWinmod:
 	default:
 		return nil, apperr.Invalid("kind", "Use script, software or hardening.")
 	}
@@ -633,9 +656,10 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			  AND ($7 = '' OR j.kind = $7)
 			  AND ($8::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r JOIN devices rd ON rd.id = r.device_id
 			        WHERE r.job_id = j.id AND rd.device_group_id = $8))
+			  AND (NOT j.hidden OR $9)
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
 			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind,
-			nullUUID(q.GroupID))
+			nullUUID(q.GroupID), q.Kind == KindWinmod && c.CanAnywhere(rbac.PermJobViewSensitive))
 		if err != nil {
 			return err
 		}
@@ -691,12 +715,17 @@ func canCancelAny(c access.Caller, pairs []string) bool {
 
 // GetJob returns a job with its script and the runs the caller can see.
 func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*Job, error) {
+	return s.getJob(ctx, c, id, c.CanAnywhere(rbac.PermJobViewSensitive))
+}
+
+// getJob is GetJob; a hidden job (winmod) is found only when showHidden.
+func (s *Service) getJob(ctx context.Context, c access.Caller, id uuid.UUID, showHidden bool) (*Job, error) {
 	var j *Job
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		var body string
 		var err error
 		detail := &JobDetail{}
-		j, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+`, j.body, j.arg_count FROM jobs j WHERE j.id = $1`, id), &body, &detail.ArgCount)
+		j, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+`, j.body, j.arg_count FROM jobs j WHERE j.id = $1 AND (NOT j.hidden OR $2)`, id, showHidden), &body, &detail.ArgCount)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
@@ -770,7 +799,7 @@ func (s *Service) ListRuns(ctx context.Context, c access.Caller, q RunQuery) ([]
 	}
 	out := []*Run{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE ($1::uuid IS NULL OR r.device_id = $1) AND ($3 = '' OR j.kind = $3)
+		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE ($1::uuid IS NULL OR r.device_id = $1) AND ($3 = '' OR j.kind = $3) AND NOT j.hidden
 			  AND ($4::uuid IS NULL OR r.device_id IN (SELECT gd.id FROM devices gd WHERE gd.device_group_id = $4))
 			ORDER BY r.created_at DESC, r.id LIMIT $2`,
 			nullUUID(q.DeviceID), MaxList, q.Kind, nullUUID(q.GroupID))
@@ -819,7 +848,7 @@ func (s *Service) GetRun(ctx context.Context, c access.Caller, id uuid.UUID) (*R
 		return nil, err
 	}
 	at := rbac.Site(r.OrganizationID, r.SiteID)
-	if !c.Can(rbac.PermJobView, at) {
+	if !c.Can(rbac.PermJobView, at) || (r.Job.Kind == KindWinmod && !c.Can(rbac.PermJobViewSensitive, at)) {
 		return nil, apperr.NotFound()
 	}
 	s.decorateRun(c, r)

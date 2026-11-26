@@ -55,6 +55,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/jobs/software", a.createSoftwareJob)
 	r("POST /api/v1/jobs/hardening", a.createHardeningJob)
 	r("GET /api/v1/devices/{id}/hardening", a.deviceHardening)
+	r("POST /api/v1/devices/{id}/winmod/{action}", a.runWinmod)
+	r("GET /api/v1/winmod/runs/{id}", a.winmodResult)
 	r("GET /api/v1/jobs/{id}", a.getJob)
 	r("GET /api/v1/jobs/{id}/arguments", a.jobArguments)
 	r("GET /api/v1/jobs/{id}/output.zip", a.jobOutputZip)
@@ -219,6 +221,38 @@ func (a *API) createHardeningJob(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusCreated, j)
+	return nil
+}
+
+// runWinmod starts one action of a Windows management module (ADR-0073).
+func (a *API) runWinmod(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	in := jobs.WinmodInput{DeviceID: id, Action: r.PathValue("action")}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	run, err := a.svc.RunWinmod(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+// winmodResult returns a winmod run's typed result.
+func (a *API) winmodResult(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	res, err := a.svc.ReadWinmodResult(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, res)
 	return nil
 }
 

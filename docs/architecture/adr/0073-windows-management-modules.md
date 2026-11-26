@@ -615,6 +615,36 @@ Amended 2026-11-26 (decided in review, while building slices 1 and 2):
   catalogue lint that fails a dispatch without `modules.Allowed` waits for
   slice 5, the first code that dispatches.
 
+Amended 2026-11-26 (decided in review, while building slice 5):
+
+* A `winmod` job has exactly one device, because its secret is delivered
+  once. The shell decides the platform (`ShellPlatforms`), so a test catalogue
+  can run `sh` scripts on Linux; every real action is PowerShell.
+* The typed result is stored in `winmod_run_results` (one row per run, with
+  the organization's read policy), not in a column of `job_runs`, so the run
+  table's column grants stay as they are. The job row cannot be updated by
+  the server's role, so retention **deletes the whole winmod job** (runs,
+  params, result) after its action's `Keep`, rather than blanking it and
+  leaving a compact run row; the audit rows are the record that remains.
+* A job whose request held a secret keeps **no raw output at all** and a
+  generic error text: the server cannot remove the secret's value from output
+  after delivery, because it has deleted it. Other jobs keep raw output only
+  when their result was not a valid typed result.
+* A winmod job waits 30 minutes for its computer, 10 with a secret; a run
+  whose secret is gone at delivery (redelivery after a lost response, or
+  expiry) ends as `expired`.
+* `winmod_job_secrets` and `winmod_run_results` are in migration 00054;
+  `windows_module_settings` was slice 2's and `windows_module_snapshots` is
+  slice 6's.
+* The API is `POST /api/v1/devices/{id}/winmod/{action}` (202, the run) and
+  `GET /api/v1/winmod/runs/{id}` (the typed result, which needs the action's
+  permission and, for a sensitive action, its `SensitivePermission`). Step-up
+  and confirmation are checked in the service, after the permission and the
+  module gate, so a refusal confirms nothing to a caller without access.
+* A `winmod` job is found by `kind=winmod` only by a caller with
+  `job.view_sensitive`, whose job page shows the compact row and the pinned
+  script, never params.
+
 ## References
 
 * `agent/jobs/worker.go`, `server/internal/jobs/hardening.go` and `key.go`.

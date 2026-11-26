@@ -48,6 +48,8 @@ floors=(
   "server/internal/devices                 88"
   # Scripts and jobs, inventory, monitoring and alerts, and their APIs.
   "server/internal/jobs                    85"
+  # The Windows management modules' catalog, parameter checks and results (ADR-0073).
+  "server/internal/winmod                  90"
   # Windows hardening (ADR-0054): the ownership reader's package and the
   # related-controls tables, their generator and extraction.
   "internal/winpolicy                      95"

@@ -9,3 +9,6 @@
 *.woff2 binary
 go.sum linguist-generated=true
 web/package-lock.json linguist-generated=true
+# ADR-0073: a module script is pinned by the SHA-256 of its bytes, so it is
+# checked out the same on every platform.
+server/internal/winmod/**/*.ps1 text eol=lf
