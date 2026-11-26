@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the agent's LUKS escrow tests (agent/escrow, ADR-0081) against real LUKS volumes: file-backed loop devices,
+# Runs the agent's LUKS escrow tests (agent/escrow/cryptsetup, ADR-0081) against real LUKS volumes: file-backed loop devices,
 # inside a privileged throwaway container with host networking, removed afterwards. Needs Docker, root-capable
 # Docker, a kernel with loop devices and dm-crypt, and network for the image's packages.
 #
@@ -12,7 +12,7 @@ work="$(mktemp -d /var/tmp/luks-test.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
 # A static binary runs in any image.
-(cd "$root" && CGO_ENABLED=0 go test -c -o "$work/escrow.test" ./agent/escrow)
+(cd "$root" && CGO_ENABLED=0 go test -c -o "$work/cryptsetup.test" ./agent/escrow/cryptsetup)
 
 docker run --rm --privileged --network host -v "$work:/t:ro" -e EASYRMM_LUKS_TEST=1 "$image" sh -c '
   set -e
@@ -25,5 +25,5 @@ docker run --rm --privileged --network host -v "$work:/t:ro" -e EASYRMM_LUKS_TES
   # A container'"'"'s /dev only has the loop nodes that existed when it started.
   for i in $(seq 0 63); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i; done
   cd /tmp
-  /t/escrow.test -test.v -test.run "Real" -test.count=1
+  /t/cryptsetup.test -test.v -test.run "Real" -test.count=1
 '

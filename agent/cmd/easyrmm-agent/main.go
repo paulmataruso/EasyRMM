@@ -34,6 +34,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/easypatch"
 	"github.com/paulmataruso/easyrmm/agent/escrow"
+	"github.com/paulmataruso/easyrmm/agent/escrow/cryptsetup"
 	"github.com/paulmataruso/easyrmm/agent/hardware"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
@@ -472,7 +473,7 @@ func (e *env) run(ctx context.Context) error {
 		r.Roles = &roles.Scanner{Read: roles.Read}
 		// BitLocker recovery keys are escrowed only with the escrow key the
 		// server's heartbeat answer carries (ADR-0081).
-		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, LUKS: escrow.SystemLUKS(), Server: c, Store: e.store, Log: e.log}
+		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, LUKS: cryptsetup.System(), Server: c, Store: e.store, Log: e.log}
 	}
 	var mesh *meshagent.Manager
 	var ship *logship.Shipper

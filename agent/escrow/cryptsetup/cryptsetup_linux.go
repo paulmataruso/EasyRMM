@@ -1,6 +1,9 @@
 //go:build linux
 
-package escrow
+// Package cryptsetup is the Linux LUKS backend of the agent's escrow (ADR-0081 section 5): it runs
+// cryptsetup in the agent's own process, with a key only ever on standard input. Its tests run against real LUKS
+// volumes on loop devices (scripts/ci/luks-test.sh) and are skipped elsewhere, so it has no coverage floor.
+package cryptsetup
 
 import (
 	"bufio"
@@ -22,12 +25,13 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/paulmataruso/easyrmm/agent/escrow"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/internal/escrowcrypto"
 )
 
 // TokenType is the LUKS2 token type that marks a key slot as EasyRMM's.
-const TokenType = "easyrmm-escrow"
+const TokenType = "easyrmm-escrow" //nolint:gosec // the name of a token type, not a credential
 
 // Cryptsetup is the Linux LUKS backend: it runs cryptsetup in the agent's own
 // process. A key is only ever written to a command's standard input, never to
@@ -41,8 +45,8 @@ type Cryptsetup struct {
 	Meminfo string
 }
 
-// SystemLUKS is the LUKS backend of this platform.
-func SystemLUKS() LUKS { return &Cryptsetup{} }
+// System is the LUKS backend of this platform.
+func System() escrow.LUKS { return &Cryptsetup{} }
 
 func (c *Cryptsetup) bin() string      { return orDefault(c.Bin, "cryptsetup") }
 func (c *Cryptsetup) lsblk() string    { return orDefault(c.Lsblk, "lsblk") }
@@ -74,7 +78,7 @@ func (c *Cryptsetup) run(ctx context.Context, bin string, stdin []byte, args ...
 	cmd.Stdout, cmd.Stderr = &out, &limited{b: &errb, max: 2048}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return nil, ErrUnsupported
+			return nil, escrow.ErrUnsupported
 		}
 		first, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
 		return nil, fmt.Errorf("%s %s: %w: %s", filepath.Base(bin), firstArg(args), err, first)
@@ -184,7 +188,7 @@ type luksInfo struct {
 	state    string
 	reason   string
 	unlock   []string // the arguments that unlock the volume by itself
-	ourSlots []LUKSSlot
+	ourSlots []escrow.LUKSSlot
 }
 
 var escrowIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -235,7 +239,7 @@ func slotHash(raw json.RawMessage) string {
 func (c *Cryptsetup) inspect(ctx context.Context, d luksDevice) (*luksInfo, error) {
 	info := &luksInfo{dev: d, version: 2}
 	if _, err := c.run(ctx, c.bin(), nil, "isLuks", "--type", "luks2", d.path); err != nil {
-		if errors.Is(err, ErrUnsupported) {
+		if errors.Is(err, escrow.ErrUnsupported) {
 			return nil, err
 		}
 		info.version = 1
@@ -251,7 +255,7 @@ func (c *Cryptsetup) inspect(ctx context.Context, d luksDevice) (*luksInfo, erro
 	for _, t := range toks {
 		if t.Type == TokenType && escrowIDRe.MatchString(t.EscrowID) && len(t.Keyslots) == 1 {
 			if raw, ok := slots[t.Keyslots[0]]; ok {
-				info.ourSlots = append(info.ourSlots, LUKSSlot{TokenID: t.EscrowID, Hash: slotHash(raw)})
+				info.ourSlots = append(info.ourSlots, escrow.LUKSSlot{TokenID: t.EscrowID, Hash: slotHash(raw)})
 			}
 		}
 	}
@@ -336,12 +340,12 @@ func matchesDevice(spec string, d luksDevice) bool {
 }
 
 // Volumes lists the LUKS volumes and what the agent can do with each.
-func (c *Cryptsetup) Volumes(ctx context.Context) ([]LUKSVolume, error) {
+func (c *Cryptsetup) Volumes(ctx context.Context) ([]escrow.LUKSVolume, error) {
 	devs, err := c.devices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := []LUKSVolume{}
+	out := []escrow.LUKSVolume{}
 	seen := map[string]bool{}
 	for _, d := range devs {
 		if seen[d.uuid] {
@@ -350,7 +354,7 @@ func (c *Cryptsetup) Volumes(ctx context.Context) ([]LUKSVolume, error) {
 		seen[d.uuid] = true
 		info, err := c.inspect(ctx, d)
 		if err != nil {
-			if errors.Is(err, ErrUnsupported) {
+			if errors.Is(err, escrow.ErrUnsupported) {
 				return nil, err
 			}
 			continue // a volume that cannot be read is not reported
@@ -362,7 +366,7 @@ func (c *Cryptsetup) Volumes(ctx context.Context) ([]LUKSVolume, error) {
 		if len(mount) > 64 {
 			mount = mount[len(mount)-64:]
 		}
-		out = append(out, LUKSVolume{UUID: d.uuid, Mount: mount, Version: info.version, State: info.state, Reason: info.reason, Slots: info.ourSlots})
+		out = append(out, escrow.LUKSVolume{UUID: d.uuid, Mount: mount, Version: info.version, State: info.state, Reason: info.reason, Slots: info.ourSlots})
 	}
 	return out, nil
 }
@@ -377,7 +381,7 @@ func (c *Cryptsetup) find(ctx context.Context, volume string) (*luksInfo, error)
 			return c.inspect(ctx, d)
 		}
 	}
-	return nil, ErrUnknownVolume
+	return nil, escrow.ErrUnknownVolume
 }
 
 // argonMemoryKiB is the Argon2id memory cost for a new slot: a quarter of what is
@@ -401,16 +405,16 @@ func (c *Cryptsetup) argonMemoryKiB() int {
 // and tests it. The passphrase goes to cryptsetup on standard input only. If
 // anything after the slot exists fails, the slot is removed again with the same
 // unlock that added it.
-func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (LUKSSlot, error) {
+func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (escrow.LUKSSlot, error) {
 	if _, err := escrowcrypto.NormalizeLUKSBytes(pass); err != nil {
-		return LUKSSlot{}, errors.New("escrow: the passphrase is not one the agent makes")
+		return escrow.LUKSSlot{}, errors.New("escrow: the passphrase is not one the agent makes")
 	}
 	info, err := c.find(ctx, volume)
 	if err != nil {
-		return LUKSSlot{}, err
+		return escrow.LUKSSlot{}, err
 	}
 	if info.state != agentproto.LUKSEscrowable {
-		return LUKSSlot{}, ErrCannotUnlock
+		return escrow.LUKSSlot{}, escrow.ErrCannotUnlock
 	}
 	before := map[string]bool{}
 	for id := range info.slots {
@@ -419,11 +423,11 @@ func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (L
 	args := []string{"luksAddKey", "--batch-mode", "--pbkdf", "argon2id", "--pbkdf-memory", strconv.Itoa(c.argonMemoryKiB()), "--pbkdf-parallel", "1"}
 	args = append(append(args, info.unlock...), info.dev.path, "-")
 	if _, err := c.run(ctx, c.bin(), pass, args...); err != nil {
-		return LUKSSlot{}, err
+		return escrow.LUKSSlot{}, err
 	}
 	slots, _, err := c.dump(ctx, info.dev.path)
 	if err != nil {
-		return LUKSSlot{}, err
+		return escrow.LUKSSlot{}, err
 	}
 	var added []string
 	for id := range slots {
@@ -432,7 +436,7 @@ func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (L
 		}
 	}
 	// rollback removes what this call added, with the unlock that added it.
-	rollback := func(cause error, token string) (LUKSSlot, error) {
+	rollback := func(cause error, token string) (escrow.LUKSSlot, error) {
 		rctx, stop := context.WithTimeout(context.WithoutCancel(ctx), cmdTimeout)
 		defer stop()
 		if token != "" {
@@ -441,7 +445,7 @@ func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (L
 		for _, s := range added {
 			_, _ = c.run(rctx, c.bin(), nil, append(append([]string{"luksKillSlot", "--batch-mode"}, info.unlock...), info.dev.path, s)...)
 		}
-		return LUKSSlot{}, cause
+		return escrow.LUKSSlot{}, cause
 	}
 	if len(added) != 1 {
 		return rollback(errors.New("escrow: cryptsetup did not add exactly one key slot"), "")
@@ -473,7 +477,7 @@ func (c *Cryptsetup) AddSlot(ctx context.Context, volume string, pass []byte) (L
 	if err != nil || slots[slot] == nil {
 		return rollback(errors.New("escrow: the new key slot is not in the header"), tokenNum)
 	}
-	return LUKSSlot{TokenID: id, Hash: slotHash(slots[slot])}, nil
+	return escrow.LUKSSlot{TokenID: id, Hash: slotHash(slots[slot])}, nil
 }
 
 // RemoveSlot removes one of the agent's key slots. Never the last slot, never a
@@ -491,19 +495,19 @@ func (c *Cryptsetup) RemoveSlot(ctx context.Context, volume, tokenID string) err
 		}
 	}
 	if tok == nil || len(tok.Keyslots) != 1 || info.slots[tok.Keyslots[0]] == nil {
-		return ErrNotOurSlot
+		return escrow.ErrNotOurSlot
 	}
 	slot := tok.Keyslots[0]
 	if len(info.slots) < 2 {
-		return ErrLastSlot
+		return escrow.ErrLastSlot
 	}
 	for _, t := range info.tokens {
 		if t.ID != tok.ID && slices.Contains(t.Keyslots, slot) {
-			return ErrSharedSlot
+			return escrow.ErrSharedSlot
 		}
 	}
 	if info.state != agentproto.LUKSEscrowable {
-		return ErrCannotUnlock
+		return escrow.ErrCannotUnlock
 	}
 	args := append(append([]string{"luksKillSlot", "--batch-mode"}, info.unlock...), info.dev.path, slot)
 	if _, err := c.run(ctx, c.bin(), nil, args...); err != nil {

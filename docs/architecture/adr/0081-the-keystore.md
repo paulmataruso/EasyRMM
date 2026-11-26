@@ -731,12 +731,74 @@ Amended 2026-11-26 (decided in review, while building slice 2):
   than 15 minutes, unreachable, file mode, TPM policy changed, recovery not
   verified, a KEK version overdue and the rotation alerts wait for the slices
   that have those events (or a monitor), and an alert is resolved by a person
-  in the database until the console gets a control for it.
+  in the database until the console gets a control for it (slice 3 added the
+  monitor, the control and the pages: see its amendment below).
 * **Notices** are a row per read (`keystore_notices`, shown to administrators
   of the organization and super administrators) and a mail to each of them
   through ADR-0053's sender when one is in force; the dev-scope guard is
   checked before the mail.
 * **Rotation after a read** (section 6) is slice 4, as the slice list says.
+
+Amended 2026-11-26 (decided in review, while building slice 3):
+
+* **Condition alerts and the control to resolve one.** The server checks the
+  keystore's status every minute (`keystore.Monitor`) and raises, into
+  `keystore_alerts`: *unreachable* (critical, after three failed checks in a
+  row, so a restart is not an alert), *sealed* for more than 15 minutes
+  (critical), *TPM policy changed* (critical), *protection mode file*
+  (warning), *recovery not verified* (warning: no version proved, or a pending
+  version older than a day) and *KEK version overdue* (warning, a pending
+  version older than a week). A conflicting escrow raises *escrow conflict*
+  (warning, the organization's) from the upload. Conditions close by
+  themselves when they end (`resolved_by` stays empty); a person who resolves
+  one while it still holds is not told again for 24 hours. They are mailed to
+  the super administrators (the organization's alert, to its administrators)
+  through the same sender as slice 2's, once when opened. *A rotation that
+  could not verify* waits for slice 4, which has that event. The control is
+  `POST /keystore/alerts/{id}/resolve` (platform alerts need
+  `settings.manage`; an organization's, `user.manage` there), audited as
+  `keystore.alert_resolved`, with who did it.
+* **Console pages** go where ADR-0072 puts them: an organization's
+  *Recovery keys* tab (`org.manage`: the two-person switch, off by default and
+  recommended, the notices of reads, and its alerts) and *Settings >
+  Keystore* (`settings.manage`: the keystore's state, its KEK versions and
+  every open alert).
+* **LUKS fingerprint.** Section 1 says a LUKS passphrase has no fingerprint. It
+  has one: the agent's passphrase is 200 bits from `crypto/rand`, more than a
+  BitLocker password's 128, so the same SHA-256 fingerprint reveals nothing
+  usable, and the keystore verifies a LUKS record exactly as a BitLocker one
+  (opens it, normalizes by kind, compares). The agent has also tested the
+  passphrase against the new slot (`cryptsetup open --test-passphrase`) before
+  it uploads, which is the "checked another way" of section 5.
+* **How the agent marks and finds its key slot.** A LUKS2 token of type
+  `easyrmm-escrow` with an `escrow_id` (a UUID) names the slot; that UUID is the
+  protector's ID in the record's `info`, the report and the console, so a slot
+  number reused later never confuses two records. **LUKS1 is *cannot escrow*:**
+  it has no token, so a slot of EasyRMM's could not be told from an
+  administrator's, and the rule never to remove a slot without EasyRMM's token
+  could not be kept. The agent unlocks by itself with a key file named in
+  `/etc/crypttab` for that volume (not a `/dev/` file) or, failing that, a
+  `systemd-tpm2` token; a Clevis token makes the volume *managed elsewhere*
+  and nothing is written to it. The new key goes to `cryptsetup` on standard
+  input only; the key file is named by path on the command line, the key never
+  is. Argon2id memory is a quarter of the available memory, between 64 and 256
+  MiB.
+* **Stale by metadata only.** Each report carries, per slot of ours, the
+  SHA-256 of the slot's header metadata (key derivation with its salt, area
+  and splitter). A verified record whose slot is gone or whose hash differs
+  from the one stored with the record becomes *stale* at once, and the server
+  asks for a new key naming the stale slots to *replace*. The agent adds the
+  new slot, escrows it, and only when the server says *verified* removes each
+  stale slot of its own, never the last slot of the volume, never a slot
+  without its token, never a slot another token names. A key the server did not
+  accept (or an upload that failed) has its slot removed again at once.
+* **Rate limits for LUKS** are slice 1's (one upload per volume per five
+  minutes, twenty per device per hour). A volume whose unlock fails is left
+  alone for an hour.
+* **A device that runs Linux** gets the signed key instruction, in an
+  organization the dev-scope guard allows, once its agent announces the
+  capability; the console shows the card only for a Linux device that
+  reported a LUKS volume.
 
 ## References
 

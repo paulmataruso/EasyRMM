@@ -165,11 +165,13 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 				if out.Volumes[i].ID != vol {
 					continue
 				}
+				found := false
 				for j := range out.Volumes[i].Protectors {
 					p := &out.Volumes[i].Protectors[j]
 					if p.ID != prot {
 						continue
 					}
+					found = true
 					// A conflict is shown over the verified record it sits
 					// beside, so that it is seen; the verified one stays
 					// current.
@@ -181,6 +183,16 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 					}
 					u := updated
 					p.UpdatedAt = &u
+				}
+				// A LUKS key slot made since the last report is not in it yet;
+				// its record says where it stands.
+				if !found && out.Volumes[i].Kind == "luks" {
+					u := updated
+					ps := ProtectorState{ID: prot, State: state, UpdatedAt: &u}
+					if state == StateVerified {
+						ps.VerifiedAt = verifiedAt
+					}
+					out.Volumes[i].Protectors = append(out.Volumes[i].Protectors, ps)
 				}
 			}
 		}

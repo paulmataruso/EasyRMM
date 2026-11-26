@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -112,7 +113,7 @@ func (a *Agent) reportLUKS(ctx context.Context, vols []LUKSVolume, now time.Time
 	st := &a.luks
 	rep := agentproto.EscrowVolumesReport{Kind: agentproto.EscrowLUKS, Volumes: make([]agentproto.EscrowVolume, 0, len(vols))}
 	for _, v := range vols {
-		ev := agentproto.EscrowVolume{ID: v.UUID, Mount: v.Mount, Status: "luks" + string(rune('0'+v.Version)), State: v.State, Reason: v.Reason, Protectors: []agentproto.EscrowProtector{}}
+		ev := agentproto.EscrowVolume{ID: v.UUID, Mount: v.Mount, Status: "luks" + strconv.Itoa(v.Version), State: v.State, Reason: v.Reason, Protectors: []agentproto.EscrowProtector{}}
 		for _, s := range v.Slots {
 			ev.Protectors = append(ev.Protectors, agentproto.EscrowProtector{ID: s.TokenID, Hash: s.Hash})
 		}

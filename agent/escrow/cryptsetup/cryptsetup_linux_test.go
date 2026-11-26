@@ -1,6 +1,6 @@
 //go:build linux
 
-package escrow_test
+package cryptsetup_test
 
 import (
 	"bytes"
@@ -20,11 +20,44 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/escrow"
+	"github.com/paulmataruso/easyrmm/agent/escrow/cryptsetup"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/internal/escrowcrypto"
 )
+
+const (
+	device = "dev-1"
+	org    = "org-1"
+)
+
+// stubReader stands in for BitLocker: a Linux computer has none.
+type stubReader struct{}
+
+func (stubReader) Volumes(context.Context) ([]escrow.Volume, error) {
+	return nil, escrow.ErrUnsupported
+}
+func (stubReader) RecoveryPassword(context.Context, string, string) ([]byte, error) {
+	return nil, escrow.ErrUnsupported
+}
+
+// fakeServer records what the agent sends: the network's end. The real
+// server's checks are tested against PostgreSQL in server/internal/keystore.
+type fakeServer struct {
+	records []agentproto.EscrowRecord
+	need    []agentproto.EscrowNeed
+	answer  agentproto.EscrowAnswer
+}
+
+func (f *fakeServer) EscrowVolumes(context.Context, agentproto.EscrowVolumesReport) (agentproto.EscrowVolumesAnswer, error) {
+	return agentproto.EscrowVolumesAnswer{Need: f.need}, nil
+}
+
+func (f *fakeServer) EscrowUpload(_ context.Context, r agentproto.EscrowRecord) (agentproto.EscrowAnswer, error) {
+	f.records = append(f.records, r)
+	return f.answer, nil
+}
 
 // These tests run the real cryptsetup against real LUKS volumes on file-backed
 // loop devices. They need root, cryptsetup, lsblk and loop devices, so they run
@@ -107,8 +140,8 @@ func (l *luksLab) volume(version string, key []byte, keyfile bool) (dev, uuid, k
 	return dev, uuid, keypath
 }
 
-func (l *luksLab) backend() *escrow.Cryptsetup {
-	return &escrow.Cryptsetup{Bin: l.bin, Crypttab: l.crypttab}
+func (l *luksLab) backend() *cryptsetup.Cryptsetup {
+	return &cryptsetup.Cryptsetup{Bin: l.bin, Crypttab: l.crypttab}
 }
 
 // tokenSlot is the key slot a token of ours names.
@@ -388,7 +421,7 @@ func TestRealLUKSThroughTheAgent(t *testing.T) {
 	srv := &fakeServer{answer: agentproto.EscrowAnswer{State: agentproto.EscrowVerified}, need: []agentproto.EscrowNeed{{VolumeID: uuid}}}
 	a := &escrow.Agent{
 		DeviceID: device, Key: func() ed25519.PublicKey { return signPub },
-		Reader: &stubReader{err: escrow.ErrUnsupported}, LUKS: l.backend(), Server: srv, Store: store,
+		Reader: stubReader{}, LUKS: l.backend(), Server: srv, Store: store,
 		Log: slog.New(slog.NewTextHandler(logs, nil)), Now: func() time.Time { return now },
 	}
 	sign := func() *agentproto.SignedEscrowKey {
