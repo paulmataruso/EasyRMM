@@ -35,7 +35,7 @@ func (c *Client) DialChannel(ctx context.Context) (*websocket.Conn, string, erro
 	}
 	u.Path = agentproto.PathChannel
 	ws, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
-		HTTPClient:      c.ws,
+		HTTPClient:      c.ws.Load(),
 		HTTPHeader:      http.Header{"Authorization": {h}, "User-Agent": {c.agent}},
 		Subprotocols:    []string{agentproto.ChannelSubprotocol},
 		CompressionMode: websocket.CompressionDisabled,

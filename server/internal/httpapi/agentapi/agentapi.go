@@ -67,6 +67,7 @@ type API struct {
 	channel *agentchannel.Hub
 	qa      QuickAssist
 	escrow  Escrow
+	trust   Trust
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
@@ -625,6 +626,11 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 		// The organization's escrow key, to an agent that announced it
 		// (ADR-0081); never a reason to fail the heartbeat.
 		out.Escrow = a.escrow.Instruction(r.Context(), escrowDevice(d), in.Facts.Platform, in.Caps)
+	}
+	if a.trust != nil && out.Uninstall == nil {
+		// Certificate chains to verify, and the answer to the last ask
+		// (ADR-0055); never a reason to fail the heartbeat.
+		out.Trust = a.trustHeartbeat(r, d, in)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

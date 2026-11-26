@@ -20,6 +20,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
+	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 )
 
@@ -37,7 +38,10 @@ type edge struct {
 	pki     *pki.Authority
 	// tls obtains and renews the certificates of the DNS names in acme mode
 	// (ADR-0055); nil in the other modes.
-	tls     *tlscert.Service
+	tls *tlscert.Service
+	// trust learns from it what each host is served with, for the agents
+	// that verify it (ADR-0055, slice 5b1).
+	trust   *tlstrust.Service
 	servers []*http.Server
 }
 
@@ -147,6 +151,9 @@ func (e *edge) run(ctx context.Context) error {
 	}
 	if primary != nil {
 		get := e.certificates(primary)
+		if e.trust != nil {
+			e.trust.SetSource(edgeSource{get: get})
+		}
 		for _, addr := range append([]string{e.cfg.ListenHTTPS}, e.cfg.MeshListeners()...) {
 			t := baseTLS()
 			t.GetCertificate = get
