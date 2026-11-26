@@ -7,9 +7,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func selfSigned(t *testing.T, name string) *tls.Certificate {
@@ -27,3 +31,11 @@ func selfSigned(t *testing.T, name string) *tls.Certificate {
 	leaf, _ := x509.ParseCertificate(der)
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k, Leaf: leaf}
 }
+
+func testCAPEM(t *testing.T) string {
+	t.Helper()
+	c := selfSigned(t, "ca.test")
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Certificate[0]}))
+}
+
+func zapString(k, v string) zapcore.Field { return zap.String(k, v) }

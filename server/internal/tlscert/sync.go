@@ -74,19 +74,21 @@ func (s *Service) syncName(ctx context.Context, name string) error {
 	}
 	now := s.deps.Now()
 	prev, _ := s.loadRow(ctx, name)
-	s.mu.Lock()
-	have := s.cached[name]
-	s.mu.Unlock()
-	var cert certmagic.Certificate
-	if have != ci.Serial {
-		cert, err = s.magic.CacheManagedCertificate(ctx, name)
-		if err != nil {
-			return err
-		}
-		s.mu.Lock()
-		s.cached[name] = ci.Serial
-		s.mu.Unlock()
+	// Always loaded again: CertMagic's maintenance loop may have put back a
+	// copy of the previous certificate (it refreshes ARI on what it holds),
+	// and what is served must be what storage holds.
+	cert, err := s.magic.CacheManagedCertificate(ctx, name)
+	if err != nil {
+		return err
 	}
+	// One certificate per name in the cache: a handshake picks among those it
+	// holds for the name, and must never find the one just replaced.
+	s.mu.Lock()
+	if old := s.hashes[name]; old != "" && old != cert.Hash() {
+		s.cache.Remove([]string{old})
+	}
+	s.hashes[name] = cert.Hash()
+	s.mu.Unlock()
 	if err := s.storeCert(ctx, name, ci, false, now); err != nil {
 		return err
 	}

@@ -119,7 +119,7 @@ type Service struct {
 	started      bool
 	accountReady bool
 	inflight     map[string]bool
-	cached       map[string]string // serial in CertMagic's cache, by name
+	hashes       map[string]string // the hash of the certificate cached for each name
 	lastChecked  map[string]time.Time
 	acctURI      string
 	serving      chan struct{}
@@ -151,7 +151,7 @@ func New(deps Deps, set Settings) *Service {
 		set.Instance = "server"
 	}
 	return &Service{deps: deps, set: set, store: NewStorage(deps.DB, deps.Sealer), slot: &MeshSlot{},
-		inflight: map[string]bool{}, cached: map[string]string{}, serving: make(chan struct{})}
+		inflight: map[string]bool{}, hashes: map[string]string{}, serving: make(chan struct{})}
 }
 
 // Close stops CertMagic's maintenance loop.

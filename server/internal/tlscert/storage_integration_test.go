@@ -222,7 +222,9 @@ func TestLockIsLostWhenItsConnectionDies(t *testing.T) {
 		t.Fatal("the lock was not noticed as lost")
 	}
 	// And another server can take it.
-	if err := NewStorage(inst.DB, sealer).Lock(ctx, "issue_cert_y.test"); err != nil {
+	other := NewStorage(inst.DB, sealer)
+	if err := other.Lock(ctx, "issue_cert_y.test"); err != nil {
 		t.Fatalf("after the connection died: %v", err)
 	}
+	_ = other.Unlock(ctx, "issue_cert_y.test")
 }

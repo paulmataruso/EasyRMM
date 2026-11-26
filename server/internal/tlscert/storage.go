@@ -251,12 +251,12 @@ func (s *Storage) Lock(ctx context.Context, name string) error {
 	s.mu.Lock()
 	s.locks[name] = h
 	s.mu.Unlock()
-	go h.watch() //nolint:gosec // outlives the request on purpose: it watches the lock until Unlock
+	go h.watch(lockPing) //nolint:gosec // outlives the request on purpose: it watches the lock until Unlock
 	return nil
 }
 
-func (h *heldLock) watch() {
-	t := time.NewTicker(lockPing)
+func (h *heldLock) watch(every time.Duration) {
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
