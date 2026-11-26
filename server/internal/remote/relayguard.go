@@ -194,6 +194,10 @@ const maxControlMessage = 8 << 20
 type wsGuard struct {
 	src   *bufio.Reader
 	check func([]byte) error
+	// transform, when set, is called once, with the first message the check
+	// admits; the bytes it returns are forwarded in a rebuilt frame instead
+	// of the browser's own (ADR-0079).
+	transform func([]byte) ([]byte, error)
 
 	out       []byte // checked bytes ready for the reader
 	pass      bool   // the check let the rest of the connection through
@@ -208,6 +212,12 @@ func newWSGuard(r io.Reader, check func([]byte) error) *wsGuard {
 	return &wsGuard{src: bufio.NewReaderSize(r, 32<<10), check: check}
 }
 
+// withTransform sets the transform of the first admitted message.
+func (g *wsGuard) withTransform(t func([]byte) ([]byte, error)) *wsGuard {
+	g.transform = t
+	return g
+}
+
 func (g *wsGuard) Read(p []byte) (int, error) {
 	for len(g.out) == 0 {
 		if g.pass {
@@ -219,6 +229,8 @@ func (g *wsGuard) Read(p []byte) (int, error) {
 		g.err = g.next()
 	}
 	n := copy(p, g.out)
+	// The bytes are on their way; do not leave a rebuilt frame lying about.
+	clear(g.out[:n])
 	g.out = g.out[n:]
 	return n, nil
 }
@@ -307,10 +319,34 @@ func (g *wsGuard) next() error {
 	case err != nil:
 		return err
 	default:
-		g.out = append(g.out, g.held...)
+		if t := g.transform; t != nil {
+			g.transform = nil
+			repl, terr := t(g.payload)
+			if terr != nil {
+				g.scrub()
+				return terr
+			}
+			frame, ferr := buildTextFrame(repl)
+			clear(repl)
+			if ferr != nil {
+				g.scrub()
+				return ferr
+			}
+			g.out = append(g.out, frame...)
+			clear(frame)
+		} else {
+			g.out = append(g.out, g.held...)
+		}
 	}
-	g.held, g.payload, g.inMessage = nil, nil, false
+	g.scrub()
 	return nil
+}
+
+// scrub ends the current message, overwriting what was kept of it.
+func (g *wsGuard) scrub() {
+	clear(g.held)
+	clear(g.payload)
+	g.held, g.payload, g.inMessage = nil, nil, false
 }
 
 // rdpCheck returns the check for the browser's side of MeshCentral's web RDP

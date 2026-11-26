@@ -31,6 +31,10 @@ const (
 	PermDeviceRetire  Permission = "device.retire" // revoke credentials, uninstall, delete
 	PermDeviceHarden  Permission = "device.harden" // apply and undo hardening (ADR-0051)
 	PermRemoteDesktop Permission = "device.remote_desktop"
+	// PermRDPCredentialsSave lets a person save, replace and delete their own
+	// saved RDP credential on a device they may open remote desktop on
+	// (ADR-0079). It is never a way to read one.
+	PermRDPCredentialsSave Permission = "device.rdp_credentials.save"
 	PermTerminal      Permission = "device.terminal"
 	PermFiles         Permission = "device.files"
 	PermScriptView    Permission = "script.view"
@@ -97,7 +101,7 @@ const (
 // AllPermissions lists every permission.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
-	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermTerminal, PermFiles,
+	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
 	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
@@ -181,7 +185,7 @@ func union(sets ...[]Permission) []Permission {
 }
 
 var technicianPerms = union(viewPerms, []Permission{
-	PermDeviceEdit, PermRemoteDesktop, PermTerminal, PermFiles,
+	PermDeviceEdit, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
 	PermDocManage, PermLogView,
 	// The Windows modules (ADR-0073): every view except ad.view_sensitive,

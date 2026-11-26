@@ -16,7 +16,7 @@ enforce that higher roles are strict supersets of lower ones.
 | Permission | Read-Only | Technician | Site Admin | Org Admin | Super Admin |
 |---|:-:|:-:|:-:|:-:|:-:|
 | `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view`, `doc.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files`, `doc.manage`, `log.view` | | ✓ | ✓ | ✓ | ✓ |
+| `device.edit`, `device.remote_desktop`, `device.rdp_credentials.save`, `device.terminal`, `device.files`, `doc.manage`, `log.view` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |

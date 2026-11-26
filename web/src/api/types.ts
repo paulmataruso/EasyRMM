@@ -11,6 +11,7 @@ export type Permission =
   | "device.retire"
   | "device.harden"
   | "device.remote_desktop"
+  | "device.rdp_credentials.save"
   | "device.terminal"
   | "device.files"
   | "script.view"

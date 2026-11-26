@@ -412,3 +412,24 @@ func hashSecret(t string) []byte {
 	h := sha256.Sum256([]byte(t))
 	return h[:]
 }
+
+// rdpGrant finds the redeemed RDP grant a session holds on a device, by its
+// MeshCentral node ID: whose it is, the device and organization it is for and
+// where the browser came from. The gateway takes the identity of a saved
+// credential's use from here, never from the browser's message (ADR-0079).
+func (s *Service) rdpGrant(ctx context.Context, session uuid.UUID, nodeID string) (rdpGrant, error) {
+	var out rdpGrant
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		var ip *string
+		err := tx.QueryRow(ctx, `SELECT g.id, g.user_id, g.organization_id, g.site_id, g.device_id, host(g.source_ip)
+			FROM remote_grants g JOIN devices d ON d.id = g.device_id
+			WHERE g.session_id = $1 AND g.redeemed_at IS NOT NULL AND d.mesh_node_id = $2 AND g.kind = $3
+			ORDER BY g.redeemed_at DESC LIMIT 1`, session, nodeID, string(KindRDP)).
+			Scan(&out.Grant, &out.User, &out.Organization, &out.Site, &out.Device, &ip)
+		if ip != nil {
+			out.ClientIP = *ip
+		}
+		return err
+	})
+	return out, err
+}

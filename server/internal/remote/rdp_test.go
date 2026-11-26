@@ -132,7 +132,10 @@ func TestGatewayRDPRelay(t *testing.T) {
 	ok := `["infos",{"ip":"node//granted","port":3389}]`
 	_ = ws.Write(ctx, websocket.MessageText, []byte(ok))
 	_ = ws.Write(ctx, websocket.MessageText, []byte(`["scancode",29,true]`))
-	for _, want := range []string{ok, `["scancode",29,true]`} {
+	// The first message is forwarded with MeshCentral's own credential
+	// saving forced off (ADR-0079); the rest as sent.
+	forced := `["infos",{"ip":"node//granted","port":3389,"options":{"savepass":false,"useServerCreds":false}}]`
+	for _, want := range []string{forced, `["scancode",29,true]`} {
 		select {
 		case m := <-got:
 			if m != want {

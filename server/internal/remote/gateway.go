@@ -150,6 +150,11 @@ type Gateway struct {
 	// questions about it were checked against.
 	pressure map[string]*nodePressure
 	grants   map[grantKey]time.Time
+
+	// creds opens saved RDP credentials, and rdpGrantFor says whose RDP
+	// session a relay belongs to (ADR-0079).
+	creds       CredentialOpener
+	rdpGrantFor func(ctx context.Context, session uuid.UUID, nodeID string) (rdpGrant, error)
 }
 
 type cached struct {
@@ -180,6 +185,7 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 	}
 	if svc != nil {
 		g.granted = svc.SessionGranted
+		g.rdpGrantFor = svc.rdpGrant
 	}
 	target := cfg.Upstream
 	g.proxy = &httputil.ReverseProxy{
@@ -329,6 +335,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			tw.check, tw.what = g.controlCheck(r.Context(), session), "control channel"
 		case "/mstscrelay.ashx":
 			tw.check, tw.what = g.rdpCheck(r.Context(), session), "RDP relay"
+			tw.transform = g.rdpTransform(r.Context(), session)
 		case "/meshrelay.ashx":
 			tw.check, tw.what = relayProtocolCheck(relayProto), "relay"
 		}
@@ -710,6 +717,8 @@ type trackingWriter struct {
 	// what names the channel in the log.
 	check func([]byte) error
 	what  string
+	// transform rewrites the first message check admits (rdpTransform).
+	transform func([]byte) ([]byte, error)
 	// desktop marks a remote desktop relay, whose unsent bytes are bounded.
 	desktop bool
 	log     *slog.Logger
@@ -728,7 +737,7 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	tc := t.g.track(t.session, conn)
 	if t.check != nil {
 		log, check, what := t.log, t.check, t.what
-		tc.reader = newWSGuard(conn, func(msg []byte) error {
+		guard := newWSGuard(conn, func(msg []byte) error {
 			err := check(msg)
 			switch {
 			case err == nil, errors.Is(err, errPassRest):
@@ -739,6 +748,7 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 			}
 			return err
 		})
+		tc.reader = guard.withTransform(t.transform)
 	}
 	return tc, rw, nil
 }
