@@ -50,7 +50,7 @@ function Section({ s, base, editable }: { s: SspSection; base: string; editable:
   const [body, setBody] = useState(s.body);
   const save = useApiMutation(() => api.put(`${base}/ssp/sections/${s.position}`, { body }), { invalidate: [`${base}/ssp`], onSuccess: () => toast.success("Section saved.") });
   return (
-    <section aria-label={s.heading} className="flex flex-col gap-1.5">
+    <section className="flex flex-col gap-1.5">
       <h3 className="flex items-center gap-2 text-sm font-semibold">
         {s.heading}
         {s.generated && <Badge tone="info">Written from the assessment</Badge>}

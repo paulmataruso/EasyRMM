@@ -1,4 +1,4 @@
-import type { AssessmentState, Determination } from "../../../api/types";
+import type { AssessmentState, Determination, Gate, PoamItem } from "../../../api/types";
 
 // The words of the CMMC workspace (ADR-0078, sections 9 and 12). A requirement is met, not met, not applicable or not
 // assessed; the screens never say "compliant" or "certified", never post a score anywhere, and call the workspace an aid.
@@ -31,7 +31,7 @@ export const CATEGORIES: { id: string; label: string }[] = [
   { id: "out_of_scope", label: "Out of scope" },
 ];
 
-export const POAM_STATUS: Record<string, { label: string; tone: Tone }> = {
+export const POAM_STATUS: Record<PoamItem["status"], { label: string; tone: Tone }> = {
   draft: { label: "Draft", tone: "info" },
   open: { label: "Open", tone: "warn" },
   in_progress: { label: "In progress", tone: "warn" },
@@ -41,7 +41,7 @@ export const POAM_STATUS: Record<string, { label: string; tone: Tone }> = {
 
 export const RESPONSIBILITY: Record<string, string> = { customer: "Customer", msp: "MSP", inherited: "Inherited", shared: "Shared" };
 
-export const GATE_WORDS: Record<string, { label: string; tone: Tone }> = {
+export const GATE_WORDS: Record<Gate["outcome"], { label: string; tone: Tone }> = {
   within: { label: "Within the rule", tone: "ok" },
   possible: { label: "Possible, if the unassessed requirements are met", tone: "warn" },
   outside: { label: "Outside the rule", tone: "danger" },

@@ -43,7 +43,7 @@ const REQS: RequirementRow[] = [
 ];
 
 const REQ_DETAIL: RequirementDetail = {
-  ...REQS[1],
+  ...REQS[1]!,
   text: "Control the flow of CUI in accordance with approved authorizations.",
   objectiveList: [{ id: "*", text: "The requirement as a whole.", methods: ["examine"], controls: [], whole: true, determination: "not_assessed", source: "", method: "", note: "", decidedAt: null, expired: false }],
   attestations: [],
@@ -202,7 +202,7 @@ describe("the CMMC workspace", () => {
     const main = await open();
     await userEvent.click(await main.findByRole("tab", { name: "Plan of action" }));
     expect(await main.findByText(POAM_NOTE)).toBeInTheDocument();
-    const draft = within(main.getByRole("region", { name: "Draft (2)" }));
+    const draft = within(main.getByRole("region", { name: "Draft" }));
     expect(draft.getByText("Not allowed on a plan")).toBeInTheDocument();
     expect(draft.getAllByRole("button", { name: "Confirm" })).toHaveLength(1);
   });
@@ -236,7 +236,7 @@ describe("the CMMC workspace", () => {
     for (const e of EXPORTS) {
       expect(await main.findByRole("link", { name: e.label })).toHaveAttribute("href", `/api/v1/organizations/o1/compliance/assessments/a1/export?format=${e.format}`);
     }
-    expect(main.getByText(/never posts a score to SPRS/)).toBeInTheDocument();
+    expect(main.getAllByText(/never posts a score to SPRS/).length).toBeGreaterThan(1);
   });
 
   it("edits the system security plan: only a section a person writes is saved", async () => {

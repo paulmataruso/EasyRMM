@@ -90,7 +90,7 @@ func sample() *report.Report {
 		},
 		POAM: []report.POAMItem{
 			{ID: "x", ReqID: "IA.L2-3.5.3", NistID: "3.5.3", Points: 3, Status: "open", ClosesBy: "2027-05-25",
-				Milestones: []report.Milestone{{Title: "Enrol the general users", Due: "2027-03-01", Status: "open"}}},
+				Milestones: []report.Milestone{{Title: "Enroll the general users", Due: "2027-03-01", Status: "open"}}},
 			{ID: "y", ReqID: "AC.L2-3.1.7", NistID: "3.1.7", Points: 1, Status: "draft", Eligible: true},
 		},
 	}

@@ -20,7 +20,7 @@ import (
 // 2026-11-26.
 const Version = "1.1.2"
 
-// profileHref names the requirement set: NIST publishes an OSCAL catalogue for SP 800-171
+// profileHref names the requirement set: NIST publishes an OSCAL catalog for SP 800-171
 // Revision 3 only, so Revision 2 is referred to by its publication, and each requirement is named
 // by its number under the prefix below.
 const profileHref = "https://doi.org/10.6028/NIST.SP.800-171r2"

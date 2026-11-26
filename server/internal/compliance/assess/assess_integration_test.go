@@ -766,3 +766,149 @@ func TestScopeKeepsOutOfScopeOutOfTheCount(t *testing.T) {
 		t.Error("a made-up category was accepted")
 	}
 }
+
+func TestObjectivesDetailLinksAndChecks(t *testing.T) {
+	f := newFixture(t)
+	a := f.draft()
+	req, nist, ctl := f.mapped(5)
+	f.scopeDevice(a, "cui")
+	obj := assess.WholeRequirement
+
+	// Interview needs a note; upload needs evidence; neither can be an attestation.
+	if err := f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, obj, assess.ObjectiveSet{Determination: "met", Source: "interview"}); err == nil {
+		t.Error("an interview without a note was accepted")
+	}
+	if err := f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, obj, assess.ObjectiveSet{Determination: "met", Source: "attestation"}); err == nil {
+		t.Error("an attestation was set without its signature")
+	}
+	code(t, f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, obj, assess.ObjectiveSet{Determination: "met", Source: "upload"}), "no_evidence")
+	if err := f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, "nope", assess.ObjectiveSet{Determination: "met", Source: "interview", Note: "x"}); err == nil {
+		t.Error("an objective that does not exist was set")
+	}
+
+	ev, err := f.svc.AddEvidence(f.ctx, f.admin, f.acme, assess.EvidenceInput{Title: "Config export", Body: strings.NewReader("x"), ExpiresAt: ptr(f.now.Add(24 * time.Hour))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.LinkEvidence(f.ctx, f.admin, f.acme, ev.ID, &a.ID, req, obj, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.LinkEvidence(f.ctx, f.admin, f.acme, uuid.New(), &a.ID, req, obj, nil); err == nil {
+		t.Error("evidence that does not exist was linked")
+	}
+	if err := f.svc.LinkEvidence(f.ctx, f.admin, f.acme, ev.ID, nil, "", "", nil); err == nil {
+		t.Error("a link to nothing was accepted")
+	}
+	if err := f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, obj, assess.ObjectiveSet{Determination: "met", Source: "upload", Method: "examine"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.req(a, nist); r.Status != assess.Met || r.Origin != "attested" || r.Evidence != 1 {
+		t.Errorf("met by evidence: %+v", r)
+	}
+	// The evidence runs out, and so does what it showed.
+	f.now = f.now.Add(48 * time.Hour)
+	if r := f.req(a, nist); r.Status != assess.NotAssessed {
+		t.Errorf("after the evidence expired: %s", r.Status)
+	}
+	d, err := f.svc.Requirement(f.ctx, f.admin, f.acme, a.ID, req)
+	if err != nil || len(d.ObjectiveList) != 1 || !d.ObjectiveList[0].Expired || len(d.EvidenceList) != 1 || d.Text == "" {
+		t.Errorf("detail: %v %+v", err, d)
+	}
+	if _, err := f.svc.Requirement(f.ctx, f.admin, f.acme, a.ID, "no-such"); err == nil {
+		t.Error("a requirement that does not exist was read")
+	}
+	live, _ := f.svc.ListEvidence(f.ctx, f.admin, f.acme, true)
+	if len(live) != 1 {
+		t.Errorf("%d live evidence items", len(live))
+	}
+
+	// A scan's "not met" is not set aside by an interview.
+	f.now = time.Now()
+	f.result(ctl, "failed")
+	if _, err := f.svc.Refresh(f.ctx, f.admin, f.acme, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetObjective(f.ctx, f.admin, f.acme, a.ID, req, obj, assess.ObjectiveSet{Determination: "met", Source: "interview", Note: "We asked the owner."}); err == nil {
+		t.Error("a statement set aside a scan's finding")
+	}
+
+	// The record's own fields are checked.
+	bad := "unknown"
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req, assess.RequirementUpdate{Responsibility: &bad}); err == nil {
+		t.Error("a made-up responsibility was accepted")
+	}
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req, assess.RequirementUpdate{Partial: ptr(true)}); err == nil {
+		t.Error("a partial-credit flag was set on a requirement with no such case")
+	}
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req, assess.RequirementUpdate{NextReview: ptr("tomorrow")}); err == nil {
+		t.Error("a bad date was accepted")
+	}
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req, assess.RequirementUpdate{NextReview: ptr("2027-06-30"), Responsibility: ptr("msp"), OwnerUser: &f.admin.Actor.ID}); err != nil {
+		t.Error(err)
+	}
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req, assess.RequirementUpdate{OwnerUser: &f.other.Actor.ID}); err == nil {
+		t.Error("a person with no access to the organization was made an owner")
+	}
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, "no-such", assess.RequirementUpdate{Statement: ptr("x")}); err == nil {
+		t.Error("a requirement that does not exist was updated")
+	}
+	if l, err := f.svc.List(f.ctx, f.admin, f.acme); err != nil || len(l) != 1 {
+		t.Errorf("list: %d %v", len(l), err)
+	}
+	if ts, err := f.svc.Templates(); err != nil || len(ts) < 4 {
+		t.Errorf("templates: %v", err)
+	}
+
+	// The partial-credit case: 3.5.3 partly done is worth 3, not 5.
+	var req353 string
+	_ = f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(f.ctx, `SELECT req_id FROM compliance_requirements WHERE framework_key = 'cmmc-l2' AND flags->>'nist' = '3.13.11'`).Scan(&req353)
+	})
+	f.must(`UPDATE compliance_implementations SET status = 'not_met' WHERE assessment_id = $1 AND req_id = $2`, a.ID, req353)
+	if err := f.svc.UpdateRequirement(f.ctx, f.admin, f.acme, a.ID, req353, assess.RequirementUpdate{Partial: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEvidenceLinkedToAPOAMItemAndPlainTextAreServed(t *testing.T) {
+	f := newFixture(t)
+	a := f.draft()
+	f.scopeDevice(a, "cui")
+	_, _, ctl := f.mapped(1)
+	f.result(ctl, "failed")
+	if _, err := f.svc.Refresh(f.ctx, f.admin, f.acme, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.GeneratePOAM(f.ctx, f.admin, f.acme, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := f.svc.POAM(f.ctx, f.admin, f.acme, a.ID)
+	if len(b.Items) == 0 {
+		t.Fatal("no item")
+	}
+	ev, err := f.svc.AddEvidence(f.ctx, f.admin, f.acme, assess.EvidenceInput{Title: "Rollout plan", Body: strings.NewReader("plan"), PoamID: &b.Items[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.n(`SELECT count(*) FROM compliance_evidence_links WHERE evidence_id = $1 AND poam_id = $2`, ev.ID, b.Items[0].ID) != 1 {
+		t.Error("the evidence is not linked to the item")
+	}
+	// A new draft copies the item and its evidence link.
+	f.approve(a)
+	nd, err := f.svc.NewDraft(f.ctx, f.admin, f.acme, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nb, _ := f.svc.POAM(f.ctx, f.admin, f.acme, nd.ID)
+	if len(nb.Items) != len(b.Items) || f.n(`SELECT count(*) FROM compliance_evidence_links WHERE evidence_id = $1 AND poam_id = $2`, ev.ID, nb.Items[0].ID) != 1 {
+		t.Error("the new draft lacks the plan of action or its evidence")
+	}
+	// Replacing the evidence takes its place in the new draft but leaves the approved one untouched.
+	ev2, err := f.svc.AddEvidence(f.ctx, f.admin, f.acme, assess.EvidenceInput{Title: "Rollout plan v2", Body: strings.NewReader("plan 2"), Supersedes: &ev.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.n(`SELECT count(*) FROM compliance_evidence_links WHERE evidence_id = $1`, ev2.ID) != 1 {
+		t.Error("the replacement was linked wrongly (once, in the draft; not in the approved record)")
+	}
+}

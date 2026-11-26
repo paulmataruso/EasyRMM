@@ -421,7 +421,7 @@ func sendFile(w http.ResponseWriter, name, contentType string, body []byte, sha 
 		w.Header().Set("X-Content-SHA256", sha)
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	_, _ = w.Write(body)
+	_, _ = w.Write(body) //nolint:gosec // an attachment of an opaque type with nosniff: a browser saves it and never renders it
 }
 
 func (a *API) export(w http.ResponseWriter, r *http.Request) error {
