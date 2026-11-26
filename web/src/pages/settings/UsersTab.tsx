@@ -178,7 +178,7 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
 
   if (result?.link) {
     return (
-      <Dialog open={open} onClose={close} title="Send this invitation link" size="md" dismissible={false}>
+      <Dialog open={open} onClose={close} title="Copy the sign-up link" size="md" dismissible={false}>
         <div className="flex flex-col gap-3.5">
           <OneTimeNotice title="Copy this link now. It is shown only once.">
             {whyNotEmailed(result.mailProblem, email.trim(), result.mailReason)} The link works once and expires in 72 hours.
@@ -198,7 +198,7 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
   }
 
   return (
-    <Dialog open={open} onClose={close} title="Invite user" description="They choose a password from the invitation link, then set up an authenticator app." size="lg">
+    <Dialog open={open} onClose={close} title="Invite user" description={options.data && !mailReady ? "No mail server is set up. A sign-up link will be shown to copy and give to the person. They choose a password from it, then set up an authenticator app." : "They choose a password from the invitation link, then set up an authenticator app."} size="lg">
       <form onSubmit={submit} className="flex flex-col gap-3.5">
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={fieldError(invite.error, "email")} required autoFocus />
@@ -209,14 +209,14 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
           <p className="text-sm text-muted">
             {mailReady
               ? "The invitation is emailed to them, and the link is shown here if the email cannot be sent."
-              : "No mail server is set up, so nothing is emailed. A link is shown next; send it to them yourself."}
+              : "No mail server is set up, so nothing is emailed. A sign-up link is shown next to copy and give to them."}
           </p>
         )}
         <InlineError error={invite.error} fields={["email", "displayName", "assignments", ...drafts.map((_, i) => `assignments.${i}`)]} />
         <div className="flex justify-end gap-2 pt-1">
           <Button onClick={close}>Cancel</Button>
           <Button type="submit" variant="primary" loading={invite.isPending} disabled={!email.trim() || !displayName.trim() || !drafts.every(draftComplete)}>
-            {options.data && !mailReady ? "Create invitation link" : "Send invitation"}
+            {options.data && !mailReady ? "Create user" : "Send invitation"}
           </Button>
         </div>
       </form>

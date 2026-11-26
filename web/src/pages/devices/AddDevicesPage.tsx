@@ -84,7 +84,7 @@ export function formatBytes(n: number): string {
  * checks the server's public key instead (--insecure skips only the certificate authority check).
  */
 /** Why an old token cannot show its install command. */
-const OLD_TOKEN = "Made before EasyRMM kept tokens; make a new one.";
+const OLD_TOKEN = "This token was made before EasyRMM kept tokens, so its install commands cannot be shown. Replace it: make a new token, then revoke this one.";
 
 export function linuxInstallCommand(serverUrl: string, secret: string, pin?: string): string {
   const tls = pin ? `--insecure --pinnedpubkey '${pin}' ` : "";
@@ -775,7 +775,7 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
         <>
         {tokens.items.some((t) => t.status === "active" && !t.kept) && (
           <p className="border-b border-line px-4 py-2 text-sm text-muted">
-            Some tokens were made before EasyRMM kept them, so their install commands cannot be shown again. Make a new token and revoke the old one.
+            Some tokens were made before EasyRMM kept them, so their install commands cannot be shown. Replace each: make a new token, then revoke the old one.
           </p>
         )}
         <TableWrap className="rounded-none border-0">
@@ -818,12 +818,12 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
                         size="sm"
                         variant="ghost"
                         icon={<SquareTerminal className="size-4" aria-hidden />}
-                        aria-label={`Show install command for ${t.name}`}
+                        aria-label={`Show install commands for ${t.name}`}
                         onClick={() => reveal.mutate(t, { onError: (err) => toast.error(errorMessage(err)) })}
                         disabled={!t.kept || reveal.isPending}
                         title={t.kept ? undefined : OLD_TOKEN}
                       >
-                        Show install command
+                        Show install commands
                       </Button>
                     )}
                     {t.status === "active" && !t.kept && <p className="mt-1 text-xs text-muted">{OLD_TOKEN}</p>}
