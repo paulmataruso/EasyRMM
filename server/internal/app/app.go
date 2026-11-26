@@ -859,6 +859,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.Keystore.Run(ctx) })
 	deps.Notify.SetHeld(hold.Held)
+	deps.Notify.SetSeenFloor(deps.Monitoring.SeenFloor)
 	wg.Go(func() { deps.Notify.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })

@@ -221,8 +221,13 @@ func TestMeshAgentLinking(t *testing.T) {
 		VALUES ($1, $2, 'active', now() + interval '1 hour', now() + interval '1 hour') RETURNING id`, bytes.Repeat([]byte{7}, 32), user)
 	f.exec(`INSERT INTO remote_grants (launch_hash, session_id, user_id, device_id, organization_id, site_id, kind, launch_expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, 'desktop', now() + interval '1 minute')`, bytes.Repeat([]byte{9}, 32), sess, user, discovered, f.org, f.hq)
+	// An alert open on the discovered device reads as merged in the notification journal (ADR-0053), not removed.
+	alert := f.uuid(`INSERT INTO alerts (device_id, name, kind, minutes, severity, value, last_value) VALUES ($1, 'Device offline', 'offline', 15, 'critical', 20, 20) RETURNING id`, discovered)
 	dev = f.auth(dev.ID.String(), key)
 	f.beat(dev, "web-01", second)
+	if f.count(`SELECT count(*) FROM notification_events WHERE subject_id = $1 AND event = 'deleted' AND new_row->>'reason' = 'merged'`, alert) != 1 {
+		t.Error("the merge's deletion of the alert does not read as merged")
+	}
 	if f.nodeOf(dev.ID) != secondKey || f.count(`SELECT count(*) FROM devices WHERE id = $1`, discovered) != 0 {
 		t.Fatal("discovered device not merged")
 	}

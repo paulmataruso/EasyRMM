@@ -75,6 +75,12 @@ type Facts struct {
 	// (absent or null) means the agent could not or did not detect them, which
 	// the server reads as unknown; an empty list means none were found.
 	Roles []Role `json:"roles"`
+	// Role is the kind of device: "server" or "workstation", on Windows from
+	// InstallationType (Client is a workstation, anything else a server), on
+	// Linux a server and on macOS a workstation (ADR-0053). Empty when the
+	// agent cannot tell; the server then reads the operating system's
+	// description.
+	Role string `json:"role,omitempty"`
 }
 
 // EnrollRequest exchanges a deployment token for a device identity.

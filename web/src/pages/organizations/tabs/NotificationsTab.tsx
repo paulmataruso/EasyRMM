@@ -1,4 +1,6 @@
 import { ChannelsPanel } from "../../notifications/ChannelsPanel";
+import { RulesPanel } from "../../notifications/RulesPanel";
+import { WindowsPanel } from "../../notifications/WindowsPanel";
 import type { LevelTabProps } from "../levelTabs";
 
 /**
@@ -7,5 +9,11 @@ import type { LevelTabProps } from "../levelTabs";
  */
 export function NotificationsTab({ level, id }: LevelTabProps) {
   if (level !== "organization") return null;
-  return <ChannelsPanel organizationId={id} />;
+  return (
+    <div className="flex flex-col gap-4">
+      <ChannelsPanel organizationId={id} />
+      <RulesPanel organizationId={id} />
+      <WindowsPanel organizationId={id} />
+    </div>
+  );
 }

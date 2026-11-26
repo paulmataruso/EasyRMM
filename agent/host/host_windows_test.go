@@ -539,3 +539,20 @@ func replaceWithJunction(t *testing.T, p, target string) {
 	}
 	junction(t, p, target)
 }
+
+// TestRoleOfInstallationType maps InstallationType to a device's kind: Client
+// is a workstation; Server, Server Core and other server values are servers
+// (ADR-0053).
+func TestRoleOfInstallationType(t *testing.T) {
+	for in, want := range map[string]string{"Client": "workstation", "client": "workstation", "Server": "server", "Server Core": "server", "Nano Server": "server", "": "", "  ": ""} {
+		if got := roleOfInstallationType(in, nil); got != want {
+			t.Errorf("%q = %q, want %q", in, got, want)
+		}
+	}
+	if roleOfInstallationType("Server", errors.New("no value")) != "" {
+		t.Error("an unreadable value is unknown")
+	}
+	if r := systemRole(); r != "" && r != "server" && r != "workstation" {
+		t.Errorf("this computer's role is %q", r)
+	}
+}

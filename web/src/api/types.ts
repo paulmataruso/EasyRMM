@@ -4529,6 +4529,86 @@ export interface DeliveryLogRow {
   recipients: { recipient: string; status: string; error?: string; sentAt?: string }[];
 }
 
+/** A dimension of a notification rule whose values are rows: organizations, sites or device groups (ADR-0053). */
+export interface RuleListFilter {
+  mode: "any" | "list";
+  ids: string[];
+}
+
+/** A dimension whose values are words: kinds of device, severities, conditions, disk-health checks. */
+export interface RuleValueFilter {
+  mode: "any" | "list";
+  values: string[];
+}
+
+export interface NotificationRule {
+  id: string;
+  organizationId: string | null;
+  platform: boolean;
+  source: "alerts" | "notices";
+  name: string;
+  enabled: boolean;
+  organizations: RuleListFilter;
+  sites: RuleListFilter;
+  groups: RuleListFilter;
+  deviceKinds: RuleValueFilter;
+  severities: RuleValueFilter;
+  conditions: RuleValueFilter;
+  checks: RuleValueFilter;
+  waitMinutes: number;
+  onResolve: boolean;
+  onAcknowledge: boolean;
+  reminderHours: number;
+  ignoreWindows: boolean;
+  groupOutages: boolean;
+  channelIds: string[];
+  /** A list emptied by deletions: the rule stays in list mode and matches nothing. */
+  matchesNothing: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationRuleInput = Omit<NotificationRule, "id" | "platform" | "matchesNothing" | "createdAt" | "updatedAt">;
+
+export interface MaintenanceWindow {
+  id: string;
+  organizationId: string;
+  siteId: string;
+  siteName?: string;
+  name: string;
+  kind: "weekly" | "once";
+  /** 0 Sunday to 6 Saturday; a window across midnight belongs to the day it starts. */
+  days: number[];
+  /** A weekly window's start, "15:04", in the site's time zone. */
+  start?: string;
+  /** A one-off window's start, "2006-01-02T15:04", as the site's clock reads it. */
+  startsAt?: string;
+  lengthMinutes: number;
+  enabled: boolean;
+  active: boolean;
+  createdAt: string;
+  canEdit: boolean;
+}
+
+export type MaintenanceWindowInput = Pick<MaintenanceWindow, "name" | "kind" | "days" | "lengthMinutes" | "enabled"> & { start?: string; startsAt?: string };
+
+export interface FleetSilence {
+  id: string;
+  startedAt: string;
+  counted: number;
+}
+
+export interface QuarantinedRow {
+  id: number;
+  subjectType: string;
+  subjectId: string;
+  event: string;
+  error: string;
+  failedRuns: number;
+  createdAt: string;
+  held: number;
+}
+
 // The registry editor (ADR-0067, slice 1).
 
 /** A read the server accepted: the run to follow, and the key as the server read it. */
