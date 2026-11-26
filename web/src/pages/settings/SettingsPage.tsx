@@ -11,6 +11,9 @@ import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { NotificationsTab } from "./NotificationsTab";
 import { ChannelsPanel } from "../notifications/ChannelsPanel";
+import { PlatformControls } from "../notifications/PlatformControls";
+import { RulesPanel } from "../notifications/RulesPanel";
+import { WindowsPanel } from "../notifications/WindowsPanel";
 import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
@@ -72,6 +75,11 @@ export function SettingsPage() {
           <NotificationsTab />
           <div className="mt-5">
             <ChannelsPanel organizationId={null} />
+          </div>
+          <div className="mt-5 flex flex-col gap-5">
+            <RulesPanel organizationId={null} />
+            <WindowsPanel organizationId={null} />
+            <PlatformControls />
           </div>
         </>
       )}

@@ -72,6 +72,7 @@ type fx struct {
 	orgB   uuid.UUID
 	clock  time.Time
 	clockM sync.Mutex
+	dsn    string
 }
 
 func newSealer(t *testing.T) *secrets.Sealer {
@@ -90,7 +91,7 @@ func newSealer(t *testing.T) *secrets.Sealer {
 func newFx(t *testing.T) *fx {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fx{t: t, ctx: context.Background(), db: inst.DB, log: &logBuffer{}, mp: testmail.New(t), clock: time.Now().UTC()}
+	f := &fx{t: t, ctx: context.Background(), db: inst.DB, dsn: inst.SuperDSN, log: &logBuffer{}, mp: testmail.New(t), clock: time.Now().UTC()}
 	log := slog.New(slog.NewTextHandler(f.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	auditLog := audit.New(inst.DB, nil)
 	sealer := newSealer(t)

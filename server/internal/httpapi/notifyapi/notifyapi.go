@@ -46,6 +46,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("PUT /api/v1/notifications/quotas/{orgId}", a.setQuota)
 	r("GET /api/v1/notices", a.notices)
 	r("POST /api/v1/notices/{id}/acknowledge", a.acknowledge)
+	a.registerRules(mux)
 }
 
 // orgParam reads the optional organizationId query parameter.

@@ -16,6 +16,18 @@ func systemDescription() string {
 	return ""
 }
 
+// systemRole is the kind of device: a Linux machine is a server and a Mac a
+// workstation (ADR-0053).
+func systemRole() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "server"
+	case "darwin":
+		return "workstation"
+	}
+	return ""
+}
+
 // IsAdmin reports whether the agent runs as root.
 func IsAdmin() bool { return os.Geteuid() == 0 }
 

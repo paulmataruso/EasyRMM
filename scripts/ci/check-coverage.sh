@@ -85,6 +85,9 @@ floors=(
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
+  # The one notification sender and its address policy (ADR-0053).
+  "server/internal/notify                  78"
+  "server/internal/addrpolicy              88"
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
