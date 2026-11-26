@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ChevronDown, ChevronRight, Copy, Lock, RefreshCw, ScrollText, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Lock, ScrollText } from "lucide-react";
 import { useAuth } from "../../../auth/AuthContext";
 import { errorMessage } from "../../../api/client";
 import type { Device, EventlogChannel, EventlogEnd, EventlogEvent, EventlogPos, EventlogRequest, EventlogResult } from "../../../api/types";
@@ -7,6 +7,7 @@ import { Alert, Badge, Button, Card, cx, EmptyState, Input, KeyValueList, Segmen
 import { formatRelative } from "../../../lib/format";
 import { endText, eventAsText, eventTime, groupChannels, isSecurityChannel, LEVELS, levelName, levelTone, parseIds, posText, RANGES, sizeText, STATE_TEXT, type Zone } from "./eventlogText";
 import { cancelRun, startOp } from "./runOp";
+import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequest, problemsRequest, repeatText, type EventGroup } from "./overview";
 
 const DEFAULT_CHANNELS = ["System", "Application"];
 
@@ -41,7 +42,10 @@ export function EventLogPanel({ device }: { device: Device }) {
   const [searched, setSearched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [view, setView] = useState<"overview" | "search">("overview");
+  const [overview, setOverview] = useState<{ key: EventlogEvent[]; problems: EventlogEvent[]; notes: string[]; at?: string } | null>(null);
+  const [overviewBusy, setOverviewBusy] = useState(false);
+  const [selectedEv, setSelectedEv] = useState<EventlogEvent | null>(null);
   const [detail, setDetail] = useState<"general" | "details">("general");
   const [clockSkew, setClockSkew] = useState<number | null>(null);
 
@@ -119,7 +123,7 @@ export function EventLogPanel({ device }: { device: Device }) {
       setSearched(true);
       if (r.state === "reported" || r.state === "unknown") {
         take(r, next);
-        if (!next) setSelected(null);
+        if (!next) setSelectedEv(null);
         setLast({ runId: started.run.runId, result: r });
         if (r.state === "unknown") setError(r.reason ?? STATE_TEXT.unknown);
       } else {
@@ -138,9 +142,7 @@ export function EventLogPanel({ device }: { device: Device }) {
     void run(false);
   };
 
-  const openEvent = async (i: number) => {
-    const ev = events[i];
-    if (!ev) return;
+  const openEvent = async (ev: EventlogEvent) => {
     setError(null);
     try {
       const { result } = await startOp(device.id, { op: "event", channels: [ev.log], record: ev.record, ...(sensitive ? { sensitive: true } : {}) });
@@ -150,7 +152,8 @@ export function EventLogPanel({ device }: { device: Device }) {
         setError(r.errors?.[0]?.message ?? "This event is no longer in the log: it was overwritten or cleared.");
         return;
       }
-      setEvents((prev) => prev.map((x, j) => (j === i ? one : x)));
+      setEvents((prev) => prev.map((x) => (x.log === one.log && x.record === one.record ? one : x)));
+      setSelectedEv(one);
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -159,7 +162,8 @@ export function EventLogPanel({ device }: { device: Device }) {
   const groups = useMemo(() => groupChannels(channels?.channels ?? [], showAnalytic), [channels, showAnalytic]);
   const toggleChannel = (name: string) =>
     setPicked((p) => (p.includes(name) ? p.filter((n) => n !== name) : p.length >= 10 ? p : [...p, name]));
-  const current = selected !== null ? events[selected] : undefined;
+  const current = selectedEv ?? undefined;
+  const selected = selectedEv ? events.findIndex((x) => x.log === selectedEv.log && x.record === selectedEv.record) : -1;
   const more = end?.cursor?.channels.some((c) => !c.done) === true;
   const readAt = last?.result.readAt;
 
@@ -290,7 +294,7 @@ export function EventLogPanel({ device }: { device: Device }) {
               zone={zone}
               selected={selected}
               onSelect={(i) => {
-                setSelected(i);
+                setSelectedEv(events[i] ?? null);
                 setDetail("general");
               }}
               busy={busy}
@@ -301,7 +305,7 @@ export function EventLogPanel({ device }: { device: Device }) {
             />
           </Card>
 
-          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(selected ?? 0)} />}
+          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
         </div>
       </div>
     </div>
@@ -352,7 +356,7 @@ function Results({ events, pos, end, picked, zone, selected, onSelect, busy, sea
   end: EventlogEnd | undefined;
   picked: string[];
   zone: Zone;
-  selected: number | null;
+  selected: number;
   onSelect: (i: number) => void;
   busy: boolean;
   searched: boolean;
