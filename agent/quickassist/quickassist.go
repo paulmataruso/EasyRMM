@@ -418,16 +418,16 @@ func Clean(base string) (int, error) {
 		dir := filepath.Join(base, e.Name())
 		lf, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR, 0) //nolint:gosec // a folder of ours
 		if err == nil {
-			if lockFile(lf) != nil {
-				_ = lf.Close() // a live runner holds it
-				continue
+			locked := lockFile(lf) != nil
+			// Closed before the folder goes: Windows deletes no open file.
+			// Runner folders are never reused, so nothing takes it between.
+			_ = lf.Close()
+			if locked {
+				continue // a live runner holds it
 			}
 		}
 		if err := os.RemoveAll(dir); err == nil {
 			n++
-		}
-		if lf != nil {
-			_ = lf.Close()
 		}
 	}
 	return n, nil

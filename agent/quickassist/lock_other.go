@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package quickassist
 
@@ -7,6 +7,6 @@ import (
 	"os"
 )
 
-// lockFile is not built for this platform: the Windows runner is a later
-// slice (ADR-0080 QA3).
+// lockFile is not built for this platform. The runner is built for Linux
+// and Windows only (ADR-0080).
 func lockFile(*os.File) error { return errors.New("quick assist is not built for this platform yet") }
