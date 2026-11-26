@@ -50,6 +50,8 @@ floors=(
   "server/internal/jobs                    85"
   # The Windows management modules' catalog, parameter checks and results (ADR-0073).
   "server/internal/winmod                  90"
+  # Active Directory (ADR-0075): catalog, result types, replication alert.
+  "server/internal/winmod/activedirectory 90"
   # The server-role modules (ADR-0076): guards, catalogs and alert kinds.
   "server/internal/winmod/rolekit         80"
   "server/internal/winmod/dns             85"

@@ -21,7 +21,7 @@ enforce that higher roles are strict supersets of lower ones.
 | `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
-| `defender.view`, `ad.view`, `dhcp.view`, `print.view`, `backup.view`, `defender.manage`, `print.manage`, `backup.manage` | | ✓ | ✓ | ✓ | ✓ |
+| `defender.view`, `ad.view`, `ad.helpdesk`, `dhcp.view`, `print.view`, `backup.view`, `defender.manage`, `print.manage`, `backup.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `ca.view`, `dns.view`, `shares.view`, `ad.view_sensitive`, `dns.manage`, `dhcp.manage`, `shares.manage` | | | ✓ | ✓ | ✓ |
 | `ca.manage`, `ad.manage`, `ad.reset_password` | | | | ✓ | ✓ |
 
@@ -49,7 +49,8 @@ verbose logging on or off for a device or a group needs `device.edit`
 
 The Windows management modules ([ADR-0073](../architecture/adr/0073-windows-management-modules.md))
 each have a `.view` and a `.manage` permission (Active Directory also has
-`ad.reset_password` and `ad.view_sensitive`). Read-Only holds none of them:
+`ad.reset_password`, `ad.view_sensitive` and `ad.helpdesk`, which lets a Technician unlock, enable, disable and reset the password of an
+ordinary user, never a protected or service account). Read-Only holds none of them:
 module state (users, shares, printers, certificates, backup paths) is more
 than a status light. Active Directory, certificate authority, DNS and DHCP
 power reaches the whole domain, not one site, so `ad.manage` and

@@ -1,0 +1,85 @@
+function New-Check([string]$Name, [string]$State, [string]$Detail) {
+    return [ordered]@{ name = $Name; state = $State; detail = $Detail }
+}
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $checks = @()
+    $failureCount = 0
+    $oldest = $null
+    $partners = @()
+    # Replication: the failures the directory itself reports, and when each partner last succeeded.
+    try {
+        $failures = @(Get-ADReplicationFailure -Scope Domain -Target ([string]$c.DomainName) @common)
+        $failureCount = $failures.Count
+        foreach ($f in $failures) {
+            $when = Get-Prop $f 'FirstFailureTime'
+            if ($null -ne $when -and ($null -eq $oldest -or [datetime]$when -lt $oldest)) { $oldest = [datetime]$when }
+        }
+        $lag = $false
+        foreach ($m in @(Get-ADReplicationPartnerMetadata -Target ([string]$c.Server) -Scope Server @common)) {
+            if ($partners.Count -ge 20) { break }
+            $ok = Get-Prop $m 'LastReplicationSuccess'
+            $partnerName = ([string](Get-Prop $m 'Partner') -split ',')[1]
+            if ($null -ne $ok -and [datetime]$ok -lt (Get-Date).AddMinutes(-15)) { $lag = $true }
+            $partners += [ordered]@{ partner = ([string]$partnerName -replace '^CN=', ''); lastSuccessAt = Get-UtcText $ok; lastResult = [int](Get-Prop $m 'LastReplicationResult') }
+        }
+        if ($failureCount -gt 0) { $checks += New-Check 'replication' 'critical' 'The directory reports replication failures.' }
+        elseif ($lag) { $checks += New-Check 'replication' 'warning' 'A replication partner has not succeeded in the last 15 minutes.' }
+        elseif ($partners.Count -eq 0) { $checks += New-Check 'replication' 'not_applicable' 'This controller has no replication partners.' }
+        else { $checks += New-Check 'replication' 'ok' 'Replication is succeeding.' }
+    } catch {
+        $checks += New-Check 'replication' 'could_not_run' 'The replication check could not run.'
+    }
+    # The five operations masters.
+    try {
+        $roles = @([string]$c.Domain.PDCEmulator, [string]$c.Domain.RIDMaster, [string]$c.Domain.InfrastructureMaster, [string]$c.Forest.SchemaMaster, [string]$c.Forest.DomainNamingMaster)
+        $missing = @($roles | Where-Object { [string]::IsNullOrEmpty($_) })
+        if ($missing.Count -gt 0) { $checks += New-Check 'fsmo' 'critical' 'An operations master role has no holder.' }
+        else { $checks += New-Check 'fsmo' 'ok' 'All five operations master roles have a holder.' }
+    } catch {
+        $checks += New-Check 'fsmo' 'could_not_run' 'The operations master check could not run.'
+    }
+    # The services a controller needs.
+    try {
+        $need = @('NTDS', 'ADWS', 'Netlogon', 'Kdc')
+        $want = @('DNS', 'DFSR', 'W32Time')
+        $bad = 0
+        $soft = 0
+        foreach ($name in $need) {
+            $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+            if ($null -eq $svc -or $svc.Status -ne 'Running') { $bad++ }
+        }
+        foreach ($name in $want) {
+            $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+            if ($null -ne $svc -and $svc.Status -ne 'Running') { $soft++ }
+        }
+        if ($bad -gt 0) { $checks += New-Check 'services' 'critical' 'A service a domain controller needs is not running.' }
+        elseif ($soft -gt 0) { $checks += New-Check 'services' 'warning' 'DNS, DFS Replication or Windows Time is installed but not running.' }
+        else { $checks += New-Check 'services' 'ok' 'The directory services are running.' }
+    } catch {
+        $checks += New-Check 'services' 'could_not_run' 'The service check could not run.'
+    }
+    # SYSVOL and NETLOGON are shared.
+    try {
+        $names = @(Get-CimInstance -ClassName Win32_Share | ForEach-Object { [string]$_.Name })
+        if ($names -contains 'SYSVOL' -and $names -contains 'NETLOGON') { $checks += New-Check 'sysvol' 'ok' 'SYSVOL and NETLOGON are shared.' }
+        else { $checks += New-Check 'sysvol' 'critical' 'SYSVOL or NETLOGON is not shared.' }
+    } catch {
+        $checks += New-Check 'sysvol' 'could_not_run' 'The SYSVOL check could not run.'
+    }
+    # How many accounts are locked out now.
+    $locked = $null
+    try { $locked = @(Search-ADAccount -LockedOut -UsersOnly @common).Count } catch { $locked = $null }
+    $data = [ordered]@{
+        controller = [string]$c.Dc.HostName
+        domain = [string]$c.DomainName
+        checks = @($checks)
+        lockedOutCount = $locked
+        replication = [ordered]@{ failureCount = $failureCount; oldestFailureAt = Get-UtcText $oldest; partners = @($partners) }
+    }
+    Write-Result $true $data $null $null
+} catch {
+    Stop-ForError $_
+}

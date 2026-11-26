@@ -1,0 +1,32 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    if (-not (Test-Param 'password')) { Stop-With 'invalid' 'A password is required.' }
+    $set = Get-ProtectedSet $c
+    $u = Get-TargetUser ([string]$p.id) $c
+    Assert-Writable $u $set $c ([string](Get-Prop $p 'serviceConfirm'))
+    $must = $true
+    if (Test-Param 'mustChange') { $must = [bool]$p.mustChange }
+    $unlock = $false
+    if (Test-Param 'unlock') { $unlock = [bool]$p.unlock }
+    if ($must -and ($u.PasswordNeverExpires -eq $true -or $u.CannotChangePassword -eq $true)) {
+        Stop-With 'conflict' 'This account cannot change its password or its password never expires, so it cannot be made to change it at the next sign-in.'
+    }
+    $secure = ConvertTo-Secure ([string]$p.password)
+    try {
+        Set-ADAccountPassword -Identity $u -Reset -NewPassword $secure @common
+    } catch {
+        Stop-ForError $_
+    }
+    # Two cmdlets are not one transaction: say which half happened.
+    try {
+        if ($must) { Set-ADUser -Identity $u -ChangePasswordAtLogon $true @common }
+        if ($unlock) { Unlock-ADAccount -Identity $u @common }
+    } catch {
+        Stop-With 'partial' 'The password was changed, but the must-change flag or the unlock was not. Repeat that step or reset again.'
+    }
+    Write-Result $true ([ordered]@{ mustChange = $must; unlocked = $unlock }) $null $null
+} catch {
+    Stop-ForError $_
+}

@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { Device, Permission } from "../../../../api/types";
+import { DirectoryTab } from "../directory/DirectoryTab";
 import { DhcpView } from "./dhcp/DhcpView";
 import { DnsView } from "./dns/DnsView";
 import { CaView } from "./ca/CaView";
@@ -17,6 +18,7 @@ export interface RoleView {
 
 /** The registry. A role (ADR-0076) adds one line here and one folder beside this file. */
 export const ROLE_VIEWS: readonly RoleView[] = [
+  { module: "active_directory", label: "Active Directory", permission: "ad.view", component: DirectoryTab },
   { module: "dns", label: "DNS", permission: "dns.view", component: DnsView },
   { module: "dhcp", label: "DHCP", permission: "dhcp.view", component: DhcpView },
   { module: "certificate_authority", label: "Certificate authority", permission: "ca.view", component: CaView },

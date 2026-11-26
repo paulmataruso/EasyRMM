@@ -1,0 +1,38 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $pol = Get-ADDefaultDomainPasswordPolicy @common
+    $recycle = $false
+    try {
+        $feature = Get-ADOptionalFeature -Filter 'Name -eq "Recycle Bin Feature"' @common
+        if ($null -ne $feature -and @($feature.EnabledScopes).Count -gt 0) { $recycle = $true }
+    } catch { $recycle = $false }
+    $maxAge = $null
+    if ($null -ne $pol.MaxPasswordAge -and $pol.MaxPasswordAge.TotalDays -gt 0) { $maxAge = [int]$pol.MaxPasswordAge.TotalDays }
+    $data = [ordered]@{
+        domain            = [string]$c.DomainName
+        domainSid         = [string]$c.DomainSid
+        forest            = [string]$c.Forest.Name
+        forestRootSid     = [string]$c.ForestSid
+        domainMode        = [string]$c.Domain.DomainMode
+        forestMode        = [string]$c.Forest.ForestMode
+        controller        = [string]$c.Dc.HostName
+        readOnly          = [bool]$c.ReadOnly
+        globalCatalog     = ($c.Dc.IsGlobalCatalog -eq $true)
+        pdcEmulator       = [string]$c.Domain.PDCEmulator
+        recycleBinEnabled = $recycle
+        passwordPolicy    = [ordered]@{
+            minLength                = [int]$pol.MinPasswordLength
+            complexity               = ($pol.ComplexityEnabled -eq $true)
+            historyCount             = [int]$pol.PasswordHistoryCount
+            maxAgeDays               = $maxAge
+            lockoutThreshold         = [int]$pol.LockoutThreshold
+            lockoutDurationMinutes   = [int]$pol.LockoutDuration.TotalMinutes
+            lockoutObservationMinutes = [int]$pol.LockoutObservationWindow.TotalMinutes
+        }
+    }
+    Write-Result $true $data $null $null
+} catch {
+    Stop-ForError $_
+}

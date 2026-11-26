@@ -1,0 +1,46 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $base = [string]$c.DomainDn
+    if (Test-Param 'container') { $base = [string]$p.container }
+    if (-not (Test-UnderDn $base ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+    $scope = 'OneLevel'
+    if ((Test-Param 'scope') -and [string]$p.scope -eq 'subtree') { $scope = 'Subtree' }
+    $groups = @(Get-ADGroup -SearchBase $base -SearchScope $scope -Filter '*' -ResultSetSize 20001 -Properties SamAccountName, Description, GroupScope, GroupCategory, adminCount, objectClass @common)
+    if ($groups.Count -gt 20000) { Stop-With 'too_many' 'More than 20,000 groups are in this container; narrow it to an organizational unit.' }
+    $kind = 'all'
+    if (Test-Param 'kind') { $kind = [string]$p.kind }
+    $match = ''
+    if (Test-Param 'match') { $match = [string]$p.match }
+    $after = ''
+    if (Test-Param 'after') { $after = [string]$p.after }
+    $size = 100
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $rows = @()
+    $more = $false
+    foreach ($g in ($groups | Sort-Object { [string]$_.SamAccountName })) {
+        $sam = [string]$g.SamAccountName
+        if ($after.Length -gt 0 -and [string]::Compare($sam, $after, $true) -le 0) { continue }
+        if ($match.Length -gt 0 -and -not ($sam.StartsWith($match, 'OrdinalIgnoreCase') -or ([string]$g.Name).StartsWith($match, 'OrdinalIgnoreCase'))) { continue }
+        $cat = ([string]$g.GroupCategory).ToLowerInvariant()
+        if ($kind -ne 'all' -and $kind -ne $cat) { continue }
+        if ($rows.Count -ge $size) { $more = $true; break }
+        $prot = Get-Protection $g $set ([string]$c.DomainSid)
+        $desc = Get-Text $g 'Description'
+        if ($desc.Length -gt 100) { $desc = $desc.Substring(0, 100) }
+        $rows += [ordered]@{
+            id = [string]$g.SID.Value; sam = $sam; name = [string]$g.Name; scope = ([string]$g.GroupScope).ToLowerInvariant(); category = $cat
+            description = $desc; protection = [string]$prot.level; reason = [string]$prot.reason
+        }
+    }
+    while ($rows.Count -gt 1 -and (ConvertTo-Json -InputObject $rows -Compress -Depth 4).Length -gt 58000) {
+        $rows = @($rows[0..($rows.Count - 2)]); $more = $true
+    }
+    $next = $null
+    if ($more -and $rows.Count -gt 0) { $next = [string]$rows[$rows.Count - 1].sam }
+    Write-Result $true ([ordered]@{ items = @($rows); next = $next; scanned = $groups.Count; domainSid = [string]$c.DomainSid }) $null $null
+} catch {
+    Stop-ForError $_
+}

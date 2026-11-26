@@ -1181,7 +1181,7 @@ test("a device's Security tab follows the Defender module: shown, then off for i
   const dev = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { organizationId: string };
   await page.goto(`/devices/${agent.deviceId}?tab=security`);
   await expect(page.getByRole("tab", { name: "Security" })).toBeVisible();
-  await expect(page.getByText("Not read yet")).toBeVisible();
+  await expect(page.getByText("Not read yet", { exact: true })).toBeVisible();
 
   await page.goto(`/organizations/${dev.organizationId}?tab=windows-modules`);
   const defender = page.getByRole("checkbox", { name: "Microsoft Defender" });
@@ -1272,4 +1272,77 @@ test("Confirm it is you asks for a second factor again, refuses a wrong code, an
   // The audit log has the step-ups.
   await page.goto("/settings?tab=audit");
   await expect(page.getByRole("cell", { name: /Confirmed a second factor again/ }).first()).toBeVisible();
+});
+
+test("a domain controller's Directory tab reads the domain, and a password reset reaches the agent sealed and is shown once", async () => {
+  const page = admin;
+  const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "ad_ds", state: "present" }] } });
+  const caps = ["job.pwsh", "job.params"];
+  // The agent says what its build takes (parameters on standard input) before the server sends it a module action.
+  await agent.poll(caps);
+  const SID = "S-1-5-21-1-2-3-1104";
+  // The agent answers the next winmod job with the typed result its script would print.
+  const answer = async (action: string, data: unknown) => {
+    let job;
+    await expect
+      .poll(async () => (job = (await agent.poll(caps)).find((j) => j.script.length > 0)), { timeout: 20_000 })
+      .toBeTruthy();
+    expect(await agent.start(job!.runId)).toBe(true);
+    await agent.succeeded(job!.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");
+    return { action, params: job!.params ?? {} };
+  };
+  const status = {
+    domain: "corp.test", domainSid: "S-1-5-21-1-2-3", forest: "corp.test", forestRootSid: "S-1-5-21-1-2-3", domainMode: "Windows2016Domain",
+    forestMode: "Windows2016Forest", controller: "dc1.corp.test", readOnly: false, globalCatalog: true, pdcEmulator: "dc1.corp.test",
+    recycleBinEnabled: true,
+    passwordPolicy: { minLength: 7, complexity: true, historyCount: 24, maxAgeDays: 42, lockoutThreshold: 5, lockoutDurationMinutes: 30, lockoutObservationMinutes: 30 },
+  };
+  const health = {
+    controller: "dc1.corp.test", domain: "corp.test",
+    checks: [{ name: "replication", state: "ok", detail: "Replication is succeeding." }],
+    replication: { failureCount: 0, oldestFailureAt: null, partners: [] },
+  };
+  const users = {
+    items: [
+      { id: SID, sam: "ann", name: "Ann Ordinary", upn: "ann@corp.test", enabled: true, lockedOut: false, passwordExpired: false, protection: "none", reason: "" },
+      { id: "S-1-5-21-1-2-3-1107", sam: "admin2", name: "Admin Two", upn: "", enabled: true, lockedOut: false, passwordExpired: false, protection: "protected", reason: "it is, or is inside, a privileged group" },
+    ],
+    next: null, scanned: 2, domainSid: "S-1-5-21-1-2-3",
+  };
+
+  await page.goto(`/devices/${agent.deviceId}?tab=roles`);
+  await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
+  await page.getByRole("button", { name: "Read now" }).click();
+  await answer("status", status);
+  await expect(page.getByText("Directory health")).toBeVisible();
+  await answer("health_read", health);
+  await expect(page.getByText("Replication is succeeding.")).toBeVisible();
+  await page.getByRole("button", { name: "List users" }).click();
+  await answer("user_list", users);
+  const protectedRow = page.getByRole("row", { name: /Admin Two/ });
+  await expect(protectedRow.getByText("Protected")).toBeVisible();
+  await expect(protectedRow.getByRole("button")).toHaveCount(0);
+
+  // A reset: a typed confirmation, the step-up if it has lapsed, the answer carries the generated password.
+  await page.getByRole("row", { name: /Ann Ordinary/ }).getByRole("button", { name: "Reset password" }).click();
+  const dialog = page.getByRole("dialog", { name: /Reset the password of Ann Ordinary/ });
+  await dialog.getByLabel(/Type ann to confirm/).fill("ann");
+  await dialog.getByRole("button", { name: "Reset password" }).click();
+  const stepUp = page.getByRole("dialog", { name: "Confirm it is you" });
+  if (await stepUp.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    await stepUp.getByLabel(/Code from your authenticator app/).fill(await nextCode(page, ADMIN.email));
+    await stepUp.getByRole("button", { name: "Confirm" }).click();
+  }
+  const sent = await answer("user_reset_password", { mustChange: true, unlocked: false });
+  const shown = await dialog.locator("span.select-all, .select-all").first().innerText();
+  expect(shown).toHaveLength(20);
+  // The agent got the same password, in its signed params, and the account by id; the page shows it once.
+  expect(sent.params).toMatchObject({ id: SID, password: shown, mustChange: true, unlock: false });
+  await expect(dialog.getByText(/Other controllers may take a few moments/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Close" }).last().click();
+  await expect(page.getByText(shown)).toHaveCount(0);
+  // The server keeps no copy: not in the audit, not in the stored result.
+  const audit = await (await page.request.get("/api/v1/audit?action=winmod.active_directory.user_reset_password")).text();
+  expect(audit).not.toContain(shown);
 });

@@ -903,6 +903,55 @@ eye, with defaults chosen in review:
    (section 3) is the designed fallback; storing a delegated account is not
    built.
 
+## Amendments from the first build (2026-11-26)
+
+*Amended 2026-11-26 (decided in review):* the first build (branch `ws/ad`) follows this ADR except where the code showed a better or a
+forced choice. Each is the builder's call, not the owner's.
+
+1. **A password becomes a SecureString without `ConvertTo-SecureString -AsPlainText`.** The AST check allows that call only inside
+   ADR-0077's one pinned helper. The scripts build the SecureString from the stdin variable one character at a time
+   (`AppendChar`), so a password is still never a literal and never part of a built string. The 4103 and 4104 sealing amendment to ADR-0060
+   is unchanged.
+2. **Pages use a sorted-name cursor, not a paged LDAP search with a sealed cookie.** `user_list` and `group_list` read the scope (at most
+   20,000 objects, then `too_many`), sort in memory and return the rows after the last name given. Each page re-reads the scope, which the
+   ADR's section 5 wanted to avoid; the cookie design stays the better one and is the follow-up if a real controller makes pages slow.
+3. **Tier 2 has no typed confirmation.** The framework confirms only `Destructive` actions, and `Destructive` also means step-up. Tier 3 is
+   `Destructive` (typed confirmation `active_directory.<action>:<SID>`, and step-up); tier 2 (`user_set`, `user_move`, `group_create`,
+   `group_remove_member`) is neither. The UI asks the person to type the account's name for tier 3.
+4. **A group's membership changes one member per request** (`member`, a SID), not up to 50: the framework has no list parameter.
+5. **`user_set` takes each attribute as its own optional parameter** (empty clears it), not a map. `userPrincipalName` and
+   `accountExpirationDate` are not offered yet.
+6. **The server's protected-target check refuses every SID that is not an ordinary domain account or group**: a domain SID with a relative ID of
+   1000 or more. That covers 500, 502, 512, 518, 519 and all the built-in and well-known principals without knowing the forest root, so it is
+   stricter than the ADR's table. The script's full guard (nested membership through the Global Catalog, `adminCount`, primary group, the
+   Domain Controllers OU, managed service accounts, fail closed) is the second check.
+7. **The service-account confirmation is sent as `serviceConfirm` (`service-account:<sam>`), and sending it needs `ad.manage`** (for a password
+   reset, `ad.reset_password`): the framework checks a parameter's own permission (`Param.Needs`). A Technician (`ad.helpdesk`) therefore
+   cannot touch a service account. `user_create`'s password needs `ad.reset_password` the same way.
+8. **`user_get` needs `ad.view_sensitive` to be asked at all** (not only to be read), and its result is kept for ten minutes.
+9. **A generated password is made by the framework** (`Param.Generate`): when the request leaves a secret parameter out, the server makes it, seals
+   it, and returns it once in the answer to the request (`generated`, `Cache-Control: no-store`). There is no retry with a longer one.
+10. **An OU is validated in the script at write time**, not against "the last OU tree read": it must exist, be an OU or container of this
+    domain, and not be under Domain Controllers. The server checks only its form (a DN of `CN`, `OU` and `DC` parts with letters, digits, space and
+    `. _ -`).
+11. **The Directory view is a view of the Roles tab** (ADR-0076's `ROLE_VIEWS`), not a tab of its own. It is a view of the controller it is
+    opened on; when the domain's writes go through another controller, it reads only and links to that one.
+12. **Controller selection and the pin are built** (`ad_domains`, `activedirectory.Select`, `GET /organizations/{id}/ad/domains`,
+    `PUT .../{sid}/preferred`). The first ranking is health (healthy, then unknown, then unhealthy), then pin, then PDC emulator, then latest
+    heartbeat, then lowest id. The scripts address the controller they run on, so "writes go to the chosen controller" is enforced by the
+    view (it offers no change on another controller); the server does not yet refuse a change sent to a controller that is not the chosen one.
+13. **The two event alerts read snapshots, not the Security log.** `ad_account_locked_out` counts the accounts locked out now (`Search-ADAccount
+    -LockedOut` in `health_read`), and `ad_privileged_group_changed` holds while Domain, Enterprise or Schema Administrators, or the built-in
+    Administrators, changed within N hours (`whenChanged`, from `privileged_members`, read hourly, kept as a 15-minute sensitive snapshot). They
+    need no event collection or audit policy; ADR-0060's event versions stay a later cross-check. The tier 2 privileged policy is not
+    created (the kind cannot tell tiers apart). Both name the group or the count, never an account. Default policies: many locked out
+    (10, 15 minutes, on), one locked out (off), privileged group changed (24 hours, critical, on), replication failing (on).
+14. **`health_read` and `privileged_members` are scheduled hourly per controller**, not per domain; `ad_replication_failed` opens on the controller's
+    device.
+15. **Dialogs:** create user, edit attributes, move (an OU walked one level at a time, never created), create and delete group, add and
+    remove member (one at a time), disable a computer. A new user's `userPrincipalName`, `accountExpirationDate` and clearing
+    protection flags are still not offered.
+
 ## Amendments to ADR-0073 (decided in review)
 
 All are additive.

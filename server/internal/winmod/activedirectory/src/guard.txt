@@ -1,0 +1,101 @@
+# The protected targets (ADR-0075 section 4): the privileged groups and everything nested in them, counted through the
+# Global Catalog by SID, never by name. A member that cannot be resolved, or a set that is too large, refuses the request.
+function Find-Group([string]$Sid, [bool]$ForestWide, [bool]$Required, [hashtable]$c) {
+    $common = @{ Server = $c.Server }
+    if ($c.Common.ContainsKey('Credential')) { $common['Credential'] = $c.Common['Credential'] }
+    if ($ForestWide -and $c.ForestSid -ne $c.DomainSid) { $common['Server'] = Join-Text $c.Server ':3268' }
+    try {
+        return Get-ADGroup -Identity $Sid -Properties member, whenChanged @common
+    } catch {
+        if ($_.Exception.GetType().Name -eq 'ADIdentityNotFoundException' -and -not $Required) { return $null }
+        throw
+    }
+}
+function Get-ProtectedSet([hashtable]$c) {
+    $set = @{}
+    $dom = [string]$c.DomainSid
+    $for = [string]$c.ForestSid
+    $set[(Join-Text $dom '-500')] = 'the built-in Administrator'
+    $set[(Join-Text $dom '-502')] = 'the krbtgt account'
+    $roots = @(
+        @((Join-Text $dom '-512'), $false, $true), @((Join-Text $for '-519'), $true, $true), @((Join-Text $for '-518'), $true, $true),
+        @('S-1-5-32-544', $false, $true), @('S-1-5-32-548', $false, $false), @('S-1-5-32-549', $false, $false),
+        @('S-1-5-32-550', $false, $false), @('S-1-5-32-551', $false, $false), @('S-1-5-32-552', $false, $false),
+        @((Join-Text $dom '-516'), $false, $false), @((Join-Text $dom '-520'), $false, $false), @((Join-Text $dom '-521'), $false, $false),
+        @((Join-Text $dom '-526'), $false, $false), @((Join-Text $for '-527'), $true, $false)
+    )
+    $queue = New-Object System.Collections.Queue
+    foreach ($root in $roots) {
+        $g = Find-Group ([string]$root[0]) ([bool]$root[1]) ([bool]$root[2]) $c
+        if ($null -eq $g) { continue }
+        $set[[string]$g.SID.Value] = 'it is, or is inside, a privileged group'
+        $queue.Enqueue($g)
+    }
+    $dns = $null
+    try { $dns = Get-ADGroup -Identity 'DnsAdmins' -Properties member -Server $c.Server } catch { $dns = $null }
+    if ($null -ne $dns) { $set[[string]$dns.SID.Value] = 'it is, or is inside, a privileged group'; $queue.Enqueue($dns) }
+    while ($queue.Count -gt 0) {
+        $g = $queue.Dequeue()
+        foreach ($dn in (Get-List $g 'member')) {
+            if ($set.Count -gt 5000) { throw 'The set of privileged accounts is too large to check.' }
+            $srv = $c.Server
+            if (-not (Test-UnderDn ([string]$dn) ([string]$c.DomainDn))) { $srv = Join-Text $c.Server ':3268' }
+            $m = Get-ADObject -Identity $dn -Properties objectSid, objectClass -Server $srv
+            $sid = [string]$m.objectSid.Value
+            $kind = [string]$m.objectClass
+            if ($set.ContainsKey($sid) -and $kind -ne 'foreignSecurityPrincipal') { continue }
+            $set[$sid] = 'it is, or is inside, a privileged group'
+            if ($kind -eq 'group') {
+                $queue.Enqueue((Get-ADGroup -Identity $dn -Properties member -Server $srv))
+            } elseif ($kind -eq 'foreignSecurityPrincipal') {
+                $fg = Find-Group $sid $true $false $c
+                if ($null -ne $fg) { $queue.Enqueue($fg) }
+            }
+        }
+    }
+    return $set
+}
+# 'protected', 'service' or 'none', with why.
+function Get-Protection($o, [hashtable]$Set, [string]$DomainSid) {
+    $sid = [string]$o.SID.Value
+    $cls = Get-Text $o 'objectClass'
+    if ($Set.ContainsKey($sid)) { return @{ level = 'protected'; reason = [string]$Set[$sid] } }
+    if ($cls -eq 'computer') { return @{ level = 'protected'; reason = 'it is a computer account' } }
+    if ($cls -eq 'msDS-GroupManagedServiceAccount' -or $cls -eq 'msDS-ManagedServiceAccount') { return @{ level = 'protected'; reason = 'it is a managed service account' } }
+    $admin = Get-Prop $o 'adminCount'
+    if ($null -ne $admin -and [int]$admin -eq 1) { return @{ level = 'protected'; reason = 'adminCount is set (this can be left over from a past membership)' } }
+    $pg = Get-Prop $o 'primaryGroupID'
+    if ($null -ne $pg -and $Set.ContainsKey((Join-Text (Join-Text $DomainSid '-') ([string]$pg)))) { return @{ level = 'protected'; reason = 'its primary group is a privileged group' } }
+    $spn = Get-Prop $o 'servicePrincipalName'
+    if ($null -ne $spn -and @($spn).Count -gt 0) { return @{ level = 'service'; reason = 'it has a service principal name' } }
+    $uac = Get-Prop $o 'userAccountControl'
+    if ($null -ne $uac -and (([int]$uac -band 0x10000) -ne 0)) {
+        $last = Get-Prop $o 'lastLogonTimestamp'
+        if ($null -eq $last -or [int64]$last -le 0 -or [datetime]::FromFileTimeUtc([int64]$last) -lt (Get-Date).ToUniversalTime().AddDays(-180)) {
+            return @{ level = 'service'; reason = 'its password never expires and nobody has signed in with it for 180 days (a guess)' }
+        }
+    }
+    return @{ level = 'none'; reason = '' }
+}
+function Assert-Writable($o, [hashtable]$Set, [hashtable]$c, [string]$Confirm) {
+    $verdict = Get-Protection $o $Set ([string]$c.DomainSid)
+    if ($verdict.level -eq 'protected') { Stop-With 'protected_target' ('This target is protected: ' + $verdict.reason + '.') }
+    if ($verdict.level -eq 'service' -and -not (Test-ServiceConfirm $Confirm (Get-Text $o 'SamAccountName'))) {
+        Stop-With 'service_account_confirmation_required' ('This looks like a service account (' + $verdict.reason + '); changing it can stop the services that run as it.')
+    }
+}
+function Get-TargetUser([string]$Id, [hashtable]$c) {
+    $common = $c.Common
+    return Get-ADUser -Identity $Id -Properties SamAccountName, UserPrincipalName, DisplayName, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, CannotChangePassword, adminCount, primaryGroupID, servicePrincipalName, userAccountControl, lastLogonTimestamp, objectClass, ProtectedFromAccidentalDeletion @common
+}
+function Get-TargetGroup([string]$Id, [hashtable]$c) {
+    $common = $c.Common
+    return Get-ADGroup -Identity $Id -Properties SamAccountName, adminCount, objectClass, ProtectedFromAccidentalDeletion @common
+}
+function Assert-Ou([string]$Dn, [hashtable]$c) {
+    $common = $c.Common
+    if (-not (Test-UnderDn $Dn ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+    if (Test-UnderDn $Dn ([string]$c.ControllersDn)) { Stop-With 'protected_target' 'Nothing is created in, moved into or moved out of the Domain Controllers container.' }
+    $o = Get-ADObject -Identity $Dn -Properties objectClass @common
+    if (@('organizationalUnit', 'container', 'domainDNS') -notcontains [string]$o.objectClass) { Stop-With 'not_found' 'That is not an organizational unit or a container.' }
+}

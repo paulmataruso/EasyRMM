@@ -51,6 +51,9 @@ const (
 	// Text is free text of Min to Max characters without control
 	// characters; a Secret parameter is of this type.
 	Text Type = "text"
+	// DN is an LDAP distinguished name of CN, OU and DC parts whose values
+	// hold letters, digits, spaces and . _ - only (ADR-0075).
+	DN Type = "dn"
 )
 
 // Param declares one parameter of an action.
@@ -72,6 +75,21 @@ type Param struct {
 	Check   func(string) string
 	// Sensitive values are audited as their length and SHA-256 only.
 	Sensitive bool
+	// AllowEmpty lets a Text be empty (a way to say "clear this").
+	AllowEmpty bool
+	// Needs, when set, is a permission the caller must hold on the device
+	// to send this parameter at all (a stronger permission than the
+	// action's own, for a stronger use of it).
+	Needs rbac.Permission
+	// Generate, on an optional Secret, has the server make the value when
+	// the request leaves it out (a password), and show it to the caller
+	// once in the answer (ADR-0075).
+	Generate bool
+	// RefuseWellKnown, on a SID, accepts only an ordinary domain account or
+	// group (a domain SID with a relative ID of 1000 or more): the built-in
+	// and well-known principals, which hold the domain, are refused
+	// whatever their name (ADR-0075 section 4, the server's check).
+	RefuseWellKnown bool
 }
 
 // Action is one fixed action of a module.
@@ -213,6 +231,12 @@ func (a Action) check() error {
 		seen[p.Name] = true
 		if p.Type == Enum && len(p.Values) == 0 {
 			return fmt.Errorf("parameter %q has no values", p.Name)
+		}
+		if p.Pattern != nil && p.Type != Name && p.Type != Text {
+			return fmt.Errorf("parameter %q has a bad pattern", p.Name)
+		}
+		if (p.Generate && (!p.Secret || p.Required)) || (p.RefuseWellKnown && p.Type != SID) {
+			return fmt.Errorf("parameter %q is not valid", p.Name)
 		}
 	}
 	if a.Subject != "" && !seen[a.Subject] {

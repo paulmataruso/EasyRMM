@@ -1,0 +1,12 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $g = Get-TargetGroup ([string]$p.id) $c
+    Assert-Writable $g $set $c ''
+    Add-ADGroupMember -Identity $g -Members ([string]$p.member) @common
+    Write-Result $true ([ordered]@{ done = $true }) $null $null
+} catch {
+    Stop-ForError $_
+}

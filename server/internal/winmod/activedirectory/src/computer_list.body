@@ -1,0 +1,39 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $base = [string]$c.DomainDn
+    if (Test-Param 'container') { $base = [string]$p.container }
+    if (-not (Test-UnderDn $base ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+    $scope = 'OneLevel'
+    if ((Test-Param 'scope') -and [string]$p.scope -eq 'subtree') { $scope = 'Subtree' }
+    $all = @(Get-ADComputer -SearchBase $base -SearchScope $scope -Filter '*' -ResultSetSize 20001 -Properties SamAccountName, DNSHostName, OperatingSystem, Enabled, primaryGroupID @common)
+    if ($all.Count -gt 20000) { Stop-With 'too_many' 'More than 20,000 computers are in this container; narrow it to an organizational unit.' }
+    $match = ''
+    if (Test-Param 'match') { $match = [string]$p.match }
+    $after = ''
+    if (Test-Param 'after') { $after = [string]$p.after }
+    $size = 100
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $rows = @()
+    $more = $false
+    foreach ($o in ($all | Sort-Object { [string]$_.SamAccountName })) {
+        $sam = [string]$o.SamAccountName
+        if ($after.Length -gt 0 -and [string]::Compare($sam, $after, $true) -le 0) { continue }
+        if ($match.Length -gt 0 -and -not $sam.StartsWith($match, 'OrdinalIgnoreCase')) { continue }
+        if ($rows.Count -ge $size) { $more = $true; break }
+        $isDc = (Get-Prop $o 'primaryGroupID') -eq 516 -or (Get-Prop $o 'primaryGroupID') -eq 521
+        $rows += [ordered]@{
+            id = [string]$o.SID.Value; sam = $sam; name = [string]$o.Name; dnsName = Get-Text $o 'DNSHostName'
+            os = Get-Text $o 'OperatingSystem'; enabled = ($o.Enabled -eq $true); controller = [bool]$isDc
+        }
+    }
+    while ($rows.Count -gt 1 -and (ConvertTo-Json -InputObject $rows -Compress -Depth 4).Length -gt 58000) {
+        $rows = @($rows[0..($rows.Count - 2)]); $more = $true
+    }
+    $next = $null
+    if ($more -and $rows.Count -gt 0) { $next = [string]$rows[$rows.Count - 1].sam }
+    Write-Result $true ([ordered]@{ items = @($rows); next = $next; scanned = $all.Count }) $null $null
+} catch {
+    Stop-ForError $_
+}

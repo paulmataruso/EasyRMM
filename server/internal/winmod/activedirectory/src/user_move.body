@@ -1,0 +1,14 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $u = Get-TargetUser ([string]$p.id) $c
+    Assert-Writable $u $set $c ([string](Get-Prop $p 'serviceConfirm'))
+    if (Test-UnderDn ([string]$u.DistinguishedName) ([string]$c.ControllersDn)) { Stop-With 'protected_target' 'Nothing is moved out of the Domain Controllers container.' }
+    Assert-Ou ([string]$p.targetOu) $c
+    Move-ADObject -Identity ([string]$u.DistinguishedName) -TargetPath ([string]$p.targetOu) @common
+    Write-Result $true ([ordered]@{ done = $true }) $null $null
+} catch {
+    Stop-ForError $_
+}

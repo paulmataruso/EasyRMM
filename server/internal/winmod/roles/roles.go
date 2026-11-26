@@ -5,7 +5,11 @@ package roles
 import (
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
+<<<<<<< HEAD
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/certauth"
+=======
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/activedirectory"
+>>>>>>> ws/ad
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dhcp"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dns"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/fileshares"
@@ -16,6 +20,7 @@ import (
 func Actions() []winmod.Action {
 	var all []winmod.Action
 	for _, a := range [][]winmod.Action{
+		activedirectory.Actions(),
 		dns.Actions(),
 		dhcp.Actions(),
 		certauth.Actions(),
@@ -30,6 +35,7 @@ func Actions() []winmod.Action {
 // Alerts are every role's alert kinds and default policies.
 func Alerts() []monitoring.ModuleAlerts {
 	return []monitoring.ModuleAlerts{
+		activedirectory.AlertKinds(),
 		dns.AlertKinds(),
 		dhcp.AlertKinds(),
 		certauth.AlertKinds(),

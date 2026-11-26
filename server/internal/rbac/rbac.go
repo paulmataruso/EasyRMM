@@ -80,6 +80,7 @@ const (
 	PermADManage        Permission = "ad.manage"
 	PermADResetPassword Permission = "ad.reset_password"
 	PermADViewSensitive Permission = "ad.view_sensitive"
+	PermADHelpdesk      Permission = "ad.helpdesk" // unlock, reset, enable, disable an ordinary user (ADR-0075)
 	PermCAView          Permission = "ca.view"
 	PermCAManage        Permission = "ca.manage"
 	PermDNSView         Permission = "dns.view"
@@ -126,7 +127,7 @@ var AllPermissions = []Permission{
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
 	PermDocView, PermDocManage, PermLogView,
-	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive, PermADHelpdesk,
 	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
@@ -213,7 +214,7 @@ var technicianPerms = union(viewPerms, []Permission{
 	// ca.view, dns.view and shares.view, which start at Site Administrator,
 	// plus the reversible manage permissions. No Active Directory writes.
 	PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
-	PermDefenderManage, PermBackupManage, PermPrintManage,
+	PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
