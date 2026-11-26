@@ -1,6 +1,6 @@
 # ADR-0077: Managing Windows backup from the console
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-26): "A module to control windows backup, we
   should have full managment over windows backup for both desktops and
   servers via our GUI". Those words are the only owner decisions here.
@@ -17,7 +17,7 @@
   [ADR-0055](0055-lets-encrypt-in-one-step.md), section *Step-up
   authentication* (the one definition: a second factor within the last 5
   minutes).
-* Amends: ADR-0073 (four points, below).
+* Amends: ADR-0073 (three points, below).
 
 ## Context
 
@@ -96,7 +96,9 @@ error code '%2'", with `HResult` and `DetailedHResult` in the XML node
 `VolumesInfo`), **19** `BACKUP_FAILED_DID_NOT_START_EVENT` ("Backup attempted
 at '%4' failed to start, error code '%5'"). **49** ("Backup failed as no
 target could be found") comes from a search summary of Microsoft's page, not
-a page this ADR read. Those pages predate Server 2016: whether the same IDs,
+a page this ADR read. Other IDs sometimes cited for this log (**8, 9, 14,
+20, 517, 521, 561**) were not read and are **unverified: to confirm on R1**,
+as is 49. Those pages predate Server 2016: whether the same IDs,
 and a "completed with warnings" ID, are used on 2016 to 2025 is **to confirm
 by a real run** (slice B1, step R1). File History writes to
 `Microsoft-Windows-FileHistory-Engine` (log `BackupLog`) and
@@ -119,22 +121,23 @@ This is the ADR's central statement, and the console says it in the tab.
 
 | | Server with WSB | Server without WSB | Desktop (Windows 10, 11) |
 |---|---|---|---|
-| See state, history, targets, space | yes | "not installed" | partly: events only (see below) |
-| Configure schedule, items, targets | **yes** (cmdlets) | after installing the feature | **no**: nothing supported to drive |
-| Run now, stop | **yes** | - | no |
+| See state, history, targets, space | yes | "not installed" | partly: events only, plus option A's task state |
+| Configure schedule, items, targets | **yes** (cmdlets) | after installing the feature | **option A only** (deprecated System Image Backup, opt-in, if R11 passes); File History on and off by policy |
+| Run now, stop | **yes** | - | option A: run and stop its task |
 | Restore files to a chosen place | **yes** | - | no |
 | Delete old versions | **yes** | - | no |
 | Install the feature | - | **yes** | - |
-| Restore a volume, system state or bare metal | **no**, from the console (see Actions) | - | no |
+| Restore a volume, system state or bare metal | **not in v1** (a policy choice, see Actions) | - | no |
 | Alerts | **yes** | optional ("not configured") | failures and stale, quiet by default |
 | The Windows Backup app (OneDrive) | - | - | **cannot be managed or read** |
 
 So on **servers** the console manages the whole supported lifecycle except
-whole-system recovery. On **desktops** it **watches and alerts but does not
-manage**, because Windows offers nothing documented to manage: File History is
-per user and the Windows Backup app has no interface. Where the console
-cannot do something it shows the reason and, for what the owner may want to
-change, the owner decisions below say how.
+recovery of volumes and systems. On **desktops** it **watches and alerts by
+default**, and an organization may opt in to **option A** (section 5), a
+scheduled System Image Backup that the console creates and runs. The
+Windows Backup app has no interface and File History is per user, so
+neither is managed beyond one policy switch. Where the console cannot do
+something it shows the reason.
 
 ## Decision
 
@@ -152,9 +155,10 @@ change, the owner decisions below say how.
 4. Network-target credentials travel as a sealed secret in `params`, are
    never in a command line, never logged, and are never stored by EasyRMM.
 5. Failures, a missing target and no recent backup become seven alert kinds
-   and eight default policies that are quiet on laptops because they are
+   and nine default policies that are quiet on laptops because they are
    scoped by device class and configured-ness.
-6. Servers are managed; desktops are watched.
+6. Servers are managed; desktops are watched, with an opt-in, labelled-deprecated
+   System Image Backup (option A) if a real-device test passes.
 
 ### 1. Identity, permissions and where it is offered
 
@@ -263,14 +267,19 @@ section 4). Scripts import `WindowsServerBackup` by name and report
 
 *Plain limits, decided in review:*
 
-* **No volume, system-state, application or bare-metal recovery from the
-  console.** Microsoft says a system recovery runs only from the recovery
-  environment; a volume recovery of a volume in use, a domain controller's
-  system state (which needs Directory Services Restore Mode) and Hyper-V
-  recovery stop or replace running systems and cannot be made safe by a
-  remote button. The console shows the backup, its recoverable kinds and
-  the command to run at the recovery console. No action is added to the
-  catalogue for them; a later ADR may add one with its own risk analysis.
+* **No volume, system-state, application or bare-metal recovery in v1: a
+  policy choice, not a Microsoft limit.** Microsoft documents `wbadmin start
+  recovery -itemtype:Volume`, `Start-WBVolumeRecovery` and the others; what
+  is true is that `start sysrecovery` runs only in the Windows Recovery
+  Environment. v1 leaves out recovery of volumes because it can overwrite
+  live data and a wrong volume or version cannot be undone, and leaves out
+  the operating-system volume, a domain controller's system state (which
+  needs Directory Services Restore Mode) and Hyper-V recovery because they
+  replace a running system. The console shows the backup, its recoverable
+  kinds and the command to run at the recovery console. **Later slice
+  (B12):** recovery of a **non-system** volume to its own volume, tier 3 with
+  a step-up and a typed confirmation naming the volume and version, offered
+  only if real-device steps (R12) prove it safe; the rest stay out.
 * **No browsing inside a backup.** `Get-WBBackupVolumeBrowsePath` mounts a
   volume of the backup as a share. v1 restores by a path the operator types
   and reports "not found in this version" from the recovery's result. A
@@ -308,12 +317,19 @@ cmdlets only as argument values.
   secret** (ADR-0073 section 4, *Secrets*): sealed with the server key, held
   at most 10 minutes, delivered once inside the signed `params`, deleted on
   delivery.
-* The script builds the credential in memory
-  (`ConvertTo-SecureString -AsPlainText -Force`, which the AST check allows
-  for this one named secret parameter and nothing else) and passes it to
-  `New-WBBackupTarget -Credential`. **`wbadmin -password` is not used**: a
-  command-line argument is visible to every process listing and to
-  command-line audit logs.
+* On servers the **only** path is `New-WBBackupTarget -Credential` with a
+  `PSCredential` built in memory from `params`. **There is no safe `wbadmin`
+  path with a password**: `-user` and `-password` are command-line arguments,
+  visible to every process listing and to command-line audit logs, so they
+  are never used, by the catalogue or by an operator through this module.
+* Building the credential needs `ConvertTo-SecureString -AsPlainText -Force`.
+  **That exemption weakens the AST check** (ADR-0073 bans plain-text
+  handling of parameters). It is confined to **one reviewed helper function**,
+  `New-EasyRmmCredential`, in one catalogue file shared by the scripts that
+  need it; the AST check permits the construct only inside that function,
+  whose body is matched by its **pinned SHA-256** (a change to it changes the
+  hash and needs review), and everywhere else in every script it still
+  fails.
 * The server and the agent never keep it: `jobs.args`, `jobs.body`, audit,
   logs, results and `winmod_job_secrets` after delivery hold no password
   (ADR-0073's grep test is extended with this action). The script's result
@@ -349,10 +365,43 @@ cmdlets only as argument values.
   session, so it should work; `feature_install` on Core is
   `Install-WindowsFeature`. **Not verified on Server Core**; slice B11 says
   so until R10 is run.
-* **Desktops.** Visibility and alerts only, plus the explanation card. No
-  action in the catalogue targets a `WinNT` computer, and the server refuses
-  any with `not_offered`. If the owner wants more (decisions 1 and 2), they
-  are separate follow-ups, each needing its own real-device confirmation.
+* **Desktops, default.** Visibility and alerts, plus the explanation card.
+  No action targets a `WinNT` computer unless an organization has opted in
+  to option A; the server refuses any with `not_offered`.
+* **Desktops, option A (opt-in per organization, off by default).** The
+  console manages Microsoft's **deprecated** "System Image Backup" (the
+  legacy Backup and Restore (Windows 7) feature, announced deprecated with
+  Windows 10 version 1709), and the UI labels it exactly that, with the
+  deprecation notice, wherever it appears. It is a **SYSTEM-owned scheduled
+  task** the agent creates with `Register-ScheduledTask` (a principal of
+  SYSTEM, a trigger from the chosen schedule) that runs
+  `wbadmin start backup -allCritical -quiet` with `-backupTarget` set to:
+  * a local or attached disk or volume (never one in the backup itself), or
+  * a UNC share the **computer account** (`DOMAIN\PC$`) can write to.
+  **No password is stored or passed on desktops**: `schtasks /RU /RP` and
+  `wbadmin -user -password` would put one in a command line, so neither is
+  used, and a share that needs a user account is **not** offered for
+  desktops. Actions: `desktop_image_enable` (tier 2; register the task),
+  `desktop_image_disable` (tier 3; stop protection), `desktop_image_run` and
+  `desktop_image_stop` (tier 1), and `desktop_image_status` (the task's
+  state and last result). Events, alerts and versions work as for servers.
+  **Ships only if R11 passes:** on a real Windows 11 Pro machine (a VM),
+  confirm that `wbadmin start backup -allCritical -quiet` runs as SYSTEM to a
+  disk and to a share via the computer account, that the Backup log
+  records it and that a restore from it works at the recovery console. **If
+  R11 fails, desktops stay monitor-only and this ADR is amended to say so**;
+  slice B13 does not ship.
+* **File History on desktops.** The console can switch File History on or
+  off for the computer through its **policy registry value** (the "Turn off
+  File History" policy, `HKLM\SOFTWARE\Policies\Microsoft\Windows\FileHistory`
+  value `Disabled`, as secondary sources describe it; the exact name and
+  effect are to confirm on a real desktop, R11), tier 2 on, tier 3 off, and
+  shows when a policy elsewhere owns it. **Per-user File History
+  configuration is out of scope and no user-session helper is built**: the
+  configuration object is per user and needs that user's session, a helper
+  would be a new agent component running as a user with its own attack
+  surface, and the benefit does not justify it. File History's folders and
+  drive are chosen by the user.
 
 ### 6. Alerts
 
@@ -384,6 +433,12 @@ and "off means off". Differences:
   retention 90 days. No backup content, share credentials or file names
   are stored.
 
+**Gate.** No alert kind in this module ships before R1 confirms **each** event
+ID it uses on a real server (4, 5, 19, 49 and any other), with its message and
+fields recorded in this ADR. Kinds whose source is the status read (target
+space, overdue, stuck, not configured) do not depend on R1 and may ship
+earlier. Until then an ID not confirmed is **to confirm on R1**.
+
 #### Alert kinds
 
 Registered per ADR-0073 section 6 (name, label, module `windows_backup`,
@@ -391,9 +446,9 @@ parameters, value source). Seven kinds:
 
 | Kind | Source | `threshold` means | `minutes` means | Opens on | Resolves on |
 |---|---|---|---|---|---|
-| `backup_failed` | events 5 and 19; File History errors | unused | unused | a failure; subject = the product (`wsb` or `filehistory`) | event 4 after it (WSB), or a later success the status read shows; for File History when no error has been logged for 7 days (*decided in review*) |
+| `backup_failed` | events 5 and 19 (to confirm on R1); File History errors | unused | unused | a failure; subject = the product (`wsb` or `filehistory`) | event 4 after it (WSB), or a later success the status read shows; for File History when no error has been logged for 7 days (*decided in review*) |
 | `backup_overdue` | Facts `lastSuccess` | days without a success | unused | `now` minus the later of `lastSuccess` and **the time the device last came online** is at least the threshold | a success |
-| `backup_target_missing` | event 49; status `targets[].online` | unused | grace in minutes | the target is not found or offline for the grace | the target comes back |
+| `backup_target_missing` | event 49 (to confirm on R1); status `targets[].online` | unused | grace in minutes | the target is not found or offline for the grace | the target comes back |
 | `backup_target_low_space` | status `targets[].free` | percent free | unused | free space below the threshold | above it |
 | `backup_not_configured` | role state | unused | unused | a server has WSB installed with no policy for the grace | a policy exists |
 | `backup_not_installed` | role state | unused | unused | a server without the WSB feature | the feature appears |
@@ -429,7 +484,8 @@ there (ADR-0073 section 6); organization-level, owned by the module, marked
 
 | Name | Kind | Threshold | Minutes | Class | Severity | Default |
 |---|---|---|---|---|---|---|
-| Backup: last backup failed | `backup_failed` | - | - | any | critical | on |
+| Backup: last backup failed (servers) | `backup_failed` | - | - | server | critical | on |
+| Backup: last backup failed (workstations) | `backup_failed` | - | - | workstation | warning | **off** |
 | Backup: target not found | `backup_target_missing` | - | 60 | server | critical | on |
 | Backup: no successful backup in 2 days | `backup_overdue` | 2 | - | server | warning | on |
 | Backup: target nearly full (under 10% free) | `backup_target_low_space` | 10 | - | server | warning | on |
@@ -442,10 +498,13 @@ there (ADR-0073 section 6); organization-level, owned by the module, marked
 and a full or missing target. A server's failure, a missing target, two days
 without a backup, a nearly full target and a stuck job mean something is
 wrong now and are on. On laptops a missing target (the external drive left at
-home) and a week without a backup are normal: the failure rule is on for
-every class but the other four are server-only or off, the 14-day rule is
-off and online-relative, and File History's own errors resolve after 7 quiet
-days. "Not configured" and "not installed" are off because many customers
+home), a failed File History run and a week without a backup are normal, so
+**every default is server-only or off on workstations**: the workstation
+failure rule is off (an organization that has enabled option A, or whose
+desktops have been seen with a target, turns it on; the evaluator also holds
+a workstation failure until a successful backup or a target has been seen on
+that device), the 14-day rule is off and online-relative, and File History's
+own errors resolve after 7 quiet days. "Not configured" and "not installed" are off because many customers
 back up servers with another product, and a default that fires on every such
 server teaches people to ignore alerts; an organization that uses WSB turns
 them on. Creation calls `modules.Allowed`.
@@ -483,7 +542,9 @@ same function for the organization.
   refreshed once.
 * **PowerShell AST check (Windows runner CI).** ADR-0073's check over every
   `windows_backup` script, with one allowed exception: `ConvertTo-SecureString
-  -AsPlainText -Force` whose input is the single declared secret parameter.
+  -AsPlainText -Force` inside the pinned helper `New-EasyRmmCredential` and
+  nowhere else (section 3, *Credentials*); a test shows the same construct
+  outside it fails.
 * **Windows runner CI.** On a `windows-latest` runner: parse all scripts;
   the hostile-value stdin pattern; the `module_missing` result where the
   module is absent; and, **if** the runner can install the feature
@@ -518,9 +579,16 @@ same function for the organization.
     check, the format, and the dialog text.
   * R10 Server Core, if a test Core server exists: install, configure and
     run; otherwise the ADR says "not verified on Server Core".
-  * R11 On a Windows 11 desktop: confirm what the logs and events show with
-    File History on and off, whether `wbadmin` exists and works, and that
-    the tab shows the explanation card; settle owner decisions 1 and 2 (this is R11).
+  * R11 On a **real Windows 11 Pro VM** (not the servers): confirm the
+    logs and events with File History on and off and the policy value's
+    effect; then option A: register the SYSTEM task with
+    `Register-ScheduledTask`, run `wbadmin start backup -allCritical -quiet`
+    to a local disk and to a share via the computer account, confirm the
+    Backup log events and the alert, confirm no password appears anywhere,
+    stop the job, and restore at the recovery console. A failure keeps
+    desktops monitor-only.
+  * R12 (only for B12) on a scratch volume: recover a non-system volume to
+    itself from a test backup, with the step-up and confirmation.
   Until they are run the ADR says "not verified on a real server".
 
 ## Slices
@@ -553,7 +621,7 @@ additive edits.
 8. **B8 Install.** `feature_install` and the role rescan. Needs B1, B2 and
    ADR-0073 slice 4.
 9. **B9 Alerts and defaults.** Seven kinds, `AppliesTo` and `deviceClass`,
-   the last-online rule, `ours` windows, eight default policies, the
+   the last-online rule, `ours` windows, nine default policies, the
    `Evaluate` pass. Files: `server/internal/monitoring/policies.go`,
    `evaluate.go`, `service.go`. Needs B1 and ADR-0073 slice 7.
 10. **B10 UI.** The Backup tab's panels, group column, site and organization
@@ -563,8 +631,15 @@ additive edits.
     `web/src/pages/devices/backup/`. Needs ADR-0073 slice 8; each panel
     needs its action's slice.
 11. **B11 CI and the real-device run.** The module's AST rules and Windows
-    job (grows with each slice; needs ADR-0073 slice 9) and the R1 to R11
+    job (grows with each slice; needs ADR-0073 slice 9) and the R1 to R12
     runbook with results written back here.
+
+12. **B12 Non-system volume recovery (later, optional).** Only if R12
+    proves it safe; tier 3. Needs B3, B4.
+13. **B13 Desktop option A and File History policy switch.** The scheduled
+    task actions, the opt-in toggle, the policy value, the UI labels. **Does
+    not start until R11 passes**; if R11 fails it is dropped and the ADR
+    amended. Needs B1, B2, B9.
 
 B1 and B2 start together; B3 to B8 after them, in parallel where marked; B9
 after B1; B10 as its slices land. ADR-0073's order puts this module second,
@@ -573,9 +648,10 @@ after Defender.
 ## Consequences
 
 * Servers get complete management of the supported Windows Server Backup
-  lifecycle; desktops get honest visibility and alerts, not management, and
-  the console says why.
-* Whole-system recovery stays at the recovery console, a deliberate limit.
+  lifecycle; desktops get visibility and alerts, and, if R11 passes and an
+  organization opts in, a labelled-deprecated scheduled System Image Backup.
+* Recovery of volumes and systems stays at the recovery console in v1, by
+  policy.
 * Four new pieces of cross-module machinery are small and additive: a role
   state on every server, two permissions, a class on alert kinds and
   policies, and the "last came online" rule for age alerts.
@@ -589,17 +665,10 @@ after Defender.
 
 ## Owner decisions
 
-The owner's request is the only owner decision recorded. Two things are worth
-the owner's eye, with defaults chosen in review:
-
-1. **Desktops are read-only.** Windows has no supported way to manage File
-   History from the system account, and System Image Backup is deprecated.
-   If the owner wants the console to turn File History on or off by policy,
-   or to drive the deprecated system image through `wbadmin` once R11 shows
-   it works on Windows 11, those are follow-ups. Default: not built.
-2. **A helper in the user's session** (to manage per-user File History or
-   the Windows Backup app) would be a new kind of agent component. Default:
-   not built, and not planned.
+The owner's request is the only owner decision recorded; none remain. The
+choices on desktops (option A opt-in, File History by policy only, no
+user-session helper) and on volume recovery were *decided in review*, and the
+owner can overturn them.
 
 ## Amendments to ADR-0073 (decided in review)
 
@@ -611,9 +680,8 @@ All are additive.
   only marker, so that the install action is reachable.
 * **Section 3:** the Windows Backup row gains `backup.view_sensitive` and
   `backup.destroy`.
-* **Section 4, step-up:** ADR-0073 says "within the last 10 minutes". The one
-  definition is ADR-0055's, **5 minutes**; this ADR and every module use
-  that, and ADR-0073's number is read as ADR-0055's.
+* **Step-up** is not amended here: it is deferred to ADR-0055 (a second
+  factor within 5 minutes), which is the one definition.
 * **Section 6:** kinds may declare `AppliesTo`, and a policy may carry an
   optional `deviceClass`, so one kind can have a server rule and a
   workstation rule; the evaluator skips the other class and resolves with
