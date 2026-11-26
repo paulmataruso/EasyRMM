@@ -14,6 +14,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 )
 
@@ -452,6 +453,9 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		if err := pending.Err(); err != nil {
 			return err
 		}
+		if err := recordMeshConnections(ctx, tx, present, online); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE devices d SET mesh_agent_type = n.type, remote_online = n.online, mesh_wrong_group = false,
 			    last_seen_at = CASE WHEN n.online OR d.remote_online THEN now() ELSE d.last_seen_at END
@@ -723,4 +727,49 @@ func (s *Service) recordedNodes(ctx context.Context, tx pgx.Tx, nodes []string) 
 		out[node] = true
 	}
 	return out, rows.Err()
+}
+
+// recordMeshConnections writes a MeshAgent record (source "meshagent") into
+// the device's log for each enrolled device whose connection to MeshCentral
+// changed, before the sync stores the new state. It is what MeshCentral
+// sees; the record is the server's own (sequence -1), and an organization
+// outside the dev scope gets none.
+func recordMeshConnections(ctx context.Context, tx pgx.Tx, nodes []string, online []bool) error {
+	rows, err := tx.Query(ctx, `
+		SELECT d.id, d.organization_id, n.online
+		FROM devices d JOIN unnest($1::text[], $2::bool[]) AS n(node, online) ON d.mesh_node_id = n.node
+		WHERE d.agent_public_key IS NOT NULL AND d.remote_online IS DISTINCT FROM n.online`, nodes, online)
+	if err != nil {
+		return fmt.Errorf("finding MeshAgent connection changes: %w", err)
+	}
+	var ids []uuid.UUID
+	var msgs []string
+	for rows.Next() {
+		var id, org uuid.UUID
+		var on bool
+		if err := rows.Scan(&id, &org, &on); err != nil {
+			rows.Close()
+			return err
+		}
+		if !devscope.Allowed(org) {
+			continue
+		}
+		msg := "MeshCentral sees MeshAgent disconnected."
+		level := "warn"
+		if on {
+			msg, level = "MeshCentral sees MeshAgent connected.", "info"
+		}
+		ids, msgs = append(ids, id), append(msgs, level+"|"+msg)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agent_log_records (device_id, seq, source, logged_at, level, message, attrs)
+		SELECT t.id, -1, 'meshagent', now(), split_part(t.m, '|', 1), substr(t.m, strpos(t.m, '|') + 1), '{"origin":"meshcentral"}'::jsonb
+		FROM unnest($1::uuid[], $2::text[]) AS t(id, m)`, ids, msgs); err != nil {
+		return fmt.Errorf("recording MeshAgent connection changes: %w", err)
+	}
+	return nil
 }

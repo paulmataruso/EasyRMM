@@ -510,6 +510,17 @@ func (e *env) run(ctx context.Context) error {
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
 	g.Go(func() { ship.Run(ctx, sendLogs(c)) })
+	if ship != nil && mesh != nil {
+		// MeshAgent's side of the device's log: what the agent observes of it.
+		emit := func(level, msg string, attrs map[string]string) {
+			ship.Record(agentproto.LogSourceMeshAgent, level, msg, attrs)
+		}
+		mesh.OnExit = func(err error) {
+			emit("warn", "MeshAgent exited and is restarted: "+fmt.Sprint(err), nil)
+		}
+		obs := &meshagent.Observer{M: mesh, Emit: emit}
+		g.Go(func() { obs.Run(ctx) })
+	}
 	err = r.Run(ctx)
 	cancel()
 	g.Wait()

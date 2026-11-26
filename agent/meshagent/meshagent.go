@@ -60,6 +60,9 @@ type Manager struct {
 	// RestartDelay is the pause before restarting a child MeshAgent that
 	// exited (5 s).
 	RestartDelay time.Duration
+	// OnExit, when set, hears of each exit of a child MeshAgent the
+	// supervisor restarts.
+	OnExit func(err error)
 
 	mu    sync.Mutex
 	child *exec.Cmd
@@ -507,6 +510,9 @@ func (m *Manager) supervise(ctx context.Context, cmd *exec.Cmd) {
 			return
 		}
 		m.Log.Warn("MeshAgent exited; restarting", "error", err)
+		if m.OnExit != nil {
+			m.OnExit(err)
+		}
 		select {
 		case <-ctx.Done():
 			return
