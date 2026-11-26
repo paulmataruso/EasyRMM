@@ -18,6 +18,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/powershell"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/internal/eventrules"
 )
 
 var (
@@ -34,10 +35,11 @@ func systemRoot() string { return cmp.Or(os.Getenv("SystemRoot"), `C:\Windows`) 
 // Accepts lists the job capabilities this build takes, for its polls
 // (agentproto.PollRequest.Accepts): pwsh jobs, their fallback and the
 // program a result reports, job params, and structured jobs with the
-// registry builtin (ADR-0067).
+// registry builtin (ADR-0067) and the event viewer's (ADR-0068).
 func Accepts() []string {
 	return []string{agentproto.CapJobPwsh, agentproto.CapJobParams, agentproto.CapJobStructured,
-		agentproto.CapBuiltin(agentproto.BuiltinRegistry, agentproto.RegistryInputVersion)}
+		agentproto.CapBuiltin(agentproto.BuiltinRegistry, agentproto.RegistryInputVersion),
+		agentproto.CapBuiltin(agentproto.BuiltinEventlog, eventrules.InputVersion)}
 }
 
 // pwshRoots are where a pwsh run looks for PowerShell 7: Program Files and

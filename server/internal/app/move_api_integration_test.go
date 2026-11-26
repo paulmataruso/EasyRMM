@@ -343,7 +343,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// the keystore (ADR-0081): the volume rows follow within an organization and end with a move out of it
 		"device_encrypted_volumes": ends,
 		// ends
-		"remote_grants": ends, "alerts": ends, "device_rdp_credentials": ends, "recovery_key_escrows": ends, "recovery_key_requests": ends, "keystore_notices": stays,
+		"remote_grants": ends, "alerts": ends, "device_rdp_credentials": ends, "recovery_key_escrows": ends, "recovery_key_requests": ends, "keystore_notices": stays, "notices": stays,
 		"agent_log_records": ends, "agent_log_days": ends, "agent_log_follow": ends,
 		// a device's verbose setting ends with any move to another site; a
 		// group's is owned by the group.
@@ -351,11 +351,11 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// stays
 		"job_runs": stays, "registry_masked_values": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays, "compliance_fix_items": stays, "compliance_fix_agreements": stays, "hardening_setting_results": stays,
 		// owned
-		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
 		// the assessment workspace (ADR-0078 C5): a record of the organization; a scope entry names a computer and stays with the record
 		"compliance_assessments": owned, "compliance_implementations": owned, "compliance_objective_results": owned, "compliance_attestations": owned,
 		"compliance_evidence": owned, "compliance_evidence_links": owned, "compliance_org_keys": owned, "compliance_poam_items": owned, "compliance_poam_milestones": owned,
 		"compliance_documents": owned, "compliance_document_sections": owned, "compliance_score_snapshots": owned, "compliance_scope_assets": stays,
+		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "notification_channels": owned, "notification_channel_shares": owned, "notification_quotas": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
 		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned,
 		// engine
 		"easypatch_devices": engine, "easypatch_install_restarts": engine, "easypatch_installs": engine, "easypatch_opt_outs": engine,

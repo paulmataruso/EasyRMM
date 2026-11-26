@@ -66,6 +66,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/keystoreapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/notifyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/postureapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/quickassistapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/rdpcredsapi"
@@ -85,6 +86,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/modsnap"
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
+	"github.com/paulmataruso/easyrmm/server/internal/notify"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/posture"
 	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
@@ -195,6 +197,9 @@ type Deps struct {
 	// Keystore stores the recovery keys agents escrow and has the keystore
 	// process check them (ADR-0081); it holds no key.
 	Keystore *keystore.Service
+	// Notify is the one notification sender: channels, the outbox, notices
+	// (ADR-0053).
+	Notify *notify.Service
 }
 
 // Build constructs the services over an open database.
@@ -398,6 +403,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	// organization's administrators (ADR-0053).
 	d.Keystore.SetStepUp(sessions)
 	d.Keystore.SetNotifier(mailSvc)
+	d.Notify = newNotify(cfg, db, auditLog, sealer, mailSvc, log)
 	var files agentfiles.Mesh
 	if mesh != nil {
 		files = mesh
@@ -693,6 +699,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		return nil, fmt.Errorf("web interface: %w", err)
 	}
 	keystoreapi.New(d.Keystore).Register(mux)
+	notifyapi.New(d.Notify).Register(mux)
 	mux.Handle("/", webui.Handler(files))
 
 	trusted := cfg.TrustedProxies
@@ -851,6 +858,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.Keystore.Run(ctx) })
+	deps.Notify.SetHeld(hold.Held)
+	wg.Go(func() { deps.Notify.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.RunAgentPoll(ctx) })

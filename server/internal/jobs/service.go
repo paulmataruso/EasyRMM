@@ -173,9 +173,9 @@ func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 		// is required today.
 		tag, err := tx.Exec(ctx, `UPDATE job_runs r SET status = 'expired', finished_at = now(),
 				error = CASE `+heldSQL+`
-					WHEN 'unable' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent cannot open the registry editor, so the run waited until it expired. Update the agent.'
+					WHEN 'unable' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent cannot open the ' || CASE WHEN j.kind = 'eventlog_query' THEN 'event viewer' ELSE 'registry editor' END || ', so the run waited until it expired. Update the agent.'
 						ELSE 'The device''s agent cannot run PowerShell 7 scripts, so the run waited until it expired. Update the agent.' END
-					WHEN 'unreported' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent did not say whether it can open the registry editor before the run expired. Update the agent if this happens again.'
+					WHEN 'unreported' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent did not say whether it can open the ' || CASE WHEN j.kind = 'eventlog_query' THEN 'event viewer' ELSE 'registry editor' END || ' before the run expired. Update the agent if this happens again.'
 						ELSE 'The device''s agent did not say whether it can run PowerShell 7 scripts before the run expired. Update the agent if this happens again.' END
 					ELSE 'The device did not pick up the job before it expired.' END
 			FROM jobs j, devices d

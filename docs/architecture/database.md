@@ -488,6 +488,28 @@ order, so 00036 follows 00032 to 00035.
 | `contacts` | `organization_id`, `site_id` (NULL for the organization's own) through the composite key to `sites`, `name` (1 to 200 characters), `job_title`, `email`, `office_phone`, `mobile_phone`, `note` (up to 2,000), `priority` (`primary`, `secondary` or `none`), `emergency`. `contacts_primary_org_key` and `contacts_primary_site_key`: one primary for the organization and one per site. Goes with its organization or site |
 | Policies `site_places_tenant`, `contacts_tenant` | `sites_tenant`'s, without `scope_read_orgs`: site-scoped people see their sites' rows, not the organization's own contacts. Enabled and forced |
 
+## Notification channels, the outbox, notices and their journal (migration 00074, renumbered by the integrator)
+
+ADR-0053, slice 3. Every table has row-level security enabled and forced, on
+`easyrmm_scope_all()` and `easyrmm_scope_ids('easyrmm.scope_orgs')`. The nil
+UUID is the platform's owner key.
+
+| Table | Notes |
+|---|---|
+| `organizations` | Gains `CHECK (id <> nil)` (`organizations_id_not_nil`) |
+| `notification_channels` | `owner` never NULL, equal to `organization_id` or the nil UUID (`notification_channels_owner`); `organization_id` is never the nil UUID; `kind` email or webhook; name 1 to 100 characters, unique per owner ignoring case (`notification_channels_name`); unique `(id, owner)` for the composite keys. Read: platform scope, the owner's own, and a platform channel in the scope of an organization it is shared with; written by the owner's scope |
+| `notification_channel_shares` | `owner` fixed to the nil UUID, composite foreign key `(channel_id, owner)`: platform channels only. Written at platform scope only |
+| `notification_channel_details` | Recipients (up to 20), webhook host and port, the sealed URL and signing secret, trusted authority, the `X-EasyPatch-*` switch, failing state and last error, the transport's generation. Its own policy on its own `owner`: no `EXISTS` on channels, no exception for platform rows |
+| `notification_channel_approvals` | One row per channel: host, port, proposed addresses, approved prefixes, state `requested` or `approved`. An organization's scope may insert `requested` rows and delete; updating (approving) is platform scope only |
+| `notification_deliveries` | The outbox. `charged_org` the organization charged (nil for the platform's own); `about` the organizations it concerns, `CHECK` that an organization's delivery is about that organization only (`notification_deliveries_owner_about`, `_owner_charged`); composite key `(channel_id, owner)` with `ON DELETE SET NULL (channel_id)`. An organization's scope inserts only its own tests |
+| `notification_delivery_recipients` | Each recipient's outcome (a webhook has one row, `(webhook)`); follows its delivery |
+| `notification_quotas` | Platform scope only; absent means the defaults (20 channels, 50 rules, 20 tests an hour, 600 messages an hour) |
+| `notices` | Raised and resolved at platform scope; read, and acknowledged, in the owner organization's scope (or the site's); one open notice per organization, kind and subject (`notices_open`) |
+| `notification_events` | The journal. Inserted only by `easyrmm_notice_journal()` (`SECURITY DEFINER`, owned by `easyrmm_owner`, policy `FOR INSERT TO easyrmm_owner`) on `notices` insert and on a change of resolution or acknowledgement; the runtime role has no `INSERT` and may update only `status`, `planned_at`, `failed_runs` and `error`, at platform scope |
+
+The down migration drops them all, the triggers and the function, and the
+constraint on `organizations`.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

@@ -74,6 +74,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/devices/{id}/registry/query", a.registryQuery)
 	r("GET /api/v1/job-runs/{id}/result", a.runResult)
 	r("GET /api/v1/job-runs/{id}/export", a.registryExport)
+	r("POST /api/v1/devices/{id}/eventlog", a.eventlogQuery)
+	r("GET /api/v1/job-runs/{id}/eventlog", a.eventlogResult)
 }
 
 func (a *API) listScripts(w http.ResponseWriter, r *http.Request) error {
@@ -572,5 +574,40 @@ func (a *API) registryExport(w http.ResponseWriter, r *http.Request) error {
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(f.Data) //nolint:gosec // an attachment of a text or JSON type, sent with nosniff: never rendered as a page
+	return nil
+}
+
+// eventlogQuery starts one operation of the event viewer on a Windows device
+// (ADR-0068): channels, a query or its next page, an event, or a provider.
+func (a *API) eventlogQuery(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	in := jobs.EventlogRequest{DeviceID: id}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	run, err := a.svc.CreateEventlogQuery(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusAccepted, run)
+	return nil
+}
+
+// eventlogResult returns an event log run's result: never cached, as it holds
+// events.
+func (a *API) eventlogResult(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	res, err := a.svc.ReadEventlogResult(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, res)
 	return nil
 }

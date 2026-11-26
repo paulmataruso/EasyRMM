@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/internal/eventrules"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -18,6 +19,14 @@ const (
 
 // KindFilterRegistry is the Jobs list's filter for both registry kinds.
 const KindFilterRegistry = "registry"
+
+// KindEventlogQuery is the event viewer's kind (ADR-0068): reads of a Windows
+// computer's event logs. Its filter in the Jobs list has the same name
+// without the suffix.
+const (
+	KindEventlogQuery  = "eventlog_query"
+	KindFilterEventlog = "eventlog"
+)
 
 // Executors of a kind.
 const (
@@ -84,6 +93,15 @@ var Kinds = map[string]Kind{
 		WaitDefault: 2 * time.Minute, WaitMax: 2 * time.Minute,
 		Timeout: agentproto.QuickSeconds * time.Second, Quick: true,
 		AuditAction: "registry.read",
+	},
+	KindEventlogQuery: {
+		Name: KindEventlogQuery, Executor: ExecBuiltin, Builtin: agentproto.BuiltinEventlog, Platforms: []string{"windows"},
+		Requires: []string{agentproto.CapJobStructured}, BuiltinVersions: []int{eventrules.InputVersion},
+		ReadPerm: rbac.PermEventlogView, AskerOnly: true,
+		KeepResult: time.Hour, KeepJob: 7 * 24 * time.Hour,
+		WaitDefault: 2 * time.Minute, WaitMax: 2 * time.Minute,
+		Timeout: agentproto.QuickSeconds * time.Second, Quick: true,
+		AuditAction: "eventlog.query",
 	},
 	KindRegistryChange: {
 		Name: KindRegistryChange, Executor: ExecBuiltin, Builtin: agentproto.BuiltinRegistry, Platforms: []string{"windows"},

@@ -1360,6 +1360,71 @@ level it touches.
    upload, `eventlog.clear`, ADR-0060's detection amended. Built only if
    the owner wants it.
 
+### Slice 1 as built
+*Amended 2026-11-26 (decided in review).* The slice follows the Decision
+above; where the code showed a better shape, this is what was built.
+
+* **The tab is "Event logs", beside Logs.** The device page's *Logs* tab is
+  already the agent's own log (ADR-0069, `log.view`), so the viewer is its own
+  tab, `eventlog` ("Event logs"), shown for Windows devices with the agent and
+  `eventlog.view` at the site, after Logs and before the module tabs. ADR-0072's
+  "Logs" row is unchanged; *Collected* (slice 3) will join it in one tab then.
+* **Data functions.** The second permission is not a change to F2's
+  `easyrmm_job_run_result` and `easyrmm_job_input`, which stay as they are: two
+  thin definer functions, `easyrmm_eventlog_result` and `easyrmm_eventlog_input`,
+  ask for `log.view_sensitive` again where the stored input says `sensitive`
+  (treated as sensitive if a result has no input to say), and then call them.
+  `easyrmm_eventlog_page` returns a next page's input and the last line of the
+  previous result (which holds the cursor) after checking the caller asked for
+  that run, on the same device, within the hour, and still holds the permission;
+  `easyrmm_eventlog_refusal` records `eventlog.refused`. The migration also
+  replaces `easyrmm_job_refusal`, which counts `eventlog.refused` in its 20 per
+  10 minutes beside `registry.refused`.
+* **Where the rules live.** `internal/eventrules` holds the model, the
+  classification, the query builder, the input and the result lines and the
+  server's check; `internal/agentproto` gains only the builtin's name. The agent
+  lists `builtin.eventlog.v1` on Windows in `accepts`.
+* **The query.** One structured `QueryList` per channel, the whole selection
+  XML-escaped once as text, so a provider name can only be a value. Information
+  is `Level=4 or Level=0`. A keyword mask is a decimal string, since a JSON
+  number would round a 64-bit one. The Event Log API is bound in
+  `agent/winevent/backend_windows.go` with `golang.org/x/sys/windows` and lazy
+  procedures: `EvtQuery`, `EvtNext`, `EvtRender`, `EvtFormatMessage`,
+  `EvtOpenChannelEnum`/`Config`, `EvtOpenLog`/`EvtGetLogInfo`,
+  `EvtOpenPublisherMetadata`, `EvtCancel`. The engine in `agent/winevent` takes a
+  `Backend`, so that bounds, merging, cursors and hiding are tested without
+  Windows; the Windows half runs on the runners.
+* **Cancelling.** The agent starts a builtin of `cancelsOnInput` (this one) with
+  a pipe on its standard input and closes it to cancel; the child's watchdog
+  cancels its queries with `EvtCancel` and the child writes its last line. The job
+  object ends it after `InputGrace` (5 seconds) if it has not exited. The
+  registry builtin is still ended at once.
+* **A run per person.** A new query from the same person cancels their query
+  still open on that device (a channel list does not cancel a search); a third
+  open run of the kind on one device from anyone is refused. The claim delivers an
+  event log run to a device only while none is running there, and at most one in
+  a poll's answer.
+* **The Security channel and "sensitive".** `sensitive` in the request is the
+  person's choice; the server sets it only for someone holding `log.view_sensitive`
+  in the device's organization (organization-wide grants only: `orgWideOnly` in
+  `rbac.go`). The Security log asked for without it is refused and recorded; asked
+  for by one who holds it, without `sensitive`, it is an input error ("Ask for the
+  Security log with sensitive data"); the console sets it when the Security log is
+  chosen.
+* **Result lines.** `begin`, `crash` (the `CrashOnAuditFail` value), `channel`,
+  `pos` (a channel's state, its log's creation time and oldest record, and
+  whether it was cleared or wrapped), `provider`, `event`, `error` and `end`,
+  which carries the cursor, what bound stopped the page and the server's counts of
+  events it redacted or dropped. A value over its cut is marked `…[cut]` in the
+  fields and the XML alike.
+* **Not yet measured**: whether Windows stops a query for a client that was
+  killed (the cancel makes it unnecessary), the time of a page from click to list,
+  the Event Log service's load on a 256 MiB log, the error codes this ADR marks
+  to be confirmed (analytic channels, the service not running, a filter too
+  complex), the message of an event with unresolved inserts, forwarded events.
+  The runners' tests log what they can see; the integrator measures the rest on a
+  real computer.
+
 ## Consequences
 * Technicians can read a Windows computer's event logs from the console,
   without the Security log and command lines, with each query recorded;

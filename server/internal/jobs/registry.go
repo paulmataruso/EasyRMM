@@ -423,6 +423,9 @@ func (s *Service) recordRegistryResult(ctx context.Context, tx pgx.Tx, device, r
 	if err != nil || len(raw) > agentproto.MaxResultFile {
 		return fail("The agent's result was not valid, so it was not kept.")
 	}
+	if *kind == KindEventlogQuery {
+		return s.storeEventlogResult(ctx, tx, run, input, raw, in.ResultCut, fail)
+	}
 	lines := agentproto.SplitResultLines(raw)
 	res, perr := agentproto.ParseRegistryLines(lines)
 	if perr != nil {
@@ -743,6 +746,14 @@ func (s *Service) readStructuredInput(ctx context.Context, c access.Caller, id u
 	var result string
 	var input []byte
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		if *kind == KindEventlogQuery {
+			// A query for sensitive data is read again only by one who still
+			// holds log.view_sensitive (ADR-0068).
+			ls := scopeOf(c, rbac.PermLogViewSensitive)
+			return tx.QueryRow(ctx, `SELECT result, job_input FROM easyrmm_eventlog_input($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::inet, $17, $18, $19, $20)`,
+				id, view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites, kindScope.All, kindScope.Orgs, kindScope.Sites,
+				askerOnly, st.At, st.ActorType, st.ActorID, st.ActorLabel, st.SourceIP, st.UserAgent, ls.All, ls.Orgs, ls.Sites).Scan(&result, &input)
+		}
 		return tx.QueryRow(ctx, `SELECT result, job_input FROM easyrmm_job_input($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::inet, $17)`,
 			id, view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites, kindScope.All, kindScope.Orgs, kindScope.Sites,
 			askerOnly, st.At, st.ActorType, st.ActorID, st.ActorLabel, st.SourceIP, st.UserAgent).Scan(&result, &input)

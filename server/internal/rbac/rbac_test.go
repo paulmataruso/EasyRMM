@@ -462,3 +462,35 @@ func TestRecoveryKeyPermissionsAreAddOnOnly(t *testing.T) {
 		t.Error("the add-on is not scoped like a device permission")
 	}
 }
+
+// The event viewer (ADR-0068): Technicians and above query one computer's
+// logs; the Security log and sensitive fields are for organization
+// administrators and above, from organization-wide grants only.
+func TestEventlogPermissions(t *testing.T) {
+	for _, c := range []struct {
+		role       Role
+		view, sens bool
+	}{{RoleSuperAdmin, true, true}, {RoleOrgAdmin, true, true}, {RoleSiteAdmin, true, false}, {RoleTechnician, true, false}, {RoleReadOnly, false, false}} {
+		if got := slices.Contains(Roles[c.role].Permissions, PermEventlogView); got != c.view {
+			t.Errorf("%s holds eventlog.view: %v", c.role, got)
+		}
+		if got := slices.Contains(Roles[c.role].Permissions, PermLogViewSensitive); got != c.sens {
+			t.Errorf("%s holds log.view_sensitive: %v", c.role, got)
+		}
+	}
+	org := mustPrincipal(t, Assignment{Role: RoleOrgAdmin, OrganizationID: orgA})
+	if !org.Can(PermLogViewSensitive, Org(orgA)) || !org.Can(PermLogViewSensitive, Site(orgA, siteA1)) || org.Can(PermLogViewSensitive, Org(orgB)) {
+		t.Error("an organization administrator holds log.view_sensitive in their organization only")
+	}
+	// A site grant never gives it, whatever the role says.
+	if !orgWideOnly[PermLogViewSensitive] {
+		t.Error("log.view_sensitive is not organization-wide only")
+	}
+	site := mustPrincipal(t, Assignment{Role: RoleSiteAdmin, OrganizationID: orgA, SiteID: siteA1})
+	if site.Can(PermLogViewSensitive, Site(orgA, siteA1)) || site.CanAnywhere(PermLogViewSensitive) {
+		t.Error("a site-scoped grant gave log.view_sensitive")
+	}
+	if !site.Can(PermEventlogView, Site(orgA, siteA1)) {
+		t.Error("a site-scoped administrator reads the logs of their site")
+	}
+}

@@ -742,6 +742,13 @@ stays with it. `recovery_key_requests` follow the device's site within an
 organization and end with a move to another one, as the escrow records do;
 the audit log keeps every read.
 
+### Amended 2026-11-26 (decided in review), notification channels
+
+ADR-0053's slice 3 tables (migration `00074`): `notification_channels`,
+`notification_channel_shares` and `notification_quotas` belong to their
+organization (owned). A notice in `notices` was raised to the organization
+of its time and stays with it when a device it names moves.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,

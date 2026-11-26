@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/paulmataruso/easyrmm/agent/registry"
+	"github.com/paulmataruso/easyrmm/agent/winevent"
 )
 
 // builtin runs one of the agent's builtins as the child process a job
@@ -18,6 +19,8 @@ func (e *env) builtin(args []string) error {
 	switch args[0] {
 	case "registry":
 		return registry.Main(Version)
+	case "eventlog":
+		return winevent.Main(Version)
 	}
 	return fmt.Errorf("there is no builtin named %q", args[0])
 }

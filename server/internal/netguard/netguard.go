@@ -23,9 +23,64 @@ var metadata = map[netip.Addr]string{
 	netip.MustParseAddr("100.100.100.200"): "Alibaba Cloud instance metadata",
 }
 
+var (
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour      = netip.MustParsePrefix("2002::/16")
+)
+
+// Embedded lists the IPv4 addresses an IPv6 address carries, beyond an
+// IPv4-mapped one: NAT64 (64:ff9b::/96), 6to4 (2002::/16) and
+// IPv4-compatible (::a.b.c.d) addresses, plus the extra /96 prefixes given
+// (the network's own NAT64 prefix, RFC 7050). An address checked as the IPv6
+// address must also be checked as each of these (ADR-0053).
+func Embedded(a netip.Addr, nat64 ...netip.Prefix) []netip.Addr {
+	a = a.Unmap()
+	if !a.Is6() {
+		return nil
+	}
+	b := a.As16()
+	var out []netip.Addr
+	v4 := func(o int) { out = append(out, netip.AddrFrom4([4]byte{b[o], b[o+1], b[o+2], b[o+3]})) }
+	switch {
+	case nat64WellKnown.Contains(a):
+		v4(12)
+	case sixToFour.Contains(a):
+		v4(2)
+	}
+	for _, p := range nat64 {
+		if p.Bits() == 96 && p.Contains(a) {
+			v4(12)
+		}
+	}
+	// IPv4-compatible: ::a.b.c.d with the first 96 bits zero (not :: or ::1).
+	zero := true
+	for _, x := range b[:12] {
+		if x != 0 {
+			zero = false
+		}
+	}
+	if zero && a != netip.IPv6Unspecified() && a != netip.IPv6Loopback() {
+		v4(12)
+	}
+	return out
+}
+
 // Refused says why the server does not connect to an address, or "" when
-// it does.
+// it does. An IPv6 address that carries an IPv4 one (see Embedded) is
+// refused when either is.
 func Refused(a netip.Addr) string {
+	if why := refused(a); why != "" {
+		return why
+	}
+	for _, e := range Embedded(a) {
+		if why := refused(e); why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
+func refused(a netip.Addr) string {
 	a = a.Unmap()
 	if why, ok := metadata[a]; ok {
 		return why
