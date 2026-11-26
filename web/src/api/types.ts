@@ -4328,3 +4328,54 @@ export interface DeliveryLogRow {
   mailReply?: string;
   recipients: { recipient: string; status: string; error?: string; sentAt?: string }[];
 }
+
+/** One name's certificate, as the Certificates page shows it (ADR-0055). It carries no key. */
+export interface TlsNameStatus {
+  name: string;
+  role?: string;
+  state: "valid" | "renewing" | "waiting_dns" | "failing" | "expired" | "pending";
+  imported: boolean;
+  serial?: string;
+  issuer?: string;
+  notBefore?: string;
+  notAfter?: string;
+  renewalDue?: string;
+  ariStart?: string;
+  ariEnd?: string;
+  ariExplanation?: string;
+  nextAttemptAt?: string;
+  failingSince?: string;
+  waitingDnsSince?: string;
+  lastError?: string;
+  failures: number;
+  alert: "none" | "warning" | "critical";
+  alertReason?: string;
+  retryRefusedUntil?: string;
+  servedSerial?: string;
+  pendingSerial?: string;
+  pendingReadyAt?: string;
+}
+
+export interface TlsStatus {
+  directory: string;
+  email: string;
+  account: boolean;
+  held: boolean;
+  names: TlsNameStatus[];
+  warnings: string[];
+  now: string;
+}
+
+export interface TlsOverview {
+  mode: string;
+  managed: boolean;
+  status?: TlsStatus;
+}
+
+export interface TlsCheck {
+  id: string;
+  title: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+  fix?: string;
+}

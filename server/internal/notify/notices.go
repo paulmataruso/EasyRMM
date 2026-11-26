@@ -122,3 +122,19 @@ func (s *Service) Acknowledge(ctx context.Context, c access.Caller, id uuid.UUID
 		return nil
 	})
 }
+
+// RaisePlatformNotice opens, or updates the detail of, a notice about the
+// platform itself (no organization): a certificate that is failing or about
+// to expire (ADR-0055). Super administrators see it; the journal records it.
+func (s *Service) RaisePlatformNotice(ctx context.Context, kind, subject, title, detail string) error {
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		return openNotice(ctx, tx, nil, kind, subject, title, detail)
+	})
+}
+
+// ResolvePlatformNotice resolves the platform notice open for a thing, if any.
+func (s *Service) ResolvePlatformNotice(ctx context.Context, kind, subject string) error {
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		return resolveNotice(ctx, tx, nil, kind, subject)
+	})
+}

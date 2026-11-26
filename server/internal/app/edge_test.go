@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
+	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 )
 
@@ -455,7 +456,9 @@ func TestEdgeHeld(t *testing.T) {
 	acmeCfg.ACMEDirectory = "https://127.0.0.1:1/directory" // never contacted by this test
 	acmeCfg.ListenHTTPS = reserveAddr(t)
 	acmeCfg.ListenHTTP = reserveAddr(t)
-	stop = runEdge(t, &edge{cfg: acmeCfg, handler: okHandler(), hold: held(t), log: discard()})
+	// The certificate service is not started: no challenge is known to it.
+	svc := tlscert.New(tlscert.Deps{}, tlscert.Settings{Names: []string{"rmm.test"}})
+	stop = runEdge(t, &edge{cfg: acmeCfg, handler: okHandler(), hold: held(t), log: discard(), tls: svc})
 	defer stop()
 	resp, body = get(t, noRedirect(), "http://"+acmeCfg.ListenHTTP+"/x", "rmm.test")
 	wantHeld(t, "ACME's redirect", resp, body)

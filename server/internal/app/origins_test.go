@@ -231,8 +231,9 @@ func TestCertificateChoice(t *testing.T) {
 		{"DNS name", &tls.ClientHelloInfo{ServerName: "rmm.test", Conn: external}, operator, "rmm.test"},
 		{"IP address from outside", &tls.ClientHelloInfo{Conn: external}, internal, ""},
 		{"IP as server name", &tls.ClientHelloInfo{ServerName: "203.0.113.10", Conn: external}, internal, ""},
-		{"MeshCentral over loopback", &tls.ClientHelloInfo{Conn: loop}, operator, "mesh.rmm.test"},
-		{"MeshCentral on the host address", &tls.ClientHelloInfo{Conn: self}, operator, "mesh.rmm.test"},
+		// MeshCentral has a listener of its own: no rule on the main listeners.
+		{"loopback without a server name", &tls.ClientHelloInfo{Conn: loop}, internal, ""},
+		{"the host's own address without a server name", &tls.ClientHelloInfo{Conn: self}, internal, ""},
 	} {
 		asked = ""
 		got, err := get(c.hello)
@@ -240,8 +241,14 @@ func TestCertificateChoice(t *testing.T) {
 			t.Errorf("%s: got internal=%v asked %q, err %v", c.name, got == internal, asked, err)
 		}
 	}
-	if fromThisHost(nil) {
-		t.Error("nil conn from this host")
+	// MeshCentral's listener serves the MeshCentral name's certificate,
+	// whatever server name it is sent and from wherever it connects.
+	mesh := e.meshCertificate(primary)
+	for _, h := range []*tls.ClientHelloInfo{{Conn: loop}, {ServerName: "unrelated.test", Conn: loop}, {ServerName: "203.0.113.10", Conn: self}} {
+		asked = ""
+		if got, err := mesh(h); err != nil || got != operator || asked != "mesh.rmm.test" {
+			t.Errorf("MeshCentral's listener for %+v: asked %q, err %v", h.ServerName, asked, err)
+		}
 	}
 
 	// Without IP access an address gets the operator's certificate.

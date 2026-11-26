@@ -165,6 +165,7 @@ services:
       EASYRMM_AGENT_CHANNEL: ${EASYRMM_AGENT_CHANNEL:-}
       EASYRMM_AGENT_CONNECTIONS_MAX: ${EASYRMM_AGENT_CONNECTIONS_MAX:-}
       EASYRMM_ACME_DIRECTORY: ${EASYRMM_ACME_DIRECTORY:-}
+      EASYRMM_ACME_CA_FILE: ${EASYRMM_ACME_CA_FILE:-}
       # Set, the mail server is .env's; empty, the console's (Settings ->
       # Notifications -> Mail server).
       EASYRMM_SMTP_HOST: ${EASYRMM_SMTP_HOST:-}

@@ -115,7 +115,7 @@ func TestMissingRequiredValuesAreAllReported(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty environment accepted")
 	}
-	for _, want := range []string{"EASYRMM_PUBLIC_URL", "EASYRMM_SECRET_KEY", "EASYRMM_DATABASE_URL", "EASYRMM_DATABASE_MIGRATION_URL", "EASYRMM_ACME_EMAIL"} {
+	for _, want := range []string{"EASYRMM_PUBLIC_URL", "EASYRMM_SECRET_KEY", "EASYRMM_DATABASE_URL", "EASYRMM_DATABASE_MIGRATION_URL"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
@@ -226,14 +226,14 @@ func TestRemoteAccessSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := c.Mesh
-	if !m.Enabled || m.InternalURL.String() != "http://127.0.0.1:14430" || m.ConfigDir != "/var/lib/easyrmm-meshcentral" || m.CertURL != "https://127.0.0.1:443" {
+	if !m.Enabled || m.InternalURL.String() != "http://127.0.0.1:14430" || m.ConfigDir != "/var/lib/easyrmm-meshcentral" || m.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("remote access defaults: %+v", m)
 	}
 
-	// The certificate is read from our own HTTPS listener...
+	// The certificate is read from a loopback listener of its own...
 	e := base()
 	e["EASYRMM_LISTEN_HTTPS"] = ":8443"
-	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:8443" {
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("cert URL with a custom HTTPS port: %v %v", c, err)
 	}
 	// ...or, behind a proxy, from the proxy.
@@ -275,7 +275,7 @@ func TestRemoteAccessSettings(t *testing.T) {
 	// Blank, as Compose passes what .env leaves blank: the defaults.
 	e = base()
 	e["EASYRMM_MESH_PUBLIC_URL"], e["EASYRMM_MESH_CERT_URL"] = " ", ""
-	if c, err := LoadFrom(env(e), noFiles); err != nil || c.MeshPublicURL.String() != "https://mesh.rmm.example.com" || c.Mesh.CertURL != "https://127.0.0.1:443" {
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.MeshPublicURL.String() != "https://mesh.rmm.example.com" || c.Mesh.CertURL != "https://127.0.0.1:18444" {
 		t.Errorf("blank remote-access URLs: %v", err)
 	}
 	// Without a public URL there is nothing to derive the remote-access URL from.

@@ -10,17 +10,16 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/acme"
-	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 )
 
@@ -36,6 +35,9 @@ type edge struct {
 	hold    *updater.Hold
 	log     *slog.Logger
 	pki     *pki.Authority
+	// tls obtains and renews the certificates of the DNS names in acme mode
+	// (ADR-0055); nil in the other modes.
+	tls     *tlscert.Service
 	servers []*http.Server
 }
 
@@ -115,17 +117,15 @@ func (e *edge) run(ctx context.Context) error {
 	case config.TLSOffload:
 		e.servers = append(e.servers, e.newServer(e.cfg.ListenOffload, handler, nil))
 	case config.TLSAcme:
-		m := &autocert.Manager{
-			Prompt:     autocert.AcceptTOS,
-			Cache:      autocert.DirCache(filepath.Join(e.cfg.DataDir, "acme")),
-			HostPolicy: autocert.HostWhitelist(acmeHosts(e.cfg)...),
-			Email:      e.cfg.ACMEEmail,
-			Client:     &acme.Client{DirectoryURL: e.cfg.ACMEDirectory},
+		if e.tls == nil {
+			return errors.New("acme TLS mode without the certificate service")
 		}
-		primary, acmeALPN = m.GetCertificate, true
+		primary, acmeALPN = e.tls.GetCertificate, true
 		// HTTP-01 challenges, answered while held too: a certificate can
-		// then be issued or renewed during a held start.
-		plain = m.HTTPHandler(redirect)
+		// then be issued or renewed during a held start. Every certificate
+		// comes from storage: nothing is ordered at a handshake.
+		plain = e.tls.HTTPHandler(redirect)
+		handler = e.tls.CheckHandler(handler)
 	case config.TLSManual:
 		r, err := newCertReloader(e.cfg.CertFile, e.cfg.KeyFile, e.log)
 		if err != nil {
@@ -160,7 +160,23 @@ func (e *edge) run(ctx context.Context) error {
 		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTP, plain, nil))
 	}
 
-	errc := make(chan error, len(e.servers))
+	errc := make(chan error, len(e.servers)+1)
+	if primary != nil && e.cfg.Mesh.Enabled && e.cfg.ListenMeshCert != "" {
+		ln, err := listen(ctx, e.cfg.ListenMeshCert)
+		if err != nil {
+			return fmt.Errorf("listening on %s: %w", e.cfg.ListenMeshCert, err)
+		}
+		e.log.Info("listening", "addr", ln.Addr().String(), "tls", true, "for", "MeshCentral's reads of its certificate")
+		var onRead func(time.Time)
+		if e.tls != nil {
+			onRead = e.tls.RecordMeshRead
+		}
+		go func() {
+			if err := tlscert.ServeMesh(ctx, ln, e.meshCertificate(primary), onRead); err != nil {
+				errc <- fmt.Errorf("server on %s: %w", e.cfg.ListenMeshCert, err)
+			}
+		}()
+	}
 	for _, s := range e.servers {
 		ln, err := listen(ctx, s.Addr)
 		if err != nil {
@@ -180,6 +196,9 @@ func (e *edge) run(ctx context.Context) error {
 				errc <- fmt.Errorf("server on %s: %w", s.Addr, err)
 			}
 		}()
+	}
+	if e.tls != nil {
+		e.tls.Serving() // challenges can be answered: orders may begin
 	}
 	select {
 	case <-ctx.Done():
@@ -237,28 +256,17 @@ func covers(c *tls.Certificate, names []string) error {
 // certificates picks the certificate for a connection. A server name means
 // a DNS origin: the configured source (ACME or files). Without one the
 // client connected to an IP address (browsers send no server name for
-// those): IP access is served by the internal certificate authority, except
-// for MeshCentral reading, from this same host, the certificate its agents
-// see (EASYRMM_MESH_CERT_URL), which gets the MeshCentral origin's. When the
-// operator's own certificate is for the IP address (manual mode), it serves
-// every connection.
+// those): IP access is served by the internal certificate authority. When
+// the operator's own certificate is for the IP address (manual mode), it
+// serves every connection. MeshCentral's reads of the certificate its agents
+// see have a listener of their own (meshCertificate), not a rule here.
 func (e *edge) certificates(primary getCertificate) getCertificate {
 	if e.cfg.TLSMode == config.TLSInternal {
 		return primary
 	}
-	meshName := ""
-	if e.cfg.MeshPublicURL != nil && net.ParseIP(e.cfg.MeshPublicURL.Hostname()) == nil {
-		meshName = e.cfg.MeshPublicURL.Hostname()
-	}
 	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if hello.ServerName != "" && net.ParseIP(hello.ServerName) == nil {
 			return primary(hello)
-		}
-		if meshName != "" && fromThisHost(hello.Conn) {
-			// ACME would refuse a connection without a server name.
-			h := *hello
-			h.ServerName = meshName
-			return primary(&h)
 		}
 		if e.pki != nil {
 			return e.pki.GetCertificate(hello)
@@ -267,18 +275,20 @@ func (e *edge) certificates(primary getCertificate) getCertificate {
 	}
 }
 
-// fromThisHost reports whether a connection comes from the server's own
-// host: from loopback, or from one of the host's addresses to itself.
-func fromThisHost(c net.Conn) bool {
-	if c == nil {
-		return false
+// meshCertificate is what MeshCentral's dedicated listener serves, whatever
+// server name it is sent: exactly the certificate the edge serves MeshAgents
+// for MeshCentral's name at that moment, from the same function.
+func (e *edge) meshCertificate(primary getCertificate) getCertificate {
+	get := e.certificates(primary)
+	name := ""
+	if e.cfg.MeshPublicURL != nil && net.ParseIP(e.cfg.MeshPublicURL.Hostname()) == nil {
+		name = e.cfg.MeshPublicURL.Hostname()
 	}
-	remote, ok1 := c.RemoteAddr().(*net.TCPAddr)
-	local, ok2 := c.LocalAddr().(*net.TCPAddr)
-	if !ok1 || !ok2 {
-		return false
+	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		h := *hello
+		h.ServerName, h.SupportedProtos = name, nil
+		return get(&h)
 	}
-	return remote.IP.IsLoopback() || remote.IP.Equal(local.IP)
 }
 
 // hostWithPort joins a host (IPv6 addresses bracketed) and an optional port.
