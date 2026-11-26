@@ -1060,7 +1060,7 @@ test("the one Repair button says what it would do, and refuses what it cannot or
 
   // Once it checks in, the EasyPatch agent the earlier steps linked to this device is the one that is silent (the
   // stand-in engine has not heard from it): the EasyRMM agent repairs it, and the dialog says so before it asks.
-  await agent.heartbeat({ hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" });
+  await agent.heartbeat({ facts: { hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" } });
   await page.reload();
   await repair.click();
   await expect(dialog.getByTestId("repair-plan")).toHaveText(
@@ -1071,6 +1071,7 @@ test("the one Repair button says what it would do, and refuses what it cannot or
   await expect(page.getByText(/Restart the EasyPatch agent/)).toBeVisible();
   // One at a time: the button waits while the repair runs.
   await expect(repair).toBeDisabled();
+});
 
 test("a Windows agent's Defender state and installed hashes show on the device, next to the list in Settings", async () => {
   const page = admin;
@@ -1148,4 +1149,35 @@ test("the audit log records everything and its hash chain verifies", async () =>
 
   await page.getByRole("button", { name: "Verify integrity" }).click();
   await expect(page.getByText(/^Intact: \d+ entries checked, none altered or removed\.$/)).toBeVisible();
+});
+
+test("Confirm it is you asks for a second factor again, never a recovery code, and lasts a while", async () => {
+  const page = admin;
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Confirm it is you" }).click();
+  const dialog = page.getByRole("dialog", { name: "Confirm it is you" });
+  const code = dialog.getByLabel(/Code from your authenticator app/);
+
+  // A recovery code is refused, and a wrong code is.
+  await code.fill("abcdef-123456");
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  await expect(dialog.getByText(/recovery code cannot confirm this/i)).toBeVisible();
+  await code.fill("000000");
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  await expect(dialog.getByText(/not valid/i)).toBeVisible();
+
+  // The current code does it, and the request that asked is sent again by itself.
+  await code.fill(await nextCode(page, ADMIN.email));
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(/Confirmed\. Actions that need a second factor/)).toBeVisible();
+
+  // Within the next five minutes nothing asks again.
+  await page.getByRole("button", { name: "Confirm it is you" }).click();
+  await expect(page.getByText(/Confirmed\. Actions that need a second factor/).first()).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Confirm it is you" })).toHaveCount(0);
+
+  // The audit log has the step-ups.
+  await page.goto("/audit");
+  await expect(page.getByRole("cell", { name: /Confirmed a second factor again/ }).first()).toBeVisible();
 });

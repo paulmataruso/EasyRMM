@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { KeyRound, LogIn, LogOut, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, fieldError } from "../../api/client";
+import { api, ApiError, errorMessage, fieldError } from "../../api/client";
 import { pathKey, useApi, useApiMutation, useList } from "../../api/hooks";
 import type { AuthOptions, LinkedIdentity, RecoveryCodes, SecurityKey, SessionItem, SessionView, SsoButton } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
@@ -136,8 +136,19 @@ function SecondFactorCard() {
   const { session, applySession } = useAuth();
   const [codesOpen, setCodesOpen] = useState(false);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  const toast = useToast();
   if (!session) return null;
   const { totp, mfaEnabled } = session.user;
+
+  // Step-up ahead of what needs it (ADR-0055): the API client asks for the second factor and sends this again.
+  async function confirm() {
+    try {
+      await api.post("/auth/step-up/check");
+      toast.success("Confirmed. Actions that need a second factor are allowed for the next 5 minutes.");
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === "step_up_required")) toast.error(errorMessage(err));
+    }
+  }
   return (
     <Card title="Two-factor authentication">
       <div className="flex flex-col gap-3.5">
@@ -169,6 +180,9 @@ function SecondFactorCard() {
               New recovery codes
             </Button>
           )}
+          <Button icon={<ShieldCheck className="size-4" aria-hidden />} onClick={() => void confirm()}>
+            Confirm it is you
+          </Button>
         </div>
       </div>
       <RecoveryCodesDialog open={codesOpen} onClose={() => setCodesOpen(false)} />

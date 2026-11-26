@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import { StepUpGate } from "./StepUp";
 import { ApiError, request, setAuthErrorListener, setCsrfToken } from "../api/client";
 import type { Permission, SessionView, SetupStatus } from "../api/types";
 
@@ -167,7 +168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [query.data, query.isPending, query.isError, query.error, sessionEnded, showingRecoveryCodes, setupEmail, refresh, applySession, signOut, completeSetup]);
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      <StepUpGate />
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

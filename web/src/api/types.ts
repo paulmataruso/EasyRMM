@@ -3368,3 +3368,11 @@ export interface AgentFiles {
   entries: AgentFileEntry[];
   canRefresh: boolean;
 }
+
+/** What a session can step up with (ADR-0055), and until when it is stepped up. */
+export interface StepUpStatus {
+  validUntil: string | null;
+  methods: ("totp" | "webauthn" | "oidc")[];
+  /** The identity provider, when methods includes oidc. */
+  provider?: string;
+}

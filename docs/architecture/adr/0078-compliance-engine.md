@@ -306,9 +306,10 @@ who owns the value if managed elsewhere, and the requirements it would help
    the owner can tighten it).
 4. **T3**: one item at a time. The user types the host's name (the typed
    text) after the dialog shows the preconditions and, for account items,
-   the exposure scan's named accounts. Step-up authentication within 10
-   minutes. **Step-up is a named prerequisite** (ADR-0073 slice 4, or F5 if it
-   lands first): until it ships, T3 fixes and attestations are disabled, not
+   the exposure scan's named accounts. Step-up authentication as ADR-0055
+   defines it (a second factor within the last 5 minutes; *amended
+   2026-11-26, decided in review*, from "within 10 minutes"). **Step-up is a
+   named prerequisite** (F5's `RequireStepUp`, which ADR-0073 slice 4 attaches): until it ships, T3 fixes and attestations are disabled, not
    offered without it (see the slice order).
 5. **No "fix all"** above T1, and no default selection of any item.
 6. **Preconditions** are checked on the server before dispatch and again by

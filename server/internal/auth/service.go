@@ -154,6 +154,11 @@ type Session struct {
 	// went (ADR-0046) they are only recorded, for a later step-up check.
 	AMR             []string   `json:"-"`
 	AuthenticatedAt *time.Time `json:"-"`
+	// SteppedUpAt is when a step-up last confirmed a second factor on this
+	// session (ADR-0055). Only a step-up sets it. SSOProviderID is the
+	// identity provider the session signed in through, if any.
+	SteppedUpAt   *time.Time `json:"-"`
+	SSOProviderID *uuid.UUID `json:"-"`
 }
 
 // Sign-in methods recorded on sessions, as amr values (RFC 8176). "rc" (a
@@ -410,6 +415,9 @@ type ExternalSignIn struct {
 	// SecondFactorDone: the provider is trusted to have asked for a second
 	// factor, so EasyRMM does not ask for its own.
 	SecondFactorDone bool
+	// ProviderID is the identity provider, kept on the session so that a
+	// step-up (ADR-0055) goes back to the same one.
+	ProviderID uuid.UUID
 }
 
 // SignInExternal starts a session for a user another system authenticated.
@@ -472,6 +480,12 @@ func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, meta Re
 		token, sess, err = s.createSession(ctx, tx, in.UserID, state, meta, amr...)
 		if err != nil {
 			return err
+		}
+		if in.ProviderID != uuid.Nil {
+			if _, err := tx.Exec(ctx, `UPDATE sessions SET sso_provider_id = $2 WHERE id = $1`, sess.ID, in.ProviderID); err != nil {
+				return err
+			}
+			sess.SSOProviderID = &in.ProviderID
 		}
 		if state == StateActive {
 			if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, in.UserID); err != nil {
@@ -542,14 +556,14 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT s.id, s.user_id, s.state, s.created_at, s.last_seen_at, s.expires_at, s.idle_expires_at,
-			       s.revoked_at, s.source_ip, s.user_agent, s.amr, s.authenticated_at,
+			       s.revoked_at, s.source_ip, s.user_agent, s.amr, s.authenticated_at, s.stepped_up_at, s.sso_provider_id,
 			       u.email, u.display_name, u.status, u.totp_enabled_at,
 			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id),
 			       u.passkey_prompt_after, u.passkey_prompt_declined_at
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token_hash = $1`, hash).
 			Scan(&sess.ID, &sess.UserID, &state, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IdleExpiresAt,
-				&revokedAt, &sess.SourceIP, &sess.UserAgent, &sess.AMR, &sess.AuthenticatedAt, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
+				&revokedAt, &sess.SourceIP, &sess.UserAgent, &sess.AMR, &sess.AuthenticatedAt, &sess.SteppedUpAt, &sess.SSOProviderID, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
 				&promptAfter, &promptDeclined)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidSession

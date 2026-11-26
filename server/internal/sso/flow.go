@@ -249,7 +249,7 @@ func (s *Service) Callback(ctx context.Context, in CallbackInput, meta auth.Requ
 		details["linked"] = true
 	}
 	token, sess, err := s.auth.SignInExternal(ctx, auth.ExternalSignIn{
-		UserID: userID, Email: email, Method: "oidc", Details: details, SecondFactorDone: p.TrustMFA,
+		UserID: userID, Email: email, Method: "oidc", Details: details, SecondFactorDone: p.TrustMFA, ProviderID: p.ID,
 	}, meta)
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
