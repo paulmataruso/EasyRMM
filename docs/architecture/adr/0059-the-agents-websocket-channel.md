@@ -199,8 +199,8 @@ slices at the end.
   edge (`app/edge.go`) needs no change: its `IdleTimeout` and
   `ReadHeaderTimeout` do not apply once a connection is hijacked.
 * **NGINX**: `docs/deployment/nginx.md` already forwards `Upgrade` and
-  `Connection` for MeshAgent; the agent's route gets the same location
-  settings (*Behind the reverse proxy*).
+  `Connection` in its one `location /`, with a 1 h read timeout; the agent's
+  route needs no change (*Behind the reverse proxy*).
 
 ### What does not change (authority and trust)
 * **Every instruction on the channel is the object the heartbeat answer
@@ -227,6 +227,21 @@ slices at the end.
 * **Agent-to-server frames** are log batches only (below), each signed
   with the device key; everything else the agent says stays on its signed
   HTTPS requests.
+
+### Pushes go to confirmed connections only
+* **Every push** (`jobs`, `repair`, `settings`, `logs`) and the per-connection
+  job claim loop target only a connection **confirmed** by a signed
+  heartbeat that names its connection id (*Presence confirmed by the
+  heartbeat*). A **pending** connection (a fresh or replayed upgrade, not
+  yet named by a heartbeat) receives `hello`, `tick` and `closing` only;
+  the claim loop does not run for it, so nothing is marked `sent` for it
+  and `Push` returns false. Until confirmation the agent's heartbeat and
+  poll carry everything. This needs the confirmation of H1 in the first
+  build, so **H1's confirmation (not the clone guard or the table) moves
+  into S1**; H1 keeps the rest.
+* **Test**: an upgrade replayed by someone without the device key never
+  confirms, receives no push and has no run marked `sent`; the real
+  agent's connection, once its heartbeat names it, does.
 
 ### What the channel carries (`channel.v1`, additions)
 Server to agent, all with the envelope of *Messages* (`hello`, `tick`,
@@ -277,7 +292,11 @@ Agent to server, signed by the agent (`EASYRMM-CHANNEL-AGENT-V1\n` + `connId` +
   `agentapi` that `heartbeat` also calls, so there is one builder).
   `recovery.AgentHeartbeat`, which settles reports and hands out steps,
   is split so a push reads the pending step without settling anything.
-* **A repair is pushed once.** The step's `sent_at` is set when pushed, as
+* **A push is not exactly once.** The heartbeat answer may carry the same
+  repair or job again (a push the agent missed, or one sent just before a
+  heartbeat); the agent dedupes repairs by step id and jobs by run id
+  (its journal, ADR-0017), so an instruction applied from either path is
+  applied once. The step's `sent_at` is set when pushed, as
   when answered in a heartbeat; the agent's report in its next heartbeat
   settles it, and a step not reported in time is handled by the existing
   waits (`waitFor`, `maxRunning`).
@@ -310,11 +329,13 @@ and poll still work.
   port and no plain WebSocket (`ws://`): the agent refuses any URL that is
   not `https`.
 * **Direct deployments** need nothing; the `net/http` edge serves the
-  upgrade. **NGINX** (`docs/deployment/nginx.md`): the location for
-  `/api/agent/` gets `proxy_http_version 1.1`, `Upgrade` and `Connection`
-  from `$connection_upgrade`, `proxy_read_timeout` and `proxy_send_timeout`
-  of 1 h (above the 75-second keepalive window, so NGINX never cuts a
-  live connection), and `proxy_buffering off`. The guide's sizing of
+  upgrade. **NGINX** (`docs/deployment/nginx.md`): the guide's one
+  `location /` (`docs/deployment/nginx.md`, lines 35 to 67) already sets
+  `proxy_http_version 1.1`, `Upgrade` and `Connection` from
+  `$connection_upgrade`, `proxy_read_timeout 1h`, `proxy_send_timeout 1h`
+  and `proxy_buffering off`, which cover the agent route (1 h is above the
+  75-second keepalive window); no new location, and the guide only gains
+  a line saying so. The guide's sizing of
   `worker_connections` stays as written.
 * **What the server sees**: `httpapi.ClientIP` as for every request. The
   signed upgrade does not depend on the proxy; a proxy that strips
@@ -335,12 +356,17 @@ and poll still work.
   the first with `replaced`); an upgrade at most every 10 s after a burst
   of six; **server frames at most 20 a second (burst 50)**, beyond that
   the push is dropped and the heartbeat carries it; **agent frames at
-  most one a second**.
+  most one a second, burst 3** (the follow cadence, `LogFollowEvery`, is one
+  batch every 2 s, so it sits well inside; beyond the limit the server
+  closes with 1008).
 * **Frame sizes** (this changes the 16 KiB rule in *Messages*): the agent
-  accepts up to **1 MiB** for `jobs`, `repair` and `settings` (a signed
-  script job is the largest instruction; slice 4 checks the real maximum
-  against `agentproto` and fixes the number), and still 16 KiB for the
-  others; the server reads at most **64 KiB** from the agent.
+  accepts up to **1 MiB** for `jobs`, `repair` and `settings`, and still
+  16 KiB for the others; the server reads at most **64 KiB** from the
+  agent, and the only inbound type is signed `logs.batch`. **A job whose
+  signed `PollResponse` would exceed 1 MiB is not claimed by the push
+  loop**: it stays queued, the heartbeat's `jobsWaiting` sets and the agent
+  makes an ordinary poll, which delivers it (the poll's body limit
+  applies, as today).
 * **Per server**: 200 verified upgrades a second (503 `channel_busy`),
   `EASYRMM_AGENT_CONNECTIONS_MAX` 10,000 (503 `channel_full`), the
   descriptor gate on Linux; one reader and one writer goroutine per
@@ -453,7 +479,7 @@ fallback of its own, and no 400 is read as "not supported".
 * **Never a URL token** (proxies log URLs) **and never a cookie**: the
   route reads none, and a browser cannot set the header, so a web page
   cannot open an agent's connection on someone's session.
-* **No challenge to sign.** The agent signs nothing on the connection; a
+* **No challenge to sign.** _Amended by *Refresh, 2026-11-26*: the agent signs its `logs.batch` frames, never a server-chosen challenge._ The agent signs nothing on the connection; a
   challenge it signed could be made into a signing oracle. This replaces
   ADR-0009's signed challenge. The server proves itself in every message;
   the agent proves the connection is its own in its signed heartbeat
@@ -553,7 +579,7 @@ while the real agent's own attempt is refused as `replayed`. So:
     and `reconnectWithin`, in seconds.
 * **The agent closes the connection** at the first message that does not
   verify with the keys it trusts, names another device or connection,
-  breaks the sequence (a gap, a repeat), or exceeds 16 KiB, and when no
+  breaks the sequence (a gap, a repeat), or exceeds its size cap (16 KiB; 1 MiB for `jobs`, `repair`, `settings`, *Refresh, 2026-11-26*), and when no
   `hello` arrives within 10 seconds of the `101`. Nothing on the way can
   inject, replay or reorder a message; it can only end the connection,
   which the agent notices. A verified unlisted message (a type, field,
@@ -563,7 +589,7 @@ while the real agent's own attempt is refused as `replayed`. So:
   refusals from one `instance`, it stops connecting until a heartbeat
   answer names another instance or its own build changes, and reports
   why; the device meanwhile works as with regular check-ins.
-* **The agent sends no messages**, only WebSocket pings. The server closes
+* **The agent sends no messages**, only WebSocket pings. _Amended by *Refresh, 2026-11-26*: it may also send signed `logs.batch` frames, no other type; any other frame closes the connection._ The server closes
   a connection that sends one.
 * **Cost**: one Ed25519 signature per message. 10,000 connections ticking
   every 30 seconds are about 330 signatures a second.
@@ -1169,9 +1195,16 @@ and the heartbeat alone:
   with and without the channel;
 * limits: per-device upgrade rate, the 10,000 and 200 gates (with small
   numbers set by environment), the descriptor gate by a lowered limit.
-**T2, load and Windows.** The 10,000-connection run on a drill host
-(never the owner's instance) with the memory figure of *Server limits*;
-`GOOS=windows` build and the Windows agent harness; `agentsim -channel`.
+**T2, load, Windows and the simulator.** The 10,000-connection run on a
+drill host (never the owner's instance) with the memory figure of *Server
+limits*; **a reconnect storm**: the server restarts with the fleet
+connected and every agent reconnects within the jitter window, never above
+the 200 upgrades a second gate, with no lost job; the **Windows
+end-to-end harness is built in this slice** (it does not exist for the
+channel today: a Windows agent over the channel against a server, run by
+the existing Windows test setup), plus the `GOOS=windows` build; and the
+**`agentsim -channel` flag** (simulated agents connect, answer pushes and
+send `logs.batch`).
 
 **H1 to H3, hardening, after the above, each with its own tests** (the
 sections as written in this ADR): H1 presence confirmed by the heartbeat,
