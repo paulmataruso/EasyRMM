@@ -645,6 +645,30 @@ Amended 2026-11-26 (decided in review, while building slice 5):
   `job.view_sensitive`, whose job page shows the compact row and the pinned
   script, never params.
 
+Amended 2026-11-26 (decided in review, while building slices 6 and 7):
+
+* A snapshot action is declared in the catalogue with `Freshness`; one with
+  `Schedule` (at least an hour, no required parameters) is read by the server
+  on every computer that has the module's role, where `modules.Allowed`
+  says yes and the computer is online and has no read on its way. A
+  successful action with `Changes` drops the module's snapshots of the
+  device. `windows_module_snapshots` has no organization or site column (it
+  follows its device) and is keyed by device, action and the SHA-256 of the
+  canonical parameters (empty for none).
+* The alert kinds are a registry in the monitoring package, so the database
+  kind checks on `alert_policies` and `alerts` became a shape check and the
+  server validates the name. Default policies are created when an
+  organization first has a computer with the module's role, or when the
+  module is turned on (the `OnEnabled` hook), idempotently by module and key.
+  New resolutions: `module_off`, `role_removed`, `not_applicable`.
+* A kind with a grace period (`defender_protection_off`) opens when its
+  condition has held, on readings, for the policy's minutes; the time it
+  was first seen is kept in `windows_module_conditions`. A snapshot older than
+  three hours is not judged. When several policies of one kind hold on a
+  computer, only the highest threshold opens an alert.
+* Refreshing a default policy on upgrade where the user has not changed it is
+  not built yet.
+
 ## References
 
 * `agent/jobs/worker.go`, `server/internal/jobs/hardening.go` and `key.go`.

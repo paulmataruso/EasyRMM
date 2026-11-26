@@ -85,6 +85,12 @@ const RolesKnownFor = 7 * 24 * time.Hour
 // reason "role removed".
 type RemovedHook func(ctx context.Context, tx pgx.Tx, deviceID, orgID uuid.UUID, m Module) error
 
+// EnabledHook is called, in the transaction of the change, when a toggle
+// turns a module on for an organization or one of its sites. A module
+// registers one to create its default alert policies for the organization
+// (idempotently).
+type EnabledHook func(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, m Module) error
+
 // Service holds the framework's state.
 type Service struct {
 	db      *database.DB
@@ -92,12 +98,17 @@ type Service struct {
 	log     *slog.Logger
 	now     func() time.Time
 	removed []RemovedHook
+	enabled []EnabledHook
 }
 
 // New returns a Service.
 func New(db *database.DB, auditLog *audit.Logger, log *slog.Logger) *Service {
 	return &Service{db: db, audit: auditLog, log: log, now: time.Now}
 }
+
+// OnEnabled registers a hook for a module turned on. Call it while wiring,
+// before the server serves.
+func (s *Service) OnEnabled(h EnabledHook) { s.enabled = append(s.enabled, h) }
 
 // OnRoleRemoved registers a hook for a role that disappeared. Call it while
 // wiring, before the server serves.

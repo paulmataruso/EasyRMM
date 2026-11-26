@@ -109,10 +109,14 @@ type Policy struct {
 	Enabled   bool   `json:"enabled"`
 	// ActiveAlerts counts the policy's unresolved alerts on devices the
 	// caller can see.
-	ActiveAlerts int       `json:"activeAlerts"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
-	CanEdit      bool      `json:"canEdit"`
+	ActiveAlerts int `json:"activeAlerts"`
+	// Module and Default mark a Windows module's default policy (ADR-0073):
+	// owned by the module, it can be turned on or off and nothing else.
+	Module    string    `json:"module,omitempty"`
+	Default   bool      `json:"default"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	CanEdit   bool      `json:"canEdit"`
 }
 
 func (p *Policy) level() (org, site uuid.UUID) {
@@ -145,7 +149,7 @@ func canAt(c access.Caller, perm rbac.Permission, org, site uuid.UUID, below boo
 const policyColumns = `p.id, p.organization_id, coalesce(o.name, ''), p.site_id, coalesce(si.name, ''),
 	p.name, p.description, p.kind, p.check_name, p.threshold, p.minutes, p.severity, p.enabled,
 	(SELECT count(*) FROM alerts a WHERE a.policy_id = p.id AND a.status <> 'resolved'),
-	p.created_at, p.updated_at`
+	p.created_at, p.updated_at, coalesce(p.module, ''), p.default_key IS NOT NULL`
 
 const policyFrom = ` FROM alert_policies p
 	LEFT JOIN organizations o ON o.id = p.organization_id
@@ -155,7 +159,7 @@ func scanPolicy(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.ID, &p.OrganizationID, &p.OrganizationName, &p.SiteID, &p.SiteName,
 		&p.Name, &p.Description, &p.Kind, &p.CheckName, &p.Threshold, &p.Minutes, &p.Severity, &p.Enabled,
-		&p.ActiveAlerts, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.ActiveAlerts, &p.CreatedAt, &p.UpdatedAt, &p.Module, &p.Default); err != nil {
 		return nil, err
 	}
 	switch {
@@ -295,8 +299,10 @@ type condition struct {
 }
 
 func validKind(k string) bool {
-	return k == KindOffline || k == KindCPU || k == KindMemory || k == KindDisk || k == KindDiskHealth ||
-		k == KindRemoteDown || k == KindAgentSilent
+	if _, ok := ModuleKindOf(k); ok {
+		return true
+	}
+	return validBuiltin(k)
 }
 
 func (cd *condition) validate() error {
@@ -307,7 +313,12 @@ func (cd *condition) validate() error {
 	f.Check(cd.severity == SeverityWarning || cd.severity == SeverityCritical, "severity", "Choose warning or critical.")
 	switch {
 	case !validKind(cd.kind):
-		f.Add("kind", "Choose offline, processor, memory, disk, disk health, remote access down or EasyRMM agent silent.")
+		f.Add("kind", "Choose offline, processor, memory, disk, disk health, remote access down, EasyRMM agent silent or a Windows module's alert.")
+	case isModuleKind(cd.kind):
+		k, _ := ModuleKindOf(cd.kind)
+		if err := cd.validateModule(k); err != nil {
+			return err
+		}
 	case cd.kind == KindDiskHealth:
 		cd.validateDisk(f)
 	case cd.kind == KindOffline || cd.kind == KindRemoteDown || cd.kind == KindAgentSilent:
@@ -320,6 +331,11 @@ func (cd *condition) validate() error {
 		f.Check(cd.minutes >= 1 && cd.minutes <= MaxMinutes, "minutes", "Use 1 to 1,440 minutes.")
 	}
 	return f.Err()
+}
+
+func isModuleKind(k string) bool {
+	_, ok := ModuleKindOf(k)
+	return ok
 }
 
 // validateDisk checks a disk health policy (ADR-0065, "Alerts"): a check,
@@ -403,6 +419,10 @@ func (s *Service) UpdatePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 		cur, err := s.editable(ctx, tx, c, id)
 		if err != nil {
 			return err
+		}
+		if cur.Default && (p.Name != nil || p.Description != nil || p.Kind != nil || p.CheckName != nil || p.Threshold != nil ||
+			(p.DriveLimit != nil && *p.DriveLimit) || p.Minutes != nil || p.Severity != nil) {
+			return errDefaultPolicy
 		}
 		cd := condition{
 			name: cur.Name, description: cur.Description, kind: cur.Kind, checkName: cur.CheckName, severity: cur.Severity,
@@ -509,6 +529,9 @@ func (s *Service) DeletePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 		if err != nil {
 			return err
 		}
+		if cur.Default {
+			return errDefaultPolicy
+		}
 		if _, err := tx.Exec(ctx, `UPDATE alerts SET status = 'resolved', resolved_at = $2, resolution = 'policy_deleted'
 				WHERE policy_id = $1 AND status <> 'resolved'`, id, s.now()); err != nil {
 			return err
@@ -524,6 +547,10 @@ func (s *Service) DeletePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 		})
 	})
 }
+
+// errDefaultPolicy refuses a change to a module's default policy beyond
+// turning it on or off, so an upgrade can refresh it (ADR-0073).
+var errDefaultPolicy = apperr.Conflict("default_policy", "This is a default policy of a Windows module. You can turn it on or off, but not change or delete it.")
 
 func policyWriteError(err error) error {
 	switch {

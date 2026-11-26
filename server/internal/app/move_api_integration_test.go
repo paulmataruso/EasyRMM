@@ -349,7 +349,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// stays
 		"job_runs": stays, "winmod_run_results": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays,
 		// owned
-		"alert_policies": owned, "windows_module_settings": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned,
+		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned,
 		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned,
 		// engine
 		"easypatch_devices": engine, "easypatch_install_restarts": engine, "easypatch_installs": engine, "easypatch_opt_outs": engine,

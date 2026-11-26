@@ -172,3 +172,51 @@ func TestConfirmAndStepUp(t *testing.T) {
 		t.Error("a credential action needs a step-up")
 	}
 }
+
+func TestParamsKeyIsTheHashOfTheCanonicalForm(t *testing.T) {
+	for _, none := range []string{"", "  ", "null", "{}", " { } "} {
+		if got, err := ParamsKey([]byte(none)); err != nil || got != "" {
+			t.Errorf("ParamsKey(%q) = %q, %v; want no key", none, got, err)
+		}
+	}
+	a, err := ParamsKey([]byte(`{"b": 2, "a": "x"}`))
+	if err != nil || len(a) != 64 {
+		t.Fatalf("%q, %v", a, err)
+	}
+	if b, _ := ParamsKey([]byte(`{"a":"x","b":2}`)); a != b {
+		t.Error("the key depends on key order and white space")
+	}
+	if c, _ := ParamsKey([]byte(`{"a":"y","b":2}`)); a == c {
+		t.Error("different parameters have one key")
+	}
+	if _, err := ParamsKey([]byte(`[1]`)); err == nil {
+		t.Error("an array was accepted")
+	}
+}
+
+func TestSnapshotActionsAreChecked(t *testing.T) {
+	base := func() Action {
+		return Action{Module: modules.Defender, Name: "defender.x", Version: 1, Script: "x", ScriptSHA256: agentproto.HashScript("x"),
+			Permission: rbac.PermDefenderView, Timeout: 1, Keep: time.Hour, Decode: Typed[struct{}]()}
+	}
+	for name, mut := range map[string]func(*Action){
+		"a schedule below an hour":     func(a *Action) { a.Freshness, a.Schedule = time.Minute, 30*time.Minute },
+		"a schedule with no freshness": func(a *Action) { a.Schedule = time.Hour },
+		"a scheduled change":           func(a *Action) { a.Freshness, a.Schedule, a.Changes = time.Minute, time.Hour, true },
+		"a snapshot that destroys": func(a *Action) {
+			a.Freshness, a.Destructive, a.Subject = time.Minute, true, "n"
+			a.Params = []Param{{Name: "n", Type: Name}}
+		},
+	} {
+		a := base()
+		mut(&a)
+		if _, err := NewCatalog(a); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	a := base()
+	a.Freshness, a.Schedule = time.Minute, time.Hour
+	if _, err := NewCatalog(a); err != nil {
+		t.Errorf("an hourly snapshot read: %v", err)
+	}
+}

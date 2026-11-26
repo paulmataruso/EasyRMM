@@ -66,6 +66,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/modsnap"
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
@@ -128,6 +129,8 @@ type Deps struct {
 	AgentChannel *agentchannel.Hub
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
+	// ModSnap keeps the Windows modules' snapshots (ADR-0073).
+	ModSnap *modsnap.Service
 	// Recovery repairs agents that stopped working (ADR-0069).
 	Recovery *recovery.Service
 	// Reports reads devices, software and alerts into tables (ADR-0029).
@@ -252,6 +255,17 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Jobs.SetWinmod(catalog, d.Modules, sealer)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
+	// Snapshots and module alerts (ADR-0073, slices 6 and 7): a role that
+	// goes clears the module's snapshots and resolves its alerts; a module
+	// turned on gets its default policies.
+	if err := monitoring.RegisterModuleAlerts(defender.AlertKinds()); err != nil {
+		return nil, err
+	}
+	d.ModSnap = modsnap.New(db, catalog, d.Modules, d.Modules, d.Jobs, log)
+	d.Modules.OnRoleRemoved(modsnap.OnRoleRemoved)
+	d.Modules.OnRoleRemoved(monitoring.RoleRemovedHook)
+	d.Modules.OnEnabled(monitoring.EnsureDefaults)
+	d.Monitoring.UseModules(d.Modules)
 	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
 	if d.Mesh != nil {
 		// Nothing about remote access is judged while EasyRMM cannot see
@@ -746,6 +760,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
+	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
