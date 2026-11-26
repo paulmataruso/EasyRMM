@@ -682,6 +682,62 @@ Amended 2026-11-26 (decided in review, while building slice 1):
   place, but the Go string the COM layer makes of it cannot be erased, so the
   agent's zeroing is best-effort, as the server's is.
 
+Amended 2026-11-26 (decided in review, while building slice 2):
+
+* **The permission is two add-on roles.** The ADR asks for a "role add-on"; no
+  per-user permission grants exist, so `device.recovery_key.read` and
+  `device.recovery_key.approve` are carried by two roles, *Recovery Key Reader*
+  and *Recovery Key Approver* (`key_reader`, `key_approver`), assigned beside a
+  person's ordinary role at an organization or a site. They are not in
+  `rbac.AllPermissions`, which is what the super administrator role holds, so
+  no built-in role implies them, the super administrator included. The
+  `role_assignments` checks name the two new roles.
+* **Two-person approvals are minimal and for key reads only.** ADR-0055's
+  general approvals do not exist in this tree, so `recovery_key_requests`
+  holds one request per person per record: pending for 30 minutes, then
+  approved by a person other than the requester (with the approver's own
+  step-up) and usable by the requester alone, once, within 10 minutes. The
+  requester and the approver may not be the same person (a database check as
+  well as the service's). Turning the rule on needs two holders of the approver
+  role in the organization and a step-up; it is off by default. When ADR-0055's
+  approvals land, this table can be moved onto them.
+* **Server limits count the audit log.** The per-user and per-organization
+  limits count `recovery_key.read` rows with outcome success in the audit log,
+  not the in-memory limiter, so a restart resets nothing; a refused read is
+  audited, and reaching half of a limit or a limit raises a warning.
+* **The keystore's log and its answers.** The log is `log/keystore.log` in the
+  state directory (JSON lines, each with the hash of the one before, fsynced,
+  also sent to the process log). A read writes its line before the key is
+  returned, and a keystore whose log does not verify at start, or cannot write
+  it, returns no key. The keystore's counters (10 an hour and 50 a day per
+  organization, 30 an hour in total) are rebuilt from the log at start. The
+  `read_escrow` answer is encoded by hand into a buffer the keystore zeroes;
+  the server's client reads it into a buffer it zeroes, and the HTTP handler
+  writes the key by hand and zeroes its own copy. Go's HTTP and TLS buffers
+  may still hold a copy until they are overwritten: stated, not defended.
+* **Reconciliation.** The hourly job reads the log after its cursor, verifies
+  the chain, leaves entries younger than two minutes for the next run (the
+  audit record commits just after the keystore answers) and requires each
+  plaintext-returning entry to be matched by as many `recovery_key.read` audit
+  rows carrying its request ID. A failed read after the keystore was asked is
+  audited with that request ID (outcome failure), so a discarded key is
+  accounted for. A key with no audit row, or more entries than rows, is a
+  critical alert; so is a log that does not verify.
+* **Keystore alerts have their own table.** `alerts` is per device and its
+  kinds are constrained; the keystore's alerts (unaudited read, log broken,
+  read-limit) are rows of `keystore_alerts` with the same dedupe (one open per
+  kind and subject), shown in the console and mailed to administrators.
+  Slice 2 builds only the read-related alerts of section 7; sealed for more
+  than 15 minutes, unreachable, file mode, TPM policy changed, recovery not
+  verified, a KEK version overdue and the rotation alerts wait for the slices
+  that have those events (or a monitor), and an alert is resolved by a person
+  in the database until the console gets a control for it.
+* **Notices** are a row per read (`keystore_notices`, shown to administrators
+  of the organization and super administrators) and a mail to each of them
+  through ADR-0053's sender when one is in force; the dev-scope guard is
+  checked before the mail.
+* **Rotation after a read** (section 6) is slice 4, as the slice list says.
+
 ## References
 
 ADR-0007, 0009, 0023, 0037, 0047, 0052, 0053, 0054, 0055 (step-up), 0057, 0066,

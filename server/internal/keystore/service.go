@@ -51,6 +51,8 @@ type Verifier interface {
 	Status(ctx context.Context) (Status, error)
 	CreateOrgKey(ctx context.Context, org, keyID, purpose string) (MadeKey, error)
 	VerifyEscrow(ctx context.Context, requestID, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) (string, error)
+	ReadEscrow(ctx context.Context, requestID, record, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) ([]byte, error)
+	Log(ctx context.Context, seq int64, limit int) (LogPage, error)
 }
 
 var _ Verifier = (*Client)(nil)
@@ -66,6 +68,10 @@ type Service struct {
 	signKey ed25519.PrivateKey
 	log     *slog.Logger
 	now     func() time.Time
+
+	stepUp   StepUpVerifier
+	notifier Notifier
+	limits   ReadLimits
 
 	mu       sync.Mutex
 	status   Status
@@ -83,7 +89,7 @@ type cachedKey struct {
 // New builds a Service. ks may be nil when no keystore is configured; the
 // service then reports it unavailable and starts nothing.
 func New(db *database.DB, auditLog *audit.Logger, ks Verifier, signKey ed25519.PrivateKey, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, ks: ks, signKey: signKey, log: log, now: time.Now, keys: map[uuid.UUID]cachedKey{}}
+	return &Service{db: db, audit: auditLog, ks: ks, signKey: signKey, log: log, now: time.Now, keys: map[uuid.UUID]cachedKey{}, limits: DefaultReadLimits}
 }
 
 // Errors the service reports.

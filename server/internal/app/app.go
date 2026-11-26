@@ -373,6 +373,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		ks = &keystore.Client{Path: cfg.KeystoreSocket}
 	}
 	d.Keystore = keystore.New(db, auditLog, ks, jobKey, log)
+	// Reading a key needs the session stepped up (ADR-0055) and mails the
+	// organization's administrators (ADR-0053).
+	d.Keystore.SetStepUp(sessions)
+	d.Keystore.SetNotifier(mailSvc)
 	var files agentfiles.Mesh
 	if mesh != nil {
 		files = mesh

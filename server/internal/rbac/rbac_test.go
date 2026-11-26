@@ -32,7 +32,7 @@ func TestEveryRolePermissionIsKnown(t *testing.T) {
 			t.Errorf("role %q has mismatched key", role)
 		}
 		for _, perm := range def.Permissions {
-			if !slices.Contains(AllPermissions, perm) {
+			if !slices.Contains(AllPermissions, perm) && !slices.Contains(AddOnPermissions, perm) {
 				t.Errorf("role %q grants unknown permission %q", role, perm)
 			}
 		}
@@ -438,5 +438,27 @@ func TestScopedPermissions(t *testing.T) {
 	super := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
 	if g := super.ScopedPermissions(); len(g) != 0 {
 		t.Errorf("platform-wide permissions listed as scoped: %v", g)
+	}
+}
+
+// The recovery-key permissions are held by the add-on roles alone: no
+// built-in role, the super administrator included, implies them.
+func TestRecoveryKeyPermissionsAreAddOnOnly(t *testing.T) {
+	for role, def := range Roles {
+		for _, perm := range AddOnPermissions {
+			has := slices.Contains(def.Permissions, perm)
+			want := (role == RoleKeyReader && perm == PermRecoveryKeyRead) || (role == RoleKeyApprover && perm == PermRecoveryKeyApprove)
+			if has != want {
+				t.Errorf("%s holds %s = %v, want %v", role, perm, has, want)
+			}
+		}
+	}
+	su := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
+	if su.CanGlobal(PermRecoveryKeyRead) || su.Can(PermRecoveryKeyApprove, Org(orgA)) {
+		t.Error("a super administrator holds a recovery-key permission without the add-on")
+	}
+	p := mustPrincipal(t, Assignment{Role: RoleTechnician, OrganizationID: orgA}, Assignment{Role: RoleKeyReader, SiteID: siteA1, OrganizationID: orgA})
+	if !p.Can(PermRecoveryKeyRead, Site(orgA, siteA1)) || p.Can(PermRecoveryKeyRead, Site(orgA, siteA2)) || p.Can(PermRecoveryKeyApprove, Site(orgA, siteA1)) {
+		t.Error("the add-on is not scoped like a device permission")
 	}
 }
