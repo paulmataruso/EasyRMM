@@ -43,6 +43,15 @@ off*); reading the tab is not, as reading is the point of a log.
   folder where MeshAgent keeps one. It remembers where it stopped, so a
   restart neither skips nor repeats lines. Verbose mode does not change the
   EasyPatch agent's own level yet.
+* **MeshAgent's side.** MeshAgent writes `meshagent.log` only for its own
+  diagnostics, not for its connection to MeshCentral, so the agent also
+  records what it observes, as source `meshagent`: whether MeshAgent's service
+  (or child process) runs, when it stops or starts, an exit of a child that is
+  restarted, the last error of a start, restart or repair, and what
+  `meshagent -info` prints (its build), once per build of its program. The
+  server adds one record, marked `origin=meshcentral`, whenever MeshCentral
+  sees MeshAgent connect or disconnect. The records come every 30 seconds at
+  most and are bounded like all others.
 * **Secrets.** Before a record leaves the computer, and again on the server
   before it is stored, the values of fields named like secrets (token,
   password, secret, key, authorization, cookie), anything shaped like an

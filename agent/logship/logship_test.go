@@ -371,3 +371,18 @@ func TestClip(t *testing.T) {
 		t.Errorf("Clip = %q", got)
 	}
 }
+
+func TestRecordRedactsAndTagsTheSource(t *testing.T) {
+	dir := t.TempDir()
+	buf, err := OpenBuffer(dir, DefaultMaxBytes, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(buf)
+	s.Record(agentproto.LogSourceMeshAgent, agentproto.LogWarn, "token Bearer abcdefghijklmnop stopped", map[string]string{"password": "hunter2"})
+	recs, _ := buf.Next(10, 1<<20)
+	if len(recs) != 1 || recs[0].Source != "meshagent" || recs[0].Level != "warn" ||
+		strings.Contains(recs[0].Message, "abcdefghijklmnop") || recs[0].Attrs["password"] == "hunter2" {
+		t.Errorf("record = %+v", recs)
+	}
+}
