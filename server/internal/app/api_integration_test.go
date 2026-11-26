@@ -399,8 +399,15 @@ func TestUsersAPI(t *testing.T) {
 		} `json:"items"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/roles", nil, &roles)
-	if len(roles.Items) != 5 || roles.Items[0].Role != "super_admin" || roles.Items[0].Scopes[0] != "global" || roles.Items[4].Role != "read_only" {
+	// The five built-in roles, then the recovery-key add-ons (ADR-0081).
+	if len(roles.Items) != 7 || roles.Items[0].Role != "super_admin" || roles.Items[0].Scopes[0] != "global" || roles.Items[4].Role != "read_only" ||
+		roles.Items[5].Role != "key_approver" || roles.Items[6].Role != "key_reader" {
 		t.Fatalf("roles: %+v", roles.Items)
+	}
+	for _, r := range roles.Items[5:] {
+		if len(r.Permissions) != 1 {
+			t.Fatalf("an add-on role grants one permission: %+v", r)
+		}
 	}
 	for i := 1; i < len(roles.Items); i++ {
 		if roles.Items[i].Rank > roles.Items[i-1].Rank {

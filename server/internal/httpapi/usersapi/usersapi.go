@@ -73,7 +73,14 @@ func (a *API) roles(w http.ResponseWriter, _ *http.Request) error {
 		sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
 		out = append(out, RoleView{Role: d.Role, Name: d.Name, Description: d.Description, Rank: d.Rank, Scopes: d.Scopes, Permissions: perms})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Rank > out[j].Rank })
+	// By rank, then by name: roles of the same rank (the add-ons) come back
+	// in one order, not the map's.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Rank != out[j].Rank {
+			return out[i].Rank > out[j].Rank
+		}
+		return out[i].Role < out[j].Role
+	})
 	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[RoleView]{Items: out})
 	return nil
 }
