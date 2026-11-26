@@ -99,6 +99,15 @@ const (
 	PermRDPCredentialsSave Permission = "device.rdp_credentials.save" //nolint:gosec // a permission name, not a credential
 )
 
+// ADR-0074's two added Defender permissions: PermDefenderViewSensitive reads
+// file paths, user names and the exclusions an administrator added;
+// PermDefenderWeaken does what lowers protection or restores a threat. Both
+// start at Site Administrator.
+const (
+	PermDefenderViewSensitive Permission = "defender.view_sensitive"
+	PermDefenderWeaken        Permission = "defender.weaken"
+)
+
 // AllPermissions lists every permission.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
@@ -109,6 +118,7 @@ var AllPermissions = []Permission{
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
 	PermDocView, PermDocManage, PermLogView,
 	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 }
@@ -199,6 +209,7 @@ var technicianPerms = union(viewPerms, []Permission{
 var siteAdminPerms = union(technicianPerms, []Permission{
 	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
+	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADView, PermADViewSensitive,
 })
 

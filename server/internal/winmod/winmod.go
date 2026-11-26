@@ -94,6 +94,15 @@ type Action struct {
 	// step-up; so does a Credential action (a password reset).
 	Destructive bool
 	Credential  bool
+	// Confirm makes the action need the typed confirmation without a
+	// step-up (ADR-0074's tier 2: a change that does not lower protection).
+	// A Destructive action already needs it. The subject may be empty, and
+	// the confirmation is then just the action's name followed by a colon.
+	Confirm bool
+	// Check, when set, is the module's own check of the parameters after
+	// the generic ones passed: the values in their canonical forms, by name.
+	// It returns an *apperr.Error (an invalid field, or a conflict).
+	Check func(params map[string]any) error
 	// Subject names the parameter that is the confirmation's subject.
 	Subject string
 	// Timeout is the script's time limit in seconds.
@@ -130,6 +139,9 @@ func (a Action) shell() string {
 
 // ShellName is the shell the action's script runs in.
 func (a Action) ShellName() string { return a.shell() }
+
+// NeedsConfirm says whether the action needs the typed confirmation.
+func (a Action) NeedsConfirm() bool { return a.Destructive || a.Confirm }
 
 // NeedsStepUp says whether the action needs a step-up and a confirmation.
 func (a Action) NeedsStepUp() bool { return a.Destructive || a.Credential }
