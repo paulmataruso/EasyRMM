@@ -5,11 +5,8 @@ package roles
 import (
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
-<<<<<<< HEAD
-	"github.com/paulmataruso/easyrmm/server/internal/winmod/certauth"
-=======
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/activedirectory"
->>>>>>> ws/ad
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/certauth"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dhcp"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dns"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/fileshares"
