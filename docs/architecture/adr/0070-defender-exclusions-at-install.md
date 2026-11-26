@@ -757,3 +757,13 @@ list the build emits, and the `FileTrust` table shared with A.
   the MSI, as the per-file hash list. (6) The tray process's own extraction
   folder is not moved: the tray is not a service or an installer command, and
   nothing here sets the variable machine-wide.
+* Amended 2026-11-26 (decided in review), after slice B: the EasyRMM agent
+  runs `EasyPatch.Agent.exe defender status`, by its exact path under
+  `%ProgramFiles%\EasyPatch Agent` and with a 90-second timeout, each time it
+  reconciles, and forwards the answer as `easypatch` inside its own `defender`
+  report (a `DefenderReport` that holds no report or events of its own). The
+  server stores it with the report (no new column) and the device page shows it
+  as a second card beside the EasyRMM agent's. The report the EasyPatch agent
+  prints is slice A's format. It is dropped, not forwarded, when it is not a
+  valid report. The Windows CI steps 1 to 5 and 8 for the EasyPatch side are the
+  job `defender-windows` in `easypatch-agent.yml` (`easypatch/scripts/ci/defender-windows.ps1`).

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/defender"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
+	"github.com/paulmataruso/easyrmm/agent/runner"
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 // The agent's Defender exclusions (ADR-0070). Windows only, and only on the
@@ -145,4 +148,30 @@ func meshBuild(ctx context.Context, exe string) string {
 		}
 	}
 	return ""
+}
+
+// withEasyPatch adds the EasyPatch agent's own Defender report (its
+// `defender status`, run by its exact path) to every report this agent
+// makes (ADR-0070 slice B).
+func (e *env) withEasyPatch(m *defender.Manager) runner.DefenderManager {
+	root := os.Getenv("ProgramFiles")
+	if root == "" {
+		root = `C:\Program Files`
+	}
+	return easyPatchDefender{Manager: m, ep: defender.EasyPatch{
+		Run:     defender.RunExec,
+		Exe:     filepath.Join(root, "EasyPatch Agent", "EasyPatch.Agent.exe"),
+		Timeout: 90 * time.Second,
+	}}
+}
+
+type easyPatchDefender struct {
+	*defender.Manager
+	ep defender.EasyPatch
+}
+
+func (d easyPatchDefender) Reconcile(ctx context.Context) *agentproto.DefenderReport {
+	r := d.Manager.Reconcile(ctx)
+	r.EasyPatch = d.ep.Status(ctx)
+	return r
 }

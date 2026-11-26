@@ -451,7 +451,7 @@ func (e *env) run(ctx context.Context) error {
 			r.Installed = in
 		}
 		if dm := e.defenderManager(); dm != nil {
-			r.Defender = dm
+			r.Defender = e.withEasyPatch(dm)
 		}
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)

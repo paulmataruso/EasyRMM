@@ -95,3 +95,19 @@ func TestReportIsSentOnceThenOnlyOnChangeAndInstalledHashesRideAlong(t *testing.
 		t.Fatal("an unchanged state was sent again")
 	}
 }
+
+func TestSameDefenderSeesAChangeInTheEasyPatchReport(t *testing.T) {
+	a := &agentproto.DefenderReport{State: "effective"}
+	b := &agentproto.DefenderReport{State: "effective"}
+	if !sameDefender(a, b) {
+		t.Fatal("equal reports differ")
+	}
+	b.EasyPatch = &agentproto.DefenderReport{State: "effective"}
+	if sameDefender(a, b) {
+		t.Fatal("an EasyPatch report appearing is a change")
+	}
+	a.EasyPatch = &agentproto.DefenderReport{State: "not_locked", Reason: "x"}
+	if sameDefender(a, b) {
+		t.Fatal("an EasyPatch state change is a change")
+	}
+}

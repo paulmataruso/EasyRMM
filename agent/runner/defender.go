@@ -78,6 +78,9 @@ func (r *Runner) defendRequest(ctx context.Context, req *agentproto.HeartbeatReq
 // sameDefender compares what the server shows: state, reasons and folders,
 // not the events.
 func sameDefender(a, b *agentproto.DefenderReport) bool {
+	if (a.EasyPatch == nil) != (b.EasyPatch == nil) || (a.EasyPatch != nil && !sameDefender(a.EasyPatch, b.EasyPatch)) {
+		return false
+	}
 	if a.State != b.State || a.Reason != b.Reason || a.Method != b.Method || len(a.Kinds) != len(b.Kinds) || len(a.Folders) != len(b.Folders) {
 		return false
 	}

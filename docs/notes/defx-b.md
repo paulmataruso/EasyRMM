@@ -17,6 +17,8 @@
   directory in `%ProgramData%\EasyPatch\work`; the service and the installer's
   commands extract their single file into their own folder under
   `%ProgramData%\EasyPatch\bundle`.
+* Added: the EasyRMM agent forwards the EasyPatch agent's Defender report in
+  its own (`easypatch` inside `defender`); the device page shows a second card.
 * Added: `EasyPatch.Agent.exe defender add|remove|status`; the installer build
   writes `<msi>.files.json` with the hashes of the installed program file.
 
@@ -31,7 +33,7 @@
 
 Nothing beyond slice A's line: the paths of the agents' own folders and
 Defender's exclusion state, from Windows devices. `defender status` prints the
-report on the device; this slice sends nothing to the server.
+report on the device; the EasyRMM agent forwards it with its own.
 
 ## Not done, not verified
 
@@ -41,11 +43,11 @@ report on the device; this slice sends nothing to the server.
   `Environment` value for the service, .NET extracting into the new folders
   (the ADR's "to confirm on the runner where it extracts today"), and the
   Defender cmdlets themselves.
-* No heartbeat carries the EasyPatch report to the server (slice A's `Facts`
-  are the Go agent's); the console can read it through `defender status` only.
-  Decide whether the EasyRMM agent should run that command and forward it.
-* The Windows CI steps 1 to 5 and 8 of the ADR are not written (they need the
-  Windows job slice A owns).
+* The Windows CI job `defender-windows` (easypatch-agent.yml,
+  `easypatch/scripts/ci/defender-windows.ps1`) is written but has never run;
+  its PowerShell and its MSI-log pattern for the action order are unproven.
+  Step 5 only checks that nothing of EasyPatch lands in the temp folders; winget
+  and agent-update runs through the work folder stay manual.
 * A failed MSI install after the pre-step leaves the two exclusions and the
   record; the next install or `defender remove` handles them (no rollback action).
 * `INSTALLFOLDER` overridden on the command line: the exclusions still name the

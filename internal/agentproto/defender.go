@@ -96,6 +96,10 @@ type DefenderReport struct {
 	AgentVersion string `json:"agentVersion,omitempty"`
 	// Events are what happened since the last report the server took.
 	Events []DefenderEvent `json:"events,omitempty"`
+	// EasyPatch is the EasyPatch agent's own report (its `defender status`),
+	// which the EasyRMM agent forwards (ADR-0070 slice B). It holds no
+	// report of its own and no events.
+	EasyPatch *DefenderReport `json:"easypatch,omitempty"`
 }
 
 // InstalledFile is the hash of one program file on the device.
@@ -130,6 +134,14 @@ var defenderStates = map[string]bool{
 // Check validates a report as the server stores it: known states, bounded
 // lists and text.
 func (r *DefenderReport) Check() error {
+	if r.EasyPatch != nil {
+		if r.EasyPatch.EasyPatch != nil || len(r.EasyPatch.Events) > 0 {
+			return errors.New("the EasyPatch Defender report holds a report or events")
+		}
+		if err := r.EasyPatch.Check(); err != nil {
+			return fmt.Errorf("the EasyPatch Defender report: %w", err)
+		}
+	}
 	if !defenderStates[r.State] || r.State == DefenderNotNeeded {
 		return fmt.Errorf("the Defender state %q is unknown", r.State)
 	}

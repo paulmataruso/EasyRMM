@@ -90,3 +90,20 @@ func TestInstalledFilesCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckEasyPatchReportIsNestedOnceWithoutEvents(t *testing.T) {
+	ok := &DefenderReport{State: DefenderEffective, EasyPatch: &DefenderReport{State: DefenderNotApplicable, Reason: "third-party antivirus"}}
+	if err := ok.Check(); err != nil {
+		t.Fatal(err)
+	}
+	bad := []*DefenderReport{
+		{State: DefenderEffective, EasyPatch: &DefenderReport{State: "bogus"}},
+		{State: DefenderEffective, EasyPatch: &DefenderReport{State: DefenderEffective, EasyPatch: &DefenderReport{State: DefenderEffective}}},
+		{State: DefenderEffective, EasyPatch: &DefenderReport{State: DefenderEffective, Events: []DefenderEvent{{Kind: DefenderEventAdd}}}},
+	}
+	for i, r := range bad {
+		if r.Check() == nil {
+			t.Errorf("report %d was accepted", i)
+		}
+	}
+}

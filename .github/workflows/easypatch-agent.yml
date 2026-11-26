@@ -117,6 +117,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # ADR-0070 slice B: the EasyPatch agent's Defender exclusions on a real Windows with Defender running (steps 1 to 5 and 8).
+  defender-windows:
+    name: Defender exclusions (${{ matrix.runner }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-2022]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: easypatch/global.json
+      - name: Build the MSI
+        shell: pwsh
+        run: ./scripts/build-agent.ps1 -Version '1.0.1' -Architecture x64 -SkipTests
+      - name: Steps 1 to 5 and 8
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/defender-windows.ps1 -Msi "$((Resolve-Path artifacts/installer/EasyPatchAgent-1.0.1-x64.msi).Path)"
+          exit $LASTEXITCODE
+      - name: Defender is as the image left it
+        if: always()
+        shell: powershell
+        run: |
+          $left = (Get-MpPreference).ExclusionPath | Where-Object { $_ -like '*EasyPatch*' -or $_ -like 'C:\ep-ci-keep' }
+          if ($left) { throw "Exclusions were left behind: $left" }
+
   macos-packages:
     name: macOS packages (experimental)
     needs: test

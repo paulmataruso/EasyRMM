@@ -38,7 +38,8 @@ export type Permission =
   | "log.view"
   | "settings.manage";
 
-export type Role = "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
+export type Role =
+  "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
 export type ScopeKind = "global" | "organization" | "site";
 export type SessionState = "mfa_required" | "mfa_enrollment" | "active";
 
@@ -141,7 +142,14 @@ export interface SessionItem {
   current: boolean;
 }
 
-export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+export type Weekday =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
 
 /** One period of opening, "HH:MM" to "HH:MM"; an end at or before the start runs past midnight. */
 export interface OpeningPeriod {
@@ -509,7 +517,15 @@ export interface Repair {
   carriedBy: RepairTarget;
   trigger: RepairTrigger;
   state: RepairState;
-  steps: { id: string; step: RepairStepName; state: RepairStepState; sentAt?: string; doneAt?: string; error?: string; note?: string }[];
+  steps: {
+    id: string;
+    step: RepairStepName;
+    state: RepairStepState;
+    sentAt?: string;
+    doneAt?: string;
+    error?: string;
+    note?: string;
+  }[];
   startedAt: string;
   endedAt: string | null;
   /** Why a failed repair failed. */
@@ -593,7 +609,14 @@ export interface DeviceAgent {
  * Where an agent stands against the build the server serves (ADR-0027). "waiting": only signed Windows builds are handed
  * out and none is for its architecture yet (ADR-0049).
  */
-export type AgentUpdateStatus = "current" | "available" | "queued" | "updating" | "failed" | "unsupported" | "waiting";
+export type AgentUpdateStatus =
+  | "current"
+  | "available"
+  | "queued"
+  | "updating"
+  | "failed"
+  | "unsupported"
+  | "waiting";
 
 export interface AgentUpdate {
   status: AgentUpdateStatus;
@@ -658,7 +681,8 @@ export interface SignedAgentBuild {
   served: boolean;
 }
 
-export type EnrollmentTokenStatus = "active" | "expired" | "revoked" | "used_up";
+export type EnrollmentTokenStatus =
+  "active" | "expired" | "revoked" | "used_up";
 
 export interface EnrollmentToken {
   id: string;
@@ -1061,9 +1085,28 @@ export interface ScriptInput {
   timeoutSeconds: number;
 }
 
-export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "pwshFallback" | "body" | "timeoutSeconds">>;
+export type ScriptPatch = Partial<
+  Pick<
+    ScriptInput,
+    | "name"
+    | "description"
+    | "shell"
+    | "pwshFallback"
+    | "body"
+    | "timeoutSeconds"
+  >
+>;
 
-export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" | "timed_out" | "canceled" | "expired" | "lost";
+export type RunStatus =
+  | "queued"
+  | "sent"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "timed_out"
+  | "canceled"
+  | "expired"
+  | "lost";
 
 export interface Job {
   id: string;
@@ -1341,7 +1384,8 @@ export interface TextFact {
 // Disk health (ADR-0065) ---------------------------------------------------------------------------
 
 /** What a disk shows, or a judged fact: unhealthy is sent as its level, warning or failing. */
-export type DiskState = "healthy" | "warning" | "failing" | "unknown" | "unsupported" | "unavailable";
+export type DiskState =
+  "healthy" | "warning" | "failing" | "unknown" | "unsupported" | "unavailable";
 /** A fact's state: a judged one's, or reported for a fact EasyRMM reads and does not judge. */
 export type FactState = DiskState | "reported";
 
@@ -1450,7 +1494,13 @@ export interface Inventory {
   system: SystemInfo;
   cpu: { model: string; sockets: number; cores: number; threads: number };
   memoryBytes: number;
-  os: { name: string; id: string; version: string; kernel: string; timezone: string };
+  os: {
+    name: string;
+    id: string;
+    version: string;
+    kernel: string;
+    timezone: string;
+  };
   disks: Disk[];
   interfaces: NetworkInterface[];
   gateways: string[];
@@ -1569,14 +1619,30 @@ export interface SoftwareDevice {
  * with one of its checks (ADR-0065). remote_down: the EasyRMM agent checks in but MeshAgent is not connected;
  * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in; repair_failed: an automatic repair
  * ended with its agent still broken, an alert of no policy (ADR-0069). */
-export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health" | "remote_down" | "agent_silent" | "repair_failed";
+export type AlertKind =
+  | "offline"
+  | "cpu"
+  | "memory"
+  | "disk"
+  | "disk_health"
+  | "remote_down"
+  | "agent_silent"
+  | "repair_failed";
 /** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
  * temperature (°C, or the drive's own limit without a threshold). */
-export type DiskCheck = "failing" | "errors" | "pending" | "wear" | "temperature";
+export type DiskCheck =
+  "failing" | "errors" | "pending" | "wear" | "temperature";
 export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
 /** subject_gone: a disk missing from the device's hardware reports for 14 days. */
-export type AlertResolution = "cleared" | "manual" | "not_covered" | "policy_off" | "policy_changed" | "policy_deleted" | "subject_gone";
+export type AlertResolution =
+  | "cleared"
+  | "manual"
+  | "not_covered"
+  | "policy_off"
+  | "policy_changed"
+  | "policy_deleted"
+  | "subject_gone";
 
 export interface AlertPolicy {
   id: string;
@@ -1708,7 +1774,14 @@ export interface AlertSummary {
 
 // --- Reports (ADR-0029) --------------------------------------------------------------------
 
-export type ReportName = "devices" | "software" | "health" | "alerts" | "contacts" | "patch-compliance" | "patch-installations";
+export type ReportName =
+  | "devices"
+  | "software"
+  | "health"
+  | "alerts"
+  | "contacts"
+  | "patch-compliance"
+  | "patch-installations";
 
 export interface ReportColumn {
   key: string;
@@ -1820,7 +1893,13 @@ export interface PatchStatus {
   configured: boolean;
 }
 
-export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
+export type ComplianceStatus =
+  | "Compliant"
+  | "MissingUpdates"
+  | "FailedUpdates"
+  | "RebootRequired"
+  | "ScanStale"
+  | "NeverScanned";
 
 /** Where EasyRMM's agent is with installing the EasyPatch agent (ADR-0031). */
 export type AgentInstallState = "waiting" | "sent" | "succeeded" | "failed";
@@ -1921,7 +2000,13 @@ export interface PatchFleetUpdate {
   /** Installed and waiting for a restart. */
   pendingRebootCount: number;
   excludedCount: number;
-  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] | null } | null;
+  package: {
+    name: string;
+    version: string;
+    installedVersion: string;
+    repository: string;
+    advisories: string[] | null;
+  } | null;
   cveCount: number;
   knownExploited: boolean;
   reofferedCount: number;
@@ -2027,13 +2112,26 @@ export interface PatchEndpointDetail {
   restart: PatchRestartDetails | null;
   /** How the agent applied the policy's Windows Update settings (Windows only). */
   windowsUpdatePolicy: {
-    groups: { group: string; state: string; message: string; appliedAt: string | null; conflictingValues: string[] | null }[] | null;
+    groups:
+      | {
+          group: string;
+          state: string;
+          message: string;
+          appliedAt: string | null;
+          conflictingValues: string[] | null;
+        }[]
+      | null;
     mdmUpdatePoliciesPresent: boolean;
   } | null;
 }
 
 /** What EasyPatch agents report they can do. */
-export const PATCH_AGENT_CAN = { notifyUser: "notify-user", uninstallUpdates: "uninstall-updates", tray: "tray", restart: "restart" } as const;
+export const PATCH_AGENT_CAN = {
+  notifyUser: "notify-user",
+  uninstallUpdates: "uninstall-updates",
+  tray: "tray",
+  restart: "restart",
+} as const;
 
 /** Whether the agent can update itself, and to what. */
 export interface PatchAgentUpdate {
@@ -2048,7 +2146,15 @@ export interface PatchAgentUpdate {
 }
 
 export interface PatchRestartDetails {
-  updates: { updateGuid: string | null; title: string; kbNumbers: string[] | null; source: string; installedAt: string | null }[] | null;
+  updates:
+    | {
+        updateGuid: string | null;
+        title: string;
+        kbNumbers: string[] | null;
+        source: string;
+        installedAt: string | null;
+      }[]
+    | null;
   /** Pending Windows servicing packages that name no KB. */
   servicingPackages: string[] | null;
   /** The first 25 file operations Windows has queued. */
@@ -2074,10 +2180,22 @@ export interface PatchRestartSchedule {
 
 /** Windows Update's own settings that EasyPatch manages; a null group is not managed. */
 export interface PatchWindowsUpdate {
-  automaticUpdates: { mode: string; scheduledInstallDay: number; scheduledInstallHour: number } | null;
-  featureUpdates: { deferDays: number | null; targetProductVersion: string; targetReleaseVersion: string } | null;
+  automaticUpdates: {
+    mode: string;
+    scheduledInstallDay: number;
+    scheduledInstallHour: number;
+  } | null;
+  featureUpdates: {
+    deferDays: number | null;
+    targetProductVersion: string;
+    targetReleaseVersion: string;
+  } | null;
   qualityUpdates: { deferDays: number | null; disablePause: boolean } | null;
-  restartBehavior: { noAutoRestartWithSignedInUsers: boolean; activeHoursStart: number | null; activeHoursEnd: number | null } | null;
+  restartBehavior: {
+    noAutoRestartWithSignedInUsers: boolean;
+    activeHoursStart: number | null;
+    activeHoursEnd: number | null;
+  } | null;
 }
 
 /** An endpoint's effective EasyPatch policy, with the layer each value comes from. */
@@ -2109,8 +2227,12 @@ export interface PatchPolicy {
   preDownloadHours: number;
   restartSchedule: PatchRestartSchedule | null;
   windowsUpdate: PatchWindowsUpdate | null;
-  windowsUpdateValues: { group: string; path: string; name: string; value: string }[] | null;
-  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+  windowsUpdateValues:
+    { group: string; path: string; name: string; value: string }[] | null;
+  applicationUpdates: {
+    enabled: boolean;
+    approvedApps: string[] | null;
+  } | null;
   /** The layer that set each value (Global, Organization, Site, Tag or Endpoint), keyed by its name; EasyPatch writes the keys in PascalCase. */
   sources: Record<string, string> | null;
   /** The tag whose policy set a value. */
@@ -2118,9 +2240,12 @@ export interface PatchPolicy {
 }
 
 /** The levels of an EasyPatch policy. */
-export type PolicyLevel = "default" | "organization" | "site" | "device" | "tag";
+export type PolicyLevel =
+  "default" | "organization" | "site" | "device" | "tag";
 
-type WindowsUpdateGroups = { [K in keyof PatchWindowsUpdate]: NonNullable<PatchWindowsUpdate[K]> };
+type WindowsUpdateGroups = {
+  [K in keyof PatchWindowsUpdate]: NonNullable<PatchWindowsUpdate[K]>;
+};
 
 /** One group of Windows Update settings at one level: not managed leaves Windows alone, even when a level above manages it. */
 export interface PatchGroupSetting<T> {
@@ -2154,8 +2279,17 @@ export interface PatchPolicyLayer {
   installNotificationsEnabled: boolean | null;
   agentAutoUpdateEnabled: boolean | null;
   restartSchedule: PatchRestartSchedule | null;
-  windowsUpdate: { [K in keyof WindowsUpdateGroups]: PatchGroupSetting<WindowsUpdateGroups[K]> | null } | null;
-  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+  windowsUpdate:
+    | {
+        [K in keyof WindowsUpdateGroups]: PatchGroupSetting<
+          WindowsUpdateGroups[K]
+        > | null;
+      }
+    | null;
+  applicationUpdates: {
+    enabled: boolean;
+    approvedApps: string[] | null;
+  } | null;
 }
 
 /** A level's policy for the editor: its own values and what it inherits, already resolved by the server. */
@@ -2177,7 +2311,8 @@ export interface PatchPolicyView {
   organizationId?: string;
 }
 
-export type TagColor = "gray" | "blue" | "green" | "amber" | "red" | "purple" | "teal" | "pink";
+export type TagColor =
+  "gray" | "blue" | "green" | "amber" | "red" | "purple" | "teal" | "pink";
 
 /** An EasyPatch tag. Counts are 0 for someone who does not see every organization. */
 export interface PatchTag {
@@ -2494,7 +2629,11 @@ export interface PatchChannel {
   hasSigningSecret: boolean;
   createdAt: string;
   updatedAt: string;
-  lastDelivery: { status: PatchNotificationStatus; createdAt: string; lastError: string | null } | null;
+  lastDelivery: {
+    status: PatchNotificationStatus;
+    createdAt: string;
+    lastError: string | null;
+  } | null;
 }
 
 export interface PatchChannelInput {
@@ -2575,9 +2714,23 @@ export interface PatchAssignedTags {
 export interface PatchInstallPreview {
   /** AllEligible or Selected. */
   mode: string;
-  items: { updateGuid: string; title: string; kbNumber: string; category: string; sizeBytes: number | null; rebootBehavior: number | null; state: string }[];
+  items: {
+    updateGuid: string;
+    title: string;
+    kbNumber: string;
+    category: string;
+    sizeBytes: number | null;
+    rebootBehavior: number | null;
+    state: string;
+  }[];
   /** Updates left out, with EasyPatch's reason code. */
-  skipped: { updateGuid: string; title: string; kbNumber: string; category: string; reason: string }[];
+  skipped: {
+    updateGuid: string;
+    title: string;
+    kbNumber: string;
+    category: string;
+    reason: string;
+  }[];
   totalSizeBytes: number;
   rebootLikelyCount: number;
   warnings: string[];
@@ -2613,7 +2766,15 @@ export interface DevicePatching {
 }
 
 export type PatchUpdateState =
-  "Missing" | "Failed" | "PendingVerification" | "PendingReboot" | "Installed" | "Superseded" | "NotApplicable" | "Excluded" | "Reoffered";
+  | "Missing"
+  | "Failed"
+  | "PendingVerification"
+  | "PendingReboot"
+  | "Installed"
+  | "Superseded"
+  | "NotApplicable"
+  | "Excluded"
+  | "Reoffered";
 
 export interface PatchUpdate {
   updateGuid: string;
@@ -2635,8 +2796,21 @@ export interface PatchUpdate {
   failedAttempts: number;
   errorCode: string;
   errorMessage: string;
-  activeJob: { jobId: string; jobStatus: string; itemStatus: string; downloadPercent: number | null; installPercent: number | null; jobType: string } | null;
-  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] | null } | null;
+  activeJob: {
+    jobId: string;
+    jobStatus: string;
+    itemStatus: string;
+    downloadPercent: number | null;
+    installPercent: number | null;
+    jobType: string;
+  } | null;
+  package: {
+    name: string;
+    version: string;
+    installedVersion: string;
+    repository: string;
+    advisories: string[] | null;
+  } | null;
   deferredUntil: string | null;
   cveIds: string[] | null;
   knownExploited: boolean;
@@ -2733,7 +2907,13 @@ export interface PatchJobDetail {
   retryOfJobId: string | null;
   cancelRequestedAt: string | null;
   items: PatchJobItem[];
-  events: { id: number; type: string; severity: string; message: string; createdAt: string }[];
+  events: {
+    id: number;
+    type: string;
+    severity: string;
+    message: string;
+    createdAt: string;
+  }[];
   deviceId: string;
   deviceName: string;
   canManage: boolean;
@@ -2810,7 +2990,13 @@ export interface PatchJobUpdateFacts {
   supportUrl: string;
   /** The update's state on the device now. */
   state: PatchUpdateState;
-  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] } | null;
+  package: {
+    name: string;
+    version: string;
+    installedVersion: string;
+    repository: string;
+    advisories: string[];
+  } | null;
 }
 
 /** A restart asked for with an install, and what became of it. */
@@ -2849,7 +3035,8 @@ export interface PatchTargets {
 }
 
 /** Why a device of an organization or site is left out of an action on all of it. */
-export type PatchScopeSkip = "not_permitted" | "stopped" | "no_agent" | "not_linked" | "platform";
+export type PatchScopeSkip =
+  "not_permitted" | "stopped" | "no_agent" | "not_linked" | "platform";
 
 /** An organization, or one of its sites, as an action on all of it would reach it. */
 export interface PatchScope {
@@ -2879,7 +3066,10 @@ export interface PatchAvailablePlan {
   /** Feature upgrades found: installed only when asked for. */
   features: number;
   /** Updates left out because they are excluded on the device; `devices` lists the first 50. */
-  excluded: { count: number; devices: { deviceId: string; deviceName: string; count: number }[] };
+  excluded: {
+    count: number;
+    devices: { deviceId: string; deviceName: string; count: number }[];
+  };
   /** Left out: on hold. */
   held: number;
   /** Left out: application updates the policy does not approve. */
@@ -2925,14 +3115,27 @@ export interface PatchActionResult {
    * Each device's outcome. jobIds lists its jobs when there are several (more updates than one install takes), jobId
    * being the last.
    */
-  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; jobIds?: string[]; upToDate?: boolean; message?: string }[];
+  results: {
+    deviceId: string;
+    deviceName: string;
+    ok: boolean;
+    jobId?: string;
+    jobIds?: string[];
+    upToDate?: boolean;
+    message?: string;
+  }[];
   /** On all of an organization or site: the scope as it was when the request ran. */
   scope?: PatchScope;
   /**
    * On all of an organization or site: each batch sent to the patching engine. error says why it was not taken;
    * unknown, that the engine did not answer, so whether it took the batch is not known.
    */
-  batches?: { devices: number; sent: number; error?: string; unknown?: boolean }[];
+  batches?: {
+    devices: number;
+    sent: number;
+    error?: string;
+    unknown?: boolean;
+  }[];
   /** Devices that restart once their install has finished. */
   restartAfter?: number;
 }
@@ -2962,7 +3165,8 @@ export interface RestartPlan {
 }
 
 /** How a restart treats the people signed in. */
-export type RestartMode = "Countdown" | "PromptWithDeadline" | "PromptNoDeadline" | "Immediate";
+export type RestartMode =
+  "Countdown" | "PromptWithDeadline" | "PromptNoDeadline" | "Immediate";
 
 export interface RestartInput extends PatchTargets {
   mode?: RestartMode;
@@ -3054,7 +3258,11 @@ export interface AgentLogPage {
   /** More records exist beyond these, in the direction asked. */
   more: boolean;
   /** The verbose mode in force: set on the device, or on its group. */
-  verbose: { until: string; scope: "device" | "group"; groupId?: string } | null;
+  verbose: {
+    until: string;
+    scope: "device" | "group";
+    groupId?: string;
+  } | null;
   retentionDays: number;
   /** The device's agent reported recently. */
   online: boolean;
@@ -3064,7 +3272,14 @@ export interface AgentLogPage {
 // Defender exclusions and the hash list of everything installed (ADR-0070)
 // ---------------------------------------------------------------------------------------------
 
-export type DefenderState = "effective" | "present_not_effective" | "not_locked" | "refused" | "unavailable" | "not_applicable" | "not_needed";
+export type DefenderState =
+  | "effective"
+  | "present_not_effective"
+  | "not_locked"
+  | "refused"
+  | "unavailable"
+  | "not_applicable"
+  | "not_needed";
 export type DefenderKindName = "path" | "process" | "asr" | "cfa";
 
 export interface DefenderReport {
@@ -3074,9 +3289,12 @@ export interface DefenderReport {
   folders: { path: string; listed: boolean; ours: boolean; reason?: string }[];
   method?: string;
   agentVersion?: string;
+  /** The EasyPatch agent's own report, which the EasyRMM agent forwards (ADR-0070 slice B). */
+  easypatch?: DefenderReport;
 }
 
-export type InstalledStatus = "match" | "mismatch" | "not_current" | "no_expected";
+export type InstalledStatus =
+  "match" | "mismatch" | "not_current" | "no_expected";
 
 export interface ExpectedHash {
   source: "server" | "meshcentral" | "patching";
