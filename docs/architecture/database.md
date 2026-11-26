@@ -468,7 +468,7 @@ order, so 00036 follows 00032 to 00035.
 | `contacts` | `organization_id`, `site_id` (NULL for the organization's own) through the composite key to `sites`, `name` (1 to 200 characters), `job_title`, `email`, `office_phone`, `mobile_phone`, `note` (up to 2,000), `priority` (`primary`, `secondary` or `none`), `emergency`. `contacts_primary_org_key` and `contacts_primary_site_key`: one primary for the organization and one per site. Goes with its organization or site |
 | Policies `site_places_tenant`, `contacts_tenant` | `sites_tenant`'s, without `scope_read_orgs`: site-scoped people see their sites' rows, not the organization's own contacts. Enabled and forced |
 
-## Notification channels, the outbox, notices and their journal (migration 90421, renumbered by the integrator)
+## Notification channels, the outbox, notices and their journal (migration 00074, renumbered by the integrator)
 
 ADR-0053, slice 3. Every table has row-level security enabled and forced, on
 `easyrmm_scope_all()` and `easyrmm_scope_ids('easyrmm.scope_orgs')`. The nil
