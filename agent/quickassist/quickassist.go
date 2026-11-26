@@ -66,6 +66,10 @@ type Options struct {
 	Poll time.Duration
 	// Elevated says the program runs with administrative rights.
 	Elevated bool
+	// Window asks for consent in the platform's window where it has one
+	// (Windows), beside the terminal text. The program sets it; tests read
+	// the answer from In, since a window waits for a click no runner gives.
+	Window bool
 	// Transport and Now are for tests.
 	Now func() time.Time
 }
@@ -165,9 +169,12 @@ this session. Nothing is installed, and everything is removed when it ends.
   Read this code to the technician on the phone. Only they can accept the
   session, and only by typing it.
 
-%s`, su.Host, code, answerPrompt())
+%s`, su.Host, code, answerPrompt(o.Window))
 	rd := bufio.NewReader(o.In)
-	yes, handled := askWindow(su.Host, code)
+	yes, handled := false, false
+	if o.Window {
+		yes, handled = askWindow(su.Host, code)
+	}
 	if !handled {
 		line, _ := rd.ReadString('\n')
 		yes = strings.TrimSpace(line) == "YES"
@@ -247,8 +254,8 @@ type sessionState struct {
 	mesh *meshRun
 }
 
-func answerPrompt() string {
-	if _, handled := askWindowAvailable(); handled {
+func answerPrompt(window bool) string {
+	if _, handled := askWindowAvailable(); window && handled {
 		return "A window asks you to allow or cancel.\n"
 	}
 	return "Type YES to allow, anything else to cancel: "

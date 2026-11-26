@@ -4,6 +4,7 @@ import type { PatchStatus, Permission } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
+import { ComplianceTab } from "../compliance/ComplianceTab";
 import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { ContactsTab } from "./tabs/ContactsTab";
 import { HardeningTab } from "./tabs/HardeningTab";
@@ -111,6 +112,14 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "device.view",
     levels: ["organization", "site", "group"],
     component: HardeningTab,
+  },
+  {
+    // Compliance (ADR-0078): the results, the fix queue and the module's switch. It is shown to those who may view it.
+    id: "compliance",
+    label: "Compliance",
+    permission: "compliance.view",
+    levels: ["organization"],
+    component: ComplianceTab,
   },
   {
     id: "install",

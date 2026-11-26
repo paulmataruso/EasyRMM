@@ -29,6 +29,7 @@ import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
 import { EasyRmmRepairCard, PatchingRepairCard, RemoteRepairCard, RepairButton } from "./remoteRepair";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
+import { DeviceCompliance, useComplianceEnabled } from "../compliance/DeviceCompliance";
 import { ModuleOff } from "./modules/ModuleTab";
 import { DEVICE_MODULE_TABS, moduleTabState } from "./modules/moduleTabs";
 
@@ -76,6 +77,7 @@ export function DeviceDetailPage() {
   const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
   // Windows management modules (ADR-0073): the detected roles decide which module tabs are offered.
   const roles = useApi<DeviceRoles>(hasAgent && device.data?.platform === "windows" ? `/devices/${id}/roles` : null, undefined, { staleTime: 60_000 });
+  const complianceOn = useComplianceEnabled(device.data);
   const [running, setRunning] = useState(false);
   const [moving, setMoving] = useState(false);
   const showHistory = can("audit.view");
@@ -93,6 +95,8 @@ export function DeviceDetailPage() {
     { id: "hardening", label: "Hardening", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") },
     // Agent logs (ADR-0069) need log.view: Technicians and above.
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
+    // Compliance (ADR-0078): hidden where the module is off or the viewer may not see its results.
+    { id: "compliance", label: "Compliance", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") || !complianceOn },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
   ];
   const requested = url.get("tab");
@@ -202,6 +206,12 @@ export function DeviceDetailPage() {
       {tab === "hardening" && (
         <div role="tabpanel" aria-labelledby="tab-hardening">
           {d.platform === "windows" ? <WindowsHardeningPanel device={d} /> : <HardeningPanel device={d} />}
+        </div>
+      )}
+
+      {tab === "compliance" && (
+        <div role="tabpanel" aria-labelledby="tab-compliance">
+          <DeviceCompliance device={d} />
         </div>
       )}
 

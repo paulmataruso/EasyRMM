@@ -35,8 +35,9 @@ export function DevicesPage() {
   const status = url.get("status");
   const hardening = url.get("hardening");
   const diskHealth = url.get("diskHealth");
+  const compliance = url.get("compliance");
   const sort = parseSort(url.get("sort"));
-  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth);
+  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth || compliance);
 
   const params = {
     q: search || undefined,
@@ -46,6 +47,7 @@ export function DevicesPage() {
     status: status || undefined,
     hardening: hardening || undefined,
     diskHealth: diskHealth || undefined,
+    compliance: compliance || undefined,
   };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
   // The server lists by name; sorting by disk health keeps that order among devices with the same label.
@@ -102,6 +104,7 @@ export function DevicesPage() {
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
         <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />
+        {can("compliance.view") && <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />}
         {picked.length > 0 && (
           <Button icon={<MoveRight className="size-4" aria-hidden />} onClick={() => setMoving(picked)}>
             Move {plural(picked.length, "device")} to…
@@ -269,6 +272,19 @@ function HardeningSelect({ value, onChange }: { value: string; onChange: (v: str
             {f.label}
           </option>
         ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** Devices with a stored compliance result that does not meet (ADR-0078, section 7); on a group's list too. */
+function ComplianceSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <Field label="Compliance" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any compliance</option>
+        <option value="failing">Failing</option>
       </Select>
     </Field>
   );
