@@ -29,3 +29,12 @@ ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.t
 78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:private-key:221
 # A pinned helper's SHA-256 (ADR-0077), not a key.
 93479ac683233560e47f4d1d7f7f5e1932350d77:scripts/ci/winmod-helper-pins.json:generic-api-key:2
+# Pinned script hashes of the file-share actions, in this branch's early commits (the names have since changed).
+3785d25beb6d19ba3bd52ffa8c05c3ead5020c97:server/internal/winmod/fileshares/pins.go:generic-api-key:9
+3785d25beb6d19ba3bd52ffa8c05c3ead5020c97:server/internal/winmod/fileshares/pins.go:generic-api-key:11
+3785d25beb6d19ba3bd52ffa8c05c3ead5020c97:server/internal/winmod/fileshares/pins.go:generic-api-key:12
+9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:9
+9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:10
+9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:11
+9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:12
+9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:13
