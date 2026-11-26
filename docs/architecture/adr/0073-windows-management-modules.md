@@ -1,6 +1,6 @@
 # ADR-0073: The framework every Windows management module builds on
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-23 and 2026-11-26), for the four modules
   that build on it: Windows Defender (ADR-0074),
   Active Directory (ADR-0075), the server roles

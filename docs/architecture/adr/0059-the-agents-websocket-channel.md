@@ -1,6 +1,6 @@
 # ADR-0059: The agent's WebSocket channel
 
-* Status: Proposed (2026-11-21); refreshed 2026-11-26 against the code
+* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). Not built yet.
   after ADR-0069 and the dev-scope guard (see *Refresh, 2026-11-26*, which
   wins where it disagrees with what follows). Not implemented.
 * Revised 2026-11-21 after an independent review: features the server
