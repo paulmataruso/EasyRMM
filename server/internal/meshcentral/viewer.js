@@ -22,6 +22,10 @@
  *  - An RDP session (ADR-0026) asks for the credentials straight away, shows
  *    only the RDP Connect button, and when the view is resized, connects
  *    again at the new size with the credentials typed for this session.
+ *  - An RDP session that names a saved credential (rdpcred=<id>, ADR-0079)
+ *    skips the credentials dialog and connects at once; the RDP
+ *    connection request carries only that id (never a password), and
+ *    EasyRMM's gateway puts the credential in before MeshCentral reads it.
  *
  * Each change first checks that what it changes is there, so a MeshCentral
  * update that renames something turns that change off rather than breaking
@@ -42,6 +46,9 @@
   // RDP sessions open the desktop view with rdp=1.
   var RDP = /[?&]rdp=1(?:&|$)/.test(w.location.search);
   var RDP_CONNECT = 'connectbutton1r';
+  // The saved credential the console chose for this RDP session, if any.
+  var RDP_SAVED = (RDP && /[?&]rdpcred=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:&|$)/.exec(w.location.search) || [])[1] || null;
+  var RDP_DEFAULT_FLAGS = 0x2F;
   // Windows accepts session sizes from 200 to 8192 pixels; widths are kept to
   // a multiple of 4, which older RDP servers need. A resize by less than
   // RDP_TOLERANCE is left to scaling; a larger one connects again once the
@@ -310,6 +317,60 @@
     };
   }
 
+  // The size MeshCentral's credentials dialog would ask for, by the desktop
+  // settings' choice of size.
+  function savedSize() {
+    var settings = w.desktopsettings || {};
+    var mode = settings.rdpsize;
+    var parent = doc.getElementById('DeskParent');
+    if (!mode || mode === 'canvas') {
+      return parent ? [parent.offsetWidth, parent.offsetHeight] : [null, null];
+    }
+    if (mode === 'browser') { return [w.innerWidth, w.innerHeight]; }
+    if (mode === 'screen') { return [w.screen && w.screen.width, w.screen && w.screen.height]; }
+    var i = String(mode).indexOf('x');
+    if (i >= 1) { return [parseInt(String(mode).substring(0, i), 10), parseInt(String(mode).substring(i + 1), 10)]; }
+    return [null, null];
+  }
+
+  // Connect with the saved credential without the dialog. The options carry
+  // no credentials; the id goes into the connection request (below).
+  function connectSaved() {
+    var settings = w.desktopsettings || {};
+    var size = savedSize();
+    w.connectDesktop(null, 4, {
+      domain: '', username: '', password: '', savecred: false, width: size[0], height: size[1],
+      flags: settings.rdpflags != null ? settings.rdpflags : RDP_DEFAULT_FLAGS, altshell: '', workdir: ''
+    });
+  }
+
+  // MeshCentral's RDP module sends its connection request as
+  // ["infos", {ip, port, screen, domain, username, password, options, locale}]
+  // on a WebSocket to mstscrelay.ashx. With a saved credential the request
+  // names it instead of carrying one, on every connection, so a resize
+  // connects again the same way.
+  function nameSavedCredential() {
+    var socket = w.WebSocket;
+    if (!RDP_SAVED || !socket || !socket.prototype || typeof socket.prototype.send !== 'function') { return; }
+    var send = socket.prototype.send;
+    socket.prototype.send = function (data) {
+      if (typeof data === 'string' && /mstscrelay\.ashx(?:[?#]|$)/.test(String(this.url))) {
+        try {
+          var m = JSON.parse(data);
+          if (Array.isArray(m) && m[0] === 'infos' && m[1] && typeof m[1] === 'object') {
+            m[1].domain = '';
+            m[1].username = '';
+            m[1].password = '';
+            m[1].options = m[1].options && typeof m[1].options === 'object' ? m[1].options : {};
+            m[1].options.useSavedCredential = RDP_SAVED;
+            data = JSON.stringify(m);
+          }
+        } catch (e) { report(e); }
+      }
+      return send.call(this, data);
+    };
+  }
+
   // Each view shows only its own way of connecting: an RDP session the RDP
   // Connect button (also for a device MeshCentral would not offer it for),
   // a desktop session MeshAgent's.
@@ -361,7 +422,7 @@
       var button = doc.getElementById(id);
       if (button && !button.disabled && button.offsetParent !== null) {
         w.clearInterval(timer);
-        button.click();
+        if (RDP_SAVED && id === RDP_CONNECT) { connectSaved(); } else { button.click(); }
       } else if (++polls * CONNECT_POLL >= CONNECT_WAIT) {
         w.clearInterval(timer);
       }
@@ -373,6 +434,7 @@
   if (typeof w.CreateAgentRemoteDesktop === 'function') {
     wrap('CreateAgentRemoteDesktop', tuneDesktop);
   }
+  nameSavedCredential();
   // The settings and the page start-up are defined by inline scripts after
   // this one; the page starts on load, after DOMContentLoaded.
   doc.addEventListener('DOMContentLoaded', function () {

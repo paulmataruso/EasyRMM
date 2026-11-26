@@ -595,3 +595,25 @@ func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Log(strings.TrimSpace(string(p)))
 	return len(p), nil
 }
+
+func TestWithSavedCredential(t *testing.T) {
+	const rdp = "/?gotonode=abc&viewmode=11&hide=63&rdp=1&login=tok"
+	const id = "0D3B8A52-6F0E-4A7E-9C0A-0B5F3A1D2E44"
+	if got := withSavedCredential(rdp, id); got != rdp+"&rdpcred=0d3b8a52-6f0e-4a7e-9c0a-0b5f3a1d2e44" {
+		t.Errorf("rdp: %s", got)
+	}
+	const desktop = "/?gotonode=abc&viewmode=11&hide=63&login=tok"
+	for name, c := range map[string][2]string{
+		"not RDP":       {desktop, id},
+		"no id":         {rdp, ""},
+		"not an id":     {rdp, "abc&x=1"},
+		"braces":        {rdp, "{" + id + "}"},
+		"urn":           {rdp, "urn:uuid:" + id},
+		"no hyphens":    {rdp, strings.ReplaceAll(id, "-", "")},
+		"extra content": {rdp, id + "&a=b"},
+	} {
+		if got := withSavedCredential(c[0], c[1]); got != c[0] {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}

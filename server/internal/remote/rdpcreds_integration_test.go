@@ -215,6 +215,7 @@ func TestSavedRDPCredentialEndToEnd(t *testing.T) {
 
 	// MeshCentral's own port is not a way around the gateway: a browser
 	// without a grant is refused there too, whatever it sends.
+	//nolint:bodyclose // coder/websocket owns the handshake response body
 	direct, _, derr := websocket.Dial(r.ctx, "ws"+strings.TrimPrefix(r.env.URL, "http")+"/mstscrelay.ashx", &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {r.env.URL}}})
 	if derr == nil {
 		_ = direct.Write(r.ctx, websocket.MessageText, []byte(`["infos",{"ip":"`+dev.MeshNodeID+`","port":3389,"username":"x","password":"y","options":{"savepass":true}}]`))

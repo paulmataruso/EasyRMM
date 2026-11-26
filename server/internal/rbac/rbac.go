@@ -96,7 +96,7 @@ const (
 	// PermRDPCredentialsSave lets a person save, replace and delete their own
 	// saved RDP credential on a device they may open remote desktop on
 	// (ADR-0079). It is never a way to read one.
-	PermRDPCredentialsSave Permission = "device.rdp_credentials.save"
+	PermRDPCredentialsSave Permission = "device.rdp_credentials.save" //nolint:gosec // a permission name, not a credential
 )
 
 // AllPermissions lists every permission.

@@ -476,7 +476,19 @@ func (g *Gateway) launch(w http.ResponseWriter, r *http.Request) {
 		Secure: g.secure, HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
 	g.remember(red.Cookie, red.SessionID)
-	http.Redirect(w, r, red.Target, http.StatusSeeOther)
+	//nolint:gosec // the target is the server's own path; the only input added is a validated UUID
+	http.Redirect(w, r, withSavedCredential(red.Target, r.URL.Query().Get("rdpcred")), http.StatusSeeOther)
+}
+
+// withSavedCredential names the saved RDP credential the console chose in an
+// RDP session's page address, for the session view to put in its connection
+// request (ADR-0079). It is only an id: the gateway checks on use that it is
+// the person's own, so a made-up one opens nothing.
+func withSavedCredential(target, id string) string {
+	if _, err := uuid.Parse(id); err != nil || len(id) != 36 || !strings.Contains(target, "&rdp=1") {
+		return target
+	}
+	return target + "&rdpcred=" + strings.ToLower(id)
 }
 
 func cookieKey(v string) [32]byte { return sha256.Sum256([]byte(v)) }

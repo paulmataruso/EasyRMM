@@ -384,7 +384,9 @@ describe("remote sessions", () => {
   });
 
   it("opens an RDP session", async () => {
-    const server = installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
+    const server = installFakeApi({
+      ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "GET /devices/:id/rdp-credentials": ok({ credentials: [] }), "POST /devices/:id/remote-sessions": launch,
+    });
     renderApp("/devices/d1/remote/rdp");
     expect(await screen.findByTitle("RDP on FRONT-DESK")).toHaveAttribute("src", expect.stringContaining("rdp-token"));
     expect(server.calls.filter((c) => c.method === "POST").map((c) => (c.body as { kind: string }).kind)).toEqual(["rdp"]);

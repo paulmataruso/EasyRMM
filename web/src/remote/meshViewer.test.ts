@@ -89,6 +89,8 @@ interface PageOptions {
   fetch?: boolean;
   /** The console opened an RDP session (rdp=1). */
   rdp?: boolean;
+  /** The console chose a saved credential for it (rdpcred=). */
+  rdpcred?: string;
 }
 
 /** A MeshCentral device page with the tuning loaded. */
@@ -110,10 +112,14 @@ class Page {
   /** The options of each RDP connection started, as the RDP module got them. */
   rdpStarts: Array<Record<string, unknown>> = [];
   warn = vi.fn();
+  /** What the page sent on WebSockets, by address. */
+  sent: Array<{ url: string; data: unknown }> = [];
   win: Record<string, unknown>;
 
   constructor(opts: PageOptions = {}) {
     const doc = this.doc;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const page = this;
     doc.body.innerHTML = `<div id="DeskParent"><canvas id="Desk"></canvas></div>
       <span id="connectbutton1span"><input type="button" id="connectbutton1" disabled></span>
       <span id="connectbutton1rspan"><input type="button" id="connectbutton1r" disabled></span>
@@ -133,7 +139,13 @@ class Page {
     }
     const win: Record<string, unknown> = {
       document: doc,
-      location: { search: `?gotonode=abc&viewmode=${opts.viewmode ?? "11"}&hide=63${opts.rdp ? "&rdp=1" : ""}` },
+      location: { search: `?gotonode=abc&viewmode=${opts.viewmode ?? "11"}&hide=63${opts.rdp ? "&rdp=1" : ""}${opts.rdpcred ? `&rdpcred=${opts.rdpcred}` : ""}` },
+      WebSocket: class {
+        constructor(readonly url: string) {}
+        send(data: unknown) {
+          page.sent.push({ url: this.url, data });
+        }
+      },
       devicePixelRatio: 1,
       console: { warn: this.warn },
       Blob,
@@ -320,6 +332,74 @@ describe("MeshCentral session view tuning", () => {
       other.button("connectbutton1").disabled = false;
       other.advance(1000);
       expect(other.clicks).toEqual([]);
+    });
+  });
+
+  describe("RDP sessions with a saved credential (ADR-0079)", () => {
+    const ID = "0d3b8a52-6f0e-4a7e-9c0a-0b5f3a1d2e44";
+    const infos = JSON.stringify(["infos", { ip: "node//abc", port: 3389, screen: { width: 945, height: 479 }, domain: "D", username: "typed", password: "typed-pw", options: { savepass: true, flags: 47 }, locale: "en-US" }]);
+    const socket = (page: Page, url: string) => new (page.win.WebSocket as new (u: string) => { send(d: unknown): void })(url);
+
+    it("connects at once, without the credentials dialog and without credentials in the options", () => {
+      const page = new Page({ rdp: true, rdpcred: ID });
+      page.button("connectbutton1r").disabled = false;
+      page.advance(100);
+      expect(page.clicks).toEqual([]);
+      expect(page.rdpStarts).toEqual([{ domain: "", username: "", password: "", savecred: false, width: 944, height: 479, flags: 0x2f, altshell: "", workdir: "" }]);
+      page.advance(5000);
+      expect(page.rdpStarts).toHaveLength(1);
+    });
+
+    it("sizes the session by the desktop settings, as the dialog does", () => {
+      const page = new Page({ rdp: true, rdpcred: ID });
+      (page.win.desktopsettings as { rdpsize: string }).rdpsize = "1280x720";
+      page.button("connectbutton1r").disabled = false;
+      page.advance(100);
+      expect(page.rdpStarts[0]).toMatchObject({ width: 1280, height: 720 });
+    });
+
+    it("names the credential in the connection request, which then carries no credentials", () => {
+      const page = new Page({ rdp: true, rdpcred: ID.toUpperCase() });
+      socket(page, "wss://mesh.example.com/mstscrelay.ashx").send(infos);
+      const sent = JSON.parse(page.sent[0]!.data as string) as [string, Record<string, unknown>];
+      expect(sent[0]).toBe("infos");
+      expect(sent[1]).toMatchObject({ ip: "node//abc", domain: "", username: "", password: "", options: { savepass: true, flags: 47, useSavedCredential: ID.toUpperCase() } });
+      expect(page.sent[0]!.data).not.toContain("typed-pw");
+    });
+
+    it("leaves other sockets and other messages alone", () => {
+      const page = new Page({ rdp: true, rdpcred: ID });
+      socket(page, "wss://mesh.example.com/control.ashx").send(infos);
+      socket(page, "wss://mesh.example.com/mstscrelay.ashx").send(JSON.stringify(["mouse", 1, 2, 0, false]));
+      socket(page, "wss://mesh.example.com/mstscrelay.ashx").send(new Uint8Array([1, 2]));
+      socket(page, "wss://mesh.example.com/mstscrelay.ashx").send("not json");
+      expect(page.sent.map((s) => s.data)).toEqual([infos, '["mouse",1,2,0,false]', new Uint8Array([1, 2]), "not json"]);
+      expect(page.warn).toHaveBeenCalled();
+    });
+
+    it("does nothing in a session without one, or with an id that is not one", () => {
+      for (const rdpcred of [undefined, "abc", `${ID}x`, "'; alert(1)"]) {
+        const page = new Page({ rdp: true, rdpcred });
+        socket(page, "wss://mesh.example.com/mstscrelay.ashx").send(infos);
+        expect(page.sent[0]!.data).toBe(infos);
+        page.button("connectbutton1r").disabled = false;
+        page.advance(100);
+        expect(page.clicks).toEqual(["connectbutton1r"]);
+      }
+      const desktop = new Page({ rdpcred: ID }); // not an RDP session
+      socket(desktop, "wss://mesh.example.com/mstscrelay.ashx").send(infos);
+      expect(desktop.sent[0]!.data).toBe(infos);
+    });
+
+    it("names it again when the view is resized and the session connects again", () => {
+      const page = new Page({ rdp: true, rdpcred: ID });
+      page.button("connectbutton1r").disabled = false;
+      page.advance(100);
+      page.rdpConnected();
+      page.relayout(1920, 1005);
+      page.advance(1000 + 100);
+      page.advance(1000);
+      expect(page.rdpStarts.map((o) => [o.width, o.height, o.password])).toEqual([[944, 479, ""], [1920, 1005, ""]]);
     });
   });
 

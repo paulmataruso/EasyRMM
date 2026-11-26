@@ -127,6 +127,12 @@ func TestHTTPSavedRDPCredentials(t *testing.T) {
 	wantStatus(t, admin.do("DELETE", base+"/"+id, nil), http.StatusUnauthorized, "step_up_required")
 	steppedUp("now()")
 
+	// Routes name real things.
+	wantStatus(t, admin.do("GET", "/api/v1/devices/"+uuid.NewString()+"/rdp-credentials", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("GET", "/api/v1/devices/nope/rdp-credentials", nil), http.StatusNotFound, "")
+	wantStatus(t, admin.do("DELETE", base+"/nope", nil), http.StatusNotFound, "")
+	wantStatus(t, admin.do("DELETE", "/api/v1/devices/nope/rdp-credentials/"+id, nil), http.StatusNotFound, "")
+
 	// Delete, then the credential is gone; and no password is in the logs.
 	wantStatus(t, admin.do("DELETE", base+"/"+id, nil), http.StatusNoContent, "")
 	wantStatus(t, admin.do("DELETE", base+"/"+id, nil), http.StatusNotFound, "not_found")

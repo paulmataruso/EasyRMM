@@ -112,6 +112,10 @@ floors=(
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
+  # Saved RDP credentials (ADR-0079): a sealed password per device, opened
+  # only for the gateway, and the routes that save and delete it.
+  "server/internal/rdpcreds                88"
+  "server/internal/httpapi/rdpcredsapi     90"
   # The host updater (ADR-0052): it runs as root, verifies what it
   # installs, and replaces the whole deployment.
   "updater/internal/release                90"

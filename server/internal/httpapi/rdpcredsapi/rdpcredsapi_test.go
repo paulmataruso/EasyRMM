@@ -15,9 +15,9 @@ func TestSecretBytesDecodesLikeEncodingJSON(t *testing.T) {
 	}
 	// Escapes encoding/json writes in other forms.
 	for raw, want := range map[string]string{
-		`"A\/😀"`: "A/\U0001F600",
-		`"😀"`:         "\U0001F600",
-		`"\ud83dx"`:              "�x", // a lone surrogate
+		`"A\/😀"`:    "A/\U0001F600",
+		`"😀"`:       "\U0001F600",
+		`"\ud83dx"`: "�x", // a lone surrogate
 	} {
 		var got secretBytes
 		if err := got.UnmarshalJSON([]byte(raw)); err != nil || string(got) != want {

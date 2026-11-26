@@ -380,6 +380,54 @@ Order (step-up first, so nothing saves or injects without it):
 * MeshCentral's own "Remember credentials" stays off and cannot be turned on
   by a browser.
 
+## Amendments
+
+Amended 2026-11-26 (decided in review), while building slices 1 to 3 of the
+brief's order (gateway hook, storage, API, UI). The personal level only; the
+shared level and re-sealing (slices 4 and 5 above) are not built.
+
+* **Row-level security is by organization, as written, but the service reads and
+  writes under the system scope after its own checks.** A site-scoped
+  technician's database scope names sites, not the organization, so the
+  organization policy would hide their own credential. The service checks the
+  person (`user_id` is the caller's), the permissions at the device's site and
+  `devscope` itself; the policy still bounds every other path, and a test proves
+  another organization's scope sees nothing and cannot write a row.
+* **Only `device.rdp_credentials.save` is added** (technicians and above, every
+  role holding `device.remote_desktop`). `.use` and `.manage_shared` come with
+  the shared level, since nothing checks them yet. Using one's own credential
+  needs `device.remote_desktop` and being its owner, as the table says.
+* **"Save for this device" is a form in the console, not a tick in
+  MeshCentral's dialog.** The credentials dialog belongs to MeshCentral's page,
+  in an iframe on another origin, which cannot call the console's API or ask for
+  step-up. The remote desktop page therefore asks first: a saved credential, or
+  "type credentials in the session" (MeshCentral's own dialog, as before), and a
+  "Saved credential" button that saves, replaces or deletes one. The page
+  starts a session with `savedCredential: true` (the API asks for step-up
+  then, so the person is asked before the session, not in the middle of it)
+  and puts `rdpcred=<id>` on the session's address; the session view's script
+  (`viewer.js`) skips the dialog and writes only that id into the connection
+  request, on every connection, including the reconnect after a resize.
+* **First use needs a step-up not older than 5 minutes, read by the gateway from
+  the session's `stepped_up_at`.** That is the same as the "once per 5 minutes"
+  rule above, with no extra state.
+* **A refused credential closes the session; it does not say so.** The gateway
+  cannot write to the browser's side of a MeshCentral page, so "The saved
+  credential was refused. Replace it." is not shown. The audit row
+  (`rdp_credential.use_denied`, with the reason) and the "Saved credential" button
+  are the way back.
+* **Device removal and moves audit each credential through `PurgeDevice`**,
+  called in the removal paths of `agents/removal.go` and in a move between
+  organizations. The two other places that delete a device (merging a duplicate
+  at heartbeat, MeshCentral-only devices at sync) rely on the foreign key's
+  cascade and write no per-credential row.
+* **MeshCentral's RDP client does not reveal the account before CredSSP**, so a
+  stand-in RDP port cannot show that the saved account reached the device. The
+  gateway tests check the rewritten message with a standard WebSocket reader;
+  the end-to-end test through the real MeshCentral checks that it accepts the
+  rebuilt frame, saves nothing, and is not reachable around the gateway. The
+  real session against Windows is still the manual step above.
+
 ## Owner decisions
 
 None. Decided in review: the shared level comes later (slice 4), and

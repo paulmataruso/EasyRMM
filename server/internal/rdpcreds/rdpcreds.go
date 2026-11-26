@@ -432,7 +432,7 @@ func (s *Service) refuse(ctx context.Context, u Use, d *deviceRow, cr *Credentia
 		"requestedCredentialId": u.CredentialID.String()}
 	ev := s.event(s.actor(u, ""), d, ActionUseDenied, audit.Denied, cr, extra)
 	if err := s.audit.Record(ctx, ev); err != nil {
-		return fmt.Errorf("%w: %s (audit failed: %v)", ErrRefused, reason, err)
+		return fmt.Errorf("%w: %s (audit failed: %w)", ErrRefused, reason, err)
 	}
 	return fmt.Errorf("%w: %s", ErrRefused, reason)
 }

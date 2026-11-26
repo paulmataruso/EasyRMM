@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, NavLink, useParams } from "react-router";
-import { ArrowLeft, Maximize, Minimize, MonitorOff, RotateCw, ShieldOff, ShieldQuestionMark, Unplug } from "lucide-react";
+import { ArrowLeft, KeyRound, Maximize, Minimize, MonitorOff, RotateCw, ShieldOff, ShieldQuestionMark, Unplug } from "lucide-react";
 import { api, ApiError, errorMessage } from "../../api/client";
 import { useApi } from "../../api/hooks";
-import type { Device, RemoteKind, RemoteLaunch } from "../../api/types";
+import type { Device, RdpCredential, RemoteKind, RemoteLaunch } from "../../api/types";
 import { REMOTE_KIND_NAMES } from "../../components/StatusBadges";
 import { Button, buttonClasses, cx, Dot, Spinner } from "../../components/ui";
 import { allowedKinds } from "./remote";
 import { isRemoteKind } from "./platform";
 import { inSessionWindow } from "./sessionWindow";
+import { RdpChooser, RdpCredentialsDialog, rdpCredentialsPath, type RdpChoice } from "./RdpCredentials";
 
 /** What the frame area shows for one launch attempt. */
 type Attempt = { key: string; launch?: RemoteLaunch; error?: unknown };
@@ -32,18 +33,32 @@ export function RemoteSessionPage() {
   const started = useRef<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(frame);
-  const key = `${id}/${kind}/${nonce}`;
+  // RDP signs in with a credential saved for the device or with what is typed in the session (ADR-0079). The saved
+  // ones are read first; when there are none, or the read fails, the session opens as it always did.
+  const rdp = kind === "rdp";
+  const saved = useApi<{ credentials: RdpCredential[] }>(rdp ? rdpCredentialsPath(id) : null);
+  const savedList = saved.data?.credentials ?? [];
+  const [picked, setPicked] = useState<RdpChoice | null>(null);
+  const [manage, setManage] = useState(false);
+  const choice: RdpChoice | null = !rdp ? null : (picked ?? (saved.isPending || savedList.length > 0 ? null : { mode: "typed" }));
+  const choosing = rdp && !choice && !saved.isPending;
+  const waiting = rdp && !choice && saved.isPending;
+  const credentialId = choice?.mode === "saved" ? choice.id : null;
+  const key = `${id}/${kind}/${nonce}/${credentialId ?? ""}`;
+
+  useEffect(() => setPicked(null), [id, kind]);
 
   useEffect(() => {
     // Guarded by key so a re-run of the effect (React's development double-invoke) does not launch twice.
-    if (!kind || started.current === key) return;
+    if (!kind || started.current === key || (rdp && !choice)) return;
     started.current = key;
     setLoaded(false);
-    api.post<RemoteLaunch>(`/devices/${id}/remote-sessions`, { kind }).then(
+    const body = credentialId ? { kind, savedCredential: true } : { kind };
+    api.post<RemoteLaunch>(`/devices/${id}/remote-sessions`, body).then(
       (launch) => setAttempt({ key, launch }),
       (error: unknown) => setAttempt({ key, error }),
     );
-  }, [id, kind, key]);
+  }, [id, kind, key, rdp, choice, credentialId]);
 
   const reconnect = useCallback(() => setNonce((n) => n + 1), []);
   const current = attempt?.key === key ? attempt : null;
@@ -102,6 +117,11 @@ export function RemoteSessionPage() {
             <span className="hidden md:inline">Not loading?</span>
           </Button>
         )}
+        {rdp && (
+          <Button size="sm" variant="ghost" icon={<KeyRound className="size-3.5" aria-hidden />} onClick={() => setManage(true)} title="Saved RDP credential for this device">
+            <span className="hidden md:inline">Saved credential</span>
+          </Button>
+        )}
         <Button size="sm" variant="ghost" icon={<RotateCw className="size-3.5" aria-hidden />} onClick={reconnect} disabled={!kind} title="Start this session again">
           <span className="hidden md:inline">Reconnect</span>
         </Button>
@@ -141,7 +161,9 @@ export function RemoteSessionPage() {
           <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Unknown session type" deviceId={id} popup={popup}>
             Remote sessions are desktop, RDP, terminal or files.
           </Problem>
-        ) : !current ? (
+        ) : choosing ? (
+          <RdpChooser credentials={savedList} deviceName={d?.name ?? "this device"} onChoose={setPicked} onManage={() => setManage(true)} />
+        ) : waiting || !current ? (
           <Centered>
             <Spinner label={d ? `Connecting to ${d.name}…` : "Connecting…"} />
           </Centered>
@@ -156,7 +178,7 @@ export function RemoteSessionPage() {
             )}
             <iframe
               key={current.launch.grantId}
-              src={current.launch.url}
+              src={sessionUrl(current.launch.url, credentialId)}
               title={d ? `${label} on ${d.name}` : label}
               onLoad={() => setLoaded(true)}
               className={cx("absolute inset-0 size-full border-0", !loaded && "invisible")}
@@ -167,8 +189,30 @@ export function RemoteSessionPage() {
           </>
         ) : null}
       </div>
+      {rdp && (
+        <RdpCredentialsDialog
+          open={manage}
+          onClose={() => setManage(false)}
+          deviceId={id}
+          deviceName={d?.name ?? "this device"}
+          credentials={savedList}
+          onChanged={() => void saved.refetch()}
+          onUse={(credential) => {
+            setManage(false);
+            setPicked({ mode: "saved", id: credential });
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/** The session's address; for a saved RDP credential it also names the credential, never its password. */
+function sessionUrl(url: string, credentialId: string | null): string {
+  if (!credentialId) return url;
+  const u = new URL(url);
+  u.searchParams.set("rdpcred", credentialId);
+  return u.toString();
 }
 
 function KindSwitcher({ device, active }: { device: Device; active: RemoteKind }) {

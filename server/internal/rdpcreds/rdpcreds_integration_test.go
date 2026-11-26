@@ -501,3 +501,68 @@ func TestOpensAfterKeyRotation(t *testing.T) {
 		t.Errorf("after rotation: %v", err)
 	}
 }
+
+func TestRefusedChangesAndDatabaseFailures(t *testing.T) {
+	f := newFx(t)
+	ann, annID := f.user("ann@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme})
+	ro, _ := f.user("ro@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
+	dev := f.device(f.acme, f.hq, "srv1", "windows")
+	lin := f.device(f.acme, f.hq, "lin1", "linux")
+	cr, err := f.svc.Save(f.ctx, ann, dev, save("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleting is held to the same rules as saving, and a refusal is audited.
+	if err := f.svc.Delete(f.ctx, ro, dev, cr.ID); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("delete by read-only: %v", err)
+	}
+	if err := f.svc.Delete(f.ctx, ann, lin, cr.ID); err == nil {
+		t.Error("delete on a Linux device")
+	}
+	if err := f.svc.Delete(f.ctx, ann, uuid.New(), cr.ID); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("delete on no device: %v", err)
+	}
+	if err := f.svc.Delete(f.ctx, ann, dev, uuid.New()); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("delete of no credential: %v", err)
+	}
+	if err := f.svc.Delete(f.ctx, access.System("x"), dev, cr.ID); !errors.Is(err, apperr.ErrForbidden) {
+		t.Errorf("delete with no person: %v", err)
+	}
+	if _, err := f.svc.List(f.ctx, ann, uuid.New()); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("list of no device: %v", err)
+	}
+	if list, err := f.svc.List(f.ctx, ann, lin); err != nil || len(list) != 0 {
+		t.Errorf("list on a Linux device: %v %v", list, err)
+	}
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE action = 'rdp_credential.use_denied' AND details->>'attempt' = 'delete'`); n != 2 {
+		t.Errorf("%d refused deletes audited", n)
+	}
+
+	// A failing database is an error, never a quiet success.
+	dead, cancel := context.WithCancel(f.ctx)
+	cancel()
+	if _, err := f.svc.Save(dead, ann, dev, save("x")); err == nil {
+		t.Error("save with a dead context")
+	}
+	if _, err := f.svc.List(dead, ann, dev); err == nil {
+		t.Error("list with a dead context")
+	}
+	if err := f.svc.Delete(dead, ann, dev, cr.ID); err == nil {
+		t.Error("delete with a dead context")
+	}
+	sess := f.session(annID, "1 second")
+	if _, err := f.svc.OpenForSession(dead, use(f, cr.ID, dev, annID, sess, f.acme, f.hq)); err == nil || errors.Is(err, rdpcreds.ErrRefused) {
+		t.Errorf("open with a dead context: %v", err)
+	}
+	err = f.db.InTx(f.ctx, database.System, func(tx pgx.Tx) error {
+		return rdpcreds.PurgeDevice(dead, tx, audit.New(f.db, nil), audit.SystemActor("test"), dev, f.acme, f.hq, "x", "y")
+	})
+	if err == nil {
+		t.Error("purge with a dead context")
+	}
+	// A refusal that cannot be audited is still a refusal.
+	if _, err := f.svc.OpenForSession(dead, use(f, uuid.New(), dev, annID, sess, f.acme, f.hq)); err == nil {
+		t.Error("unknown credential with a dead context")
+	}
+}

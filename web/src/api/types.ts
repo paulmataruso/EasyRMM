@@ -884,6 +884,25 @@ export interface AgentDownloads {
   certificateAuthority: CertificateAuthority | null;
 }
 
+/** A saved RDP credential (ADR-0079). The password is never part of it, in either direction after saving. */
+export interface RdpCredential {
+  id: string;
+  deviceId: string;
+  scope: "user" | "device";
+  label: string;
+  domain: string;
+  username: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface RdpCredentialInput {
+  label: string;
+  domain: string;
+  username: string;
+  password: string;
+}
+
 export interface RemoteLaunch {
   grantId: string;
   url: string;
