@@ -127,12 +127,15 @@ func (a *Agent) Answered(s *agentproto.SignedEscrowKey) {
 		return
 	}
 	known := a.Store.LoadEscrowKey()
+	if known.OrgID != "" && known.OrgID != p.OrgID {
+		known = state.EscrowKey{} // the device moved to another organization
+	}
 	if p.KeyVersion < known.Version || (p.KeyVersion == known.Version && known.KeyID != "" && p.KeyID != known.KeyID) {
 		a.Log.Warn("refused an escrow key older than the newest this agent verified", "version", p.KeyVersion, "known", known.Version)
 		return
 	}
-	if p.KeyVersion != known.Version || p.KeyID != known.KeyID {
-		if err := a.Store.SaveEscrowKey(state.EscrowKey{KeyID: p.KeyID, Version: p.KeyVersion}); err != nil {
+	if p.KeyVersion != known.Version || p.KeyID != known.KeyID || known.OrgID != p.OrgID {
+		if err := a.Store.SaveEscrowKey(state.EscrowKey{OrgID: p.OrgID, KeyID: p.KeyID, Version: p.KeyVersion}); err != nil {
 			// Without the record the agent cannot promise never to go back;
 			// it still escrows to a verified key.
 			a.Log.Warn("recording the escrow key version failed", "error", err)

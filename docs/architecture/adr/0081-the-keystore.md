@@ -644,6 +644,12 @@ Amended 2026-11-26 (decided in review, while building slice 1):
 * **The TPM device** is offered through `EASYRMM_TPM_DEVICE` and
   `EASYRMM_TPM_GID` in `.env` (set by `setup.sh` when `/dev/tpmrm0` exists),
   because the updater refuses a second compose file and `COMPOSE_FILE`.
+* **Device moves (ADR-0069).** Within an organization the escrow and volume
+  rows follow the device; a move to another organization deletes them, audited
+  with counts only, and the agent escrows again to the new organization's key.
+  An agent keeps its rollback protection per organization: it records the
+  organization with the newest key version it verified, and a verified key of
+  another organization resets that record.
 * **KEK versions are mirrored.** The keystore has no database, so the server
   copies each version's metadata (`keystore_kek_versions`: check value, mode,
   state, verified-at; no key) from its status, to show recovery state and for
