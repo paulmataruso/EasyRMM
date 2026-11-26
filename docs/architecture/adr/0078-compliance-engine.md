@@ -727,6 +727,9 @@ per-host and per-organization views and the screens are in. What the code showed
   module's kinds to a module list; a later slice), the Reports row, the Devices list column, restricting the site
   card to the selected packs, the typed agreement that lifts a lock-out guard item by item, the Windows runner tests
   and a machine test per T3 module (none was run on a real Windows computer), and BitLocker.
+* **The queue's view.** A verified fix stays in the queue for a week, so it can be undone there; after that it is
+  history. A fix whose re-scan could not say (`not_verified`) stays until the control meets or it is undone, and can be
+  applied again. Reading a scan moves it forward, so the page asks until its scan ends.
 * **Automatic behaviour** checked with `devscope.Allowed`: the queue's sync after a scan and on the hourly loop, the
   re-scan after a fix, the guard read, and every apply, undo and approval.
 

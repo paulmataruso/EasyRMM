@@ -138,6 +138,8 @@ test("a Windows computer enrolls, and the organization's Compliance tab turns th
 
 test("a scan asks the computer and makes the fix queue, one item for each control that does not meet", async () => {
   const page = admin;
+  // The organization may hold other Windows computers (earlier specs enrolled some): this scan is of this computer alone, from its own tab.
+  await page.goto(`/devices/${agent.deviceId}?tab=compliance`);
   await page.getByLabel("Profile").selectOption({ label: "Windows server security baseline" });
   await page.getByRole("button", { name: "Scan now" }).click();
   const job = await take("check");
@@ -148,10 +150,10 @@ test("a scan asks the computer and makes the fix queue, one item for each contro
   await expect(itemRow(page, /No AutoRun commands/).getByText("Safe")).toBeVisible();
   await expect(itemRow(page, /Passwords of at least 14 characters/).getByText("Can break a workflow")).toBeVisible();
   await expect(itemRow(page, /Network Level Authentication required/).getByText("Can cut access")).toBeVisible();
-  await expect(itemRow(page, /No AutoRun commands/).getByRole("link", { name })).toBeVisible();
-  // The counts and the requirements read the same results, in the console's words.
-  await expect(page.getByText("Controls that do not meet")).toBeVisible();
-  await expect(page.getByRole("table", { name: /requirements$/ })).toBeVisible();
+  // The computer's controls and its requirements read the same results, in the console's words.
+  await expect(page.getByRole("table", { name: "Controls" }).getByRole("row", { name: /No AutoRun commands/ })).toContainText("Does not meet");
+  await expect(page.getByRole("heading", { name: "Requirements for this computer" })).toBeVisible();
+  await expect(page.getByText(/requirements can be checked by a scan/)).toBeVisible();
   expect((await page.locator("body").innerText()).toLowerCase()).not.toMatch(/compliant|certified/);
   // Nothing is chosen, and there is no "fix all".
   for (const box of await queue(page).getByRole("checkbox").all()) await expect(box).not.toBeChecked();
@@ -162,7 +164,7 @@ test("a safe fix is agreed to and applied; the re-scan verifies it; undo puts it
   const page = admin;
   await itemRow(page, /No AutoRun commands/).getByRole("button", { name: /^Apply/ }).click();
   const dialog = page.getByRole("dialog", { name: "Apply fix" });
-  await expect(dialog.getByText(name)).toBeVisible();
+  await expect(dialog.getByRole("list", { name: "Computers" }).getByText(name)).toBeVisible();
   await expect(dialog.getByLabel(/^Type .* to confirm/)).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Apply" })).toBeDisabled();
   await dialog.getByRole("checkbox", { name: /I have read the warning/ }).check();
@@ -205,6 +207,9 @@ test("a safe fix is agreed to and applied; the re-scan verifies it; undo puts it
       { module: "autoplay", state: "not_in_place", outcome: "undone", done: ["autoplay-autorun"], settings: [{ id: "autoplay-autorun", state: "not_in_place", value: "0", outcome: "restored", before: "1" }] },
     ]),
   );
+  // The undo is checked again too, and the control that does not meet is back in the queue as a new item.
+  await answer(await take("check"), check(["autoplay"], "not_in_place"));
+  await expect(itemRow(page, /No AutoRun commands/).getByText("Waiting")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("radio", { name: "History" }).click();
   await expect(page.getByRole("table", { name: "Fix history" }).getByText("Undone").first()).toBeVisible({ timeout: 30_000 });
 
@@ -259,14 +264,12 @@ test("a fix that can cut access needs the computer's name, and is refused withou
   expect(item.agreements[0]!.warningSha256).toHaveLength(64);
 });
 
-test("a technician-level view: the computer's own Compliance tab lists its controls and its items", async () => {
+test("the organization's tab counts the results, and the site's card and the devices filter find the computer", async () => {
   const page = admin;
-  await page.goto(`/devices/${agent.deviceId}?tab=compliance`);
-  await expect(page.getByRole("tab", { name: "Compliance" })).toHaveAttribute("aria-selected", "true");
-  const controls = page.getByRole("table", { name: "Controls" });
-  await expect(controls.getByRole("row", { name: /No AutoRun commands/ })).toBeVisible();
-  await expect(controls.getByText("Does not meet").first()).toBeVisible();
-  await expect(queue(page).getByRole("row", { name: /Passwords of at least 14 characters/ })).toBeVisible();
+  await page.goto(`/organizations/${orgId}?tab=compliance`);
+  await expect(page.getByText("Controls that do not meet")).toBeVisible();
+  const all = queue(page);
+  await expect(all.getByRole("row", { name: /Passwords of at least 14 characters/ }).getByRole("link", { name })).toHaveAttribute("href", `/devices/${agent.deviceId}?tab=compliance`);
   // The site's Overview has its result card, and the devices list its filter.
   const dev = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { siteId: string };
   await page.goto(`/sites/${dev.siteId}`);

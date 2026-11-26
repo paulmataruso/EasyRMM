@@ -46,7 +46,8 @@ type pending struct {
 func (s *Service) AdvanceOpen(ctx context.Context) error {
 	var orgs []uuid.UUID
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT organization_id FROM compliance_fix_items WHERE state IN ('applying', 'undoing', 'applied')`)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT i.organization_id FROM compliance_fix_items i LEFT JOIN compliance_scans c ON c.id = i.verify_scan_id
+			WHERE i.state IN ('applying', 'undoing', 'applied') OR c.state IN ('planned', 'running')`)
 		if err != nil {
 			return err
 		}
@@ -109,7 +110,9 @@ func (s *Service) advanceOrg(ctx context.Context, org uuid.UUID) error {
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		sr, err := tx.Query(ctx, `SELECT DISTINCT verify_scan_id FROM compliance_fix_items WHERE organization_id = $1 AND state = 'applied' AND verify_scan_id IS NOT NULL`, org)
+		// The re-scans that run: of an applied fix, and of an undone one (whose next scan result makes a new item if it still does not meet).
+		sr, err := tx.Query(ctx, `SELECT DISTINCT i.verify_scan_id FROM compliance_fix_items i JOIN compliance_scans c ON c.id = i.verify_scan_id
+			WHERE i.organization_id = $1 AND c.state IN ('planned', 'running')`, org)
 		if err != nil {
 			return err
 		}
@@ -226,27 +229,22 @@ func (s *Service) settle(ctx context.Context, p pending) (string, error) {
 }
 
 // startVerify asks the engine for one re-scan of the controls a job changed
-// on a computer, and notes it on the items that were applied (an undone
-// item has nothing to verify: the next scan makes a new item if the control
-// still does not meet).
+// on a computer, and notes it on the items. The result of an undone item's
+// re-scan moves nothing of that item: the sync makes a new item if the control
+// still does not meet.
 func (s *Service) startVerify(ctx context.Context, group []pending) error {
 	var ids []string
-	var applied []uuid.UUID
+	var items []uuid.UUID
 	for _, p := range group {
 		ids = append(ids, p.control)
-		if p.state == StateApplying {
-			applied = append(applied, p.id)
-		}
+		items = append(items, p.id)
 	}
 	scanID, err := s.eng.StartVerify(ctx, group[0].org, group[0].dev, ids)
 	if err != nil {
 		return err
 	}
-	if len(applied) == 0 {
-		return nil
-	}
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE compliance_fix_items SET verify_scan_id = $2 WHERE id = ANY ($1)`, applied, scanID)
+		_, err := tx.Exec(ctx, `UPDATE compliance_fix_items SET verify_scan_id = $2 WHERE id = ANY ($1)`, items, scanID)
 		return err
 	})
 }

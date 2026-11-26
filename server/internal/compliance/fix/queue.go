@@ -291,11 +291,13 @@ func (s *Service) list(ctx context.Context, tx pgx.Tx, org uuid.UUID, f Filter) 
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(cond, len(args)))
 	}
+	// A fix that was verified stays in the queue for a week, so it can be undone from there; after that it is history.
+	const inQueue = "(i.state = ANY ($%d) OR (i.state = 'verified' AND i.updated_at > now() - interval '7 days'))"
 	switch f.State {
 	case "", "active":
-		add("i.state = ANY ($%d)", activeStates)
+		add(inQueue, activeStates)
 	case "history":
-		add("NOT (i.state = ANY ($%d))", activeStates)
+		add("NOT "+inQueue, activeStates)
 	case "all":
 	default:
 		add("i.state = $%d", f.State)

@@ -354,6 +354,25 @@ func TestApplyVerifyAndUndo(t *testing.T) {
 	if st := f.str(`SELECT state FROM compliance_results WHERE device_id = $1 AND control_id = $2`, f.win, autorun); st != "in_place" {
 		t.Errorf("after the re-scan: %s", st)
 	}
+	// A verified fix stays in the queue for a week, so it can be undone from there; then it is history.
+	for filter, want := range map[string]bool{"active": true, "history": false} {
+		got, err := f.fix.Queue(f.ctx, admin, f.acme, fix.Filter{State: filter})
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := false
+		for _, g := range got {
+			in = in || g.ID == it.ID
+		}
+		if in != want {
+			t.Errorf("a verified fix in the %s list: %v", filter, in)
+		}
+	}
+	f.exec(`UPDATE compliance_fix_items SET updated_at = now() - interval '8 days' WHERE id = $1`, it.ID)
+	if got, _ := f.fix.Queue(f.ctx, admin, f.acme, fix.Filter{State: "history"}); len(got) != 1 || got[0].ID != it.ID {
+		t.Errorf("a verified fix after a week is not history: %d", len(got))
+	}
+	f.exec(`UPDATE compliance_fix_items SET updated_at = now() WHERE id = $1`, it.ID)
 
 	// Undo, agreed to like the fix.
 	if _, err := f.fix.Undo(f.ctx, admin, f.acme, it.ID, fix.Agreement{}); err == nil {
@@ -373,6 +392,14 @@ func TestApplyVerifyAndUndo(t *testing.T) {
 	}
 	if it := f.item(admin, autorun); it.State != fix.StateUndone {
 		t.Fatalf("after the undo: %s", it.State)
+	}
+	// The undone fix is checked again; the control does not meet, so a new item is in the queue.
+	f.finish(f.lastJob("check"), line("check", "autoplay", "not_in_place", `"settings":[{"id":"autoplay-autorun","state":"not_in_place","value":"0","want":"1"}],`))
+	if err := f.fix.AdvanceOpen(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.n(`SELECT count(*) FROM compliance_fix_items WHERE control_id = $1 AND state = 'open'`, autorun); n != 1 {
+		t.Errorf("%d open items after the undo's re-scan", n)
 	}
 	// The history keeps every step.
 	hist, err := f.fix.Get(f.ctx, admin, f.acme, it.ID)
