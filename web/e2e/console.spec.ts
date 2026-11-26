@@ -1039,18 +1039,38 @@ test("Update all now for a site installs every available update, and restarts th
   await expect(page.getByRole("dialog")).toBeHidden();
 });
 
-test("the one Repair button says what it would do, and refuses to repair what is not down", async () => {
+test("the one Repair button says what it would do, and refuses what it cannot or need not repair", async () => {
   const page = admin;
   await page.goto(`/devices/${agent.deviceId}`);
   // One button for the three agents, whatever is down.
   await expect(page.getByRole("button", { name: "Reconnect remote access" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Repair patching agent" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Repair", exact: true }).click();
+  const repair = page.getByRole("button", { name: "Repair", exact: true });
   const dialog = page.getByRole("dialog", { name: /^Repair / });
-  // The agent checks in, and no MeshAgent or EasyPatch agent is expected here: nothing is down.
-  await expect(dialog.getByTestId("repair-plan")).toHaveText("Everything that should run on this device is running.");
-  await expect(dialog.getByRole("button", { name: "Repair", exact: true })).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Close" }).first().click();
+
+  // The agent has not checked in for a while and no EasyPatch agent runs here: no agent can repair anything, and the
+  // dialog says so instead of offering a repair.
+  const silent = (await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { agent: { online: boolean } };
+  if (!silent.agent.online) {
+    await repair.click();
+    await expect(dialog.getByTestId("repair-plan")).toContainText("no agent on the device can repair anything");
+    await expect(dialog.getByRole("button", { name: "Repair", exact: true })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Close" }).first().click();
+  }
+
+  // Once it checks in, the EasyPatch agent the earlier steps linked to this device is the one that is silent (the
+  // stand-in engine has not heard from it): the EasyRMM agent repairs it, and the dialog says so before it asks.
+  await agent.heartbeat({ hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" });
+  await page.reload();
+  await repair.click();
+  await expect(dialog.getByTestId("repair-plan")).toHaveText(
+    "The EasyRMM agent will restart the EasyPatch agent and, if that does not bring it back, reinstall its package of the same version, keeping its enrollment.",
+  );
+  await dialog.getByRole("button", { name: "Repair", exact: true }).click();
+  await expect(page.getByText("Repairing the patching agent")).toBeVisible();
+  await expect(page.getByText(/Restart the EasyPatch agent/)).toBeVisible();
+  // One at a time: the button waits while the repair runs.
+  await expect(repair).toBeDisabled();
 });
 
 test("a deep link survives sign-in and the second factor", async () => {
