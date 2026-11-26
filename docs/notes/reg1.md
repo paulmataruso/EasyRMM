@@ -38,7 +38,10 @@
   `ResultRequest.Result/ResultCut/AgentVersion` (sent only to a server of level 2 or higher: `agent/client`), `MaxResultBody` 8 MiB.
 - Hotspots, additive: `rbac.go` (two permissions, in a block of their own), `DeviceDetailPage.tsx` (one tab, one panel), `agent main.go`
   (`builtin` command, `jobs.AgentVersion`), `StatusBadges.tsx` (audit labels), `types.ts`, the CI workflow (job `windows-registry`).
-- Existing test changed: `TestTheServerRoleCannotReadOutputOrArguments` now lists `job_runs.result` among the columns the role cannot read.
+- Existing tests changed: `TestTheServerRoleCannotReadOutputOrArguments` now lists `job_runs.result` among the columns the role cannot read, and
+  `TestMoveDispositionOfEveryTable` lists `registry_masked_values` as stays (ADR-0069 amended to say so).
+- The branch has integration/2026-11 merged in up to ws/ci10 and ws/c2/ks2 (conflicts in `rbac.go`, `types.ts`, `DeviceDetailPage.tsx` and the move test
+  resolved by keeping both sides).
 - Every job created for a registry read checks `devscope.Allowed(org)`.
 - For ADR-0072: the Registry tab id is `registry`, shown for Windows devices with the agent and `registry.view` at the site.
 - For ADR-0064/W2: F2 built job retention per kind for its two kinds (`Kind.KeepResult`, `KeepJob`) and the delivery limit; W2 extends them.
