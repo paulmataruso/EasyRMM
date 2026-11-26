@@ -53,6 +53,15 @@ type SignedRequest struct {
 // is verified yet.
 func (p *SignedRequest) DeviceID() uuid.UUID { return p.device.ID }
 
+// SignedAt is the time in the request's own signature, on the agent's clock.
+func (p *SignedRequest) SignedAt() time.Time { return time.Unix(p.auth.Timestamp, 0) }
+
+// Nonce is the request's nonce.
+func (p *SignedRequest) Nonce() string { return p.auth.Nonce }
+
+// PublicKey is the key the device's signatures verify with.
+func (p *SignedRequest) PublicKey() ed25519.PublicKey { return p.key }
+
 // BeginSigned checks what a signed request's header says on its own: its
 // form, its timestamp and that it names an enrolled device, or one removed
 // by force whose agent is still waited for. The server does this before

@@ -157,7 +157,7 @@ func (s *Service) retire(ctx context.Context, c access.Caller, id uuid.UUID, for
 	if err != nil {
 		return err
 	}
-	s.deleted()
+	s.deleted(id)
 	return nil
 }
 
@@ -201,7 +201,10 @@ func (r *doomed) remember(ctx context.Context, tx pgx.Tx, key []byte, mayRemain 
 
 // deleted has MeshCentral's devices refreshed soon, which removes the
 // nodes of removed devices, and tells whoever asked.
-func (s *Service) deleted() {
+func (s *Service) deleted(id uuid.UUID) {
+	if s.gone != nil {
+		s.gone(id)
+	}
 	if s.mesh != nil {
 		s.mesh.Linked()
 	}
@@ -329,7 +332,7 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 		return err
 	}
 	if deleted {
-		s.deleted()
+		s.deleted(d.ID)
 	}
 	return nil
 }

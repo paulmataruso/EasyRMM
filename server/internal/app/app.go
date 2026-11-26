@@ -17,9 +17,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentchannel"
 	"github.com/paulmataruso/easyrmm/server/internal/agentfiles"
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
@@ -112,6 +114,9 @@ type Deps struct {
 	Hardware *hardware.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
+	// AgentChannel is the agents' WebSocket channel; off unless
+	// EASYRMM_AGENT_CHANNEL is on (ADR-0059).
+	AgentChannel *agentchannel.Hub
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
 	// Recovery repairs agents that stopped working (ADR-0069).
@@ -216,6 +221,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, cfg.JobOutputRetention, log)
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
+	d.AgentChannel = agentchannel.New(agentchannel.Options{
+		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
+		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
+	})
+	d.Agents.OnDeviceGone(func(id uuid.UUID) { d.AgentChannel.Close(id, agentproto.ClosingRemoved) })
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
@@ -581,7 +591,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -687,6 +697,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	defer cancel()
 	var wg sync.WaitGroup
 	wg.Go(func() { hold.Run(ctx) })
+	if deps.AgentChannel.Enabled() {
+		// A hold ends the agents' connections (restart), and so does stopping.
+		deps.AgentChannel.SetHeld(hold.Held)
+		wg.Go(func() { deps.AgentChannel.Run(ctx) })
+	}
 	var tasks []func(context.Context) error
 	if deps.Remote != nil {
 		if err := writeMeshConfig(cfg, deps.MeshSecrets, log); err != nil {

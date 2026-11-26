@@ -45,7 +45,7 @@ type Error struct {
 	Message string
 	Fields  map[string]string
 	// RetryAfter, for a 429, is how long until trying again may succeed;
-	// 0 gives defaultRetryAfter.
+	// 0 gives defaultRetryAfter. A 503 sends Retry-After only when it is set.
 	RetryAfter time.Duration
 }
 
@@ -109,7 +109,8 @@ const StatusClientClosedRequest = 499
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	var apiErr *Error
 	if errors.As(err, &apiErr) {
-		if apiErr.Status == http.StatusTooManyRequests {
+		// A 503 carries one only when its error says how long to wait.
+		if apiErr.Status == http.StatusTooManyRequests || (apiErr.Status == http.StatusServiceUnavailable && apiErr.RetryAfter > 0) {
 			setRetryAfter(w, apiErr.RetryAfter)
 		}
 		WriteJSON(w, apiErr.Status, ErrorBody{Error: ErrorDetail{Code: apiErr.Code, Message: apiErr.Message, Fields: apiErr.Fields}})

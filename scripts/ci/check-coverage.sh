@@ -29,6 +29,8 @@ floors=(
   # Reads the signatures operators upload (ADR-0049).
   "server/internal/agents/authenticode     90"
   "server/internal/httpapi/agentapi        88"
+  # The agents' WebSocket channel (ADR-0059).
+  "server/internal/agentchannel            90"
   # Everything else.
   "server/internal/database                85"
   "server/internal/config                  90"

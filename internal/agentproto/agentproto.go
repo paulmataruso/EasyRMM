@@ -149,6 +149,12 @@ type HeartbeatRequest struct {
 	// InstalledFiles are the hashes of what is installed on the device
 	// (ADR-0070), sent when something changed, and once a day.
 	InstalledFiles *InstalledFiles `json:"installedFiles,omitempty"`
+	// Channel lists the channel versions the agent speaks, ["v1"]
+	// (ADR-0059). Older servers ignore it.
+	Channel []string `json:"channel,omitempty"`
+	// Transport names the connection the agent holds, which confirms it
+	// (ADR-0059). An agent without one sends none.
+	Transport *ChannelReport `json:"transport,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -197,6 +203,15 @@ type HeartbeatResponse struct {
 	// report installed-file hashes on this device (ADR-0070). Absent from
 	// older servers, which means no.
 	Defender *DefenderPolicy `json:"defender,omitempty"`
+	// Features lists what this server offers beyond the protocol level, such
+	// as "channel" (ADR-0059). An agent ignores names it does not know.
+	Features []string `json:"features,omitempty"`
+	// Instance is the ID this server process drew at its start, so that an
+	// agent can tell a restarted server from one still serving.
+	Instance string `json:"instance,omitempty"`
+	// JobsWaiting says that work is waiting that the channel did not carry,
+	// such as a jobs frame over its cap: the agent makes an ordinary poll.
+	JobsWaiting bool `json:"jobsWaiting,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

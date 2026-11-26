@@ -269,6 +269,8 @@ Authentik holds, `authentik-setup` applies nothing.
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
 | `EASYRMM_HARDWARE_RETENTION` | `17520h` (730 days) | How long one disk health sample per disk and day is kept. Every reading is kept for `EASYRMM_METRICS_RETENTION`, then thinned to the day's worst state, highest temperature and last counts; at least `EASYRMM_METRICS_RETENTION`. See [Disk health](../operations/disk-health.md#history-and-retention) |
 | `EASYRMM_AGENT_LOG_RETENTION_DAYS` | `14` | How many days agents' log records are kept, 1 to 90. Records are deleted in batches by the server's hourly maintenance; each device stores at most 200,000 a day. See [Agent logs](../operations/agent-logs.md) |
+| `EASYRMM_AGENT_CHANNEL` | `off` | `on` lets agents hold a WebSocket to the server (ADR-0059). Off, the route does not exist and heartbeat answers say nothing of it. Agents that do not know the channel are not affected |
+| `EASYRMM_AGENT_CONNECTIONS_MAX` | `10000` | The most agent channel connections at once, 1 to 1,000,000; beyond it agents are answered `503 channel_full` and work as with regular check-ins |
 
 ## Patching engine
 
