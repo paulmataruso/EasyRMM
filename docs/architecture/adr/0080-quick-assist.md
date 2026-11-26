@@ -1,6 +1,6 @@
 # ADR-0080: Quick Assist, ad-hoc support sessions
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner on 2026-11-26 (binding): "one time quick assist
   agent package, we can generate a link to send to a user, or we can
   generate a permanemt link. Upon download it will run the full RMM
@@ -53,11 +53,16 @@ way to turn the session into a normal device.
   certificate subject and node id, and every touch of it by exact identity.
   A temporary MeshAgent is the same thing with an identity that is made
   for one session and removed at its end.
-* **EasyPatch's agent** has `run` and `enroll` commands
-  (`easypatch/agent/EasyPatch.Agent/Program.cs:12-21`), but it ships as an
-  MSI, `.deb` or `.rpm`, and enrolls with an EasyPatch token the server
-  creates (ADR-0031). Nothing in the repository runs it without the
-  installer, and I have not run it that way.
+* **EasyPatch's agent** ships as an MSI, `.deb` or `.rpm`, and enrolls with
+  an EasyPatch token the server creates (ADR-0031). It is self-contained
+  and a single file (`EasyPatch.Agent.csproj:10-11`), so it needs no .NET
+  runtime. What stops it running ad hoc is four things in our own code:
+  `run` refuses unless elevated or LocalSystem (`Program.cs:44-47`); its
+  data directory is fixed, `C:\ProgramData\EasyPatch`
+  (`AgentRuntimeOptions.cs:5`, `AgentComposition.DataDirectory`), with a
+  registry key of its own; a single-instance lock on that directory
+  (`AgentInstanceLock`, `Program.cs:62`); and `AddWindowsService`
+  (`Program.cs:74`). We own it, so it gets an ad-hoc mode (below).
 * **Remote control** needs `device.remote_desktop`, and RDP is typed per
   session (ADR-0026, ADR-0079). Both go through the server's gateway.
 * **Code signing is on hold.** The agent is not signed (ADR-0020), so a
@@ -98,11 +103,21 @@ way to turn the session into a normal device.
   * **a session from it waits for acceptance as any request does**, with
     no auto-accept option in v1, so a leaked permanent link can queue
     requests but never open a session without a technician;
-  * rate limits: 20 downloads per link per hour, 5 per source address per
-    hour, 20 waiting requests per organization at once; over the limit
-    the page says to call the technician and the technician sees
-    `quickassist.link.throttled` in the audit log and an alert (once per
-    link per day, through ADR-0053's sender);
+  * **abuse limits.** A **token bucket per link** is the primary limit
+    (burst 5, refill 1 per 3 minutes; settings), because an attacker can
+    rotate addresses and cannot rotate the link. Per-address limits (5
+    downloads an hour, 20 enrollments an hour) are secondary and only
+    stop one machine hammering. **A waiting request expires after 10
+    minutes** and the runner is told. **The per-organization cap** (20
+    waiting requests) **evicts the oldest unanswered request** when a new
+    one arrives, so one stranger cannot fill the queue and lock real
+    users out; an evicted runner is told "not accepted, try again". A
+    link over its bucket answers the page's "call your technician" text,
+    audits `quickassist.link.throttled` and raises one alert per link per
+    day (ADR-0053's sender);
+  * a link can be **paused** (the page says "paused, call your
+    technician") and resumed by anyone with `quickassist.link.permanent`,
+    without step-up, so a technician can stop a flood in one click;
   * an optional **name** shown to the user ("Support for Contoso") and an
     optional note;
   * after 90 days of no use the console marks it stale, and
@@ -137,29 +152,32 @@ way to turn the session into a normal device.
   button (the same signed ticket, base32). The runner already asks for
   that code when it finds no trailer, so this is the fallback now and the
   main path later.
-* **Phishing.** Three different risks, and what each gets:
-  1. *An attacker copies our page to hand out their own exe.* We cannot
-     prevent a copy; we make the genuine one checkable: the page shows
-     the file's SHA-256 and, once signing exists, the publisher; the
-     runner prints the server's name in its first window; the technician
-     reads the session code (below) over the phone, so a user who got a
-     link from a stranger has no code to read to anyone. Link text
-     tells the user to run the file only when the technician who called
-     them asked, and that EasyRMM staff never ask for a password.
-  2. *An attacker uses our real link page to trick a user* ("Microsoft
-     support: open this"). The runner shows whose server it is, the
-     organization's name and what it will share, and requires a click on
-     **Allow**; nothing is shared before it, and nothing is shared that
-     the user did not read. The attacker gets nothing, because the
-     request goes to our technicians, not to them.
-  3. *An attacker uses a permanent link to flood or to impersonate a
-     user.* Rate limits and acceptance above; the session code binds a
-     real person to a request.
-  Until code signing, SmartScreen will warn on every exe. The page says
-  so, in plain words, with the steps ("More info, Run anyway") and the
-  hash to compare. **Owner decision:** accept that warning for the first
-  release, or hold the feature until code signing is back on the plan
-  (the design does not change either way).
+* **Threat model, said plainly.** The runner is a program on the user's
+  own computer. Anyone who can run a modified runner there already has
+  code execution as that user, so **the runner's consent window protects
+  the user from us and from a misdirected link; it is not a control the
+  server can rely on to defend itself.** The server therefore enforces
+  its own rules (no remote control before a technician's acceptance, the
+  holder rule, expiry, revocation, rate limits) and does not believe the
+  runner about consent beyond recording it. What the design does and does
+  not stop:
+  1. *A copied binary or page pointing at somebody else's server.* This is
+     the generic remote-support scam: a user is talked into running a
+     program. We cannot prevent it. We make the genuine one checkable: the
+     page shows the file's SHA-256, the consent window names the MSP's
+     organization and the server's domain, the technician's call supplies
+     a code the user reads out, code signing will show a publisher when it
+     lands, and a link can be revoked at once. A user who does not check
+     these is not protected, and the page says so in plain words.
+  2. *Our genuine runner used to deceive a user.* The consent text names
+     who asks and what is shared, and nothing is shared before **Allow**.
+     A scammer cannot use our server for this: the request goes to our
+     technicians.
+  3. *A permanent link used to flood or to impersonate.* The limits and
+     acceptance above; the code the technician types binds a real person
+     to a request.
+  Until code signing, SmartScreen warns on every exe; the page explains
+  it ("More info, Run anyway"). **Owner decision 1** below.
 
 ### What runs (Windows first)
 
@@ -169,61 +187,137 @@ No service, no scheduled task, no auto-start, no Defender exclusion
 them, and a Defender block is reported, not worked around).
 
 1. **Consent window.** Before it contacts anything but the server's
-   `/qa/ticket` check, it shows, in a window of its own that cannot be
-   skipped by a command-line flag:
-   * who: the link's name and the server's host name;
+   `/qa/ticket` check, it shows, in a window of its own that no
+   command-line flag skips:
+   * who: the **MSP's organization name** (the link's organization) and
+     the **server's domain**, in large text;
    * what: "lets the technician see and control your screen, run
      programs, see your computer's details and installed updates, and
      transfer files, until you close this window";
-   * the **session code**, six digits chosen by the runner from a CSPRNG
-     and shown large; the technician is asked to confirm it, so the
-     request is tied to the person on the phone;
+   * the **session code**, six digits from a CSPRNG, shown large. The user
+     reads it to the technician on the call; **the technician must type
+     it** (the console never displays it, only the runner does), so
+     acceptance proves the technician is talking to the person at that
+     computer. Three wrong entries close the request, the runner is told,
+     and the audit log records `quickassist.session.decline` with reason
+     `code_failed`;
    * **Allow** and **Cancel**. Cancel exits and deletes the runner's
-     files. A visible **End session** stays on screen for the whole
-     session, and closing the window ends it.
-2. **Elevation is the user's choice.** The runner starts as the user.
-   Without elevation, the technician sees and controls the user's own
-   session only (no UAC prompts, no other users); with **Run as
-   administrator** (the window offers it), the session can do more. The
-   console shows which one it is.
+     files. **End session** stays on screen, and closing the window ends
+     it.
+2. **Elevation by default.** The runner asks for elevation through UAC
+   when it starts (the exe's manifest is `asInvoker`; the runner
+   relaunches itself with `runas`, so the consent window is the first
+   thing the user sees either way). If the user declines UAC, the runner
+   continues **not elevated**: the session is **screen only plus
+   inventory** (the user's own desktop through MeshAgent, the facts the
+   agent reads as a user), with no jobs, scripts, services, file system
+   outside the user's folders and no patching; the console shows
+   "Not elevated: screen and inventory only" on the request and device.
 3. **A temporary identity** (builds on ADR-0071). Folder
    `%ProgramData%\EasyRMM\QuickAssist\<session id>` when elevated,
    `%LOCALAPPDATA%\EasyRMM\QuickAssist\<session id>` otherwise, ACL'd to
    the user (and SYSTEM). Inside: a fresh Ed25519 key, `state`, our
-   MeshAgent binary and a `.msh` with `meshServiceName =
-   EasyRMMQA-<8 hex>`, so its registry key (`HKLM` only when elevated),
-   certificate subject (`CN=EasyRMMQA-<8 hex>_NodeCertificate`) and
-   node id are its own, and none collide with the installed
-   `EasyRMMMeshAgent`, with a customer's own MeshAgent, or with another
-   session. The MeshAgent runs as a child of the runner (`ModeChild`), so
-   it dies with it; nothing installs a service.
-   The EasyRMM agent, MeshAgent and (below) EasyPatch agent are started
-   with the server's pinned certificate or CA exactly as the installed ones.
+   MeshAgent binary and its `.msh` and `.db`, and the EasyPatch data
+   directory (item 5). Nothing is installed as a service. The EasyRMM
+   agent, MeshAgent and EasyPatch agent are started with the server's
+   pinned certificate or CA as the installed ones are. The MeshAgent is
+   described next.
 4. **Enrollment.** The runner enrolls with its ticket. The server checks
-   the ticket (link live, not revoked, rate limits, `devscope`) and creates
-   a **session** row and a **Quick Assist device** in the organization's
-   Quick Assist site (below), state `requested`. No job, script, remote
-   session or file transfer is accepted for it until a technician accepts.
-5. **EasyPatch, said honestly.** *Amended 2026-11-26 (decided in review):*
-   the owner's "RMM Agent + Mesh + Patching ad hoc" is delivered for the
-   first two and not for patching in v1. The EasyPatch agent is an MSI,
-   `.deb` or `.rpm` that registers a service and enrolls with a server-made
-   EasyPatch token (ADR-0031); I found an agent `run` command but no
-   evidence it works from a temporary folder, without the installer's
-   registrations and (on Windows) without an installed .NET runtime. So:
-   * v1 installs no EasyPatch agent for a session, and the Quick Assist
-     device shows **Patching: available after install**;
-   * the patch inventory still appears, because the EasyRMM agent's own
-     facts include the installed updates it can read; what is missing is
-     EasyPatch's scan and its install of updates;
-   * **slice QA6** is a one-day spike: run `EasyPatch.Agent.exe run` from
-     a temporary folder on a test VM with a one-time EasyPatch token. If it
-     works with no residue, a session may start it (through the same
-     ADR-0031 instruction, `devscope`-gated and shown on the consent
-     text), and the EasyPatch device is deleted at the end; if not,
-     patching stays "after install" and the ADR says so.
-   * **Install permanently** (below) is the path that brings EasyPatch,
-     exactly as ADR-0031 does today.
+   the ticket (link live, not paused or revoked, token bucket, `devscope`)
+   and creates a **session** row and a **Quick Assist device** in the
+   organization's Quick Assist site (below), state `requested`. No job,
+   script, remote session or file transfer is accepted for it until a
+   technician accepts.
+5. **EasyPatch, ad hoc.** *Amended 2026-11-26 (decided in review),
+   replacing this ADR's first draft, which cut patching:* EasyPatch gets
+   an **ad-hoc mode**, `EasyPatch.Agent run --adhoc --data-dir <dir>
+   --registry-key <name> --lock <name>`, changed in
+   `easypatch/agent/EasyPatch.Agent` (new paths proposed in the Slices
+   section). In it:
+   * it runs as a **console child of the runner**, no `AddWindowsService`;
+   * its data directory is `<session folder>\EasyPatch`, and its registry
+     key and single-instance lock names carry the session id, so none
+     touches `C:\ProgramData\EasyPatch`, `HKLM\SOFTWARE\EasyPatch` or
+     an installed agent's lock;
+   * it **starts only when the runner is elevated** (the elevation check
+     at `Program.cs:44-47` stays: it needs to scan and install updates)
+     and **refuses to start when a real EasyPatch install exists** on the
+     computer (the service, its data directory or its registry key), so
+     there is no collision and the real agent is never disturbed; the
+     console then says "EasyPatch already installed; its patching
+     applies";
+   * the server gives it an EasyPatch token as ADR-0031 does (single use,
+     one hour, for the linked EasyPatch organization, only if the
+     organization is linked and `devscope.Allowed`), and **deletes the
+     EasyPatch device at the end** through the engine's API, as it
+     removes the MeshCentral node below;
+   * it dies with the runner (job object on Windows, below), so a reboot
+     leaves no EasyPatch process, no service and no data directory.
+   A non-elevated session, an unlinked organization or an existing real
+   install gets inventory only, and the device says why.
+
+### The MeshAgent for a session
+
+*Verified against MeshAgent master (`meshcore/agentcore.c`) and MeshCentral
+1.3.1 (`webserver.js`, `meshuser.js`, `agents/meshcore.js`), the version
+`deploy/docker-compose.yml:237` pins. A run on a real Windows VM is not
+yet done.*
+
+* **Which no-install mode.** MeshAgent has a foreground mode that needs no
+  installation: `meshagent run` or `meshagent connect`
+  (`agentcore.c:5663`, `paramLen == 2` with `run` or `connect`), which runs
+  the agent from the folder it is in and reads the `.msh` and `.db`
+  beside the executable (`agentcore.c:5134-5142`; ADR-0071 row 3). **We use
+  `connect`** as a child of the runner. **MeshCentral Assistant** (served
+  by `webserver.js:6417-6420`, `id=10006`, `AutoConnect`) is a separate
+  Windows program with its own flags, a system tray and the Assistant
+  settings; it is not our MeshAgent, we do not control its folder or
+  identity, and it would be a second thing to isolate, so we do not use it.
+  The "agent invite" page (`webserver.js:2346-2571`, `agentinvitecodes`,
+  `installflags`) hands out installers and sets `InstallFlags` in the
+  `.msh` (`webserver.js:6416`); it is an installer path, and we do not use
+  it either. We write our own `.msh` as the installed agent does.
+* **Which device group.** The server makes **one MeshCentral device group
+  per organization named "Quick Assist"** (`CreateMesh`,
+  `server/internal/meshcentral/commands.go:79`, on first use; MeshCentral
+  `createmesh`, `meshuser.js:2212`), separate from the organization's
+  site groups. The temporary node joins it by the `.msh`'s
+  `MeshID`/`ServerID`/`MeshServer`, which the server composes for that
+  group the same way it does for the real ones. Technician access is
+  through the same per-user mesh rights EasyRMM already sets
+  (`SetMeshRights`, `commands.go:138`), so a technician sees it only
+  through the gateway as for any device.
+* **A per-session identity, minted by the server.** The `.msh` carries
+  `meshServiceName=EasyRMMQA-<8 hex of the session id>` (the same setting
+  ADR-0071 uses, `agentcore.c:5317-5327`) and `Tag=<session id, hex>`
+  (`webserver.js:6414`, alphanumeric only). That makes its folder, `.db`
+  and node key, registry key (`Software\Open Source\<name>`,
+  `agentcore.c:5503-5505`) and, when the Windows store is used, its
+  certificate subject (`CN=<name>_NodeCertificate`, `agentcore.c:2277-2283`,
+  `:2396-2402`) its own, and different from `EasyRMMMeshAgent`, from a
+  customer's own `Mesh Agent`/`meshagent` and from every other session.
+  The node's id is the one our own MeshAgent binary prints for its
+  `.db` (`NodeID`, `agent/meshagent/meshagent.go:526`); the runner sends
+  it on the signed channel, the server finds the node with `Nodes()`
+  (`commands.go:165`) and cross-checks the `Tag`, and refuses on a
+  mismatch. Where the certificate lives (the Windows store or the `.db`:
+  `agentcore.c:2264` reads `SelfNodeCert` from the `.db` and skips the
+  store when it is set) is read in QA3 and the cleanup removes whichever
+  one is used, by exact subject.
+* **Removal.** At the session's end the server calls `RemoveDevice`
+  (MeshCentral `removedevices`, `meshuser.js:2965`; `commands.go:187`)
+  with the recorded node id, so no stale node stays in the group, then
+  deletes the group if it has no nodes (one per organization, kept
+  otherwise). It never uses `uninstallagent` (nothing is installed),
+  and never matches by name. A node left by a crash is removed by the
+  server's session sweep when the session is marked `lost`.
+* **Isolation from other MeshAgents.** Everything ADR-0071 requires holds
+  with different names: no shared service, folder, registry key,
+  certificate, process or pipe; our force-stop matches the **exact image
+  path** in the session folder, never a name; the UDP 16990 socket is
+  shared by design (`SO_REUSEPORT`, ADR-0071 row 8). A customer's own
+  MeshAgent is neither read, stopped nor changed.
+
 6. **The end of a session** (any of: the user's End or close, the
    technician's End, the idle limit, the maximum length, link revoked
    with **End sessions** chosen, the runner's process dying):
@@ -243,6 +337,17 @@ them, and a Defender block is reported, not worked around).
      report within 10 minutes, e.g. a power cut). The technician sees
      which. Nothing on the server pretends a clean computer it did not
      hear about.
+   * **Mechanisms.** The runner starts every child (MeshAgent, EasyPatch)
+     inside a **Windows job object** with `KILL_ON_JOB_CLOSE`, so the
+     children die with the runner, including when it crashes or is
+     killed, and the runner holds no persistence (no service, no Run key,
+     no task), so a **reboot** ends the session and nothing restarts. The
+     **idle limit** is a timer in the runner's loop: it measures its own
+     last activity (a remote session, a job, a technician request relayed
+     by the server) and ends the session at 30 minutes; the server has the
+     same timer on the session row as a second check. *Linux:* children
+     are started in their own process group with `PR_SET_PDEATHSIG` and
+     the runner is a foreground program, so closing the terminal ends it.
    * **A crash** leaves residue the runner cannot remove. The next run of
      any runner (or `easyrmm-agent quick-assist --clean`) removes folders
      under `...\QuickAssist\` whose session is not running (found by a
@@ -265,14 +370,14 @@ them, and a Defender block is reported, not worked around).
   It arrives within a second through the ADR-0059 channel when the
   technician's console is open (and by the held poll otherwise), and the
   section's badge and the page title show the count.
-* **Accept** needs `quickassist.session` at the organization, the code
-  typed or confirmed by clicking it (a click on the displayed code, so a
-  technician cannot accept without looking), and is bound to that
-  technician: the session's `accepted_by` is the person, and only that
-  person (or someone with `quickassist.session.takeover`) can open remote
-  desktop, a terminal, files or a script on the device, or end it. Another
-  technician sees the device and who has it; they ask for it, and a holder
-  or an administrator hands it over, each audited.
+* **Accept** needs `quickassist.session` at the organization and the
+  technician **types the six-digit code** the user reads to them; the
+  console does not show it. Three wrong entries close the request. The
+  session is bound to that technician: `accepted_by` is the person, and
+  only that person (or someone with `quickassist.session.takeover`) can
+  open remote desktop, a terminal, files or a script on the device, or end
+  it. Another technician sees the device and who has it; they ask for it,
+  and a holder or an administrator hands it over, each audited.
 * **While the session lasts the device stays listed**, in *Active*, with
   the holder, the time, elevation, whether Mesh is connected, and the same
   tabs a device has (Overview, Hardware, Software, Patches, Logs) plus the
@@ -302,30 +407,43 @@ them, and a Defender block is reported, not worked around).
   Only the user's click on the runner (never anything the server sends
   alone) lets it proceed, and the technician's click is recorded first.
   Then:
-  1. the runner asks the server for a **conversion**: a deployment token
-     bound to this device's organization and the *Quick Assist* site, one
-     use, 30 minutes, with `devscope` checked again;
-  2. it runs the normal install path in place (the one `install` uses:
-     service, MeshAgent as `EasyRMMMeshAgent`, EasyPatch by ADR-0031's
-     instruction, Defender exclusions as ADR-0070 says, subject to the
-     same refusals), **elevated only**: a non-elevated session asks the
-     user to restart the runner as administrator first;
-  3. the device row is kept: the same device id, history and audit; the
-     session ends with `converted`; the temporary MeshAgent, key and
-     folder are removed by the cleanup above, after the permanent ones
-     answer, and verified;
-  4. **Where it lives afterwards:** it stays in the Quick Assist site
-     (**Keep in Quick Assist**, the default, a normal agent that is listed
-     there) or is **moved** to any site by the existing move action
-     (ADR-0069's one move rule, `device.move`), after which it is an
-     ordinary device. Either is the technician's choice at any time, and
-     the user's consent covers the organization the link named.
+  1. **The approval step is replaced.** ADR-0024 has a super
+     administrator approve waiting devices; here the technician's accept
+     plus a **step-up** (5 minutes, ADR-0055) done for this action stands
+     in for it, *decided in review*, because the technician is on the call
+     with the user and the device is already in an organization the link
+     named.
+  2. The server issues a **conversion token**: a deployment token for this
+     organization and the Quick Assist site, one use, valid for **30
+     minutes**, `devscope` checked again. The token is consumed only by an
+     enrollment that succeeds; **a failed install can retry until it
+     expires**, and the token is revoked when the session ends.
+  3. The runner runs the normal install path (service, MeshAgent as
+     `EasyRMMMeshAgent`, EasyPatch by ADR-0031's instruction, Defender
+     exclusions as ADR-0070), **elevated only**; a non-elevated session
+     asks the user to restart the runner as administrator first.
+  4. **It is a new enrollment**: new device key, new MeshAgent node and
+     (when linked) a new EasyPatch device. It is **not** the temporary
+     identity promoted. **Continuity of the audit trail** comes from
+     linking: the conversion records `quick_assist_session_id` on the new
+     device (`devices.origin_session_id`) and the session's `device_id`
+     moves to the new device, so the session's audit rows, notes and
+     history show under the new device and `quickassist.converted` names
+     both ids. The temporary device row, key, node and folder are then
+     removed, after the permanent agent has answered, and cleanup is
+     verified as at any end.
+  5. **Where it lives afterwards:** it stays in the Quick Assist site
+     (the default, a normal agent listed there) or is **moved** to any
+     site by the existing move action (ADR-0069's one move rule,
+     `device.move`), after which it is an ordinary device. Either is the
+     technician's choice at any time; the user's consent covers the
+     organization the link named.
   A failed conversion leaves the session as it was and reports why; the
   install's own rollback (ADR-0020) removes what it made.
 
 ### Data model
 
-Migration `server/migrations/98080_quick_assist.sql` (the integrator
+Migration `server/migrations/90131_quick_assist.sql` (a placeholder; the integrator
 renumbers it), goose up and down.
 
 * `quick_assist_links(id, organization_id, site_id null, kind
@@ -336,7 +454,7 @@ renumbers it), goose up and down.
   `kind = 'one_time'` implies `expires_at is not null` and at most 7 days.
 * `quick_assist_sessions(id, link_id, organization_id, device_id,
   state ('requested'|'active'|'declined'|'ended'|'lost'|'converted'),
-  session_code_hash, elevated, requested_at, accepted_by, accepted_at,
+  session_code_hash, code_failures, elevated, requested_at, accepted_by, accepted_at,
   ended_at, end_reason, last_seen_at, cleanup ('none'|'verified'|
   'residue'|'unconfirmed'), cleanup_report jsonb, source_ip, expires_at)`.
   The code is stored as a hash with the session's id as salt and is
@@ -350,7 +468,10 @@ renumbers it), goose up and down.
   foreign key and RLS rule already works per site.
 * `devices.quick_assist boolean not null default false`, true from
   enrollment until moved to a normal site (then false); the Quick Assist
-  nav lists `devices.site in Quick Assist sites`.
+  nav lists `devices.site in Quick Assist sites`; `devices.origin_session_id
+  uuid null` links a converted device to its session.
+* `organizations`-level Quick Assist MeshCentral group id and EasyPatch
+  link state are kept in `quick_assist_orgs(organization_id, mesh_id)`.
 * Row-level security on all three tables follows ADR-0063 and the
   organization column, as the other tenant tables do.
 * Retention: ended sessions and their devices after 30 days; links 1 year
@@ -370,9 +491,9 @@ view, link.create and session; administrators the rest.
 
 ### Security
 
-* **Step-up** (ADR-0055 section Step-up, 5 minutes) for: creating a
-  permanent link, raising the permanent-link cap, and revoking another
-  person's link. Not for a one-time link or accepting a session (it must
+* **Step-up** (ADR-0055 section Step-up, 5 minutes) for: **creating a
+  permanent link**, raising the permanent-link cap, converting a session
+  to a permanent install, and revoking another person's link. Not for a one-time link or accepting a session (it must
   be quick on a call), which are audited and rate limited instead.
 * **Audit** (ADR-0007), each with the actor, link or session id, the
   organization and the source address, never the code or the token:
@@ -444,7 +565,9 @@ view, link.create and session; administrators the rest.
     SmartScreen text matches the page; accept; remote desktop works;
     end; confirm with a before/after listing of folders, services,
     registry, certificates, processes, scheduled tasks and Defender
-    exclusions that **nothing remains**; kill the runner mid-session and
+    exclusions, and the EasyPatch data directory and registry key that
+    **nothing remains**, with an installed EasyPatch agent present (the
+    ad-hoc mode refuses and the real one is untouched) and without; kill the runner mid-session and
     confirm the next run cleans up; run **beside** a stock MeshAgent and
     beside the installed EasyRMM agent; convert to a permanent install and
     move it; revoke a link mid-session.
@@ -456,20 +579,55 @@ view, link.create and session; administrators the rest.
 
 ### Slices
 
-* **QA1** schema, link create/revoke/page, ticket, rate limits, audit,
-  RBAC, `devscope`. Server only.
-* **QA2** session and acceptance on the server (request, accept, holder
-  rule, end, timeouts, janitor), channel push, Quick Assist site.
-* **QA3** the runner on Windows (consent window, temporary identity,
-  MeshAgent child, enrollment, end, verified cleanup, crash cleanup).
-  **First a one-day spike**: MeshAgent in `ModeChild` from a temporary
-  folder with no service, as a non-admin user, on the Windows VM. If
-  remote desktop needs more than that, this design's non-elevated mode
-  is cut back before building.
-* **QA4** the console section and pages (ADR-0072 main pages, nav, badge).
-* **QA5** install permanently and conversion.
-* **QA6** the EasyPatch ad hoc spike, as above, decided on its result.
-* **QA7** Linux runner (terminal, files, inventory).
+Existing files are real (grepped 2026-11-26); paths marked *proposed* do
+not exist yet. Hotspot files (`rbac.go`, `app.go`, `agentproto`,
+`runner.go`, the nav tree) get small additive edits.
+
+* **QA1: links, ticket, limits (server).** Proposed
+  `server/internal/quickassist/` (links, tickets, token bucket),
+  proposed `server/internal/httpapi/quickassistapi/` (console API) and
+  the public `/qa/` page beside the existing installer templates in
+  `server/internal/httpapi/agentapi/` (`install.ps1.tmpl`); proposed
+  `server/migrations/90131_quick_assist.sql`;
+  `server/internal/rbac/rbac.go` (permissions), `server/internal/app/app.go`
+  (wiring), `server/internal/audit` (event names),
+  `server/internal/devscope` (the check).
+* **QA2: sessions and acceptance (server).** Proposed
+  `server/internal/quickassist/session.go`; the enrollment and ticket
+  check in `server/internal/agents/enroll.go` and `tokens.go`
+  (`approval.go` is the model for the waiting request);
+  `server/internal/agents/heartbeat.go` and `internal/agentproto` (session
+  state in the heartbeat); the channel push of ADR-0059 in
+  `server/internal/agentchannel`; the Quick Assist site in
+  `server/internal/tenancy`; the janitor in `server/internal/jobs`.
+* **QA3: the Windows runner.** `agent/cmd/easyrmm-agent/main.go` (the
+  `quick-assist` subcommand, next to `enroll` and `run`), proposed
+  `agent/quickassist/` (consent window, job object, cleanup and
+  verification), `agent/meshagent/meshagent.go` (a `connect` mode beside
+  `ModeChild`), `agent/host/` (exact-path stop, `force_windows.go`),
+  `agent/state/state.go` (the session folder), `agent/runner/runner.go`
+  (the session loop, one small block). **First a one-day spike on the
+  Windows VM:** `meshagent connect` from a temporary folder as a standard
+  user and as an administrator; remote desktop and where the node
+  certificate is kept. If the standard-user case fails, the
+  not-elevated mode is cut back before building.
+* **QA4: the console.** `web/src/nav/sections.ts` and `SectionNav.tsx`
+  (the section and its tree), proposed `web/src/pages/quickassist/`
+  (links, requests, active, ended), `web/src/pages/devices/DeviceDetailPage.tsx`
+  (holder badge, additive), `web/src/api/` (client and hooks).
+* **QA5: install permanently and conversion.** `agent/cmd/easyrmm-agent/main.go`
+  (`install` reused), `server/internal/agents` (the conversion token),
+  `server/internal/httpapi/quickassistapi/`, the console dialog.
+* **QA6: EasyPatch ad-hoc mode.** `easypatch/agent/EasyPatch.Agent/Program.cs`
+  (`run --adhoc`, the elevation and existing-install checks),
+  `AgentComposition.cs` (data directory, service name, lock, registry
+  key as parameters), `easypatch/agent/EasyPatch.Agent.Core/AgentRuntimeOptions.cs`,
+  `easypatch/agent/EasyPatch.Agent.Tests` (collision, refusal, no
+  service), `agent/easypatch/` (the runner side), `server/internal/easypatch`
+  (token and device removal at the end).
+* **QA7: Linux runner.** The same subcommand with a process group and a
+  terminal consent text; a shell fetcher beside
+  `install.sh.tmpl`; no EasyPatch (it needs root and a package manager).
 * Each slice leaves the tree green and builds on the last.
 
 ## Consequences
@@ -479,9 +637,8 @@ view, link.create and session; administrators the rest.
   itself.
 * Unsigned, the exe will be warned about by SmartScreen; users must click
   through. This is a real cost and the page says so.
-* Patching of an ad-hoc session is inventory-only until the EasyPatch
-  spike proves more; the owner's wording said full patching, so this is a
-  deliberate reduction with a reason.
+* Patching ad hoc needs a change to the EasyPatch agent (QA6) and works
+  only for elevated sessions on computers with no real EasyPatch install.
 * A permanent link is a standing door to the request queue. It cannot
   open a session on its own, but it can fill the queue; limits, alerts and
   revocation answer that.
@@ -493,18 +650,33 @@ view, link.create and session; administrators the rest.
 
 ## Owner decisions
 
-1. **SmartScreen.** Ship the first release with the unsigned-exe warning,
-   or wait for code signing. (Recommendation: ship it with the page's
-   instructions; signing slots in later without changing the design.)
-2. **Patching ad hoc.** Accept inventory-only for v1 with EasyPatch
-   decided by the QA6 spike, rather than holding the feature for it.
+1. **SmartScreen, until code signing is back.** Options:
+   * **(a) Ship unsigned.** Every download meets the browser and
+     SmartScreen warnings; the page explains the click-through and shows
+     the SHA-256. Fast, honest, and a poor first impression for users who
+     were told to expect a support call; it also teaches clicking through
+     warnings, which is a real cost.
+   * **(b) Hold Quick Assist until signing.** No warning at launch, but
+     the feature waits on an unscheduled item, so nothing ships.
+   * **(c) Ship to technicians' own test links only until signing.** One-time
+     links to the owner's and testers' own computers (a setting that
+     limits who may create links), proving the flow on real systems while
+     real customers wait for a signed build. Costs one flag and a gate.
+   **Recommendation: (c) now, then (a) only if signing slips past the
+   first customers.** It builds and exercises everything, avoids training
+   customers to ignore warnings, and does not block on signing.
 
 Everything else is decided in review above.
 
 ## Amended 2026-11-26 (decided in review)
 
-* Patching is not part of the ad-hoc runner in v1 (see *What runs*, item 5);
-  the owner's words said it was.
+* EasyPatch runs ad hoc, through a new ad-hoc mode in its agent (*What
+  runs*, item 5), elevated sessions only; the first draft's "inventory
+  only" is withdrawn, and its claim that .NET might be missing was wrong
+  (the agent is self-contained).
+* The technician types the code; the console never displays it.
+* Conversion is a new enrollment, with the technician's accept plus
+  step-up standing in for ADR-0024's approval.
 * macOS is out of scope: there is no macOS EasyRMM agent.
 
 ## References
