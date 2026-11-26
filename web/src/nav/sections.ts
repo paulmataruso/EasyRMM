@@ -96,7 +96,12 @@ export function selectedKey(section: SectionId, pathname: string, search: string
     case "jobs":
       return pathname === "/jobs" ? scope() : null;
     case "patching":
-      return pathname === "/patching" ? scope() : null;
+      if (pathname === "/patching") return scope();
+      // A device's own patching page (ADR-0072).
+      {
+        const device = one(/^\/patching\/devices\/([^/]+)$/, pathname);
+        return device ? deviceKey(device) : null;
+      }
     case "settings":
       return null;
   }
@@ -116,6 +121,8 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
     return "/organizations";
   }
   if (section === "devices" && target.kind === "device") return `/devices/${encodeURIComponent(target.id)}`;
+  // In Patching a device has its own page, in the Patching section (ADR-0072).
+  if (section === "patching" && target.kind === "device") return `/patching/devices/${encodeURIComponent(target.id)}`;
   if (target.kind === "approvals") return "/devices/approvals";
   const list = LIST[section];
   if (!list) return "/";

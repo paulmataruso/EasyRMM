@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
-import { useApi, useList } from "../../api/hooks";
-import type { PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
-import { DeviceScope, GroupSelect, SearchInput } from "../../components/Filters";
+import { useApi, useList, useOrganizations, useSites } from "../../api/hooks";
+import type { DeviceTreeData, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
+import { GroupSelect, SearchInput } from "../../components/Filters";
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -56,8 +56,33 @@ const CLEARED = {
   ...ALERT_FILTERS,
 };
 
+/** The node the page is narrowed to, and the page one level up (ADR-0072). */
+function usePatchingScope() {
+  const url = useUrlState();
+  const organizationId = url.get("organizationId");
+  const siteId = url.get("siteId");
+  const groupId = url.get("groupId");
+  const orgs = useOrganizations();
+  const sites = useSites(organizationId || undefined);
+  const tree = useApi<DeviceTreeData>(groupId ? "/device-tree" : null, undefined, { staleTime: 30_000 });
+  const org = orgs.items.find((o) => o.id === organizationId);
+  const site = sites.items.find((x) => x.id === siteId);
+  const group = tree.data?.groups.find((g) => g.id === groupId);
+  const to = (p: Record<string, string>) => `/patching?${new URLSearchParams(p)}`;
+  if (groupId) {
+    const up: Record<string, string> | null = siteId ? { organizationId: organizationId ?? "", siteId } : organizationId ? { organizationId } : null;
+    return { name: group?.name ?? "Group", up: up ? { href: to(up), label: site?.name ?? "site" } : { href: "/patching", label: "all organizations" } };
+  }
+  if (siteId) {
+    return { name: site?.name ?? "Site", up: organizationId ? { href: to({ organizationId }), label: org?.name ?? "organization" } : { href: "/patching", label: "all organizations" } };
+  }
+  if (organizationId) return { name: org?.name ?? "Organization", up: { href: "/patching", label: "all organizations" } };
+  return null;
+}
+
 export function PatchingPage() {
   const url = useUrlState();
+  const scope = usePatchingScope();
   const status = useApi<PatchStatus>("/patching", undefined, {
     staleTime: 30_000,
   });
@@ -69,7 +94,14 @@ export function PatchingPage() {
   return (
     <>
       <PageHeader
-        title="Patching"
+        title={scope ? `Patching · ${scope.name}` : "Patching"}
+        breadcrumb={
+          scope && (
+            <Link to={scope.up.href} className="hover:text-fg">
+              Up to {scope.up.label}
+            </Link>
+          )
+        }
         subtitle="Operating system and application updates on the devices EasyRMM patches, read from the patching engine as you look."
       />
       {notice && (
@@ -93,9 +125,9 @@ export function PatchingPage() {
             onChange={(t) => url.set({ tab: t === "overview" ? null : t, ...CLEARED })}
             tabs={[...TABS]}
           />
-          {tab !== "devices" && (url.get("groupId") || url.get("deviceId")) && (
+          {tab !== "devices" && url.get("groupId") && (
             <p className="mb-3 text-sm text-muted">
-              The patching engine counts updates, jobs and alerts for a whole site, so this tab shows the site of the {url.get("deviceId") ? "device" : "group"} you chose.
+              The patching engine counts updates, jobs and alerts for a whole site, so this tab shows the site of the group you chose.
               The Devices tab narrows to it.
             </p>
           )}
@@ -143,15 +175,13 @@ function Fleet({ status }: { status: PatchStatus }) {
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
   const groupId = url.get("groupId");
-  const deviceId = url.get("deviceId");
   const compliance = url.get("compliance");
-  const filtered = Boolean(q || organizationId || siteId || groupId || deviceId || compliance);
+  const filtered = Boolean(q || organizationId || siteId || groupId || compliance);
   const params = {
     q: q || undefined,
     organizationId: organizationId || undefined,
     siteId: siteId || undefined,
     groupId: groupId || undefined,
-    deviceId: deviceId || undefined,
     compliance: compliance || undefined,
   };
   const fleet = useApi<PatchFleet>("/patching/devices", params, {
@@ -163,8 +193,7 @@ function Fleet({ status }: { status: PatchStatus }) {
     <>
       <Toolbar>
         <SearchInput value={q} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
-        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v, deviceId: null })} />
-        {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show every device" onClear={() => url.set({ deviceId: null })} />}
+        <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />
       </Toolbar>
       {fleet.isPending ? (

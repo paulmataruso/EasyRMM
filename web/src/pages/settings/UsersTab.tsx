@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { ChevronRight, UserPlus, Users } from "lucide-react";
 import { api, fieldError } from "../../api/client";
-import { useApiMutation, useList, usePrefetch } from "../../api/hooks";
-import type { InviteResult, User } from "../../api/types";
+import { useApi, useApiMutation, useList, usePrefetch } from "../../api/hooks";
+import type { AuthOptions, InviteResult, User } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { CodeBlock, OneTimeNotice } from "../../components/Copy";
 import { Dialog } from "../../components/Dialog";
@@ -138,6 +138,9 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
   const [displayName, setDisplayName] = useState("");
   const [drafts, setDrafts] = useState<DraftAssignment[]>([blankDraft()]);
   const [result, setResult] = useState<InviteResult | null>(null);
+  // The server sends mail only with a mail server set up: the same fact that decides whether password reset is offered.
+  const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
+  const mailReady = options.data?.passwordResetAvailable === true;
 
   const invite = useApiMutation(
     () => api.post<InviteResult>("/users", { email: email.trim(), displayName: displayName.trim(), assignments: drafts.map(fromDraft) }),
@@ -202,11 +205,18 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
           <TextField label="Name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} error={fieldError(invite.error, "displayName")} required maxLength={200} />
         </div>
         <AssignmentEditor value={drafts} onChange={setDrafts} error={invite.error} />
+        {options.data && (
+          <p className="text-sm text-muted">
+            {mailReady
+              ? "The invitation is emailed to them, and the link is shown here if the email cannot be sent."
+              : "No mail server is set up, so nothing is emailed. A link is shown next; send it to them yourself."}
+          </p>
+        )}
         <InlineError error={invite.error} fields={["email", "displayName", "assignments", ...drafts.map((_, i) => `assignments.${i}`)]} />
         <div className="flex justify-end gap-2 pt-1">
           <Button onClick={close}>Cancel</Button>
           <Button type="submit" variant="primary" loading={invite.isPending} disabled={!email.trim() || !displayName.trim() || !drafts.every(draftComplete)}>
-            Send invitation
+            {options.data && !mailReady ? "Create invitation link" : "Send invitation"}
           </Button>
         </div>
       </form>

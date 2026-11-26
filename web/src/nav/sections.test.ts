@@ -14,6 +14,7 @@ describe("sections", () => {
     expect(sectionFor("/scripts/new")).toBe("scripts");
     expect(sectionFor("/jobs/j1")).toBe("jobs");
     expect(sectionFor("/patching")).toBe("patching");
+    expect(sectionFor("/patching/devices/d1")).toBe("patching");
     expect(sectionFor("/settings")).toBe("settings");
     expect(sectionFor("/users/u1")).toBe("settings");
   });
@@ -46,6 +47,8 @@ describe("sections", () => {
     expect(selectedKey("patching", "/patching", "")).toBe("all");
     expect(selectedKey("patching", "/patching", "?tab=devices&organizationId=o1")).toBe("o:o1");
     expect(selectedKey("patching", "/patching", "?organizationId=o1&siteId=s1")).toBe("s:s1");
+    expect(selectedKey("patching", "/patching", "?organizationId=o1&siteId=s1&groupId=g1")).toBe("g:g1");
+    expect(selectedKey("patching", "/patching/devices/d1", "")).toBe("d:d1");
     expect(selectedKey("patching", "/patching/updates/g1", "")).toBeNull();
     expect(selectedKey("settings", "/settings", "")).toBeNull();
   });
@@ -78,6 +81,13 @@ describe("sections", () => {
     expect(targetHref("scripts", { kind: "all" }, "/scripts", "?library=o1&siteId=s1")).toBe("/scripts");
 
     expect(targetHref("jobs", { kind: "device", id: "d1", organizationId: "o1", siteId: "s1" }, "/jobs/j1", "")).toBe("/jobs?organizationId=o1&siteId=s1&deviceId=d1");
+
+    // Patching: a device has its own page in the section; a group keeps the list, narrowed to it.
+    expect(targetHref("patching", { kind: "device", id: "d1", organizationId: "o1", siteId: "s1" }, "/patching", "?tab=updates")).toBe("/patching/devices/d1");
+    expect(targetHref("patching", { kind: "group", id: "g1", organizationId: "o1", siteId: "s1" }, "/patching", "?tab=devices")).toBe(
+      "/patching?tab=devices&organizationId=o1&siteId=s1&groupId=g1",
+    );
+    expect(targetHref("patching", { kind: "org", id: "o1" }, "/patching/devices/d1", "")).toBe("/patching?organizationId=o1");
     expect(targetHref("settings", { kind: "all" }, "/settings", "")).toBe("/");
   });
 });

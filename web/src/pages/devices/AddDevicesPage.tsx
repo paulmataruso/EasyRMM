@@ -83,6 +83,9 @@ export function formatBytes(n: number): string {
  * An address with a pin uses the server's own certificate authority, which the computer does not trust yet: curl
  * checks the server's public key instead (--insecure skips only the certificate authority check).
  */
+/** Why an old token cannot show its install command. */
+const OLD_TOKEN = "Made before EasyRMM kept tokens; make a new one.";
+
 export function linuxInstallCommand(serverUrl: string, secret: string, pin?: string): string {
   const tls = pin ? `--insecure --pinnedpubkey '${pin}' ` : "";
   return `export EASYRMM_TOKEN='${secret}'; curl -fsSL ${tls}${serverUrl}${AGENT_PATH}/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN`;
@@ -769,6 +772,12 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
           {all ? "Tokens you create are listed here, with how many devices used each." : "Expired, revoked and used-up tokens are under All tokens."}
         </EmptyState>
       ) : (
+        <>
+        {tokens.items.some((t) => t.status === "active" && !t.kept) && (
+          <p className="border-b border-line px-4 py-2 text-sm text-muted">
+            Some tokens were made before EasyRMM kept them, so their install commands cannot be shown again. Make a new token and revoke the old one.
+          </p>
+        )}
         <TableWrap className="rounded-none border-0">
           <table className="table-base">
             <thead>
@@ -792,7 +801,6 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
                       {t.createdByName ? `${t.createdByName}, ` : ""}
                       <span title={formatDateTime(t.createdAt)}>{formatDate(t.createdAt)}</span>
                     </p>
-                    {t.status === "active" && !t.kept && <p className="text-xs text-muted">Made before tokens could be shown again.</p>}
                   </td>
                   <td className="hidden max-w-64 md:table-cell">{place.cell(t)}</td>
                   <td className="whitespace-nowrap tabular-nums" title={t.lastUsedAt ? `Last used ${formatDateTime(t.lastUsedAt)}` : "Not used yet"}>
@@ -805,16 +813,20 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
                     <TokenStatusBadge status={t.status} />
                   </td>
                   <td className="text-right whitespace-nowrap">
-                    {t.status === "active" && t.kept && (
-                      <IconButton
-                        label={`Show install commands for ${t.name}`}
+                    {t.status === "active" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<SquareTerminal className="size-4" aria-hidden />}
+                        aria-label={`Show install command for ${t.name}`}
                         onClick={() => reveal.mutate(t, { onError: (err) => toast.error(errorMessage(err)) })}
-                        disabled={reveal.isPending}
-                        className="hover:text-accent"
+                        disabled={!t.kept || reveal.isPending}
+                        title={t.kept ? undefined : OLD_TOKEN}
                       >
-                        <SquareTerminal className="size-4" aria-hidden />
-                      </IconButton>
+                        Show install command
+                      </Button>
                     )}
+                    {t.status === "active" && !t.kept && <p className="mt-1 text-xs text-muted">{OLD_TOKEN}</p>}
                     {t.status === "active" && (
                       <IconButton label={`Revoke ${t.name}`} onClick={() => setRevoking(t)} className="hover:text-danger">
                         <Ban className="size-4" aria-hidden />
@@ -826,6 +838,7 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
             </tbody>
           </table>
         </TableWrap>
+        </>
       )}
       <ConfirmDialog
         open={revoking !== null}

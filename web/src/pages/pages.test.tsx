@@ -225,6 +225,8 @@ describe("sites and device groups", () => {
 describe("users and invitations", () => {
   const routes = {
     ...baseRoutes(sessionView()),
+    // A mail server is set up; the test for none overrides this.
+    "GET /auth/options": ok({ passwordResetAvailable: true, mfaRequired: true, passwordMinLength: 12 }),
     "GET /users": ok({ items: [person("u-alex", "Alex Rivera", "alex@example.com", { isSelf: true }), person("u-sam", "Sam Okafor", "sam@example.com", { passwordSet: false, lastLoginAt: null })] }),
     "GET /organizations": ok({ items: ORGS }),
     "GET /roles": ok({ items: ROLES }),
@@ -266,6 +268,25 @@ describe("users and invitations", () => {
     });
     await user.click(within(notice).getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("says a link will be shown, and names the button so, when no mail server is set up", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...routes, "GET /auth/options": ok({ passwordResetAvailable: false, mfaRequired: true, passwordMinLength: 12 }) });
+    renderApp("/settings?invite=1");
+    const form = await dialog("Invite user");
+    expect(await within(form).findByRole("button", { name: "Create invitation link" })).toBeInTheDocument();
+    expect(within(form).getByText(/No mail server is set up, so nothing is emailed. A link is shown next/)).toBeInTheDocument();
+    expect(within(form).queryByRole("button", { name: "Send invitation" })).not.toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Cancel" }));
+  });
+
+  it("says the invitation is emailed when a mail server is set up", async () => {
+    installFakeApi({ ...routes });
+    renderApp("/settings?invite=1");
+    const form = await dialog("Invite user");
+    expect(await within(form).findByText(/The invitation is emailed to them/)).toBeInTheDocument();
+    expect(within(form).getByRole("button", { name: "Send invitation" })).toBeInTheDocument();
   });
 
   it("puts a server's assignment error on the row it belongs to", async () => {
