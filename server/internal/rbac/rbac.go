@@ -31,10 +31,6 @@ const (
 	PermDeviceRetire  Permission = "device.retire" // revoke credentials, uninstall, delete
 	PermDeviceHarden  Permission = "device.harden" // apply and undo hardening (ADR-0051)
 	PermRemoteDesktop Permission = "device.remote_desktop"
-	// PermRDPCredentialsSave lets a person save, replace and delete their own
-	// saved RDP credential on a device they may open remote desktop on
-	// (ADR-0079). It is never a way to read one.
-	PermRDPCredentialsSave Permission = "device.rdp_credentials.save"
 	PermTerminal      Permission = "device.terminal"
 	PermFiles         Permission = "device.files"
 	PermScriptView    Permission = "script.view"
@@ -96,6 +92,11 @@ const (
 	PermPrintManage     Permission = "print.manage"
 	PermBackupView      Permission = "backup.view"
 	PermBackupManage    Permission = "backup.manage"
+
+	// PermRDPCredentialsSave lets a person save, replace and delete their own
+	// saved RDP credential on a device they may open remote desktop on
+	// (ADR-0079). It is never a way to read one.
+	PermRDPCredentialsSave Permission = "device.rdp_credentials.save"
 )
 
 // AllPermissions lists every permission.

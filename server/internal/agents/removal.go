@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
+	"github.com/paulmataruso/easyrmm/server/internal/rdpcreds"
 )
 
 // Removing a device (ADR-0050).
@@ -139,6 +140,9 @@ func (s *Service) retire(ctx context.Context, c access.Caller, id uuid.UUID, for
 			key = nil
 		}
 		if err := r.remember(ctx, tx, key, forced, s.now()); err != nil {
+			return err
+		}
+		if err := rdpcreds.PurgeDevice(ctx, tx, s.audit, c.Actor, id, r.org, r.site, r.name, "device removed"); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, id); err != nil {
@@ -315,6 +319,9 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 			return s.audit.Write(ctx, tx, ev)
 		}
 		if err := r.remember(ctx, tx, nil, rep.Error != "", s.now()); err != nil {
+			return err
+		}
+		if err := rdpcreds.PurgeDevice(ctx, tx, s.audit, actor, d.ID, r.org, r.site, r.name, "device removed"); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, d.ID); err != nil {

@@ -53,6 +53,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/rdpcredsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/repairsapi"
@@ -68,6 +69,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/rdpcreds"
 	"github.com/paulmataruso/easyrmm/server/internal/recovery"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
@@ -149,6 +151,8 @@ type Deps struct {
 	Remote      *remote.Service
 	Gateway     *remote.Gateway
 	MeshSecrets *remote.Secrets
+	// RDPCreds keeps the RDP credentials people save per device (ADR-0079).
+	RDPCreds *rdpcreds.Service
 }
 
 // Build constructs the services over an open database.
@@ -473,6 +477,8 @@ func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secre
 	if err != nil {
 		return err
 	}
+	d.RDPCreds = rdpcreds.New(d.DB, d.Audit, sealer, d.Auth.LoadPrincipal)
+	gw.SetCredentialOpener(rdpOpener{d.RDPCreds})
 	d.Tenancy.OnChange(svc.Changed)
 	d.Users.OnChange(svc.Changed)
 	d.Mesh, d.Remote, d.Gateway, d.MeshSecrets = client, svc, gw, sec
@@ -563,7 +569,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	devicesapi.New(d.Devices).Register(mux)
 	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), addresses, caInfo).Register(mux)
 	if d.Remote != nil {
-		remoteapi.New(d.Remote).Register(mux)
+		remoteapi.New(d.Remote).WithStepUp(d.Sessions).Register(mux)
+		rdpcredsapi.New(d.RDPCreds, d.Sessions).Register(mux)
 	}
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)

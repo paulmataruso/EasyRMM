@@ -13,11 +13,20 @@ import (
 
 // API serves the remote-session routes.
 type API struct {
-	svc *remote.Service
+	svc    *remote.Service
+	stepUp interface{ StepUp(*http.Request) error }
 }
 
 // New builds the API.
 func New(svc *remote.Service) *API { return &API{svc: svc} }
+
+// WithStepUp makes a remote session that names a saved RDP credential ask
+// for step-up authentication first (ADR-0079): the credential is opened
+// only for a session stepped up in the last 5 minutes.
+func (a *API) WithStepUp(s interface{ StepUp(*http.Request) error }) *API {
+	a.stepUp = s
+	return a
+}
 
 // Register mounts the routes. Every route requires a fully signed-in session.
 func (a *API) Register(mux *http.ServeMux) {
@@ -30,6 +39,9 @@ func (a *API) Register(mux *http.ServeMux) {
 
 type sessionRequest struct {
 	Kind remote.Kind `json:"kind"`
+	// SavedCredential says the RDP session will use a saved credential, so
+	// the person steps up before the session starts, not in the middle of it.
+	SavedCredential bool `json:"savedCredential,omitempty"`
 }
 
 func (a *API) startSession(w http.ResponseWriter, r *http.Request) error {
@@ -40,6 +52,14 @@ func (a *API) startSession(w http.ResponseWriter, r *http.Request) error {
 	var in sessionRequest
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
+	}
+	if in.SavedCredential {
+		if in.Kind != remote.KindRDP || a.stepUp == nil {
+			return apperr.Invalid("savedCredential", "Saved credentials are for RDP sessions.")
+		}
+		if err := a.stepUp.StepUp(r); err != nil {
+			return err
+		}
 	}
 	ident := httpapi.IdentityFrom(r.Context())
 	l, err := a.svc.StartSession(r.Context(), httpapi.Caller(r), ident.Session.ID, id, in.Kind)

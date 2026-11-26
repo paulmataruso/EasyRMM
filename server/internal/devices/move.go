@@ -15,6 +15,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
+	"github.com/paulmataruso/easyrmm/server/internal/rdpcreds"
 )
 
 // MaxMove bounds the devices one move names.
@@ -289,6 +290,11 @@ func (s *Service) leaveOrganization(ctx context.Context, tx pgx.Tx, c access.Cal
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE device_id = $1`, m.id); err != nil {
 			return 0, err
 		}
+	}
+	// Saved RDP credentials belong to the old organization's people and are
+	// never carried over: all of them go, each audited (ADR-0079).
+	if err := rdpcreds.PurgeDevice(ctx, tx, s.audit, c.Actor, m.id, m.org, m.site, m.name, "device moved to another organization"); err != nil {
+		return 0, err
 	}
 	return len(done), nil
 }
