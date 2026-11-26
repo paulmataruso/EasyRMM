@@ -17,5 +17,5 @@ The roles list names server roles installed on a computer. It is stored per devi
 
 ## Integration
 
-* Migrations 90101 (devices.roles, roles_at, roles_rescan) and 90102 (windows_module_settings).
+* Migrations 00052 (devices.roles, roles_at, roles_rescan) and 00053 (windows_module_settings).
 * web/e2e/console.spec.ts and web/e2e/agent.ts on integration did not compile (a `});` lost in the ws/repair1 merge and two `heartbeat` methods in the agent helper after ws/defx-a). Fixed here with the smallest edit.
