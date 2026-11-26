@@ -129,15 +129,15 @@ function Get-CrlInfo($Ca) {
     if (Test-Path -LiteralPath $dir) {
         foreach ($f in @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Extension -eq '.crl' })) {
             $r = Invoke-Certutil @('-dump', $f.FullName)
-            $this = $null
+            $thisUp = $null
             $next = $null
             foreach ($l in $r.Lines) {
-                if ($l -match '^\s*ThisUpdate:\s*(.+?)\s*$') { $this = Get-Utc2 $Matches[1] }
+                if ($l -match '^\s*ThisUpdate:\s*(.+?)\s*$') { $thisUp = Get-Utc2 $Matches[1] }
                 if ($l -match '^\s*NextUpdate:\s*(.+?)\s*$') { $next = Get-Utc2 $Matches[1] }
             }
             $hours = $null
             if ($next) { $hours = [int][math]::Floor(([datetime]::Parse($next).ToUniversalTime() - (Get-Date).ToUniversalTime()).TotalHours) }
-            $info = [ordered]@{ thisUpdate = $this; nextUpdate = $next; hoursToNextUpdate = $hours; sizeBytes = [int64]$f.Length }
+            $info = [ordered]@{ thisUpdate = $thisUp; nextUpdate = $next; hoursToNextUpdate = $hours; sizeBytes = [int64]$f.Length }
             if ($f.BaseName.EndsWith('+')) { $delta = $info } else { $base = $info }
         }
     }

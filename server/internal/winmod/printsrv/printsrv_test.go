@@ -2,6 +2,7 @@ package printsrv
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -193,7 +194,7 @@ func TestAlertKinds(t *testing.T) {
 	if err != nil || !v.Holds || v.Value != 1 {
 		t.Errorf("stuck: %+v %v", v, err)
 	}
-	if _, err := eval[KindQueueStuck](json.RawMessage(`not json`), &th); err != monitoring.ErrUnknown {
+	if _, err := eval[KindQueueStuck](json.RawMessage(`not json`), &th); !errors.Is(err, monitoring.ErrUnknown) {
 		t.Errorf("a bad snapshot: %v", err)
 	}
 	v, _ = eval[KindPointAndPrint](json.RawMessage(`{"restrictDriverInstall":0,"noWarningNoElevation":null,"updatePromptSettings":null,"weakened":true,"spoolerRunning":true,"domainController":false}`), nil)

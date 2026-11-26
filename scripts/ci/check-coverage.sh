@@ -54,6 +54,9 @@ floors=(
   "server/internal/winmod/rolekit         80"
   "server/internal/winmod/dns             85"
   "server/internal/winmod/dhcp            88"
+  "server/internal/winmod/certauth        88"
+  "server/internal/winmod/fileshares      85"
+  "server/internal/winmod/printsrv        88"
   # Snapshots of the Windows modules: reads, scheduled reads, retention (ADR-0073).
   "server/internal/modsnap                 75"
   # Windows hardening (ADR-0054): the ownership reader's package and the

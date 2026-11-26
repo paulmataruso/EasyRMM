@@ -5,8 +5,11 @@ package roles
 import (
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/certauth"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dhcp"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dns"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/fileshares"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/printsrv"
 )
 
 // Actions are every role's catalog entries.
@@ -15,6 +18,9 @@ func Actions() []winmod.Action {
 	for _, a := range [][]winmod.Action{
 		dns.Actions(),
 		dhcp.Actions(),
+		certauth.Actions(),
+		fileshares.Actions(),
+		printsrv.Actions(),
 	} {
 		all = append(all, a...)
 	}
@@ -26,6 +32,9 @@ func Alerts() []monitoring.ModuleAlerts {
 	return []monitoring.ModuleAlerts{
 		dns.AlertKinds(),
 		dhcp.AlertKinds(),
+		certauth.AlertKinds(),
+		fileshares.AlertKinds(),
+		printsrv.AlertKinds(),
 	}
 }
 

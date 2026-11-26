@@ -37,7 +37,7 @@ func AlertKinds() monitoring.ModuleAlerts {
 		Module: modules.CertificateAuthority,
 		Kinds: []monitoring.ModuleKind{{
 			Name: KindCertificateExpiring, Label: "CA certificate expiring", Module: modules.CertificateAuthority,
-			Action: "certificate_authority.status", Threshold: days,
+			Action: "certificate_authority.status", Threshold: days, LowestWins: true,
 			Eval: func(data json.RawMessage, threshold *int) (monitoring.Verdict, error) {
 				st, err := statusOf(data)
 				switch {

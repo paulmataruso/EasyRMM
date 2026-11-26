@@ -61,6 +61,9 @@ type ModuleKind struct {
 	// must have held, on readings, for that long before the alert opens.
 	// Without it the minutes are unused.
 	Grace bool
+	// LowestWins says the smaller threshold is the more urgent (days left
+	// before an expiry), so of several policies that hold, the lowest opens.
+	LowestWins bool
 	// MaxAge is how old the snapshot may be to be judged; older ones change
 	// nothing. Zero means DefaultMaxAge.
 	MaxAge time.Duration
@@ -454,7 +457,12 @@ func (s *Service) evaluateKind(ctx context.Context, tx pgx.Tx, now time.Time, k 
 			holding[i].ready = now.Sub(since) >= time.Duration(r.minutes)*time.Minute
 		}
 		if holding[i].ready && r.threshold != nil {
-			best[r.deviceID] = max(best[r.deviceID], *r.threshold)
+			switch cur, seen := best[r.deviceID]; {
+			case k.LowestWins && (!seen || *r.threshold < cur):
+				best[r.deviceID] = *r.threshold
+			case !k.LowestWins:
+				best[r.deviceID] = max(cur, *r.threshold)
+			}
 		}
 	}
 	for _, j := range holding {
@@ -467,8 +475,9 @@ func (s *Service) evaluateKind(ctx context.Context, tx pgx.Tx, now time.Time, k 
 			continue
 		}
 		// The best match: of several policies that hold on one computer,
-		// only the one with the highest threshold opens an alert.
-		if r.threshold != nil && *r.threshold < best[r.deviceID] {
+		// only the one with the highest threshold opens an alert (the lowest,
+		// for a kind whose smaller threshold is the more urgent).
+		if r.threshold != nil && ((!k.LowestWins && *r.threshold < best[r.deviceID]) || (k.LowestWins && *r.threshold > best[r.deviceID])) {
 			continue
 		}
 		opens.add(r.policyID, r.deviceID, v.Value, v.Detail, "", now)
