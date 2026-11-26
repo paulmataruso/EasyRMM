@@ -4411,6 +4411,7 @@ export interface QuarantinedRow {
   failedRuns: number;
   createdAt: string;
   held: number;
+}
 
 // The registry editor (ADR-0067, slice 1).
 
