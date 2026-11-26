@@ -57,7 +57,17 @@ type CredentialOpener interface {
 
 // SetCredentialOpener turns on saved RDP credentials. Without it, a first
 // message that names one is refused.
-func (g *Gateway) SetCredentialOpener(o CredentialOpener) { g.creds = o }
+func (g *Gateway) SetCredentialOpener(o CredentialOpener) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.creds = o
+}
+
+func (g *Gateway) credentialOpener() CredentialOpener {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.creds
+}
 
 // rdpGrant is what the gateway knows about the authenticated RDP session.
 type rdpGrant struct {
@@ -77,14 +87,15 @@ const useSavedKey = "useSavedCredential"
 func (g *Gateway) rdpTransform(ctx context.Context, session uuid.UUID) func([]byte) ([]byte, error) {
 	return func(msg []byte) ([]byte, error) {
 		return rewriteInfos(msg, func(id uuid.UUID, node string) (*OpenedCredential, error) {
-			if g.creds == nil || g.rdpGrantFor == nil {
+			opener := g.credentialOpener()
+			if opener == nil || g.rdpGrantFor == nil {
 				return nil, refused("saved RDP credentials are not available")
 			}
 			grant, err := g.rdpGrantFor(ctx, session, node)
 			if err != nil {
 				return nil, refused("finding the RDP grant failed: %v", err)
 			}
-			cred, err := g.creds.OpenRDPCredential(ctx, CredentialUse{
+			cred, err := opener.OpenRDPCredential(ctx, CredentialUse{
 				CredentialID: id, Session: session, Grant: grant.Grant, User: grant.User,
 				Organization: grant.Organization, Site: grant.Site, Device: grant.Device, ClientIP: grant.ClientIP,
 			})

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,12 +110,15 @@ func maskedFrame(fin bool, op byte, payload []byte, key [4]byte) []byte {
 
 // savedOpener opens one credential for the tests.
 type savedOpener struct {
+	mu   sync.Mutex
 	cred OpenedCredential
 	err  error
 	uses []CredentialUse
 }
 
 func (o *savedOpener) OpenRDPCredential(_ context.Context, u CredentialUse) (*OpenedCredential, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	o.uses = append(o.uses, u)
 	if o.err != nil {
 		return nil, o.err
@@ -122,6 +126,18 @@ func (o *savedOpener) OpenRDPCredential(_ context.Context, u CredentialUse) (*Op
 	c := o.cred
 	c.Password = append([]byte(nil), o.cred.Password...)
 	return &c, nil
+}
+
+func (o *savedOpener) set(pw string, err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.cred.Password, o.err = []byte(pw), err
+}
+
+func (o *savedOpener) used() []CredentialUse {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]CredentialUse(nil), o.uses...)
 }
 
 const savedID = "0d3b8a52-6f0e-4a7e-9c0a-0b5f3a1d2e44"
@@ -272,7 +288,7 @@ func TestGatewayRDPSavedCredentialSizes(t *testing.T) {
 	base := len(mustRewrite(t, "")) // the message with an empty password
 	for _, target := range []int{base, base + 1, 65534, 65535, 65536, 65537, 300000} {
 		pw := strings.Repeat("p", target-base)
-		opener.cred.Password = []byte(pw)
+		opener.set(pw, nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		ws := dialRDP(t, ctx, srv, g)
 		if err := ws.Write(ctx, websocket.MessageText, []byte(infosWith("node//granted", "", "", `{"useSavedCredential":"`+savedID+`"}`))); err != nil {
@@ -282,7 +298,7 @@ func TestGatewayRDPSavedCredentialSizes(t *testing.T) {
 		case m := <-got:
 			var arr []json.RawMessage
 			if err := json.Unmarshal([]byte(m), &arr); err != nil {
-				t.Fatalf("%d (base %d): %v (%d uses, got %.60q)", target, base, err, len(opener.uses), m)
+				t.Fatalf("%d (base %d): %v (%d uses, got %.60q)", target, base, err, len(opener.used()), m)
 			}
 			var obj struct{ Password string }
 			_ = json.Unmarshal(arr[1], &obj)
@@ -302,7 +318,7 @@ func TestGatewayRDPSavedCredentialSizes(t *testing.T) {
 		}
 		cancel()
 	}
-	use := opener.uses[0]
+	use := opener.used()[0]
 	if use.Device == uuid.Nil || use.User == uuid.Nil || use.Organization == uuid.Nil || use.Session == uuid.Nil {
 		t.Errorf("the use lacks the grant's identity: %+v", use)
 	}
@@ -401,13 +417,13 @@ func TestGatewayRDPSavedCredentialRules(t *testing.T) {
 	if m := next(); m != "closed" {
 		t.Errorf("a refused credential reached MeshCentral: %s", m)
 	}
-	if len(opener.uses) != 1 || opener.uses[0].CredentialID.String() != savedID {
-		t.Errorf("uses: %+v", opener.uses)
+	if u := opener.used(); len(u) != 1 || u[0].CredentialID.String() != savedID {
+		t.Errorf("uses: %+v", u)
 	}
 
 	// A typed credential passes with saving forced off, and later messages
 	// pass untouched. The browser's own savepass is overridden.
-	opener.err = nil
+	opener.set("", nil)
 	ws = dialRDP(t, ctx, srv, g)
 	_ = ws.Write(ctx, websocket.MessageText, []byte(infosWith("node//granted", "tech", "typed", `{"savepass":true,"useServerCreds":true}`)))
 	m := next()
@@ -423,8 +439,8 @@ func TestGatewayRDPSavedCredentialRules(t *testing.T) {
 	if m := next(); m != "closed" {
 		t.Errorf("a second infos reached MeshCentral: %s", m)
 	}
-	if len(opener.uses) != 1 {
-		t.Errorf("the second request opened a credential: %d uses", len(opener.uses))
+	if n := len(opener.used()); n != 1 {
+		t.Errorf("the second request opened a credential: %d uses", n)
 	}
 }
 

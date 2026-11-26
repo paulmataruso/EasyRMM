@@ -341,7 +341,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// recovery (R1-R3): the machine's own state and repair history
 		"agent_conditions": follows, "agent_repairs": ends,
 		// ends
-		"remote_grants": ends, "alerts": ends,
+		"remote_grants": ends, "alerts": ends, "device_rdp_credentials": ends,
 		"agent_log_records": ends, "agent_log_days": ends, "agent_log_follow": ends,
 		// a device's verbose setting ends with any move to another site; a
 		// group's is owned by the group.
