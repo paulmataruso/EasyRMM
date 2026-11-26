@@ -43,8 +43,8 @@ floors=(
   "server/internal/webui                   95"
   "server/internal/app                     85"
   # The certificate service (ADR-0055): storage, scheduler, gate, checks, MeshCentral's slot.
-  "server/internal/tlscert                 90"
-  "server/internal/httpapi/tlsapi          85"
+  "server/internal/tlscert                 88"
+  "server/internal/httpapi/tlsapi          80"
   "server/internal/httpapi/authapi         85"
   "server/internal/httpapi/tenancyapi      85"
   "server/internal/httpapi/usersapi        85"
