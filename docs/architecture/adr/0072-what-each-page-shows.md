@@ -47,9 +47,10 @@ places) sits in Organizations.
 | Dashboard | `/` | Fleet summary cards. No tree. |
 | Organizations | `/organizations` | List of organizations. |
 | | `/organizations/:id` | Tabs Overview (sites, details, key contacts, delete), Contacts (`doc.view`), Patch policy (once the patching engine is set up). |
-| | `/sites/:id` | Tabs Overview (device groups, devices, details, Add devices, delete), Patch policy. A group is `/sites/:id?groupId=`, which shows the same page. |
+| | `/sites/:id` | Tabs Overview (device groups, devices, details, Places card (`doc.view`), Add devices button, delete) and Patch policy; only these two tabs exist. A group is `/sites/:id?groupId=`, which shows the same page. |
 | Devices | `/devices` | Device list; scope by `organizationId`, `siteId`, `groupId`, `deviceId`. |
 | | `/devices/approvals` | Devices waiting for approval. |
+| | `/go/from-easypatch/:kind/:id` | Redirect page for links coming from the EasyPatch console; unchanged by this ADR. |
 | | `/devices/add` | Add devices: tokens, install commands, downloads, approval mode. |
 | | `/devices/:id` | Tabs Overview, Hardware, Software, Patches, Hardening (Linux), Logs. Header actions: remote desktop, terminal, files, run script, move, delete. |
 | | `/devices/:id/remote/:kind` | Full-window remote session. |
@@ -105,10 +106,15 @@ Organizations-section pages below.
 | **Settings** | server-wide parts only | n/a: organization settings are on its page | n/a | n/a | n/a |
 | **Dashboard** | `/` | n/a | n/a | n/a | n/a |
 
-Alerts' Policies tab goes away as a tab of the Alerts section. A policy is
-about one organization, so it lives on that organization's page (below).
-`/alerts?tab=policies&organizationId=X` redirects there; `?tab=policies` with
-no organization redirects to `/organizations` (*decided in review*).
+Alerts' Policies tab goes away as a tab of the Alerts section. Policies have
+three levels (`server/internal/monitoring/policies.go`): shared (every
+organization), organization and site. Each goes with its scope: shared
+policies are server-wide and live in Settings as "Alert policies"; an
+organization's on its page; a site's on its page. The Alerts list keeps a
+"Policies" link that goes to the policies for its current scope (Everything to
+Settings, organization or site to that page; group and device to their site).
+`/alerts?tab=policies[&organizationId=]` redirects the same way (*decided in
+review*).
 
 ### The Patching selection fix (first slice)
 
@@ -138,30 +144,40 @@ Today `selectedKey` and `targetHref` for Patching put a device in
 
 ### Pages per level in the Organizations section
 
-Same tab order at each level; a tab that does not apply is hidden.
+Same tab order at each level; a tab that does not apply is hidden, never
+greyed. Each tab names its permission, checked at the level of the selection
+(the organization or site being viewed, not only globally).
 
 | Tab | Organization | Site | Group |
 |---|---|---|---|
-| Overview | sites, key contacts, details, delete | groups, devices, details, delete | devices in the group, rename, delete |
-| Contacts / Places (`doc.view`) | Contacts | Places | - |
+| Overview | sites, key contacts, details, delete | groups, devices, details, Places card (`doc.view`), delete | devices in the group, rename, delete |
+| Contacts (`doc.view`) | Contacts | - | - |
 | People (`user.view`) | who holds a role here (invite, change, remove) | - | - |
-| Alert policies (`monitoring.view`) | the organization's policies | - | - |
-| Patching (once the engine is set up) | patch policy, tags, monthly report schedule, install the patching agent automatically | patch policy (override) | - |
+| Alert policies (`monitoring.view` to see, `monitoring.manage` to change) | the organization's policies | the site's policies | - |
+| Patching (`patch.configure`; the tab shows once the engine is set up) | patch policy, tags, monthly report schedule, install the patching agent automatically | patch policy (override) | - |
 | Install (`enrollment.manage`) | install tokens and commands for the organization | the same, for the site | - |
+| Settings (`device.edit`) | - | - | group-wide verbose agent logging |
 
-"Install" is the Add devices page (`/devices/add`), embedded with the scope
-fixed, so there is one component. `/devices/add` stays as the page for no
-scope, with an organization and site picker; `?siteId=` redirects to the
-site's Install tab. A group has no settings of its own today, because the
-product has none (a group is a set of devices). The tab list for a group is
-Overview now; a new group setting, when one is designed, adds a tab there.
-No group setting is invented by this ADR.
+What the site strip gains: today it has Overview and Patch policy only
+(Places is a card on Overview). It gains Alert policies, Patching (the
+renamed Patch policy) and Install. Places stays where it is, on Overview.
+
+"Install" is the Add devices page (`/devices/add`) embedded with the scope
+fixed, so there is one component. `/devices/add` stays for no scope, with an
+organization and site picker; `?siteId=` redirects to the site's Install tab.
+
+Groups do have a setting today: group-wide verbose agent logging
+(`PUT` and `DELETE /device-groups/{id}/agent-logs/verbose`,
+`agentlogsapi.go`), switched from `DeviceLogs.tsx`. It moves to the group
+page's Settings tab. `DeviceLogs.tsx` keeps a read-only line saying a group
+setting is on, linking to the group page. No other group setting is invented;
+a new one later adds to this tab.
 
 ### Where each Settings item goes
 
 | Today | Where | Reason |
 |---|---|---|
-| Settings > Users | Stays: the list of every person, MFA, super administrators, invites with no organization. The organization's own people are the same list in the organization's People tab (one component, scope fixed). `?tab=users&organizationId=X` redirects to it. | A person can hold roles in many organizations. |
+| Settings > Users | Stays: the list of every person, MFA, super administrators, invites with no organization. The organization's own people are the same list in the organization's People tab (one component, scope fixed). `?tab=users&organizationId=X` redirects to it. This changes what that old link shows (a filtered list inside Settings becomes the organization page), so it is tested. | A person can hold roles in many organizations. |
 | `/users/:id` | Stays | |
 | Audit log | Stays (server-wide); organization filter stays | |
 | Remote access | Stays | MeshCentral is the deployment's |
@@ -175,9 +191,10 @@ No group setting is invented by this ADR.
 | Patching: tags | Organization > Patching (tags are per organization) | |
 | Patching: report schedules | Organization > Patching | Per organization |
 | Patching: server, OS lifecycle, agent packages, alert rules, notifications, audit | Settings > Patching | Server-wide |
-| Organization > Patch policy tab | Organization > Patching tab (renamed, grouped with the above) | |
+| Organization > Patch policy tab | Organization > Patching tab (renamed, grouped with the above; `patch.configure`) | |
 | Site > Patch policy tab | Site > Patching | |
-| Alerts > Policies tab | Organization > Alert policies | |
+| Alerts > Policies tab | Shared policies: Settings > Alert policies (new item, `monitoring.manage`); organization policies: Organization > Alert policies; site policies: Site > Alert policies | Policies have three levels |
+| Verbose agent logging for a group (Devices > Logs) | Group > Settings | It is a group setting |
 | Devices > Add devices (with org and site chosen) | Organization/Site > Install | |
 | Organization > Contacts, Site places | Unchanged | |
 | Scripts library per organization | Stays in Scripts (it is work, not a setting) | |
@@ -201,72 +218,89 @@ No group setting is invented by this ADR.
 
 ## Slices
 
-Ordered. Each names the files it touches. Slices S1 to S3 touch distinct
-files and may run in parallel; the hotspot files are called out so that two
-builders do not edit them at once.
+Hotspots: `DeviceDetailPage.tsx` (every module that adds a device tab edits
+it), the nav tree (`SectionNav.tsx`, `sections.ts`, `tree.ts`), `App.tsx`,
+`OrganizationDetailPage.tsx` and `SiteDetailPage.tsx`. Edits are small and
+additive. `web/e2e/console.spec.ts` is shared: each slice adds its own
+`web/e2e/ia-<slice>.spec.ts`.
 
-Hotspots: `web/src/pages/devices/DeviceDetailPage.tsx` (also edited by every
-module that adds a device tab) and the nav tree
-(`web/src/nav/SectionNav.tsx`, `sections.ts`, `tree.ts`). Edits to them are
-small and additive, and only S1 and S3 touch the nav files, so they go in that
-order, never together. `web/e2e/console.spec.ts` is shared: each slice adds
-its own spec file `web/e2e/ia-<slice>.spec.ts` instead.
+True order and parallelism:
 
-* **S1: Patching selection** (first). `nav/sections.ts`, `nav/SectionNav.tsx`
-  (patching target only), `App.tsx` (route `/patching/devices/:id`, redirect),
-  new `pages/patching/PatchingDevicePage.tsx`, `pages/patching/PatchingPage.tsx`
-  (scope on every tab, header, group note), `nav/sections.test.ts`,
-  `nav/nav.test.tsx`.
+1. **S1** and **S2** run in parallel (they share no files).
+2. **S3** after S1 (both edit `sections.ts` and `App.tsx`).
+3. **S4** after S3 (it edits the organization and site pages S3 also edits).
+4. **S5, S6, S7, S8** after S4, in parallel: each is its own tab component
+   file plus one line in the tab registry S4 creates. They do not edit the
+   organization or site pages. Only S8 edits `SectionNav.tsx`
+   (`settingsParts`), and only S7 and S8 edit `SettingsPage.tsx`, so S7 and
+   S8 are sequenced (S7 first) if they would conflict.
+5. **S9** last.
+
+* **S1: Patching selection.** `nav/sections.ts` (`sectionFor` already covers
+  `/patching/…`; patching `targetHref` and `selectedKey`), `nav/SectionNav.tsx`
+  (patching target only), `App.tsx` (route `/patching/devices/:id` and the
+  `?deviceId=` redirect), new `pages/patching/PatchingDevicePage.tsx`,
+  `pages/patching/PatchingPage.tsx`, `nav/sections.test.ts`, `nav/nav.test.tsx`.
 * **S2: Add devices and invite fixes.** `pages/devices/AddDevicesPage.tsx`,
-  `pages/settings/UsersTab.tsx`, `pages/pages.test.tsx`. Independent of S1.
-* **S3: Group page.** New `pages/organizations/GroupDetailPage.tsx`,
+  `pages/settings/UsersTab.tsx`, `pages/pages.test.tsx`.
+* **S3: Group page and its API.** Server: `GET /device-groups/{id}` in
+  `tenancyapi.go` (the router beside the existing `PUT` and `DELETE`, which
+  today are the only per-group routes, with `list by site`), the same
+  `site.view` check at the group's organization and site as the list, a 404
+  for a group the caller cannot see, and integration tests against PostgreSQL
+  for allowed, other-organization and missing cases. Web: new
+  `pages/organizations/GroupDetailPage.tsx` (Overview, Settings),
   `App.tsx` (route `/groups/:id`, redirect from `/sites/:id?groupId=`),
-  `nav/sections.ts` (`targetHref`, `selectedKey` for organizations),
-  `pages/organizations/SiteDetailPage.tsx` (group rows link to it). After S1.
-* **S4: One tab strip per level.** New `pages/organizations/levelTabs.tsx`
-  (the tab list with permissions), used by `OrganizationDetailPage.tsx`
-  `SiteDetailPage.tsx`; tab order, hidden-not-greyed, `?tab=` handling. No
-  behaviour change yet. After S3.
-* **S5: Install tab.** `pages/devices/AddDevicesPage.tsx` (scope prop),
-  Organization and Site pages (tab), `App.tsx` redirect for
-  `/devices/add?siteId=`. After S2 and S4.
-* **S6: People tab.** `pages/settings/UsersTab.tsx` (scope prop),
-  `OrganizationDetailPage.tsx`, redirect in `SettingsPage.tsx`. After S4.
-* **S7: Alert policies tab.** `pages/alerts/AlertsPage.tsx` (drop tab,
-  redirect), `OrganizationDetailPage.tsx`. After S4.
-* **S8: Patching tab.** `pages/settings/PatchingTab.tsx`,
-  `pages/settings/EasyPatchTab.tsx`, `pages/settings/SettingsPage.tsx`,
-  `nav/SectionNav.tsx` (`settingsParts`: one patching entry), the
-  organization and site pages; moves tags, report schedules and automatic
-  install. Last of the settings moves, because it touches `settingsParts`.
-* **S9: Redirect and link sweep.** Every in-app link to a moved URL
-  (`grep` for `/settings?tab=`, `/alerts?tab=policies`, `/devices/add`,
-  `/patching?deviceId`), plus `docs/` screenshots text that names the old
-  place. After S5 to S8.
+  `nav/sections.ts` (`sectionFor` gains `/groups`, so the Organizations
+  tree shows; `targetHref`, `selectedKey`), `SiteDetailPage.tsx` (group rows
+  link to it), `DeviceLogs.tsx` (the read-only line). `rbac.go` is a hotspot:
+  one additive entry if a route needs one.
+* **S4: Tab registry.** New `pages/organizations/levelTabs.tsx`: a registry
+  of `{ id, label, permission, levels, component }`, with order, permission
+  check at the selection's level, hidden-not-greyed and `?tab=`. The
+  organization and site pages use it for their current tabs. No behaviour
+  change.
+* **S5: Install tab.** New `pages/organizations/tabs/InstallTab.tsx`;
+  `AddDevicesPage.tsx` takes a scope prop; redirect for `/devices/add?siteId=`.
+  `enrollment.manage`.
+* **S6: People tab.** New `tabs/PeopleTab.tsx`; `UsersTab.tsx` takes a scope
+  prop; the redirect in `SettingsPage.tsx`. `user.view`.
+* **S7: Alert policies tabs.** New `tabs/AlertPoliciesTab.tsx` (organization
+  and site); new `settings/AlertPoliciesSettings.tsx` for shared policies;
+  `AlertsPage.tsx` (drop the tab, add the link and the redirect);
+  `settingsParts`. `monitoring.view` / `monitoring.manage`.
+* **S8: Patching tab.** New `tabs/PatchingTab.tsx` (organization and site):
+  tags, report schedule, automatic agent install; `settings/PatchingTab.tsx`
+  and `EasyPatchTab.tsx` merged into one Settings entry
+  (`settingsParts`: one patching entry, `patch.configure` as today).
+* **S9: Redirect and link sweep.** Every in-app link to a moved URL (grep for
+  `/settings?tab=`, `/alerts?tab=policies`, `/devices/add`,
+  `/patching?deviceId`), and docs that name an old place.
 
 ## Tests
 
-Each slice adds browser tests (Playwright, its own `web/e2e/ia-<slice>.spec.ts`)
-and component tests (vitest). Each tree level is covered where the slice
-changes it.
+Each slice adds Playwright specs (`web/e2e/ia-<slice>.spec.ts`) and vitest
+tests, and names a test per tree level it changes. The tree selection round
+trip uses the matrix URLs as the expected values.
 
-* S1: in Patching, click an organization (tab strip and rows scope to it),
-  a site, a group (Overview and Devices narrowed, other tabs show the site
-  note), a device (URL is `/patching/devices/:id`, the Patching tree stays,
-  the device node is highlighted, the page shows only that device); and the old
-  `?deviceId=` link redirects. Everything level unchanged.
-* S2: the show-again button has a visible name; an old token shows the
-  disabled button and the reason; the invite dialog says "Create invitation
-  link" with no mail server and "Send invitation" with one (existing tests in
-  `pages.test.tsx` updated).
-* S3: group row opens `/groups/:id`; the old `/sites/:id?groupId=` redirects;
-  rename and delete from the page.
-* S4 to S8: for the organization, the site and (where it applies) the group,
-  the tab list and order, a hidden tab for a user without the permission, each
-  moved feature working from its new home, and each old URL redirecting.
-* Every slice: the tree selection round trip, section by section, through
-  Everything, organization, site, group and device, using the matrix as the
-  expected URLs.
+* S1: Patching at Everything, organization, site, group, device (the URL, the
+  tree stays on Patching, the device node highlighted, the page shows only that
+  device; group tabs and the site note); the old `?deviceId=` redirect.
+* S2: visible "Show install command" name; disabled button and reason for an
+  old token; invite button text with and without a mail server.
+* S3: server integration tests for `GET /device-groups/{id}` (allowed,
+  denied, missing); browser: group row opens `/groups/:id`, the tree shows
+  the Organizations section, the old URL redirects, rename and delete, the
+  verbose-logging switch.
+* S4: organization and site tab lists and order with and without each
+  permission, `?tab=` round trip, at organization and site level.
+* S5 to S8: for each, the tab at organization and site level (group where it
+  applies: none), hidden without its permission, each moved feature working
+  from its new home, each old URL redirecting. S6 also tests that
+  `?tab=users&organizationId=` lands on the People tab.
+* Scripts, Jobs and Alerts (one spec in S1's sweep and again in S9): select
+  an organization, site, group and device in each and check the URL and that
+  only that scope's rows show.
 
 ## How later modules slot in
 
@@ -304,9 +338,9 @@ change.
 ## Owner decisions
 
 None are blocking. Two calls were made in review that the owner may overturn:
-policies move wholly to the organization page (the Alerts section no longer
-has a Policies tab), and Settings > Users stays as the all-people list beside
-the organization's People tab.
+policies move to the level they belong to (the Alerts section no longer has a
+Policies tab), and Settings > Users stays as the all-people list beside the
+organization's People tab.
 
 ## References
 
