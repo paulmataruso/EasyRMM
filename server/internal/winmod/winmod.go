@@ -7,6 +7,8 @@ package winmod
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,6 +106,18 @@ type Action struct {
 	Decode func(json.RawMessage) (json.RawMessage, error)
 	// CountField names an array in the data whose length the audit records.
 	CountField string
+	// Freshness, when above zero, makes the action a snapshot read: a
+	// successful result is stored in windows_module_snapshots and is fresh
+	// for this long (ADR-0073 section 5: 5 minutes by default).
+	Freshness time.Duration
+	// Schedule, when above zero, has the server read the action on every
+	// computer that has the module's role, at most this often (hourly at
+	// least), while the module is on and the organization is allowed. Only
+	// for a read with no required parameters that an alert needs.
+	Schedule time.Duration
+	// Changes says a successful run changes the module's state, so the
+	// module's snapshots of the device are dropped.
+	Changes bool
 }
 
 // Shell returns the action's shell.
@@ -162,6 +176,10 @@ func (a Action) check() error {
 		return errors.New("a sensitive action names the permission that opens its result")
 	case a.Destructive && a.Subject == "":
 		return errors.New("a destructive action names its confirmation subject")
+	case a.Schedule > 0 && (a.Freshness <= 0 || a.Schedule < time.Hour || a.Destructive || a.Credential || a.Changes):
+		return errors.New("a scheduled action is a snapshot read, run at most hourly")
+	case a.Freshness > 0 && (a.Destructive || a.Credential || a.Changes):
+		return errors.New("a snapshot read does not change anything")
 	}
 	if _, ok := modules.Lookup(a.Module); !ok {
 		return errors.New("unknown module")
@@ -180,6 +198,23 @@ func (a Action) check() error {
 		return errors.New("the confirmation subject is not a parameter")
 	}
 	return nil
+}
+
+// ParamsKey is the key a snapshot is stored under for an action's
+// parameters: empty for none, otherwise the SHA-256 of the canonical form.
+func ParamsKey(params []byte) (string, error) {
+	if len(bytes.TrimSpace(params)) == 0 || string(bytes.TrimSpace(params)) == "null" {
+		return "", nil
+	}
+	canon, err := agentproto.CanonicalParams(params)
+	if err != nil {
+		return "", err
+	}
+	if string(canon) == "{}" {
+		return "", nil
+	}
+	sum := sha256.Sum256(canon)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // Lookup finds an action by its name.

@@ -47,6 +47,9 @@ func Actions() []winmod.Action {
 		Module: modules.Defender, Name: "defender.status", Label: "Read Defender's state", Version: 1,
 		Script: statusScript, ScriptSHA256: StatusSHA256,
 		Permission: rbac.PermDefenderView, Timeout: 60, Keep: time.Hour,
+		// The alerts of alerts.go read this snapshot, which the server
+		// refreshes hourly on every computer where the module is on.
+		Freshness: 5 * time.Minute, Schedule: time.Hour,
 		Decode: winmod.Typed[Status](),
 	}}
 }

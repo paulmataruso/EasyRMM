@@ -51,6 +51,8 @@ type Service struct {
 	// mesh says whether EasyRMM's control session to MeshCentral is open and
 	// since when; nil without remote access (ADR-0069).
 	mesh MeshLink
+	// modGate guards the Windows module kinds (UseModules).
+	modGate ModuleGate
 }
 
 // MeshLink tells whether EasyRMM's connection to MeshCentral is up, and

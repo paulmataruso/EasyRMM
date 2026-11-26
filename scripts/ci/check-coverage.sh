@@ -50,6 +50,8 @@ floors=(
   "server/internal/jobs                    85"
   # The Windows management modules' catalog, parameter checks and results (ADR-0073).
   "server/internal/winmod                  90"
+  # Snapshots of the Windows modules: reads, scheduled reads, retention (ADR-0073).
+  "server/internal/modsnap                 75"
   # Windows hardening (ADR-0054): the ownership reader's package and the
   # related-controls tables, their generator and extraction.
   "internal/winpolicy                      95"

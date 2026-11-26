@@ -553,3 +553,46 @@ func TestWinmodEndToEndWithTheAgent(t *testing.T) {
 		t.Error("raw output was kept for typed results")
 	}
 }
+
+// A successful defender.status result is kept as the device's snapshot,
+// replacing the one before; a failed read leaves it alone (ADR-0073 slice 6).
+func TestWinmodResultBecomesTheSnapshot(t *testing.T) {
+	f := winmodFixture(t)
+	tech := f.user("tech@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme, SiteID: f.hq})
+	dev := f.winmodDevice("HQ-WIN", "windows")
+	finish := func(stdout string) {
+		t.Helper()
+		run, err := f.svc.RunWinmod(f.ctx, tech, WinmodInput{DeviceID: dev, Action: "defender.status"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.svc.Poll(f.ctx, dev, []string{agentproto.CapJobParams}); err != nil {
+			t.Fatal(err)
+		}
+		if st, err := f.svc.Start(f.ctx, dev, run.RunID); err != nil || !st.Proceed {
+			t.Fatal(st, err)
+		}
+		if err := f.svc.Result(f.ctx, dev, run.RunID, agentproto.ResultRequest{Status: StatusSucceeded, ExitCode: ptr(0), Stdout: stdout}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap := `SELECT coalesce((SELECT data->>'signatureVersion' FROM windows_module_snapshots WHERE device_id = $1 AND action = 'defender.status' AND params_hash = ''), '')`
+	finish(statusResult)
+	if got := f.str(snap, dev); got != "1.421.1.0" {
+		t.Fatalf("snapshot signature version %q", got)
+	}
+	if n := f.count(`SELECT count(*) FROM windows_module_snapshots WHERE device_id = $1 AND module = 'defender' AND NOT sensitive`, dev); n != 1 {
+		t.Errorf("%d snapshots", n)
+	}
+	finish(strings.Replace(statusResult, "1.421.1.0", "1.421.2.0", 1))
+	if got := f.str(snap, dev); got != "1.421.2.0" {
+		t.Errorf("the snapshot was not replaced: %q", got)
+	}
+	if n := f.count(`SELECT count(*) FROM windows_module_snapshots WHERE device_id = $1`, dev); n != 1 {
+		t.Errorf("%d snapshots after a second read", n)
+	}
+	finish(`EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"module_missing","message":"no Defender"}}` + "\n")
+	if got := f.str(snap, dev); got != "1.421.2.0" {
+		t.Errorf("a failed read changed the snapshot: %q", got)
+	}
+}

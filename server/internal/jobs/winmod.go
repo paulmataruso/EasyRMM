@@ -261,9 +261,10 @@ func (s *Service) recordWinmod(ctx context.Context, tx pgx.Tx, device, run uuid.
 		rec       []byte
 		org, site uuid.UUID
 		jobID     uuid.UUID
+		params    []byte
 	)
-	if err := tx.QueryRow(ctx, `SELECT j.kind, coalesce(j.winmod, 'null'::jsonb), r.organization_id, r.site_id, j.id
-		FROM job_runs r JOIN jobs j ON j.id = r.job_id WHERE r.id = $1`, run).Scan(&kind, &rec, &org, &site, &jobID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT j.kind, coalesce(j.winmod, 'null'::jsonb), r.organization_id, r.site_id, j.id, coalesce(j.params, 'null'::jsonb)
+		FROM job_runs r JOIN jobs j ON j.id = r.job_id WHERE r.id = $1`, run).Scan(&kind, &rec, &org, &site, &jobID, &params); err != nil {
 		return false, err
 	}
 	if kind != KindWinmod {
@@ -329,6 +330,9 @@ func (s *Service) recordWinmod(ctx context.Context, tx pgx.Tx, device, run uuid.
 		run, org, site, device, m.Module, m.Action, m.Version, res.OK, a.Sensitive, nullJSON(data), nullJSON(errJSON)); err != nil {
 		return true, err
 	}
+	if err := keepSnapshot(ctx, tx, a, device, params, res, s.now()); err != nil {
+		return true, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE job_runs SET `+scrubOutput+` WHERE id = $1`, run); err != nil {
 		return true, err
 	}
@@ -339,6 +343,33 @@ func (s *Service) recordWinmod(ctx context.Context, tx pgx.Tx, device, run uuid.
 		}
 	}
 	return true, audited(res.OK, res.Count, "")
+}
+
+// keepSnapshot stores a successful snapshot read's typed result for its
+// device, action and parameters, replacing an older one; a successful action
+// that changes the module's state drops the module's snapshots of the device
+// instead (ADR-0073 section 5). A failed run changes nothing.
+func keepSnapshot(ctx context.Context, tx pgx.Tx, a winmod.Action, device uuid.UUID, params []byte, res *winmod.Result, now time.Time) error {
+	if !res.OK {
+		return nil
+	}
+	if a.Changes {
+		_, err := tx.Exec(ctx, `DELETE FROM windows_module_snapshots WHERE device_id = $1 AND module = $2`, device, string(a.Module))
+		return err
+	}
+	if a.Freshness <= 0 {
+		return nil
+	}
+	key, err := winmod.ParamsKey(params)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO windows_module_snapshots (device_id, module, action, params_hash, taken_at, sensitive, data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (device_id, action, params_hash) DO UPDATE SET taken_at = excluded.taken_at, sensitive = excluded.sensitive, data = excluded.data
+		WHERE windows_module_snapshots.taken_at <= excluded.taken_at`,
+		device, string(a.Module), a.Name, key, now, a.Sensitive, []byte(res.Data))
+	return err
 }
 
 // WinmodResult is a run's typed result for a person.

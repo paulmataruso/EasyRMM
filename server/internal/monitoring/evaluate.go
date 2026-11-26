@@ -112,6 +112,12 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 		opened, resolved, err = s.evaluateRemote(ctx, tx, now, floor)
 		r.Opened += opened
 		r.Resolved += resolved
+		if err != nil {
+			return err
+		}
+		opened, resolved, err = s.evaluateModules(ctx, tx, now)
+		r.Opened += opened
+		r.Resolved += resolved
 		return err
 	})
 	return r, err

@@ -210,6 +210,13 @@ func (s *Service) change(ctx context.Context, c access.Caller, sc scope, m Modul
 		if err := enabledIn(ctx, tx, sc.org, sc.site, m, &after); err != nil {
 			return err
 		}
+		if after && !before {
+			for _, h := range s.enabled {
+				if err := h(ctx, tx, sc.org, m); err != nil {
+					return err
+				}
+			}
+		}
 		target, targetType := sc.org, "organization"
 		if sc.site != uuid.Nil {
 			target, targetType = sc.site, "site"
