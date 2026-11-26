@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/defenderlog"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/docs"
@@ -44,6 +45,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/defenderapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/docsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
@@ -131,6 +133,8 @@ type Deps struct {
 	Monitoring *monitoring.Service
 	// ModSnap keeps the Windows modules' snapshots (ADR-0073).
 	ModSnap *modsnap.Service
+	// DefenderLog stores the Defender events agents send (ADR-0074).
+	DefenderLog *defenderlog.Store
 	// Recovery repairs agents that stopped working (ADR-0069).
 	Recovery *recovery.Service
 	// Reports reads devices, software and alerts into tables (ADR-0029).
@@ -266,6 +270,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Modules.OnRoleRemoved(monitoring.RoleRemovedHook)
 	d.Modules.OnEnabled(monitoring.EnsureDefaults)
 	d.Monitoring.UseModules(d.Modules)
+	d.DefenderLog = defenderlog.New(db, d.Modules, log)
+	d.Agents.SetDefenderLog(d.DefenderLog)
 	d.Recovery = recovery.New(db, auditLog, cfg.Mesh.Enabled, log)
 	if d.Mesh != nil {
 		// Nothing about remote access is judged while EasyRMM cannot see
@@ -593,6 +599,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	hardwareapi.New(d.Hardware).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
+	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
@@ -755,7 +762,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	} else {
 		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
 	}
-	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge, deps.AgentLogs.Purge)
+	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge, deps.AgentLogs.Purge, deps.DefenderLog.Cleanup)
 	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })

@@ -10,9 +10,8 @@ import (
 )
 
 // The alert kinds of ADR-0074 section 7 that need only defender.status's
-// data. The kinds that come from the Defender event log (threats, failed
-// remediation, update failures, configuration changes, tamper blocks,
-// unhealthy, out of support) arrive with the events slice.
+// data. The kinds that come from the Defender event log (events.go) read the
+// derived snapshot the server builds from defender_events.
 const (
 	KindProtectionOff = "defender_protection_off"
 	KindSignaturesOld = "defender_signatures_old"
@@ -35,7 +34,7 @@ func AlertKinds() monitoring.ModuleAlerts {
 	days := monitoring.ThresholdSpec{Used: true, Min: 1, Max: 100, Unit: "days"}
 	return monitoring.ModuleAlerts{
 		Module: modules.Defender,
-		Kinds: []monitoring.ModuleKind{{
+		Kinds: append(EventKinds(), []monitoring.ModuleKind{{
 			Name: KindProtectionOff, Label: "Defender real-time protection off", Module: modules.Defender, Action: "defender.status",
 			Grace: true,
 			Eval: func(data json.RawMessage, _ *int) (monitoring.Verdict, error) {
@@ -97,10 +96,10 @@ func AlertKinds() monitoring.ModuleAlerts {
 				age := *st.QuickScanAgeDays
 				return monitoring.Verdict{Holds: age >= *threshold, Value: float64(age), Detail: fmt.Sprintf("The last quick scan was %d days ago.", age)}, nil
 			},
-		}},
-		// Three of ADR-0074's defaults wait for their event kinds; these are
-		// the ones defender.status serves. The age rules start off.
-		Defaults: []monitoring.DefaultPolicy{
+		}}...),
+		// The defaults of the status kinds; the event kinds' are in
+		// EventDefaults. The age rules start off.
+		Defaults: append(EventDefaults(), []monitoring.DefaultPolicy{
 			{Key: "protection_off", Name: "Defender: real-time protection off", Kind: KindProtectionOff, Minutes: 5, Severity: monitoring.SeverityCritical, Enabled: true,
 				Description: "Defender's real-time protection has been off for the grace period."},
 			{Key: "tamper_off", Name: "Defender: Tamper Protection off", Kind: KindTamperOff, Severity: monitoring.SeverityWarning, Enabled: true,
@@ -109,7 +108,7 @@ func AlertKinds() monitoring.ModuleAlerts {
 				Description: "Defender's signatures are at least 7 days old. Off by default: computers that are switched off for a week would alert."},
 			{Key: "scan_overdue_7", Name: "Defender: no recent scan", Kind: KindScanOverdue, Threshold: intp(7), Severity: monitoring.SeverityWarning,
 				Description: "No quick scan has run for 7 days. Off by default, like the signature age rule."},
-		},
+		}...),
 	}
 }
 

@@ -5,6 +5,7 @@ package app_test
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -119,4 +120,77 @@ func TestDefenderActionsAPI(t *testing.T) {
 	owner.expect(http.StatusAccepted, "POST", path("exclusion_remove"), map[string]any{"params": rm, "confirm": `defender.exclusion_remove:D:\LineOfBusiness`}, nil)
 	tech.expect(http.StatusUnprocessableEntity, "POST", path("threats_remove"), body(nil), nil)
 	tech.expect(http.StatusAccepted, "POST", path("threats_remove"), map[string]any{"confirm": "defender.threats_remove:"}, nil)
+}
+
+// TestDefenderEventsThroughTheHeartbeat sends Defender events in the agent's
+// heartbeat: nothing is asked of the agent until the role is reported, then
+// the answer says Events, the batch is stored and acknowledged (a repeat adds
+// nothing), and the console's Events read shows it to the people who may see.
+func TestDefenderEventsThroughTheHeartbeat(t *testing.T) {
+	h := newHarness(t, false)
+	admin, _ := setUp(t, h)
+	acme := orgID(t, admin, "Acme")
+	var hq idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
+	var token struct {
+		Secret string `json:"secret"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/sites/"+hq.ID+"/enrollment-tokens", map[string]any{"name": "Windows", "expiresInDays": 1}, &token)
+	ctx := context.Background()
+	ac := h.agentClient()
+	key := newKey(t)
+	win := facts("ws-03")
+	win.Platform, win.OS = "windows", "Windows Server 2025 Datacenter"
+	enr, err := ac.Enroll(ctx, token.Secret, key.Public().(ed25519.PublicKey), win)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac.SetIdentity(enr.DeviceID, key)
+	device := enr.DeviceID
+	invite(t, h, admin, "tess@acme.example", []map[string]any{{"role": "technician", "organizationId": acme}})
+	tech := h.client()
+	tech.signIn("tess@acme.example", "a long and unusual passphrase", "")
+
+	batch := &agentproto.DefenderLogBatch{Epoch: "e1", Through: 9, Events: []agentproto.DefenderLogEvent{{
+		RecordID: 9, EventID: 1116, At: time.Now().UTC(), Severity: "Severe", ThreatID: "T1", ThreatName: "Virus:DOS/EICAR_Test_File",
+		Sensitive: map[string]string{"path": `C:\Users\alice\Downloads\eicar.txt`},
+	}}}
+	f := windowsFacts("ws-03", "1.2.3-test")
+	resp, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: f, DefenderLog: batch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Defender == nil || resp.Defender.Events || resp.Defender.EventsAck != nil {
+		t.Fatalf("before the role is reported: %+v", resp.Defender)
+	}
+	// The role is reported: the next answer asks for events and acknowledges what came.
+	f.Roles = []agentproto.Role{{Name: "defender", State: "present"}}
+	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: f}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		resp, err = ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: f, DefenderLog: batch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Defender == nil || !resp.Defender.Events || resp.Defender.EventsAck == nil || resp.Defender.EventsAck.RecordID != 9 || resp.Defender.EventsAck.Epoch != "e1" {
+			t.Fatalf("after the role is reported: %+v", resp.Defender)
+		}
+	}
+	var list struct {
+		Items []struct {
+			EventID    int             `json:"eventId"`
+			ThreatName string          `json:"threatName"`
+			Sensitive  json.RawMessage `json:"sensitive"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+device+"/defender/events", nil, &list)
+	if len(list.Items) != 1 || list.Items[0].EventID != 1116 || !strings.Contains(string(list.Items[0].Sensitive), "alice") {
+		t.Errorf("admin: %+v", list.Items)
+	}
+	list.Items = nil
+	tech.expect(http.StatusOK, "GET", "/api/v1/devices/"+device+"/defender/events", nil, &list)
+	if len(list.Items) != 1 || len(list.Items[0].Sensitive) != 0 {
+		t.Errorf("technician: %+v", list.Items)
+	}
 }

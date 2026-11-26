@@ -112,3 +112,43 @@ func (s *Service) storeDefender(ctx context.Context, tx pgx.Tx, d *Device, hostn
 	}
 	return nil
 }
+
+// DefenderLog stores a heartbeat's Defender events and says whether the agent
+// should read its log (defenderlog.Store). It runs in the heartbeat's
+// transaction.
+type DefenderLog interface {
+	// Enabled is whether the module is on for the device and its role is
+	// there.
+	Enabled(ctx context.Context, tx pgx.Tx, device, org, site uuid.UUID) bool
+	Ingest(ctx context.Context, tx pgx.Tx, device, org, site uuid.UUID, b *agentproto.DefenderLogBatch) (*agentproto.DefenderLogAck, error)
+}
+
+// SetDefenderLog has heartbeats' Defender events stored in l (ADR-0074).
+func (s *Service) SetDefenderLog(l DefenderLog) { s.dlog = l }
+
+// storeDefenderLog stores a batch and returns the policy answer's event
+// fields: whether the agent is to read its log, and the acknowledgement. A
+// failure never fails the heartbeat; the events are sent again.
+func (s *Service) storeDefenderLog(ctx context.Context, tx pgx.Tx, d *Device, b *agentproto.DefenderLogBatch) (bool, *agentproto.DefenderLogAck) {
+	if s.dlog == nil {
+		return false, nil
+	}
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return false, nil
+	}
+	if !s.dlog.Enabled(ctx, sp, d.ID, d.OrganizationID, d.SiteID) {
+		_ = sp.Rollback(ctx)
+		return false, nil
+	}
+	ack, err := s.dlog.Ingest(ctx, sp, d.ID, d.OrganizationID, d.SiteID, b)
+	if err != nil {
+		s.log.Warn("agents: storing Defender events failed", "error", err, "device_id", d.ID)
+		_ = sp.Rollback(ctx)
+		return true, nil
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return true, nil
+	}
+	return true, ack
+}
