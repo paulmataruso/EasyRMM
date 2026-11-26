@@ -67,6 +67,18 @@ Check 'group_list shows Domain Admins as protected and Sales as not' ($r.Result.
 $r = Invoke-Action 'group_members' @{ id = (Sid 1300) }
 Check 'group_members' ($r.Result.ok -and $r.Result.data.total -eq 1 -and $r.Result.data.items[0].kind -eq 'user') $r.Text
 
+$r = Invoke-Action 'computer_list' @{}
+Check 'computer_list marks the controller' ($r.Result.ok -and $r.Result.data.items.Count -eq 2 -and (@($r.Result.data.items | Where-Object { $_.sam -eq 'DC1$' -and $_.controller }).Count -eq 1)) $r.Text
+$r = Invoke-Action 'privileged_members' @{}
+Check 'privileged_members lists the groups with their members and tier' ($r.Result.ok -and (@($r.Result.data.groups | Where-Object { $_.name -eq 'Domain Admins' -and $_.tier -eq 1 -and $_.total -eq 2 }).Count -eq 1) -and $null -ne $r.Result.data.groups[0].changedAt) $r.Text
+$r = Invoke-Action 'health_read' @{}
+Check 'health_read counts the locked-out accounts' ($r.Result.ok -and $r.Result.data.lockedOutCount -eq 1) $r.Text
+$r = Invoke-Action 'computer_disable' @{ id = (Sid 3001) }
+Check 'computer_disable disables an ordinary computer' ($r.Result.ok -and $r.Calls.Count -eq 1) $r.Text
+$r = Invoke-Action 'computer_disable' @{ id = (Sid 3002) }
+Expect-Error 'a domain controller is never disabled' $r 'protected_target'
+Check 'and nothing changed' ($r.Calls.Count -eq 0)
+
 # --- the help desk ---
 $r = Invoke-Action 'user_disable' @{ id = (Sid 1104) }
 Check 'disable an ordinary user' ($r.Result.ok -and ($r.Calls -join '|') -like 'Disable-ADAccount ann*Server=dc1.corp.test*') ($r.Calls -join '|' + $r.Text)

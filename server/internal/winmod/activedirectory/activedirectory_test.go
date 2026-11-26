@@ -343,3 +343,23 @@ func TestLockoutAndPrivilegedAlerts(t *testing.T) {
 		t.Error("garbage is unknown")
 	}
 }
+
+// Tier 2 changes ask for the typed confirmation (not a step-up); tier 3 asks for both.
+func TestTiers(t *testing.T) {
+	c := catalog(t)
+	for _, n := range []string{"user_set", "user_move", "group_create", "group_remove_member"} {
+		a, _ := c.Lookup("active_directory." + n)
+		if !a.Confirm || a.Subject == "" || a.NeedsStepUp() {
+			t.Errorf("%s: tier 2 is a confirmation without a step-up", n)
+		}
+	}
+	for _, n := range []string{"user_enable", "user_disable", "user_reset_password", "user_create", "user_delete", "group_add_member", "group_delete", "computer_disable"} {
+		a, _ := c.Lookup("active_directory." + n)
+		if !a.NeedsStepUp() || a.Subject == "" {
+			t.Errorf("%s: tier 3 asks for a step-up and a typed confirmation", n)
+		}
+	}
+	if a, _ := c.Lookup("active_directory.privileged_members"); !a.Sensitive || a.Schedule == 0 {
+		t.Error("privileged_members is sensitive and read on a schedule")
+	}
+}

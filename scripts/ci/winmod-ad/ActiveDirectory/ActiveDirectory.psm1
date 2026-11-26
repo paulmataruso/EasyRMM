@@ -41,7 +41,7 @@ $script:Users = @(
 function New-Group($name, $sam, $sid, $members) {
     [pscustomobject]@{ Name = $name; SamAccountName = $sam; SID = (New-Sid $sid); objectSid = (New-Sid $sid); objectClass = 'group'
         DistinguishedName = ('CN=' + $name + ',OU=Staff,' + $script:DomainDn); member = @($members); GroupScope = 'Global'; GroupCategory = 'Security'
-        Description = 'd'; ProtectedFromAccidentalDeletion = $false }
+        Description = 'd'; ProtectedFromAccidentalDeletion = $false; whenChanged = [datetime]'2026-11-26T05:00:00Z' }
 }
 $userDn = @{}
 foreach ($u in $script:Users) { $userDn[$u.SamAccountName] = $u.DistinguishedName }
@@ -54,6 +54,10 @@ $script:Groups = @(
     (New-Group 'Sales' 'Sales' ($script:DomainSid + '-1300') @($userDn['ann']))
 )
 
+$script:Computers = @(
+    (New-Entry 'PC1' 'PC1$' 3001 'computer' @{ DNSHostName = 'pc1.corp.test'; OperatingSystem = 'Windows 11'; primaryGroupID = 515 })
+    (New-Entry 'DC1' 'DC1$' 3002 'computer' @{ DNSHostName = 'dc1.corp.test'; OperatingSystem = 'Windows Server 2025'; primaryGroupID = 516 })
+)
 function Write-Log([string]$Line) {
     if ($env:FAKEAD_LOG) { Add-Content -LiteralPath $env:FAKEAD_LOG -Value $Line }
 }
@@ -69,6 +73,8 @@ function Test-Fail([string]$Cmdlet) {
     }
 }
 function Find-Entry($Identity) {
+    if ($Identity -isnot [string]) { return $Identity }
+    foreach ($e in $script:Computers) { if ($e.SID.Value -eq $Identity) { return $e } }
     if ($Identity -isnot [string]) { return $Identity }
     foreach ($e in @($script:Users) + @($script:Groups)) {
         if ($e.SID.Value -eq $Identity -or $e.DistinguishedName -eq $Identity -or $e.SamAccountName -eq $Identity) { return $e }
@@ -131,6 +137,12 @@ function Get-ADObject {
     if ($Identity -like 'OU=*') { return [pscustomobject]@{ Name = 'ou'; DistinguishedName = $Identity; objectClass = 'organizationalUnit' } }
     return Find-Entry $Identity
 }
+function Get-ADComputer {
+    [CmdletBinding()] param($Identity, $Properties, $Server, $Credential, $SearchBase, $SearchScope, $Filter, $ResultSetSize)
+    if ($PSBoundParameters.ContainsKey('Filter')) { return @($script:Computers) }
+    return Find-Entry $Identity
+}
+function Search-ADAccount { [CmdletBinding()] param([switch]$LockedOut, [switch]$UsersOnly, $Server, $Credential) @($script:Users | Where-Object { $_.LockedOut }) }
 function Get-ADUser {
     [CmdletBinding()] param($Identity, $Properties, $Server, $Credential, $SearchBase, $SearchScope, $Filter, $ResultSetSize)
     if ($PSBoundParameters.ContainsKey('Filter')) { return @($script:Users) }

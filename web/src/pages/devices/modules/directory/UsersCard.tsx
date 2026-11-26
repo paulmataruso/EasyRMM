@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { Lock, Search } from "lucide-react";
 import { useAuth } from "../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, InlineError, Input, Select, TableWrap } from "../../../../components/ui";
+import { EditUserDialog, CreateUserDialog } from "./UserDialogs";
 import { UserActionDialog, type UserAction } from "./UserActionDialog";
 import { ResetPasswordDialog } from "./ResetPasswordDialog";
 import type { DirectoryStatus, UserPage, UserRow } from "./types";
@@ -16,7 +17,7 @@ const STATES = [
 ] as const;
 
 /** The users of the domain, a page at a time; the help-desk actions are on the rows that are not protected. */
-export function UsersCard({ deviceId, status }: { deviceId: string; status: DirectoryStatus }) {
+export function UsersCard({ deviceId, status, writable = true }: { deviceId: string; status: DirectoryStatus; writable?: boolean }) {
   const { can } = useAuth();
   const run = useWinmod(deviceId);
   const [rows, setRows] = useState<UserRow[] | null>(null);
@@ -28,6 +29,8 @@ export function UsersCard({ deviceId, status }: { deviceId: string; status: Dire
   const [problem, setProblem] = useState<string | null>(null);
   const [acting, setActing] = useState<{ user: UserRow; action: UserAction } | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
+  const [editing, setEditing] = useState<UserRow | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(
     async (after?: string) => {
@@ -56,8 +59,8 @@ export function UsersCard({ deviceId, status }: { deviceId: string; status: Dire
     [run, match, state],
   );
 
-  const help = can("ad.helpdesk") && !status.readOnly;
-  const manage = can("ad.manage") && !status.readOnly;
+  const help = can("ad.helpdesk") && !status.readOnly && writable;
+  const manage = can("ad.manage") && !status.readOnly && writable;
 
   return (
     <Card title="Users">
@@ -86,6 +89,11 @@ export function UsersCard({ deviceId, status }: { deviceId: string; status: Dire
         <Button type="submit" size="sm" icon={<Search className="size-3.5" aria-hidden />} loading={busy}>
           {rows ? "Search" : "List users"}
         </Button>
+        {manage && (
+          <Button size="sm" onClick={() => setCreating(true)}>
+            Create user
+          </Button>
+        )}
       </form>
       <InlineError error={error} />
       {problem && <Alert tone="warn">{problem}</Alert>}
@@ -134,6 +142,11 @@ export function UsersCard({ deviceId, status }: { deviceId: string; status: Dire
                           {u.enabled ? "Disable" : "Enable"}
                         </Button>
                         {manage && (
+                          <Button size="sm" onClick={() => setEditing(u)}>
+                            Edit
+                          </Button>
+                        )}
+                        {manage && (
                           <Button size="sm" variant="danger-ghost" onClick={() => setActing({ user: u, action: "user_delete" })}>
                             Delete
                           </Button>
@@ -161,6 +174,8 @@ export function UsersCard({ deviceId, status }: { deviceId: string; status: Dire
           if (changed) void load();
         }}
       />
+      <CreateUserDialog deviceId={deviceId} minLength={status.passwordPolicy.minLength} open={creating} onClose={(c) => { setCreating(false); if (c) void load(); }} />
+      <EditUserDialog deviceId={deviceId} user={editing} canMove={manage} onClose={(c) => { setEditing(null); if (c) void load(); }} />
       <ResetPasswordDialog
         deviceId={deviceId}
         minLength={status.passwordPolicy.minLength}

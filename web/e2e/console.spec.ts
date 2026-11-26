@@ -1311,8 +1311,8 @@ test("a domain controller's Directory tab reads the domain, and a password reset
     next: null, scanned: 2, domainSid: "S-1-5-21-1-2-3",
   };
 
-  await page.goto(`/devices/${agent.deviceId}?tab=directory`);
-  await expect(page.getByRole("tab", { name: "Directory" })).toBeVisible();
+  await page.goto(`/devices/${agent.deviceId}?tab=roles`);
+  await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
   await page.getByRole("button", { name: "Read now" }).click();
   await answer("status", status);
   await expect(page.getByText("Directory health")).toBeVisible();

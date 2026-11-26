@@ -1,12 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Lock } from "lucide-react";
 import { Dialog } from "../../../../components/Dialog";
+import { AddMemberDialog, CreateGroupDialog, DeleteGroupDialog, RemoveMemberDialog } from "./GroupDialogs";
 import { Alert, Badge, Button, Card, InlineError, TableWrap } from "../../../../components/ui";
-import type { GroupPage, GroupRow, MemberPage } from "./types";
+import type { GroupMember, GroupPage, GroupRow, MemberPage } from "./types";
 import { useWinmod } from "./useWinmod";
 
 /** The groups of the domain, and who is directly in each. Reading only: membership changes are not offered here. */
-export function GroupsCard({ deviceId }: { deviceId: string }) {
+export function GroupsCard({ deviceId, canManage, recycleBin, minLength }: { deviceId: string; canManage: boolean; recycleBin: boolean; minLength?: number }) {
+  void minLength;
   const run = useWinmod(deviceId);
   const [rows, setRows] = useState<GroupRow[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
@@ -14,6 +16,8 @@ export function GroupsCard({ deviceId }: { deviceId: string }) {
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [open, setOpen] = useState<GroupRow | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<GroupRow | null>(null);
 
   const load = useCallback(
     async (after?: string) => {
@@ -40,11 +44,18 @@ export function GroupsCard({ deviceId }: { deviceId: string }) {
 
   return (
     <Card title="Groups">
-      {!rows && (
-        <Button size="sm" onClick={() => void load()} loading={busy}>
-          List groups
-        </Button>
-      )}
+      <div className="mb-3 flex gap-2">
+        {!rows && (
+          <Button size="sm" onClick={() => void load()} loading={busy}>
+            List groups
+          </Button>
+        )}
+        {canManage && (
+          <Button size="sm" onClick={() => setCreating(true)}>
+            Create group
+          </Button>
+        )}
+      </div>
       <InlineError error={error} />
       {problem && <Alert tone="warn">{problem}</Alert>}
       {rows && (
@@ -76,9 +87,16 @@ export function GroupsCard({ deviceId }: { deviceId: string }) {
                   </td>
                   <td className="text-muted">{g.description}</td>
                   <td className="text-right">
-                    <Button size="sm" onClick={() => setOpen(g)}>
-                      Members
-                    </Button>
+                    <span className="inline-flex gap-1">
+                      <Button size="sm" onClick={() => setOpen(g)}>
+                        Members
+                      </Button>
+                      {canManage && g.protection !== "protected" && (
+                        <Button size="sm" variant="danger-ghost" onClick={() => setDeleting(g)}>
+                          Delete
+                        </Button>
+                      )}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -91,33 +109,46 @@ export function GroupsCard({ deviceId }: { deviceId: string }) {
           Show more
         </Button>
       )}
-      <MembersDialog deviceId={deviceId} group={open} onClose={() => setOpen(null)} />
+      <MembersDialog deviceId={deviceId} group={open} canManage={canManage} onClose={() => setOpen(null)} />
+      <CreateGroupDialog deviceId={deviceId} open={creating} onClose={(c) => { setCreating(false); if (c) void load(); }} />
+      <DeleteGroupDialog deviceId={deviceId} group={deleting} recycleBin={recycleBin} onClose={(c) => { setDeleting(null); if (c) { setRows(null); void load(); } }} />
     </Card>
   );
 }
 
-function MembersDialog({ deviceId, group, onClose }: { deviceId: string; group: GroupRow | null; onClose: () => void }) {
+function MembersDialog({ deviceId, group, canManage, onClose }: { deviceId: string; group: GroupRow | null; canManage: boolean; onClose: () => void }) {
   const run = useWinmod(deviceId);
   const [page, setPage] = useState<MemberPage | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  if (group && loadedFor !== group.id) {
-    // Read the members when the dialog opens for a group.
-    setLoadedFor(group.id);
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<GroupMember | null>(null);
+  const [tick, setTick] = useState(0);
+  const id = group?.id;
+  useEffect(() => {
+    if (!id) return;
+    let live = true;
     setPage(null);
     setError(null);
     setProblem(null);
-    void run<MemberPage>("group_members", { id: group.id, pageSize: 100 })
-      .then((r) => (r.ok && r.data ? setPage(r.data) : setProblem(r.failure?.message ?? "The controller did not answer.")))
-      .catch(setError);
-  }
-  if (!group && loadedFor !== null) setLoadedFor(null);
+    run<MemberPage>("group_members", { id, pageSize: 100 })
+      .then((r) => live && (r.ok && r.data ? setPage(r.data) : setProblem(r.failure?.message ?? "The controller did not answer.")))
+      .catch((e) => live && setError(e));
+    return () => {
+      live = false;
+    };
+  }, [id, run, tick]);
+  const editable = canManage && group !== null && group.protection !== "protected";
   return (
     <Dialog open={group !== null} onClose={onClose} title={group ? `Members of ${group.name}` : ""} footer={<Button onClick={onClose}>Close</Button>}>
       <InlineError error={error} />
       {problem && <Alert tone="warn">{problem}</Alert>}
       {!page && !problem && !error && <p className="text-sm text-muted">Reading…</p>}
+      {group && editable && (
+        <Button className="mb-2" size="sm" onClick={() => setAdding(true)}>
+          Add member
+        </Button>
+      )}
       {page && (
         <>
           <p className="mb-2 text-xs text-muted">
@@ -126,13 +157,22 @@ function MembersDialog({ deviceId, group, onClose }: { deviceId: string; group: 
           </p>
           <ul className="flex flex-col gap-1 text-sm">
             {page.items.map((m) => (
-              <li key={m.id}>
-                {m.name} <span className="text-xs text-muted">({m.kind})</span>
+              <li key={m.id} className="flex items-center gap-2">
+                <span>
+                  {m.name} <span className="text-xs text-muted">({m.kind})</span>
+                </span>
+                {editable && (
+                  <Button size="sm" variant="danger-ghost" onClick={() => setRemoving(m)}>
+                    Remove
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
         </>
       )}
+      <AddMemberDialog deviceId={deviceId} group={adding ? group : null} onClose={(c) => { setAdding(false); if (c) setTick((t) => t + 1); }} />
+      {group && <RemoveMemberDialog deviceId={deviceId} group={group} member={removing} onClose={(c) => { setRemoving(null); if (c) setTick((t) => t + 1); }} />}
     </Dialog>
   );
 }

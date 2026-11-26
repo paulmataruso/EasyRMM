@@ -112,7 +112,7 @@ function Find-Group([string]$fn_Sid, [bool]$fn_ForestWide, [bool]$fn_Required, [
     if ($fn_c.Common.ContainsKey('Credential')) { $fn_common['Credential'] = $fn_c.Common['Credential'] }
     if ($fn_ForestWide -and $fn_c.ForestSid -ne $fn_c.DomainSid) { $fn_common['Server'] = Join-Text $fn_c.Server ':3268' }
     try {
-        return Get-ADGroup -Identity $fn_Sid -Properties member, whenChanged @common
+        return Get-ADGroup -Identity $fn_Sid -Properties member, whenChanged @fn_common
     } catch {
         if ($_.Exception.GetType().Name -eq 'ADIdentityNotFoundException' -and -not $fn_Required) { return $null }
         throw
@@ -193,17 +193,17 @@ function Assert-Writable($fn_o, [hashtable]$fn_Set, [hashtable]$fn_c, [string]$f
 }
 function Get-TargetUser([string]$fn_Id, [hashtable]$fn_c) {
     $fn_common = $fn_c.Common
-    return Get-ADUser -Identity $fn_Id -Properties SamAccountName, UserPrincipalName, DisplayName, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, CannotChangePassword, adminCount, primaryGroupID, servicePrincipalName, userAccountControl, lastLogonTimestamp, objectClass, ProtectedFromAccidentalDeletion @common
+    return Get-ADUser -Identity $fn_Id -Properties SamAccountName, UserPrincipalName, DisplayName, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, CannotChangePassword, adminCount, primaryGroupID, servicePrincipalName, userAccountControl, lastLogonTimestamp, objectClass, ProtectedFromAccidentalDeletion @fn_common
 }
 function Get-TargetGroup([string]$fn_Id, [hashtable]$fn_c) {
     $fn_common = $fn_c.Common
-    return Get-ADGroup -Identity $fn_Id -Properties SamAccountName, adminCount, objectClass, ProtectedFromAccidentalDeletion @common
+    return Get-ADGroup -Identity $fn_Id -Properties SamAccountName, adminCount, objectClass, ProtectedFromAccidentalDeletion @fn_common
 }
 function Assert-Ou([string]$fn_Dn, [hashtable]$fn_c) {
     $fn_common = $fn_c.Common
     if (-not (Test-UnderDn $fn_Dn ([string]$fn_c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
     if (Test-UnderDn $fn_Dn ([string]$fn_c.ControllersDn)) { Stop-With 'protected_target' 'Nothing is created in, moved into or moved out of the Domain Controllers container.' }
-    $fn_o = Get-ADObject -Identity $fn_Dn -Properties objectClass @common
+    $fn_o = Get-ADObject -Identity $fn_Dn -Properties objectClass @fn_common
     if (@('organizationalUnit', 'container', 'domainDNS') -notcontains [string]$fn_o.objectClass) { Stop-With 'not_found' 'That is not an organizational unit or a container.' }
 }
 

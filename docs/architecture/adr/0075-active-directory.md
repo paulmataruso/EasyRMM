@@ -934,12 +934,23 @@ forced choice. Each is the builder's call, not the owner's.
 10. **An OU is validated in the script at write time**, not against "the last OU tree read": it must exist, be an OU or container of this
     domain, and not be under Domain Controllers. The server checks only its form (a DN of `CN`, `OU` and `DC` parts with letters, digits, space and
     `. _ -`).
-11. **Not built in this slice:** controller selection and the pin (`ad_domains`; the tab works on the controller it is opened for, and says
-    which), `ou_tree`'s use as a picker in the UI, `computer_list`, `computer_disable`, `privileged_members` and the privileged-group-change
-    alert, the lockout alert (it needs ADR-0060's events), the organization Overview "Directory health" card, and the user and group
-    create, edit, move and membership dialogs (the actions exist and are tested; the UI offers unlock, enable, disable, reset a password and
-    delete for users, and lists groups and their members). `health_read` is scheduled hourly per controller, not per domain, and
-    `ad_replication_failed` opens on the controller's device.
+11. **The Directory view is a view of the Roles tab** (ADR-0076's `ROLE_VIEWS`), not a tab of its own. It is a view of the controller it is
+    opened on; when the domain's writes go through another controller, it reads only and links to that one.
+12. **Controller selection and the pin are built** (`ad_domains`, `activedirectory.Select`, `GET /organizations/{id}/ad/domains`,
+    `PUT .../{sid}/preferred`). The first ranking is health (healthy, then unknown, then unhealthy), then pin, then PDC emulator, then latest
+    heartbeat, then lowest id. The scripts address the controller they run on, so "writes go to the chosen controller" is enforced by the
+    view (it offers no change on another controller); the server does not yet refuse a change sent to a controller that is not the chosen one.
+13. **The two event alerts read snapshots, not the Security log.** `ad_account_locked_out` counts the accounts locked out now (`Search-ADAccount
+    -LockedOut` in `health_read`), and `ad_privileged_group_changed` holds while Domain, Enterprise or Schema Administrators, or the built-in
+    Administrators, changed within N hours (`whenChanged`, from `privileged_members`, read hourly, kept as a 15-minute sensitive snapshot). They
+    need no event collection or audit policy; ADR-0060's event versions stay a later cross-check. The tier 2 privileged policy is not
+    created (the kind cannot tell tiers apart). Both name the group or the count, never an account. Default policies: many locked out
+    (10, 15 minutes, on), one locked out (off), privileged group changed (24 hours, critical, on), replication failing (on).
+14. **`health_read` and `privileged_members` are scheduled hourly per controller**, not per domain; `ad_replication_failed` opens on the controller's
+    device.
+15. **Dialogs:** create user, edit attributes, move (an OU walked one level at a time, never created), create and delete group, add and
+    remove member (one at a time), disable a computer. A new user's `userPrincipalName`, `accountExpirationDate` and clearing
+    protection flags are still not offered.
 
 ## Amendments to ADR-0073 (decided in review)
 

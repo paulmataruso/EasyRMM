@@ -6,6 +6,7 @@ import { baseRoutes, installFakeApi, ok, sessionView, type FakeReply } from "../
 import { device, history, inventory, metrics } from "../../../../test/fixtures";
 import { renderApp } from "../../../../test/render";
 import { DEVICE_MODULE_TABS, moduleTabState } from "../moduleTabs";
+import { ROLE_VIEWS } from "../roles/registry";
 import type { DirectoryHealth, DirectoryStatus, GroupPage, MemberPage, UserPage } from "./types";
 
 // The Directory tab (ADR-0075, A8): detection, reads, the help-desk actions and the one-time password.
@@ -19,6 +20,7 @@ const ROLE: DeviceRole = { name: "ad_ds", state: "present", module: "active_dire
 const roles = (r: DeviceRole[]): DeviceRoles => ({ known: true, reportedAt: "2026-11-26T10:00:00Z", roles: r });
 
 const TECH = sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "ad.view", "ad.helpdesk"] });
+const ORGADMIN = sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "ad.view", "ad.helpdesk", "ad.manage", "ad.view_sensitive"] });
 const VIEWER = sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "ad.view"] });
 
 const STATUS: DirectoryStatus = {
@@ -52,13 +54,17 @@ const GROUPS: GroupPage = {
   next: null, scanned: 1, domainSid: "S-1-5-21-1-2-3",
 };
 const MEMBERS: MemberPage = { items: [{ id: "S-1-5-21-1-2-3-1104", sam: "ann", name: "Ann Ordinary", kind: "user", key: "ann" }], next: null, total: 1 };
+let DOMAINS: unknown = { enabled: true, domains: [] };
 const GENERATED = "Gx7#kQ9-mP2$rT5&vW8z";
 
 /** A controller: each action answers with its own data; a refusal can be set per action. */
 function controller(refuse: Record<string, { code: string; message: string }> = {}, session = TECH) {
   const data: Record<string, unknown> = {
     status: STATUS, health_read: HEALTH, user_list: USERS, group_list: GROUPS, group_members: MEMBERS,
-    user_reset_password: { mustChange: true, unlocked: false }, user_disable: { done: true }, user_unlock: { done: true },
+    user_reset_password: { mustChange: true, unlocked: false }, ou_tree: { parent: "DC=corp,DC=test", items: [{ dn: "OU=Staff,DC=corp,DC=test", name: "Staff", kind: "ou", protectedFromDelete: true, writable: true }] },
+    user_create: { id: "S-1-5-21-1-2-3-2001", sam: "bob2", name: "Bob Two" }, group_create: { id: "g", sam: "G", name: "G" }, computer_list: { items: [{ id: "S-1-5-21-1-2-3-3001", sam: "PC1$", name: "PC1", dnsName: "pc1.corp.test", os: "Windows 11", enabled: true, controller: false }, { id: "S-1-5-21-1-2-3-3002", sam: "DC1$", name: "DC1", dnsName: "dc1.corp.test", os: "Server", enabled: true, controller: true }], next: null, scanned: 2 },
+    computer_disable: { done: true }, group_remove_member: { done: true },
+    privileged_members: { groups: [{ id: "S-1-5-21-1-2-3-512", name: "Domain Admins", tier: 1, total: 1, changedAt: null, members: [{ id: "S-1-5-21-1-2-3-500", name: "Administrator", kind: "user" }] }] }, user_disable: { done: true }, user_unlock: { done: true },
   };
   return {
     ...baseRoutes(session),
@@ -66,6 +72,7 @@ function controller(refuse: Record<string, { code: string; message: string }> = 
     "GET /devices/:id/roles": ok(roles([ROLE])),
     "GET /devices/:id/inventory": ok({ inventory: inventory(), metrics: metrics() }),
     "GET /devices/:id/metrics": ok(history()),
+    "GET /organizations/:id/ad/domains": ok(DOMAINS),
     "GET /devices/:id/disks": ok({ items: [] }),
     "POST /devices/:id/winmod/:action": (req): FakeReply => {
       const action = req.params.action!.replace("active_directory.", "");
@@ -88,18 +95,18 @@ async function readAll() {
 }
 
 describe("the Directory tab", () => {
-  it("is offered only where a domain controller was found and the viewer may read it", () => {
-    const tab = DEVICE_MODULE_TABS.find((t) => t.id === "directory")!;
+  it("is a view of the Roles tab, offered only where a domain controller was found and the viewer may read it", () => {
+    const tab = DEVICE_MODULE_TABS.find((t) => t.id === "roles")!;
+    expect(ROLE_VIEWS.some((v) => v.module === "active_directory" && v.permission === "ad.view")).toBe(true);
+    expect(tab.views?.some((v) => v.module === "active_directory")).toBe(true);
     const can = (p: string) => p === "ad.view";
     expect(moduleTabState(tab, roles([ROLE]), can)).toBe("shown");
     expect(moduleTabState(tab, roles([]), can)).toBe("absent");
-    expect(moduleTabState(tab, roles([ROLE]), () => false)).toBe("absent");
-    expect(moduleTabState(tab, roles([{ ...ROLE, enabled: false }]), can)).toBe("off");
   });
 
   it("reads the domain and its health only when asked, then lists users with their protection", async () => {
     const api = installFakeApi(controller());
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await screen.findByText("Not read yet");
     expect(api.callsTo("POST /devices/:id/winmod/:action")).toHaveLength(0);
     await readAll();
@@ -117,7 +124,7 @@ describe("the Directory tab", () => {
 
   it("offers no action to someone without the help-desk permission", async () => {
     installFakeApi(controller({}, VIEWER));
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await readAll();
     expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
@@ -126,7 +133,7 @@ describe("the Directory tab", () => {
 
   it("asks for the account's name before disabling, and sends the typed confirmation", async () => {
     const api = installFakeApi(controller());
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await readAll();
     const ann = screen.getByText("Ann Ordinary").closest("tr")!;
     await userEvent.click(within(ann).getByRole("button", { name: "Disable" }));
@@ -142,7 +149,7 @@ describe("the Directory tab", () => {
 
   it("shows a generated password once, and sends none", async () => {
     const api = installFakeApi(controller());
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await readAll();
     const ann = screen.getByText("Ann Ordinary").closest("tr")!;
     await userEvent.click(within(ann).getByRole("button", { name: "Reset password" }));
@@ -164,7 +171,7 @@ describe("the Directory tab", () => {
 
   it("says what a refusal by the controller was, in its own words", async () => {
     installFakeApi(controller({ user_reset_password: { code: "partial", message: "The password was changed, but the must-change flag or the unlock was not." } }));
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await readAll();
     await userEvent.click(within(screen.getByText("Ann Ordinary").closest("tr")!).getByRole("button", { name: "Reset password" }));
     const dialog = await screen.findByRole("dialog");
@@ -176,18 +183,67 @@ describe("the Directory tab", () => {
 
   it("explains a controller without the PowerShell module", async () => {
     installFakeApi(controller({ status: { code: "module_missing", message: "x" } }));
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
     await screen.findByText(/RSAT-AD-PowerShell/);
   });
 
   it("lists a group's members", async () => {
     installFakeApi(controller());
-    renderApp("/devices/d1?tab=directory");
+    renderApp("/devices/d1?tab=roles");
     await readAll();
     await userEvent.click(screen.getByRole("button", { name: "List groups" }));
     await userEvent.click(await screen.findByRole("button", { name: "Members" }));
     await screen.findByText(/1 direct member/);
     expect(screen.getAllByText("Ann Ordinary").length).toBeGreaterThan(0);
+  });
+
+  it("creates a user: a container, a typed confirmation, the generated password shown once", async () => {
+    const api = installFakeApi(controller({}, ORGADMIN));
+    renderApp("/devices/d1?tab=roles");
+    await readAll();
+    await userEvent.click(screen.getByRole("button", { name: "Create user" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create a user" });
+    await userEvent.type(within(dialog).getByLabelText(/Sign-in name/), "bob2");
+    await userEvent.type(within(dialog).getByLabelText("Full name"), "Bob Two");
+    await userEvent.type(within(dialog).getByLabelText(/Type bob2 to confirm/), "bob2");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Create user" }));
+    await within(dialog).findByText(/The user was created/);
+    const sent = api.callsTo("POST /devices/:id/winmod/:action").find((c) => c.params.action === "active_directory.user_create")!;
+    expect(sent.body).toMatchObject({ params: { ou: "DC=corp,DC=test", sam: "bob2", name: "Bob Two", mustChange: true }, confirm: "active_directory.user_create:bob2" });
+    expect((sent.body as { params: Record<string, unknown> }).params).not.toHaveProperty("password");
+  });
+
+  it("lists computers without offering a change to a domain controller, and shows the privileged groups to those who may", async () => {
+    installFakeApi(controller({}, ORGADMIN));
+    renderApp("/devices/d1?tab=roles");
+    await readAll();
+    await userEvent.click(screen.getByRole("button", { name: "List computers" }));
+    const dc = (await screen.findByText("dc1.corp.test", { selector: "td" })).closest("tr")!;
+    expect(within(dc).getByText("Domain controller")).toBeInTheDocument();
+    expect(within(dc).queryByRole("button")).toBeNull();
+    expect(within(screen.getByText("pc1.corp.test").closest("tr")!).getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show who is in them" }));
+    await screen.findByText("Administrator");
+  });
+
+  it("reads only, and points to the chosen controller, when changes go through another one", async () => {
+    DOMAINS = {
+      enabled: true,
+      domains: [{ sid: "S", name: "corp.test", pinned: null, chosen: "d2", why: "pdc", lockedOut: 0, replicationFailures: 0, worst: "ok",
+        controllers: [{ deviceId: "d1", name: "DC1", online: true, readOnly: false, pdc: false, health: "healthy", controller: "dc1", siteId: "s" },
+                      { deviceId: "d2", name: "DC2", online: true, readOnly: false, pdc: true, health: "healthy", controller: "dc2", siteId: "s" }] }],
+    };
+    try {
+      installFakeApi(controller({}, ORGADMIN));
+      renderApp("/devices/d1?tab=roles");
+      await readAll();
+      await screen.findByText("Changes go to another controller");
+      expect(screen.getByRole("link", { name: "Go to DC2" })).toHaveAttribute("href", "/devices/d2?tab=roles");
+      expect(screen.queryByRole("button", { name: "Create user" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Reset password" })).toBeNull();
+    } finally {
+      DOMAINS = { enabled: true, domains: [] };
+    }
   });
 });

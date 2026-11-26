@@ -15,7 +15,7 @@ import re, sys
 keep = {"p", "_", "version", "true", "false", "null", "ErrorActionPreference"}
 def sub(m):
     return m.group(0) if m.group(1) in keep else "$fn_" + m.group(1)
-sys.stdout.write(re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", sub, sys.stdin.read()))
+sys.stdout.write(re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", sub, re.sub(r"@([A-Za-z_][A-Za-z0-9_]*)", lambda m: "@fn_" + m.group(1), sys.stdin.read())))
 '
 }
 for body in src/*.body; do

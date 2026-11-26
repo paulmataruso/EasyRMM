@@ -1,11 +1,16 @@
 import { useCallback, useState } from "react";
+import { useApi } from "../../../../api/hooks";
 import type { Device } from "../../../../api/types";
+import { useAuth } from "../../../../auth/AuthContext";
 import { Alert, Badge, Card, InlineError, KeyValueList, type Tone } from "../../../../components/ui";
 import { formatDateTime } from "../../../../lib/format";
+import { Link } from "react-router";
 import { ModuleTab } from "../ModuleTab";
+import { ComputersCard } from "./ComputersCard";
+import { PrivilegedCard } from "./PrivilegedCard";
 import { GroupsCard } from "./GroupsCard";
 import { UsersCard } from "./UsersCard";
-import type { CheckState, DirectoryHealth, DirectoryStatus } from "./types";
+import type { AdDomains, CheckState, DirectoryHealth, DirectoryStatus } from "./types";
 import { useWinmod } from "./useWinmod";
 
 const CHECK_LABEL: Record<string, string> = {
@@ -35,6 +40,8 @@ const FAILURES: Record<string, string> = {
  */
 export function DirectoryTab({ device }: { device: Device }) {
   const run = useWinmod(device.id);
+  const { can } = useAuth();
+  const domains = useApi<AdDomains>(`/organizations/${device.organizationId}/ad/domains`, undefined, { staleTime: 30_000 });
   const [status, setStatus] = useState<DirectoryStatus | null>(null);
   const [health, setHealth] = useState<DirectoryHealth | null>(null);
   const [readAt, setReadAt] = useState<string | null>(null);
@@ -42,6 +49,11 @@ export function DirectoryTab({ device }: { device: Device }) {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState(0);
+
+  // The domain's writes go through one controller; when it is another computer, this view only reads.
+  const mine = domains.data?.domains.find((x) => x.controllers.some((c) => c.deviceId === device.id));
+  const chosen = mine?.controllers.find((c) => c.deviceId === mine.chosen);
+  const other = chosen && chosen.deviceId !== device.id ? chosen : null;
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -132,8 +144,18 @@ export function DirectoryTab({ device }: { device: Device }) {
               )}
             </Card>
           </div>
-          <UsersCard key={`u${generation}`} deviceId={device.id} status={status} />
-          <GroupsCard key={`g${generation}`} deviceId={device.id} />
+          {other && (
+            <Alert tone="warn" title="Changes go to another controller">
+              This domain&apos;s changes are made through {other.name}. Open the Directory view there to change anything; this one only reads.{" "}
+              <Link to={`/devices/${other.deviceId}?tab=roles`} className="text-accent underline">
+                Go to {other.name}
+              </Link>
+            </Alert>
+          )}
+          <UsersCard key={`u${generation}`} deviceId={device.id} status={status} writable={!other} />
+          <GroupsCard key={`g${generation}`} deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} recycleBin={status.recycleBinEnabled} />
+          <ComputersCard key={`c${generation}`} deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} />
+          {can("ad.view_sensitive") && <PrivilegedCard key={`p${generation}`} deviceId={device.id} />}
         </>
       )}
     </ModuleTab>

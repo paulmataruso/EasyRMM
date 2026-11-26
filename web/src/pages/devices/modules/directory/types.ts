@@ -102,3 +102,89 @@ export interface ResetResult {
   mustChange: boolean;
   unlocked: boolean;
 }
+
+export interface ComputerRow {
+  id: string;
+  sam: string;
+  name: string;
+  dnsName: string;
+  os: string;
+  enabled: boolean;
+  controller: boolean;
+}
+export interface ComputerPage {
+  items: ComputerRow[];
+  next: string | null;
+  scanned: number;
+}
+
+export interface OuItem {
+  dn: string;
+  name: string;
+  kind: "ou" | "container";
+  protectedFromDelete: boolean;
+  writable: boolean;
+}
+export interface OuTree {
+  parent: string;
+  items: OuItem[];
+}
+
+export interface PrivilegedGroup {
+  id: string;
+  name: string;
+  tier: number;
+  total: number;
+  changedAt: string | null;
+  members: { id: string; name: string; kind: string }[];
+}
+export interface Privileged {
+  groups: PrivilegedGroup[];
+}
+
+export interface UserDetail {
+  id: string;
+  sam: string;
+  upn: string;
+  name: string;
+  displayName: string;
+  givenName: string;
+  surname: string;
+  description: string;
+  mail: string;
+  telephone: string;
+  title: string;
+  department: string;
+  company: string;
+  office: string;
+  ou: string;
+  groups: string[];
+  protection: ProtectionLevel;
+  reason: string;
+}
+
+export interface DomainController {
+  deviceId: string;
+  siteId: string;
+  name: string;
+  controller: string;
+  readOnly: boolean;
+  online: boolean;
+  pdc: boolean;
+  health: "healthy" | "unhealthy" | "unknown";
+}
+export interface AdDomain {
+  sid: string;
+  name: string;
+  controllers: DomainController[];
+  pinned: string | null;
+  chosen: string | null;
+  why: string;
+  lockedOut: number | null;
+  replicationFailures: number | null;
+  worst: string;
+}
+export interface AdDomains {
+  enabled: boolean;
+  domains: AdDomain[];
+}

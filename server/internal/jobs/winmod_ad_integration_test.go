@@ -112,7 +112,7 @@ func TestADPermissionSplit(t *testing.T) {
 			fieldErr(t, err, "deviceIds", "cannot")
 		}
 	}
-	if err := run(admin, "user_set", manage["user_set"], ""); err != nil {
+	if err := run(admin, "user_set", manage["user_set"], confirm("user_set")); err != nil {
 		t.Errorf("an Organization Administrator editing a user: %v", err)
 	}
 	if err := run(admin, "user_delete", id, confirm("user_delete")); err != nil {
