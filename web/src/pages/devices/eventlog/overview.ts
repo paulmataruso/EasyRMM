@@ -42,20 +42,25 @@ export function keyEventsFor(holdsSensitive: boolean): KeyEvent[] {
   return KEY_EVENTS.filter((k) => holdsSensitive || !k.sensitive);
 }
 
-/** One query for every key event: their IDs and sources, over the logs they live in. The page keeps only exact matches. */
-export function keyEventsRequest(holdsSensitive: boolean): EventlogRequest {
+/**
+ * The most event IDs one query names. Windows refuses a structured query of more than about 22 expressions ("the specified query
+ * is invalid"), and the time range is one; so the key events are read in several queries, one log at a time, each by ID only.
+ */
+export const KEY_IDS_PER_QUERY = 12;
+
+/** The queries that read the key events: their IDs, a few at a time, over the log they live in. The page keeps exact matches. */
+export function keyEventsRequests(holdsSensitive: boolean): EventlogRequest[] {
   const keys = keyEventsFor(holdsSensitive);
-  const ids = [...new Set(keys.flatMap((k) => k.ids))].sort((a, b) => a - b);
-  const ranges: EventlogIdRange[] = ids.map((from) => ({ from }));
-  const r: EventlogRequest = {
-    op: "query",
-    channels: [...new Set(keys.map((k) => k.log))],
-    ids: ranges,
-    providers: [...new Set(keys.flatMap((k) => k.providers))],
-    time: { last: OVERVIEW_RANGE },
-  };
-  if (holdsSensitive) r.sensitive = true;
-  return r;
+  const out: EventlogRequest[] = [];
+  for (const log of [...new Set(keys.map((k) => k.log))]) {
+    const ids = [...new Set(keys.filter((k) => k.log === log).flatMap((k) => k.ids))].sort((a, b) => a - b);
+    for (let i = 0; i < ids.length; i += KEY_IDS_PER_QUERY) {
+      const r: EventlogRequest = { op: "query", channels: [log], ids: ids.slice(i, i + KEY_IDS_PER_QUERY).map((from) => ({ from })), time: { last: OVERVIEW_RANGE } };
+      if (log === "Security") r.sensitive = true;
+      out.push(r);
+    }
+  }
+  return out;
 }
 
 /** Critical, Error and Warning events of System and Application in the last 24 hours; the page drops Application warnings. */

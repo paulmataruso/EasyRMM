@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Card, cx, EmptyState, Input, KeyValueList, Segmen
 import { formatRelative } from "../../../lib/format";
 import { endText, eventAsText, eventTime, groupChannels, isSecurityChannel, LEVELS, levelName, levelTone, parseIds, posText, RANGES, sizeText, STATE_TEXT, type Zone } from "./eventlogText";
 import { cancelRun, startOp } from "./runOp";
-import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequest, problemsRequest, repeatText, type EventGroup } from "./overview";
+import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequests, problemsRequest, repeatText, type EventGroup } from "./overview";
 
 const DEFAULT_CHANNELS = ["System", "Application"];
 
@@ -104,10 +104,19 @@ export function EventLogPanel({ device }: { device: Device }) {
       return r.events ?? [];
     };
     try {
-      const key = await read(keyEventsRequest(holdsSensitive));
-      setOverview((o) => ({ key, problems: o?.problems ?? [], notes: [...notes] }));
+      const seen = new Set<string>();
+      const key: EventlogEvent[] = [];
+      for (const req of keyEventsRequests(holdsSensitive)) {
+        for (const e of await read(req)) {
+          if (!seen.has(`${e.log}/${e.record}`)) {
+            seen.add(`${e.log}/${e.record}`);
+            key.push(e);
+          }
+        }
+        setOverview((o) => ({ key: [...key], problems: o?.problems ?? [], notes: [...new Set(notes)] }));
+      }
       const problems = (await read(problemsRequest())).filter(isProblem);
-      setOverview({ key, problems, notes, at: new Date().toISOString() });
+      setOverview({ key, problems, notes: [...new Set(notes)], at: new Date().toISOString() });
     } catch (e) {
       if (!(e instanceof DOMException && e.name === "AbortError")) setError(errorMessage(e));
     } finally {
@@ -223,8 +232,15 @@ export function EventLogPanel({ device }: { device: Device }) {
   };
 
   const groups = useMemo(() => groupChannels(channels?.channels ?? [], showAnalytic), [channels, showAnalytic]);
-  const toggleChannel = (name: string) =>
+  /** A log chosen in the tree replaces the overview and loads at once; in a search it is added to or taken from the logs read. */
+  const toggleChannel = (name: string) => {
+    if (view === "overview") {
+      setPicked([name]);
+      setView("search");
+      return;
+    }
     setPicked((p) => (p.includes(name) ? p.filter((n) => n !== name) : p.length >= 10 ? p : [...p, name]));
+  };
   const current = selectedEv ?? undefined;
   const selected = selectedEv ? events.findIndex((x) => x.log === selectedEv.log && x.record === selectedEv.record) : -1;
   const more = end?.cursor?.channels.some((c) => !c.done) === true;
@@ -286,26 +302,7 @@ export function EventLogPanel({ device }: { device: Device }) {
         </div>
       </Card>
 
-      {view === "overview" && (
-        <>
-          <Overview
-            data={overview}
-            busy={overviewBusy}
-            offline={offline}
-            holdsSensitive={holdsSensitive}
-            zone={zone}
-            selected={selectedEv}
-            onSelect={(e) => {
-              setSelectedEv(e);
-              setDetail("general");
-            }}
-            onFilter={openFilter}
-          />
-          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
-        </>
-      )}
-
-      <div className={cx("grid grid-cols-1 gap-4 lg:grid-cols-4", view !== "search" && "hidden")}>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <Card title="Logs" padded={false} className="lg:col-span-1">
           <div className="flex flex-col gap-2 p-2 text-sm">
             <label className="flex items-center gap-2 text-xs text-muted">
@@ -333,6 +330,24 @@ export function EventLogPanel({ device }: { device: Device }) {
         </Card>
 
         <div className="flex min-w-0 flex-col gap-4 lg:col-span-3">
+          {view === "overview" ? (
+            <>
+          <Overview
+            data={overview}
+            busy={overviewBusy}
+            offline={offline}
+            holdsSensitive={holdsSensitive}
+            zone={zone}
+            selected={selectedEv}
+            onSelect={(e) => {
+              setSelectedEv(e);
+              setDetail("general");
+            }}
+            onFilter={openFilter}
+          />
+            </>
+          ) : (
+            <>
           <Card title="Filter">
             <form className="flex flex-col gap-3" onSubmit={search}>
               <div className="flex flex-wrap items-center gap-3">
@@ -390,7 +405,9 @@ export function EventLogPanel({ device }: { device: Device }) {
             />
           </Card>
 
-          {view === "search" && current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
+            </>
+          )}
+          {current && <Detail key={`${current.log}/${current.record}`} event={current} zone={zone} mode={detail} setMode={setDetail} onOpen={() => void openEvent(current)} />}
         </div>
       </div>
     </div>

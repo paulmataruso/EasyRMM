@@ -116,21 +116,26 @@ test("a Windows computer enrolls with an agent that has the event viewer, and it
 
 test("the tab opens into the admin overview by itself: the key events, then the last day's problems, with no click", async () => {
   const page = admin;
-  // Nobody pressed anything since the tab opened; the page asks for the key events, then the problems, one after the other.
-  const keyJob = await nextJob();
-  expect(inputOf(keyJob)).toMatchObject({ op: "query", channels: ["System", "Application", "Security"], time: { last: "24h" }, sensitive: true });
-  const keyIds = ((inputOf(keyJob) as unknown as { ids: { from: number }[] }).ids ?? []).map((i) => i.from);
-  expect(keyIds).toEqual(expect.arrayContaining([6008, 41, 1074, 7031, 7034, 4625, 4740]));
-  expect(await agent.start(keyJob.runId)).toBe(true);
-  await agent.resulted(keyJob.runId, [
-    begin("query"),
-    { t: "pos", channel: "System", state: "ok" },
-    { t: "pos", channel: "Application", state: "ok" },
-    { t: "pos", channel: "Security", state: "ok" },
-    event(21, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
-    event(20, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
-    endLine({ returned: 2, read: 40 }),
-  ]);
+  // Nobody pressed anything since the tab opened; the page asks for the key events a log at a time (Windows takes few IDs in one
+  // query), then for the problems, one query after the other.
+  const seen: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const job = await nextJob();
+    const input = inputOf(job) as unknown as { channels: string[]; ids: { from: number }[]; sensitive: boolean; time: { last: string } };
+    expect(input).toMatchObject({ op: "query", time: { last: "24h" } });
+    expect(input.channels).toHaveLength(1);
+    expect(input.sensitive).toBe(input.channels[0] === "Security");
+    seen.push(...input.ids.map((x) => `${input.channels[0]}:${x.from}`));
+    expect(await agent.start(job.runId)).toBe(true);
+    const hits = input.ids.some((x) => x.from === 7034)
+      ? [
+          event(21, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
+          event(20, 7034, 2, [{ name: "param1", value: "Print Spooler" }], "The Print Spooler service terminated unexpectedly."),
+        ]
+      : [];
+    await agent.resulted(job.runId, [begin("query"), { t: "pos", channel: input.channels[0], state: "ok" }, ...hits, endLine({ returned: hits.length, read: 40 })]);
+  }
+  expect(seen).toEqual(expect.arrayContaining(["System:6008", "System:41", "System:1074", "System:7031", "System:7034", "Application:1000", "Security:4625", "Security:4740"]));
   const problemsJob = await nextJob();
   expect(inputOf(problemsJob)).toMatchObject({ op: "query", channels: ["System", "Application"], levels: [1, 2, 3], time: { last: "24h" } });
   expect(await agent.start(problemsJob.runId)).toBe(true);
@@ -146,6 +151,21 @@ test("the tab opens into the admin overview by itself: the key events, then the 
   for (const name of [/^Search$/, /Read now/, /^Run$/, /Refresh/]) await expect(page.getByRole("button", { name })).toHaveCount(0);
 });
 
+test("picking a log in the tree shows its events at once, with no other click", async () => {
+  const page = admin;
+  await page.getByRole("group", { name: "Logs to search" }).getByRole("checkbox", { name: "Application" }).click();
+  const job = await jobWhere((i) => Array.isArray(i.channels) && i.channels.length === 1 && i.channels[0] === "Application");
+  expect(inputOf(job)).toMatchObject({ op: "query", channels: ["Application"], time: { last: "24h" } });
+  expect(await agent.start(job.runId)).toBe(true);
+  const app = event(31, 1000, 2, [{ name: "param1", value: "app.exe" }], "Faulting application app.exe");
+  app.log = "Application";
+  app.channel = "Application";
+  app.xml = app.xml.replace("<Channel>System</Channel>", "<Channel>Application</Channel>");
+  await agent.resulted(job.runId, [begin("query"), { t: "pos", channel: "Application", state: "ok" }, app, endLine({ returned: 1, read: 1 })]);
+  await expect(page.getByRole("table", { name: "Events" }).getByRole("row")).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: /^Search$/ })).toHaveCount(0);
+});
+
 /** The next job whose input satisfies the test; a job a newer search replaced is skipped. */
 async function jobWhere(pick: (input: Record<string, unknown>) => boolean): Promise<JobPayload> {
   for (let i = 0; i < 10; i++) {
@@ -158,6 +178,7 @@ async function jobWhere(pick: (input: Record<string, unknown>) => boolean): Prom
 test("a search is a job: its input is the typed filters, its events are listed newest first, a hidden command line drops its event from a text search", async () => {
   const page = admin;
   await page.getByRole("radio", { name: "All events" }).click();
+  await page.getByRole("checkbox", { name: "System" }).check();
   await page.getByRole("checkbox", { name: "Application" }).uncheck();
   await page.getByRole("checkbox", { name: "Error" }).check();
   await page.getByLabel("Event IDs").fill("7034, 7031");

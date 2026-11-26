@@ -297,18 +297,23 @@ func TestBuiltinFilesAsSystem(t *testing.T) {
 func TestAdminOverviewQueriesAsSystem(t *testing.T) {
 	needSystem(t)
 	be := realBackend(t)
-	ids := []int{6008, 41, 1074, 7031, 7034, 7000, 7009, 7023, 7, 11, 51, 153, 55, 98, 1000, 1002, 1001, 20, 1129, 1053, 1055, 36, 47, 129, 5719, 5722, 5805, 4625, 4740}
-	var ranges []eventrules.IDRange
-	for _, id := range ids {
-		ranges = append(ranges, eventrules.IDRange{From: id})
+	// The key events are read a log at a time, a few IDs per query: Windows
+	// refuses one of more than about 22 expressions (KEY_IDS_PER_QUERY).
+	chunk := func(log string, ids ...int) eventrules.Input {
+		var ranges []eventrules.IDRange
+		for _, id := range ids {
+			ranges = append(ranges, eventrules.IDRange{From: id})
+		}
+		return eventrules.Input{Op: eventrules.OpQuery, Channels: []string{log}, IDs: ranges, Sensitive: log == "Security", Time: &eventrules.TimeFilter{Last: "24h"}}
 	}
-	key := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application", "Security"}, IDs: ranges, Sensitive: true,
-		Providers: []string{"EventLog", "Microsoft-Windows-Kernel-Power", "User32", "Service Control Manager", "disk", "Ntfs", "Microsoft-Windows-Ntfs",
-			"Application Error", "Application Hang", "Windows Error Reporting", "Microsoft-Windows-WindowsUpdateClient", "Microsoft-Windows-GroupPolicy",
-			"Microsoft-Windows-Time-Service", "NETLOGON", "Microsoft-Windows-Security-Auditing"},
-		Time: &eventrules.TimeFilter{Last: "24h"}}
 	problems := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application"}, Levels: []int{1, 2, 3}, Time: &eventrules.TimeFilter{Last: "24h"}}
-	for name, in := range map[string]eventrules.Input{"key events": key, "problems": problems} {
+	for name, in := range map[string]eventrules.Input{
+		"key events, System 1": chunk("System", 7, 11, 20, 36, 41, 47, 51, 55, 98, 129, 153, 1053),
+		"key events, System 2": chunk("System", 1055, 1074, 1129, 5719, 5722, 5805, 6008, 7000, 7009, 7023, 7031, 7034),
+		"key events, Application": chunk("Application", 1000, 1001, 1002),
+		"key events, Security": chunk("Security", 4625, 4740),
+		"problems": problems,
+	} {
 		res, raw, took := runReal(t, be, in)
 		t.Logf("%s: %d events in %s", name, len(res.Events), took)
 		if len(res.Errors) != 0 || res.End == nil || !res.End.Complete {

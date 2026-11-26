@@ -5,7 +5,7 @@ import type { EventlogEvent, EventlogRequest, EventlogResult, EventlogRun } from
 import { baseRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { device, history, inventory, metrics } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
-import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequest, matchKeyEvent, problemsRequest } from "./eventlog/overview";
+import { groupKeyEvents, groupRepeats, isProblem, keyEventsRequests, matchKeyEvent, problemsRequest } from "./eventlog/overview";
 import { endText, eventAsText, eventTime, groupChannels, parseIds, posText } from "./eventlog/eventlogText";
 
 const AGENT = { version: "1.5.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-26T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
@@ -140,7 +140,7 @@ describe("the Event logs tab", () => {
     // Other logs are grouped by provider, and analytic logs hide.
     expect(within(logs).getByText("Microsoft-Windows-PowerShell")).toBeInTheDocument();
     expect(within(logs).queryByText("Microsoft-Windows-X")).not.toBeInTheDocument();
-    await waitFor(() => expect(server.callsTo("POST /devices/:id/eventlog").map((c) => (c.body as EventlogRequest).op).sort()).toEqual(["channels", "query", "query"]));
+    await waitFor(() => expect(server.callsTo("POST /devices/:id/eventlog").map((c) => (c.body as EventlogRequest).op).sort()).toEqual(["channels", "query", "query", "query", "query"]));
   });
 
   it("searches with the filters as typed, and lists the events newest first with their fields", async () => {
@@ -182,6 +182,7 @@ describe("the Event logs tab", () => {
     const server = installFakeApi(routes(TECH));
     renderApp("/devices/d1?tab=eventlog");
     await screen.findByRole("checkbox", { name: "System" });
+    await openAll(user);
     await user.type(screen.getByLabelText("Event IDs"), "12x");
     expect(await screen.findByText(/"12x" is not an event ID/)).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 700));
@@ -301,14 +302,14 @@ describe("the Event logs tab", () => {
     await waitFor(() => expect(queries(server).length).toBeGreaterThan(0));
     const security = await screen.findByRole("checkbox", { name: "Security" });
     expect(security).toBeEnabled();
-    await user.click(security);
-    expect(screen.getByLabelText(/Show command lines and scripts/)).toBeChecked();
     await openAll(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Security" }));
+    expect(screen.getByLabelText(/Show command lines and scripts/)).toBeChecked();
     const q = await sent(server, (b) => !b.ids && !b.levels && b.channels?.includes("Security") === true);
     expect(q.sensitive).toBe(true);
     expect(q.channels).toEqual(["System", "Application", "Security"]);
     // The overview asked for the Security key events with the same permission.
-    expect(queries(server)[0]).toMatchObject({ sensitive: true, ids: expect.arrayContaining([{ from: 4625 }, { from: 4740 }]) });
+    expect(queries(server).find((b) => b.channels?.[0] === "Security" && b.ids)).toMatchObject({ sensitive: true, ids: [{ from: 4625 }, { from: 4740 }] });
   });
 
   it("sends nothing while the device is offline", async () => {
@@ -369,10 +370,24 @@ describe("the admin overview", () => {
     expect(within(problems).queryByText(/Chatty/)).not.toBeInTheDocument();
     expect(within(problems).getAllByRole("row")).toHaveLength(3);
     // The Security key events are not asked for without the permission.
-    expect(queries(server)[0]).toMatchObject({ op: "query", channels: ["System", "Application"], time: { last: "24h" } });
-    expect(queries(server)[0]?.sensitive).toBeUndefined();
-    expect(queries(server)[1]).toEqual({ op: "query", channels: ["System", "Application"], levels: [1, 2, 3], time: { last: "24h" } });
+    const qs = queries(server);
+    expect(qs.map((q) => q.channels)).toEqual([["System"], ["System"], ["Application"], ["System", "Application"]]);
+    expect(qs.every((q) => q.sensitive === undefined)).toBe(true);
+    expect(qs.at(-1)).toEqual({ op: "query", channels: ["System", "Application"], levels: [1, 2, 3], time: { last: "24h" } });
     for (const name of [/^Search$/, /Read now/, /^Run$/, /Refresh/]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  });
+
+  it("loads a log at once when it is picked in the tree, replacing the overview, with no other click", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(routes(TECH));
+    renderApp("/devices/d1?tab=eventlog");
+    await screen.findByRole("table", { name: "Problems" });
+    await user.click(screen.getByRole("checkbox", { name: "Application" }));
+    const q = await sent(server, (b) => b.channels?.length === 1 && b.channels[0] === "Application" && !b.ids);
+    expect(q).toEqual({ op: "query", channels: ["Application"], time: { last: "24h" } });
+    expect(await screen.findByRole("table", { name: "Events" })).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Problems" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Search$/ })).not.toBeInTheDocument();
   });
 
   it("opens an event from its row, and a count links to the full filtered search", async () => {
@@ -388,15 +403,21 @@ describe("the admin overview", () => {
     expect(await screen.findByRole("table", { name: "Events" })).toBeInTheDocument();
   });
 
-  it("asks for the Security key events only with the sensitive permission", () => {
-    expect(keyEventsRequest(false).channels).toEqual(["System", "Application"]);
-    expect(keyEventsRequest(false).ids?.some((i) => i.from === 4625)).toBe(false);
-    const r = keyEventsRequest(true);
-    expect(r.channels).toEqual(["System", "Application", "Security"]);
-    expect(r.sensitive).toBe(true);
-    expect(r.ids?.map((i) => i.from)).toEqual(expect.arrayContaining([6008, 41, 1074, 7031, 7034, 7000, 7009, 7023, 7, 11, 51, 153, 55, 98, 1000, 1002, 1001, 20, 1129, 1053, 1055, 36, 47, 129, 5719, 5722, 5805, 4625, 4740]));
-    expect(r.ids!.length).toBeLessThanOrEqual(32);
-    expect(r.providers!.length).toBeLessThanOrEqual(16);
+  it("asks for the Security key events only with the sensitive permission, and no query holds more IDs than Windows takes", () => {
+    const plain = keyEventsRequests(false);
+    expect(plain.flatMap((r) => r.channels!)).not.toContain("Security");
+    expect(plain.flatMap((r) => r.ids!.map((i) => i.from))).not.toContain(4625);
+    const all = keyEventsRequests(true);
+    expect(all.filter((r) => r.channels![0] === "Security").every((r) => r.sensitive === true)).toBe(true);
+    expect(all.filter((r) => r.sensitive).length).toBe(1);
+    expect(all.flatMap((r) => r.ids!.map((i) => i.from))).toEqual(
+      expect.arrayContaining([6008, 41, 1074, 7031, 7034, 7000, 7009, 7023, 7, 11, 51, 153, 55, 98, 1000, 1002, 1001, 20, 1129, 1053, 1055, 36, 47, 129, 5719, 5722, 5805, 4625, 4740]),
+    );
+    for (const r of all) {
+      expect(r.channels).toHaveLength(1);
+      expect(r.ids!.length).toBeLessThanOrEqual(12);
+      expect(r.providers).toBeUndefined();
+    }
     expect(problemsRequest().levels).toEqual([1, 2, 3]);
   });
 
