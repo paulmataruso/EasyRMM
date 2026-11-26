@@ -80,6 +80,7 @@ floors=(
   "server/internal/compliance/rollup       95"
   "server/internal/compliance/scan         92"
   "server/internal/compliance/engine       70"
+  "server/internal/compliance/fix          72"
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"

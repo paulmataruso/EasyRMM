@@ -58,9 +58,13 @@ type Summary struct {
 type DeviceEscrow struct {
 	// Applicable is false for a device that cannot escrow here: not a
 	// Windows device, or in an organization outside the dev scope.
-	Applicable bool          `json:"applicable"`
-	Keystore   Summary       `json:"keystore"`
-	Volumes    []VolumeState `json:"volumes"`
+	Applicable bool    `json:"applicable"`
+	Keystore   Summary `json:"keystore"`
+	// CanRead: the caller holds the read permission here (ADR-0081, slice 2).
+	// TwoPerson: a read waits for a second person's approval.
+	CanRead   bool          `json:"canRead"`
+	TwoPerson bool          `json:"twoPerson"`
+	Volumes   []VolumeState `json:"volumes"`
 }
 
 // SummaryOf turns the keystore's status into what the console shows.
@@ -93,6 +97,12 @@ func (s *Service) DeviceState(ctx context.Context, c access.Caller, deviceID uui
 	}
 	out := &DeviceEscrow{Applicable: platform == "windows" && devscope.Allowed(org), Volumes: []VolumeState{}}
 	out.Keystore = SummaryOf(s.CurrentStatus(ctx))
+	out.CanRead = c.Principal != nil && c.Can(rbac.PermRecoveryKeyRead, rbac.Site(org, site))
+	if out.CanRead {
+		if on, err := s.twoPerson(ctx, org); err == nil {
+			out.TwoPerson = on
+		}
+	}
 	if !out.Applicable {
 		return out, nil
 	}

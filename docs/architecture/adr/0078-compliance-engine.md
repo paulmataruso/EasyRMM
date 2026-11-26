@@ -690,6 +690,49 @@ Tests:
 * e2e: agree and apply a T1 item, type-confirm a T3 item (Playwright, under
   the e2e lock).
 
+*Built (C2), amended 2026-11-26 (decided in review):* the queue, the agreements, approval, decline, undo, the
+per-host and per-organization views and the screens are in. What the code showed, and what is not built:
+
+* **Migration** `00069_compliance_fix_queue.sql` (renumbered by the integrator; not 90782): `compliance_fix_items`,
+  `compliance_fix_agreements` (insert-only), `compliance_fix_settings` (the approval tiers) and
+  `hardening_setting_results`. The last is new: a job's output is not readable by the server's role (ADR-0063), so
+  the run's per-setting report (outcome, before and after values, time) is kept when the run reports, in
+  `recordHardening`, and the queue reads it. One item is open per computer and control (a unique index over the
+  states that are still in the queue, `not_verified` among them, so a second is not made beside an item whose re-scan
+  could not say).
+* **Scripts.** The Windows script and job already took setting ids (ADR-0054 W2, W3), so a Windows fix is one job
+  naming one setting, never a module. **The Linux script does not**, and changing its 5,500 lines to apply one
+  setting is not done here: a Linux control's apply reference names a module, so the queue lists the item with the
+  reason and offers **no Apply** (`applyBlocked`; the apply endpoint answers `not_offered`). Linux fixes wait for a
+  Linux script that takes setting ids. Until then the Hardening tab applies a module as before.
+* **The tier** an item is held to is the library's, raised to the one the hardening job holds the setting to, so the
+  agreement shown always covers what the job will demand. A test fails if the two tables disagree.
+* **Agreement order.** The agreement row and the audit event are written before the job is made, so no job exists
+  that was not agreed to; a job the hardening path refuses puts the item back and is audited
+  (`compliance.fix.dispatch_failed`). Several items on one computer in one request make one job. One change at a
+  time on a computer (`device_busy`).
+* **Step-up** answers 401 `step_up_required`, the console's existing convention (the step-up dialog is keyed on the
+  code), not 403. A refused T3 request writes no agreement and makes no job. Approval needs step-up whatever the tier.
+* **Fix permissions** also need `device.harden` on the computer, checked before anything is written; a Technician,
+  who holds `compliance.fix` but not `device.harden`, sees the queue and may set items aside, but cannot apply.
+* **Re-scan.** After an apply the engine runs a single-control scan (`trigger = verify`, `StartVerify`); only its result
+  moves the item to `verified` or `not_verified`, and the framework roll-up never reads a verify scan. A guard that
+  timed out (the computer undid the change by itself) marks the item `failed`.
+* **Where it shows.** The organization's Compliance tab is shown to those who hold `compliance.view` and, where the
+  module is off, holds only the switch (the switch lives on the tab, so the tab cannot be hidden by it). The
+  computer's Compliance is a tab of its own, hidden where the module is off, not inside Security: that tab is
+  Defender's and does not exist on Linux. The site has the result card; the Devices list has the filter
+  "Compliance: failing" (so a group's list has it too).
+* **Not built here:** the alert kinds `compliance.fix_failed` and `compliance.scan_stale` (the alert registry ties a
+  module's kinds to a module list; a later slice), the Reports row, the Devices list column, restricting the site
+  card to the selected packs, the typed agreement that lifts a lock-out guard item by item, the Windows runner tests
+  and a machine test per T3 module (none was run on a real Windows computer), and BitLocker.
+* **The queue's view.** A verified fix stays in the queue for a week, so it can be undone there; after that it is
+  history. A fix whose re-scan could not say (`not_verified`) stays until the control meets or it is undone, and can be
+  applied again. Reading a scan moves it forward, so the page asks until its scan ends.
+* **Automatic behaviour** checked with `devscope.Allowed`: the queue's sync after a scan and on the hourly loop, the
+  re-scan after a fix, the guard read, and every apply, undo and approval.
+
 #### C3: about 15 new endpoint checks
 
 *Goal:* the A-class requirements that have no check today, each as a

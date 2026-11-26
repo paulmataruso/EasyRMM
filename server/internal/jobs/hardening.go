@@ -654,6 +654,11 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 		device, r.Platform, job, started); err != nil {
 		return err
 	}
+	if len(h.Settings) > 0 && h.Mode != HardeningCheck {
+		if err := s.recordSettingResults(ctx, tx, device, job, r); err != nil {
+			return err
+		}
+	}
 	for _, m := range r.Modules {
 		// Not run: not checked either, so what the device had stands. A job
 		// for single settings read only some of the module's: they say

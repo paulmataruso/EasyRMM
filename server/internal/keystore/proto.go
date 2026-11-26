@@ -14,6 +14,13 @@ const (
 	OpStatus       = "status"
 	OpCreateOrgKey = "create_org_key"
 	OpVerifyEscrow = "verify_escrow"
+	// OpReadEscrow returns one record's plaintext (ADR-0081 section 7): the
+	// only operation that does, counted per organization and in total inside
+	// the keystore and written to its log before the answer leaves.
+	OpReadEscrow = "read_escrow"
+	// OpLog returns the keystore's own log from a sequence number on, for
+	// the server's hourly reconciliation.
+	OpLog = "log"
 )
 
 // Operations only the admin socket accepts: it exists inside the keystore
@@ -35,7 +42,12 @@ const (
 	CodeBadRequest    = "bad_request"
 	CodeDenied        = "denied"
 	CodeRefused       = "refused"
-	CodeInternal      = "internal"
+	// CodeLimit: the keystore's own limit on plaintext-returning calls.
+	CodeLimit = "rate_limited"
+	// CodeLogBroken: the keystore\'s own log does not verify, so it returns no
+	// key and cannot be reconciled.
+	CodeLogBroken = "log_broken"
+	CodeInternal  = "internal"
 )
 
 // Escrow check results.
@@ -89,6 +101,13 @@ type Request struct {
 	Fingerprint    []byte         `json:"fingerprint,omitempty"`
 	Kind           string         `json:"kind,omitempty"`
 
+	// read_escrow: the escrow record's ID, for the keystore's log.
+	Record string `json:"record,omitempty"`
+
+	// log
+	Since int64 `json:"since,omitempty"`
+	Limit int   `json:"limit,omitempty"`
+
 	// Admin operations. Secrets are byte slices so the keystore can zero
 	// them; the admin socket is reached only from inside the container.
 	Mode       string `json:"mode,omitempty"`
@@ -112,6 +131,15 @@ type Response struct {
 
 	// verify_escrow: Match or Mismatch, nothing else.
 	Result string `json:"result,omitempty"`
+
+	// read_escrow: the BitLocker recovery password, normalized. The only
+	// plaintext the keystore ever returns; both sides zero it after use.
+	Plaintext []byte `json:"plaintext,omitempty"`
+
+	// log
+	Entries []LogEntry `json:"entries,omitempty"`
+	// LogPrev is the hash of the entry before the first returned.
+	LogPrev string `json:"logPrev,omitempty"`
 
 	// init
 	RecoveryCode string `json:"recoveryCode,omitempty"`
@@ -151,3 +179,11 @@ type Status struct {
 
 // MaxMessage bounds one request or answer on either socket.
 const MaxMessage = 64 << 10
+
+// Limits on plaintext-returning calls inside the keystore (ADR-0081 section
+// 7): they hold even when the server's own are skipped.
+const (
+	OrgReadsPerHour   = 10
+	OrgReadsPerDay    = 50
+	TotalReadsPerHour = 30
+)

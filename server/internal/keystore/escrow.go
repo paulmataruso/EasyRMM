@@ -383,6 +383,7 @@ func (s *Service) VerifyPending(ctx context.Context) (int, error) {
 
 // Run checks pending records every half minute until ctx ends.
 func (s *Service) Run(ctx context.Context) {
+	go s.reconcileLoop(ctx)
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {

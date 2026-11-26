@@ -1,0 +1,14 @@
+{
+  "id": "warn.t3.v1",
+  "version": 1,
+  "tier": "T3",
+  "title": "A change that can lock people or EasyRMM out, lose data, or cannot be undone from here",
+  "paragraphs": [
+    "This change can cut access to the computer, lock accounts, lose data, or be impossible to undo remotely. It is made on one computer at a time.",
+    "Where the change could cut EasyRMM's own way in, the computer starts a timer before the change. If the agent has not reported back when the timer ends, the computer undoes the change by itself, and the item is marked as failed.",
+    "Read the preconditions below. You must type the computer's name to show that you mean this computer, and confirm it is you with your second factor."
+  ],
+  "undoNote": "Undo puts back the value the computer had before, if the record of the change is still on the computer.",
+  "typedRequired": true,
+  "stepUpRequired": true
+}

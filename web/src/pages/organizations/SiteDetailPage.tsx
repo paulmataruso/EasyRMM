@@ -44,6 +44,7 @@ import { DeleteGroupDialog, DeviceGroupDialog } from "./GroupDialogs";
 import { LevelTabs } from "./levelTabs";
 import { PlacesCard } from "./Places";
 import { SiteFormDialog } from "./SiteFormDialog";
+import { SiteComplianceCard } from "../compliance/SiteComplianceCard";
 import { SecurityCard } from "./tabs/SecurityTab";
 
 export function SiteDetailPage() {
@@ -165,6 +166,7 @@ export function SiteDetailPage() {
         overview={
           <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
             <div className="flex flex-col gap-5 xl:col-span-2">
+              <SiteComplianceCard organizationId={s.organizationId} siteId={s.id} />
               <Card
                 title="Device groups"
                 padded={false}

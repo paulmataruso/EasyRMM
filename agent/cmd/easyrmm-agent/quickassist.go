@@ -44,7 +44,7 @@ func (e *env) quickAssist(ctx context.Context, args []string) error {
 	if *base == "" {
 		*base = quickassist.BaseFor(e.isRoot())
 	}
-	opts := quickassist.Options{Self: *self, BaseDir: *base, CAFile: *caFile, Server: *server, Version: Version, Poll: *poll, Elevated: e.isRoot(), Out: e.stdout}
+	opts := quickassist.Options{Self: *self, BaseDir: *base, CAFile: *caFile, Server: *server, Version: Version, Poll: *poll, Elevated: e.isRoot(), Window: true, Out: e.stdout}
 	if *clean {
 		n, err := quickassist.Clean(opts.BaseDir)
 		if err != nil {

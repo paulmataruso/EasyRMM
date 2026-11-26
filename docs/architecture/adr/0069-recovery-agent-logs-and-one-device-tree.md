@@ -728,6 +728,15 @@ organization giving the counts and no key data. The records are sealed to the
 old organization's key, and its people lose the device; the agent escrows
 again to the new organization's key.
 
+### Amended 2026-11-26 (decided in review), keystore reads
+
+ADR-0081's slice 2 tables (migration `00068`): `keystore_alerts` and
+`keystore_org_settings` belong to the organization (owned).
+`keystore_notices` records a read shown to the organization at the time and
+stays with it. `recovery_key_requests` follow the device's site within an
+organization and end with a move to another one, as the escrow records do;
+the audit log keeps every read.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,

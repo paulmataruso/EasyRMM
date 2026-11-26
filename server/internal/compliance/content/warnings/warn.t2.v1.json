@@ -1,0 +1,14 @@
+{
+  "id": "warn.t2.v1",
+  "version": 1,
+  "tier": "T2",
+  "title": "A change that can break a workflow or someone's access",
+  "paragraphs": [
+    "This change can stop a program, a person or another computer from doing something that works today, for example connecting to a share, signing in with an older method or using a removable drive.",
+    "Check who and what uses the computer before you agree, and choose a time when a problem can be dealt with. EasyRMM never restarts the computer; if this change needs a restart, the item says so.",
+    "The setting is read again after the change. If it is not as intended, EasyRMM puts the old value back and marks the item as failed."
+  ],
+  "undoNote": "Undo puts back the value the computer had before.",
+  "typedRequired": false,
+  "stepUpRequired": false
+}

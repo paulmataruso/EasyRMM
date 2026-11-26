@@ -72,7 +72,7 @@ func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
 	t.Cleanup(func() { stop(); <-done })
 
 	h := newHarnessWith(t, false, func(c *config.Config) { c.KeystoreSocket = sock })
-	admin, _ := setUp(t, h)
+	admin, adminTOTP := setUp(t, h)
 	acme := orgID(t, admin, "Acme")
 	var hq idObj
 	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
@@ -177,6 +177,8 @@ func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
 	wantStatus(t, other.do("GET", "/api/v1/devices/"+enr.DeviceID+"/escrow", nil), http.StatusNotFound, "")
 	wantStatus(t, other.do("GET", "/api/v1/keystore", nil), http.StatusForbidden, "")
 
+	readRecoveryKey(t, h, admin, adminTOTP, acme, enr.DeviceID, vol, prot)
+
 	// The agent route is signed, limited and bound to the device: a record
 	// for a protector the device never reported is refused with 409.
 	_, err = ac.EscrowUpload(ctx, agentproto.EscrowRecord{VolumeID: vol, ProtectorID: "{DDDD}", Kind: agentproto.EscrowBitLocker, KeyID: "00000000-0000-0000-0000-000000000000",
@@ -184,4 +186,153 @@ func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
 	if err == nil {
 		t.Error("an unreported protector was accepted")
 	}
+}
+
+// readRecoveryKey is ADR-0081 slice 2 over HTTP: the read permission is an
+// add-on no super administrator has, the read needs a reason and a step-up, the
+// key is shown once with no-store, and the notice, the requests and the
+// settings are the console's.
+func readRecoveryKey(t *testing.T, h *harness, admin *client, adminTOTP, org, device, vol, prot string) {
+	t.Helper()
+	path := "/api/v1/devices/" + device + "/escrow/read"
+	body := map[string]any{"volume": vol, "protector": prot, "reason": "Laptop will not boot, owner on site", "ticket": "T-9"}
+	// A super administrator does not hold the permission, with or without a step-up.
+	wantStatus(t, admin.do("POST", path, body), http.StatusForbidden, "")
+
+	invite(t, h, admin, "rae@acme.example", []map[string]any{
+		{"role": "technician", "organizationId": org}, {"role": "key_reader", "organizationId": org},
+	})
+	rae := h.client()
+	secret := rae.signIn("rae@acme.example", "a long and unusual passphrase", "")
+	var esc struct {
+		CanRead bool `json:"canRead"`
+	}
+	rae.expect(http.StatusOK, "GET", "/api/v1/devices/"+device+"/escrow", nil, &esc)
+	if !esc.CanRead {
+		t.Fatal("the add-on role does not show the read")
+	}
+	// Without a step-up, with no reason, and with a key typed into it: refused.
+	wantStatus(t, rae.do("POST", path, body), http.StatusUnauthorized, "step_up_required")
+	rae.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, secret, time.Now().Add(30*time.Second))}, nil)
+	wantStatus(t, rae.do("POST", path, map[string]any{"volume": vol, "protector": prot, "reason": ""}), http.StatusUnprocessableEntity, "")
+	wantStatus(t, rae.do("POST", path, map[string]any{"volume": vol, "protector": prot, "reason": "key " + escrowTestPassword}), http.StatusUnprocessableEntity, "")
+
+	r := rae.expect(http.StatusOK, "POST", path, body, nil)
+	if got := strings.TrimSpace(string(r.body)); got != `{"key":"`+escrowTestPassword+`"}` {
+		t.Fatalf("the read answered %q", got)
+	}
+	if cc := r.header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q", cc)
+	}
+	// Nowhere else: not in the notices, the requests or the alerts.
+	var notices struct {
+		Notices []struct{ Reason, By string } `json:"notices"`
+	}
+	nr := admin.expect(http.StatusOK, "GET", "/api/v1/keystore/notices", nil, &notices)
+	if len(notices.Notices) != 1 || notices.Notices[0].By != "rae@acme.example" || notices.Notices[0].Reason != "Laptop will not boot, owner on site" {
+		t.Fatalf("notices: %s", nr.body)
+	}
+	for _, p := range []string{"/api/v1/keystore/notices", "/api/v1/keystore/alerts", "/api/v1/keystore/requests", "/api/v1/devices/" + device + "/escrow"} {
+		if b := rae.do("GET", p, nil).body; strings.Contains(string(b), "123456-234567") {
+			t.Errorf("%s holds the key", p)
+		}
+	}
+	// A technician without the add-on sees no notices and cannot read.
+	invite(t, h, admin, "tom@acme.example", []map[string]any{{"role": "technician", "organizationId": org}})
+	tom := h.client()
+	tsecret := tom.signIn("tom@acme.example", "a long and unusual passphrase", "")
+	tom.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, tsecret, time.Now().Add(30*time.Second))}, nil)
+	wantStatus(t, tom.do("POST", path, body), http.StatusForbidden, "")
+	var none struct {
+		Notices []any `json:"notices"`
+	}
+	tom.expect(http.StatusOK, "GET", "/api/v1/keystore/notices", nil, &none)
+	if len(none.Notices) != 0 {
+		t.Errorf("a technician sees notices: %+v", none)
+	}
+	var reqs struct {
+		Requests []any `json:"requests"`
+	}
+	rae.expect(http.StatusOK, "GET", "/api/v1/keystore/requests", nil, &reqs)
+	var al struct {
+		Alerts []any `json:"alerts"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/keystore/alerts", nil, &al)
+
+	// The two-person setting: off by default, needs two approvers and a step-up, and is an
+	// organization administrator's.
+	sp := "/api/v1/organizations/" + org + "/keystore-settings"
+	var set struct {
+		TwoPerson bool `json:"twoPerson"`
+		Approvers int  `json:"approvers"`
+	}
+	admin.expect(http.StatusOK, "GET", sp, nil, &set)
+	if set.TwoPerson || set.Approvers != 0 {
+		t.Fatalf("settings: %+v", set)
+	}
+	wantStatus(t, rae.do("PUT", sp, map[string]any{"twoPerson": true}), http.StatusForbidden, "")
+	admin.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, adminTOTP, time.Now().Add(30*time.Second))}, nil)
+	wantStatus(t, admin.do("PUT", sp, map[string]any{"twoPerson": true}), http.StatusConflict, "need_approvers")
+
+	// With two approvers it turns on, and a read then waits for one of them.
+	type approver struct {
+		c      *client
+		secret string
+	}
+	var aps []approver
+	for _, email := range []string{"ann@acme.example", "ben@acme.example"} {
+		invite(t, h, admin, email, []map[string]any{{"role": "technician", "organizationId": org}, {"role": "key_approver", "organizationId": org}})
+		c := h.client()
+		aps = append(aps, approver{c, c.signIn(email, "a long and unusual passphrase", "")})
+	}
+	admin.expect(http.StatusOK, "PUT", sp, map[string]any{"twoPerson": true}, &set)
+	if !set.TwoPerson || set.Approvers != 2 {
+		t.Fatalf("turn on: %+v", set)
+	}
+	var pending struct {
+		Pending struct {
+			ID    string `json:"id"`
+			State string `json:"state"`
+		} `json:"pending"`
+	}
+	r = rae.expect(http.StatusAccepted, "POST", path, body, &pending)
+	if pending.Pending.State != "pending" || strings.Contains(string(r.body), "123456") {
+		t.Fatalf("the two-person read answered %s", r.body)
+	}
+	// The requester cannot decide it, a technician cannot, and an approver needs a step-up of their own.
+	wantStatus(t, rae.do("POST", "/api/v1/keystore/requests/"+pending.Pending.ID+"/approve", nil), http.StatusForbidden, "")
+	wantStatus(t, aps[0].c.do("POST", "/api/v1/keystore/requests/"+pending.Pending.ID+"/approve", nil), http.StatusUnauthorized, "step_up_required")
+	aps[0].c.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, aps[0].secret, time.Now().Add(30*time.Second))}, nil)
+	var listed struct {
+		Requests []struct {
+			ID        string `json:"id"`
+			CanDecide bool   `json:"canDecide"`
+		} `json:"requests"`
+	}
+	aps[0].c.expect(http.StatusOK, "GET", "/api/v1/keystore/requests", nil, &listed)
+	if len(listed.Requests) != 1 || !listed.Requests[0].CanDecide {
+		t.Fatalf("approver's list: %+v", listed)
+	}
+	var decided struct {
+		State string `json:"state"`
+	}
+	aps[0].c.expect(http.StatusOK, "POST", "/api/v1/keystore/requests/"+pending.Pending.ID+"/approve", nil, &decided)
+	if decided.State != "approved" {
+		t.Fatalf("approve: %+v", decided)
+	}
+	used := map[string]any{"volume": vol, "protector": prot, "requestId": pending.Pending.ID}
+	r = rae.expect(http.StatusOK, "POST", path, used, nil)
+	if got := strings.TrimSpace(string(r.body)); got != `{"key":"`+escrowTestPassword+`"}` {
+		t.Fatalf("the approved read answered %q", got)
+	}
+	// Once only.
+	wantStatus(t, rae.do("POST", path, used), http.StatusConflict, "")
+	// A second request is refused by the other approver.
+	rae.expect(http.StatusAccepted, "POST", path, body, &pending)
+	aps[1].c.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, aps[1].secret, time.Now().Add(30*time.Second))}, nil)
+	aps[1].c.expect(http.StatusOK, "POST", "/api/v1/keystore/requests/"+pending.Pending.ID+"/deny", nil, &decided)
+	if decided.State != "denied" {
+		t.Fatalf("deny: %+v", decided)
+	}
+	wantStatus(t, rae.do("POST", path, map[string]any{"volume": vol, "protector": prot, "requestId": pending.Pending.ID}), http.StatusConflict, "")
 }

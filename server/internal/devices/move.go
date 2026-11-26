@@ -226,7 +226,7 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 		// The escrow rows follow the device, and row-level security reads
 		// their site (ADR-0081); a move to another organization deletes them
 		// below.
-		for _, table := range []string{"device_encrypted_volumes", "recovery_key_escrows"} {
+		for _, table := range []string{"device_encrypted_volumes", "recovery_key_escrows", "recovery_key_requests"} {
 			if _, err := tx.Exec(ctx, `UPDATE `+table+` SET site_id = $2 WHERE device_id = $1`, m.id, in.SiteID); err != nil {
 				return err
 			}
@@ -328,6 +328,11 @@ func (s *Service) leaveOrganization(ctx context.Context, tx pgx.Tx, c access.Cal
 		return 0, err
 	}
 	records = tag.RowsAffected()
+	// Requests to read a key the old organization held end with it; the
+	// audit log keeps what was read (ADR-0081).
+	if _, err := tx.Exec(ctx, `DELETE FROM recovery_key_requests WHERE device_id = $1`, m.id); err != nil {
+		return 0, err
+	}
 	if tag, err = tx.Exec(ctx, `DELETE FROM device_encrypted_volumes WHERE device_id = $1`, m.id); err != nil {
 		return 0, err
 	}

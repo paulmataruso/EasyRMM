@@ -12,6 +12,8 @@ export type Permission =
   | "device.harden"
   | "device.remote_desktop"
   | "device.rdp_credentials.save"
+  | "device.recovery_key.read"
+  | "device.recovery_key.approve"
   | "quickassist.view"
   | "quickassist.link.create"
   | "quickassist.link.permanent"
@@ -83,7 +85,7 @@ export type Permission =
   | "settings.manage";
 
 export type Role =
-  "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only";
+  "super_admin" | "org_admin" | "site_admin" | "technician" | "read_only" | "key_reader" | "key_approver";
 export type ScopeKind = "global" | "organization" | "site";
 export type SessionState = "mfa_required" | "mfa_enrollment" | "active";
 
@@ -3941,11 +3943,196 @@ export interface KeystoreSummary {
   fileMode: boolean;
 }
 
+/** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
+export interface RecoveryKeyRequest {
+  id: string;
+  deviceId: string;
+  device: string;
+  volume: string;
+  protector: string;
+  requester: string;
+  reason: string;
+  ticket?: string;
+  state: "pending" | "approved" | "denied" | "used";
+  approver?: string;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt?: string;
+  mine: boolean;
+  canDecide: boolean;
+}
+
 export interface DeviceEscrow {
+  /** The caller holds the read permission here. */
+  canRead: boolean;
+  /** A read waits for a second person's approval. */
+  twoPerson: boolean;
   /** False where the device cannot escrow here: not a Windows device, or outside the dev scope. */
   applicable: boolean;
   keystore: KeystoreSummary;
   volumes: EscrowVolume[];
+}
+
+// ---- Compliance (ADR-0078, slices C1 and C2) ----
+
+export interface ComplianceSettings {
+  enabled: boolean;
+  freshnessDays: number;
+  scanSchedule: "weekly" | null;
+  scanProfile: string | null;
+}
+
+export interface ComplianceProfile {
+  key: string;
+  version: string;
+  title: string;
+  platform: unknown;
+  frameworkKey: string | null;
+  controls: number;
+}
+
+export interface CompliancePack {
+  key: string;
+  version: string;
+  kind: string;
+  title: string;
+  reviewState: string;
+  enabled: boolean;
+  framework?: string;
+}
+
+/** Counts of an organization's or a site's latest stored results, in the console's words (section 9). */
+export interface ComplianceSummary {
+  enabled: boolean;
+  devices: number;
+  meets: number;
+  doesNotMeet: number;
+  cannotTell: number;
+  stale: number;
+  failingDevices: number;
+  lastScan: string | null;
+  disclaimer: string;
+}
+
+export type RequirementStatus = "checked_meets" | "checked_not_meets" | "not_assessed" | "not_applicable";
+
+export interface FrameworkOutcome {
+  reqId: string;
+  status: RequirementStatus;
+  label: string;
+  reason?: string;
+  failing?: { deviceId: string; controlId: string }[];
+  outOfScopeFailing?: { deviceId: string; controlId: string }[];
+  controls?: string[];
+  meeting: number;
+  cannotTell: number;
+}
+
+/** A framework's roll-up for an organization, or for one computer. */
+export interface FrameworkStatus {
+  framework: string;
+  version: string;
+  title: string;
+  scanId: string | null;
+  coverage: { total: number; checked: number; partly: number; organisational: number; noCheckYet: number };
+  counts: Partial<Record<RequirementStatus, number>>;
+  requirements: FrameworkOutcome[];
+  inScope: number;
+  disclaimer: string;
+  notes?: string[];
+  titles: Record<string, string>;
+}
+
+export type FixTier = "T1" | "T2" | "T3";
+export type FixState =
+  | "open"
+  | "awaiting_approval"
+  | "applying"
+  | "applied"
+  | "verified"
+  | "not_verified"
+  | "failed"
+  | "undoing"
+  | "undone"
+  | "declined"
+  | "resolved";
+
+export interface FixWarning {
+  id: string;
+  version: number;
+  tier: FixTier;
+  title: string;
+  paragraphs: string[];
+  undoNote: string;
+  typedRequired: boolean;
+  stepUpRequired: boolean;
+  sha256: string;
+}
+
+export interface FixItem {
+  id: string;
+  organizationId: string;
+  deviceId: string;
+  siteId: string;
+  deviceName: string;
+  platform: string;
+  controlId: string;
+  controlVersion: number;
+  title: string;
+  severity: string;
+  tier: FixTier;
+  state: FixState;
+  observed: unknown;
+  expected: unknown;
+  warning: FixWarning | null;
+  preconditions: string[];
+  undoKind: "restore_backup" | "reverse_action" | "none";
+  needsRestart: boolean;
+  requirements: { framework: string; id: string }[];
+  applyBlocked: string;
+  requiresTyped: boolean;
+  requiresStepUp: boolean;
+  requiresApproval: boolean;
+  canUndo: boolean;
+  outcome: { act: string; result?: string; before?: string; after?: string; changedAt?: string; reason?: string } | null;
+  failReason: string;
+  decline: { kind: "accepted_risk" | "deferred"; reason: string; expiresAt: string | null } | null;
+  applyJobId: string | null;
+  undoJobId: string | null;
+  requestedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FixAgreementRecord {
+  id: string;
+  act: "apply" | "undo" | "approve";
+  userId: string | null;
+  at: string;
+  warningId: string;
+  warningSha256: string;
+  controlVersion: number;
+  typedText: string | null;
+  stepUp: boolean;
+  preconditions: string[];
+}
+
+export interface FixItemDetail extends FixItem {
+  agreements: FixAgreementRecord[];
+}
+
+export interface FixSettings {
+  requireApproval: FixTier[];
+}
+
+export interface DeviceComplianceResult {
+  controlId: string;
+  controlVersion: number;
+  title: string;
+  state: string;
+  word: "meets" | "does not meet" | "cannot tell";
+  checkedAt: string;
+  scanId: string;
 }
 
 // The registry editor (ADR-0067, slice 1).
