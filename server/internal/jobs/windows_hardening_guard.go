@@ -49,23 +49,9 @@ func (s *Service) queueGuardConfirm(ctx context.Context, tx pgx.Tx, device, appl
 		s.log.Warn("jobs: no confirmation queued for a hardening guard outside the development scope", "device", device)
 		return nil
 	}
-	confirm := &Hardening{Platform: HardeningWindows, Mode: HardeningConfirm, Modules: []string{}}
-	body := windowsHardeningScript
-	sum := sha256.Sum256([]byte(body))
 	now := s.now()
-	expires := now.Add(GuardConfirmWithin)
-	jobID := uuid.New()
-	if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
-			expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires, params, params_sha256)
-		VALUES ($1, NULL, $2, $3, $4, $5, $6, 300, $7, NULL, 'EasyRMM hardening guard', $8, $9, NULL, $10, false,
-			$11, NULL, NULL)`,
-		jobID, confirm.windowsLabel(), agentproto.ShellPowerShell, body, sum[:], confirm.windowsArgs(), expires, now,
-		KindHardening, confirm, agentproto.ShellRequires(agentproto.ShellPowerShell)); err != nil {
-		return err
-	}
-	var runID uuid.UUID
-	if err := tx.QueryRow(ctx, `INSERT INTO job_runs (job_id, organization_id, site_id, device_id, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, jobID, org, site, device, expires, now).Scan(&runID); err != nil {
+	jobID, runID, sum, err := s.insertConfirmJob(ctx, tx, device, org, site, now, now.Add(GuardConfirmWithin))
+	if err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO hardening_guards (apply_job_id, device_id, confirm_job_id, settings, armed_at, rollback_at, state)
@@ -81,6 +67,26 @@ func (s *Service) queueGuardConfirm(ctx context.Context, tx pgx.Tx, device, appl
 			"mode": HardeningConfirm, "appliedBy": applyJob.String(), "settings": ids, "guardMinutes": GuardMinutes,
 		},
 	})
+}
+
+// insertConfirmJob inserts the confirm job and its run for a device, which
+// expires at the given time.
+func (s *Service) insertConfirmJob(ctx context.Context, tx pgx.Tx, device, org, site uuid.UUID, now, expires time.Time) (jobID, runID uuid.UUID, sum [32]byte, err error) {
+	confirm := &Hardening{Platform: HardeningWindows, Mode: HardeningConfirm, Modules: []string{}}
+	body := windowsHardeningScript
+	sum = sha256.Sum256([]byte(body))
+	jobID = uuid.New()
+	if _, err = tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
+			expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires, params, params_sha256)
+		VALUES ($1, NULL, $2, $3, $4, $5, $6, 300, $7, NULL, 'EasyRMM hardening guard', $8, $9, NULL, $10, false,
+			$11, NULL, NULL)`,
+		jobID, confirm.windowsLabel(), agentproto.ShellPowerShell, body, sum[:], confirm.windowsArgs(), expires, now,
+		KindHardening, confirm, agentproto.ShellRequires(agentproto.ShellPowerShell)); err != nil {
+		return
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO job_runs (job_id, organization_id, site_id, device_id, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, jobID, org, site, device, expires, now).Scan(&runID)
+	return
 }
 
 // confirmGuard records that a confirm job ran: the agent answered, the

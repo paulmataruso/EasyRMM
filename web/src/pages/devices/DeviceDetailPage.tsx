@@ -20,6 +20,7 @@ import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { PatchesPanel } from "./DevicePatches";
 import { HardeningPanel } from "./DeviceHardening";
+import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
 import { DefenderPanel } from "./DeviceDefender";
 import { platformName } from "./platform";
@@ -88,8 +89,8 @@ export function DeviceDetailPage() {
     { id: "hardware", label: "Hardware", hidden: !hasAgent },
     { id: "software", label: "Software", hidden: !hasAgent || !can("software.view") },
     { id: "patches", label: "Patches", hidden: !hasAgent || patching.data?.configured !== true },
-    // Hardening covers Linux (ADR-0051); viewing its findings needs only device.view.
-    { id: "hardening", label: "Hardening", hidden: !hasAgent || d.platform !== "linux" },
+    // Hardening covers Linux (ADR-0051) and Windows (ADR-0054); viewing its findings needs only device.view.
+    { id: "hardening", label: "Hardening", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") },
     // Agent logs (ADR-0069) need log.view: Technicians and above.
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
@@ -200,7 +201,7 @@ export function DeviceDetailPage() {
 
       {tab === "hardening" && (
         <div role="tabpanel" aria-labelledby="tab-hardening">
-          <HardeningPanel device={d} />
+          {d.platform === "windows" ? <WindowsHardeningPanel device={d} /> : <HardeningPanel device={d} />}
         </div>
       )}
 

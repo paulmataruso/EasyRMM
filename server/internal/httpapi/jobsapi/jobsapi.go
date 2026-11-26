@@ -55,6 +55,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/jobs/software", a.createSoftwareJob)
 	r("POST /api/v1/jobs/hardening", a.createHardeningJob)
 	r("GET /api/v1/devices/{id}/hardening", a.deviceHardening)
+	r("GET /api/v1/devices/{id}/hardening/guards", a.hardeningGuards)
+	r("POST /api/v1/devices/{id}/hardening/guard/keep", a.keepHardeningGuard)
+	r("GET /api/v1/hardening/windows/catalog", a.windowsCatalog)
+	r("GET /api/v1/hardening/windows/fleet", a.windowsFleet)
 	r("POST /api/v1/devices/{id}/winmod/{action}", a.runWinmod)
 	r("GET /api/v1/winmod/runs/{id}", a.winmodResult)
 	r("GET /api/v1/jobs/{id}", a.getJob)
@@ -452,5 +456,60 @@ func (a *API) cancelRun(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, run)
+	return nil
+}
+
+// hardeningGuards lists a device's connectivity guards (ADR-0054, W3).
+func (a *API) hardeningGuards(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	items, err := a.svc.DeviceGuards(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[jobs.HardeningGuard]{Items: items})
+	return nil
+}
+
+// keepHardeningGuard asks for an armed guard's change to stand now.
+func (a *API) keepHardeningGuard(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	g, err := a.svc.KeepGuard(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusAccepted, g)
+	return nil
+}
+
+// windowsCatalog lists Windows' hardening modules and their settings.
+func (a *API) windowsCatalog(w http.ResponseWriter, _ *http.Request) error {
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[jobs.WindowsCatalogModule]{Items: jobs.WindowsCatalog()})
+	return nil
+}
+
+// windowsFleet sums up the Windows computers of an organization, site or group.
+func (a *API) windowsFleet(w http.ResponseWriter, r *http.Request) error {
+	var sc jobs.FleetScope
+	var err error
+	if sc.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
+		return err
+	}
+	if sc.SiteID, err = httpapi.QueryID(r, "siteId"); err != nil {
+		return err
+	}
+	if sc.GroupID, err = httpapi.QueryID(r, "groupId"); err != nil {
+		return err
+	}
+	f, err := a.svc.HardeningFleet(r.Context(), httpapi.Caller(r), sc)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, f)
 	return nil
 }

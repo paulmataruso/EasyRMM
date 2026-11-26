@@ -186,7 +186,7 @@ func TestHardeningAPI(t *testing.T) {
 	wantStatus(t, viewer.do("GET", "/api/v1/job-runs?deviceId="+device+"&kind=patch", nil), http.StatusUnprocessableEntity, "validation_failed")
 
 	// The fleet: each device's summary, and the filters. A second Linux
-	// device is not checked yet; a Windows device never counts as such.
+	// device and the Windows one are not checked yet.
 	if _, err := h.agentClient().Enroll(ctx, token.Secret, newKey(t).Public().(ed25519.PublicKey), facts("srv-02")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestHardeningAPI(t *testing.T) {
 		}
 		return out
 	}
-	for filter, want := range map[string][]string{"": {"srv-01", "srv-02", "ws-01"}, "attention": {"srv-01"}, "in_place": {}, "unchecked": {"srv-02"}} {
+	for filter, want := range map[string][]string{"": {"srv-01", "srv-02", "ws-01"}, "attention": {"srv-01"}, "in_place": {}, "unchecked": {"srv-02", "ws-01"}} {
 		if got := names(filter); !slices.Equal(got, want) {
 			t.Errorf("hardening=%s: %q", filter, got)
 		}
@@ -246,7 +246,7 @@ func TestHardeningAPI(t *testing.T) {
 	if err := ac.Result(ctx, p.RunID, agentproto.ResultRequest{Status: agentproto.RunSucceeded, ExitCode: new(int), Stdout: out, StartedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	for filter, want := range map[string][]string{"attention": {}, "in_place": {"srv-01"}, "unchecked": {"srv-02"}} {
+	for filter, want := range map[string][]string{"attention": {}, "in_place": {"srv-01"}, "unchecked": {"srv-02", "ws-01"}} {
 		if got := names(filter); !slices.Equal(got, want) {
 			t.Errorf("after the second check, hardening=%s: %q", filter, got)
 		}

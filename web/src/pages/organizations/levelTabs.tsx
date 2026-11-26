@@ -6,6 +6,7 @@ import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { ContactsTab } from "./tabs/ContactsTab";
+import { HardeningTab } from "./tabs/HardeningTab";
 import { InstallTab } from "./tabs/InstallTab";
 import { PatchingTab } from "./tabs/PatchingTab";
 import { PeopleTab } from "./tabs/PeopleTab";
@@ -87,6 +88,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "org.view",
     levels: ["organization", "site"],
     component: WindowsModulesTab,
+  },
+  {
+    id: "hardening",
+    label: "Hardening",
+    permission: "device.view",
+    levels: ["organization", "site", "group"],
+    component: HardeningTab,
   },
   {
     id: "install",

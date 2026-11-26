@@ -176,7 +176,7 @@ type Device struct {
 	// has the EasyRMM agent on Linux or Windows (ADR-0051, ADR-0054).
 	CanCheckHardening bool `json:"canCheckHardening"`
 	// CanHarden: the caller holds device.harden here and the device has the
-	// EasyRMM agent on Linux: it may apply and undo hardening (ADR-0051).
+	// EasyRMM agent on Linux or Windows: it may apply and undo hardening (ADR-0051, ADR-0054).
 	CanHarden bool `json:"canHarden"`
 	// CanRemove: the caller may remove the device (ADR-0050).
 	CanRemove bool `json:"canRemove"`
@@ -233,7 +233,7 @@ const (
 	HardeningAttention = "attention"
 	// HardeningInPlace: checked, and no module needs attention.
 	HardeningInPlace = "in_place"
-	// HardeningUnchecked: a Linux device with the EasyRMM agent that no
+	// HardeningUnchecked: a Linux or Windows device with the EasyRMM agent that no
 	// hardening job has reported on.
 	HardeningUnchecked = "unchecked"
 )
@@ -402,7 +402,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanRepairEasyRMM = d.patched && d.Agent != nil && c.Can(rbac.PermPatchManage, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	d.CanCheckHardening = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermScriptRun, r)
-	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)
+	d.CanHarden = d.Agent != nil && (d.Platform == "linux" || d.Platform == "windows") && c.Can(rbac.PermDeviceHarden, r)
 	d.CanRemove = c.Can(rbac.PermDeviceRetire, r)
 	s.updateStatus(d)
 }
@@ -467,7 +467,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 			  AND CASE $6
 				WHEN 'attention' THEN coalesce(hs.states ?| $7::text[], false)
 				WHEN 'in_place' THEN hc.device_id IS NOT NULL AND NOT coalesce(hs.states ?| $7::text[], false)
-				WHEN 'unchecked' THEN d.platform = 'linux' AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
+				WHEN 'unchecked' THEN d.platform IN ('linux', 'windows') AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
 				ELSE true END
 			  AND CASE $8
 				WHEN '' THEN true

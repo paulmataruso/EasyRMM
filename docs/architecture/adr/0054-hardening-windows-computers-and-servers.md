@@ -2085,6 +2085,23 @@ remote PowerShell's slice 1, and before notifications.
   controls* panel; mixed
   selections sent as one job per platform.
 
+  *Built in W3 (2026-11-26, not yet run against a real Windows computer):*
+  a Windows computer's **Hardening** tab (the Linux tab's page, by platform)
+  with each module's tier, state and *restart needed*, each setting's value,
+  wanted value, owner, tier and how it stands against its rules, the
+  *Related controls* panel, apply and undo by module or by single settings
+  with the tier's confirmation (agreement; for tier 3 the computer's name
+  typed, and the console's step-up dialog when the server asks), the guard's
+  countdown with a **Keep** button (the server queues a new confirm job and
+  records `keep_requested_at`), the history (guards and runs), and a
+  **Hardening** tab at the organization, site and group levels (ADR-0072)
+  with the Windows computers, each module's states summed and a filter.
+  *Amended 2026-11-26 (decided in review):* the Devices list's `unchecked`
+  filter and `canHarden` now cover Windows computers with the agent, so the
+  fleet shows a Windows computer no check has reported on. Mixed selections
+  sent as one job per platform, the harvest's coverage and the two-step
+  modules' state are not built: they need the harvest (W2's later work).
+
 ## Consequences
 * An operator can check a fleet of Windows computers in one job, see per
   module what is in place, who else owns what, which rules each setting
