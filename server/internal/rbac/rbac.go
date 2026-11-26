@@ -92,6 +92,10 @@ const (
 	PermPrintManage     Permission = "print.manage"
 	PermBackupView      Permission = "backup.view"
 	PermBackupManage    Permission = "backup.manage"
+	// Windows Backup adds two (ADR-0077): target paths, shares and accounts
+	// name customers, and tier 3 actions erase, format or stop protecting.
+	PermBackupViewSensitive Permission = "backup.view_sensitive"
+	PermBackupDestroy       Permission = "backup.destroy"
 
 	// PermRDPCredentialsSave lets a person save, replace and delete their own
 	// saved RDP credential on a device they may open remote desktop on
@@ -111,6 +115,7 @@ var AllPermissions = []Permission{
 	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
+	PermBackupViewSensitive, PermBackupDestroy,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -200,6 +205,7 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
 	PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADView, PermADViewSensitive,
+	PermBackupViewSensitive, PermBackupDestroy,
 })
 
 var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { BackupCard } from "../devices/backup/BackupCard";
 import { Link, useNavigate, useParams } from "react-router";
 import { FolderTree, MonitorDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
@@ -276,6 +277,7 @@ export function SiteDetailPage() {
             </div>
 
             <div className="flex flex-col gap-5">
+              <BackupCard level="site" id={s.id} organizationId={s.organizationId} />
               {documented && (
                 <Card
                   title={

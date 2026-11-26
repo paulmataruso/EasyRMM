@@ -65,6 +65,11 @@ type Param struct {
 	// Secret values are sealed apart, placed in the job at delivery only,
 	// and never audited or logged.
 	Secret bool
+	// Pattern, for a Text parameter, is a regular expression the whole
+	// value must match; Check returns why a value that does not suit
+	// is refused, or "". Both run after the common text checks.
+	Pattern *regexp.Regexp
+	Check   func(string) string
 	// Sensitive values are audited as their length and SHA-256 only.
 	Sensitive bool
 }
@@ -96,6 +101,10 @@ type Action struct {
 	Credential  bool
 	// Subject names the parameter that is the confirmation's subject.
 	Subject string
+	// Confirm makes the action need the typed confirmation without a
+	// step-up (ADR-0077's tier 2: a change that is not a loss). A
+	// destructive action always needs it.
+	Confirm bool
 	// Timeout is the script's time limit in seconds.
 	Timeout int
 	// Keep is how long the job, its params and its result are kept: an hour
@@ -174,8 +183,8 @@ func (a Action) check() error {
 		return ErrScriptPin
 	case a.Sensitive && a.SensitivePermission == "":
 		return errors.New("a sensitive action names the permission that opens its result")
-	case a.Destructive && a.Subject == "":
-		return errors.New("a destructive action names its confirmation subject")
+	case (a.Destructive || a.Confirm) && a.Subject == "":
+		return errors.New("a confirmed action names its confirmation subject")
 	case a.Schedule > 0 && (a.Freshness <= 0 || a.Schedule < time.Hour || a.Destructive || a.Credential || a.Changes):
 		return errors.New("a scheduled action is a snapshot read, run at most hourly")
 	case a.Freshness > 0 && (a.Destructive || a.Credential || a.Changes):
