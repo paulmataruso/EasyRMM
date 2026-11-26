@@ -43,6 +43,7 @@ import { DeleteGroupDialog, DeviceGroupDialog } from "./GroupDialogs";
 import { LevelTabs } from "./levelTabs";
 import { PlacesCard } from "./Places";
 import { SiteFormDialog } from "./SiteFormDialog";
+import { SecurityCard } from "./tabs/SecurityTab";
 
 export function SiteDetailPage() {
   const { id = "" } = useParams();
@@ -301,6 +302,7 @@ export function SiteDetailPage() {
                   />
                 </Card>
               )}
+              <SecurityCard level="site" id={s.id} organizationId={s.organizationId} />
               <Card title="Details">
                 <KeyValueList
                   narrow

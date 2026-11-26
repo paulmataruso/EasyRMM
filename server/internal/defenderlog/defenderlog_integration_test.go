@@ -351,3 +351,40 @@ func TestRetention(t *testing.T) {
 		t.Errorf("%d events remain after the device was deleted", n)
 	}
 }
+
+// The fleet table and the cards' counts come from what is stored: no job, only
+// computers with the role where the module is on, for who holds defender.view.
+func TestFleet(t *testing.T) {
+	f := newFx(t)
+	f.exec(`INSERT INTO windows_module_snapshots (device_id, module, action, params_hash, taken_at, data)
+		VALUES ($1, 'defender', 'defender.status', '', now(), '{"realTimeProtectionEnabled":false,"tamperProtected":true,"runningMode":"Normal","signatureAgeDays":5,"quickScanAgeDays":1}')`, f.dev)
+	f.ingest(batch(1, detection(1, "T1", "Virus:DOS/EICAR_Test_File", "Severe", time.Minute)))
+	admin := adminCaller(t, f)
+	fleet, err := f.store.Fleet(f.ctx, admin, f.acme, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fleet.Items) != 1 || fleet.NotProtected != 1 || fleet.Protected != 0 || fleet.SignaturesOld != 1 || fleet.Threats30Days != 1 || fleet.Items[0].Name != "dc1" {
+		t.Errorf("fleet %+v", fleet)
+	}
+	if site, err := f.store.Fleet(f.ctx, admin, f.acme, &f.hq); err != nil || len(site.Items) != 1 {
+		t.Errorf("site fleet %+v %v", site, err)
+	}
+	// Read-Only holds no Defender permission: not found.
+	uid := f.id(`INSERT INTO users (email, display_name) VALUES ('ro@example.com', 'r') RETURNING id`)
+	p, err := rbac.NewPrincipal(uid, []rbac.Assignment{{Role: rbac.RoleReadOnly, OrganizationID: f.acme}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ro := access.User(p, auth.DataScope(p), audit.Actor{Type: audit.ActorUser, ID: uid, Label: "r"})
+	if _, err := f.store.Fleet(f.ctx, ro, f.acme, nil); err == nil {
+		t.Error("a Read-Only person read the fleet")
+	}
+	// Module off: the computer is not in the table.
+	if err := f.mods.SetEnabled(f.ctx, admin, modules.AtOrganization, f.acme, modules.Defender, false); err != nil {
+		t.Fatal(err)
+	}
+	if off, err := f.store.Fleet(f.ctx, admin, f.acme, nil); err != nil || len(off.Items) != 0 {
+		t.Errorf("fleet with the module off %+v %v", off, err)
+	}
+}

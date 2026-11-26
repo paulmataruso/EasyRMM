@@ -26,6 +26,38 @@ func New(store *defenderlog.Store, offered defenderlog.Offerer) *API {
 // the store checks the permission and that the module is offered.
 func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/devices/{id}/defender/events", httpapi.RequireActive(httpapi.Handle(a.events)))
+	mux.Handle("GET /api/v1/organizations/{id}/defender/fleet", httpapi.RequireActive(httpapi.Handle(a.orgFleet)))
+	mux.Handle("GET /api/v1/sites/{id}/defender/fleet", httpapi.RequireActive(httpapi.Handle(a.siteFleet)))
+}
+
+func (a *API) orgFleet(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	out, err := a.store.Fleet(r.Context(), httpapi.Caller(r), id, nil)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) siteFleet(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	org, err := a.store.SiteOrganization(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	out, err := a.store.Fleet(r.Context(), httpapi.Caller(r), org, &id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
 }
 
 func (a *API) events(w http.ResponseWriter, r *http.Request) error {

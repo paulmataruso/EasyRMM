@@ -9,6 +9,7 @@ import { ContactsTab } from "./tabs/ContactsTab";
 import { InstallTab } from "./tabs/InstallTab";
 import { PatchingTab } from "./tabs/PatchingTab";
 import { PeopleTab } from "./tabs/PeopleTab";
+import { SecurityTab } from "./tabs/SecurityTab";
 import { WindowsModulesTab } from "./tabs/WindowsModulesTab";
 
 // The tab strip of the organization and site pages (ADR-0072, slice S4). A tab is one line in LEVEL_TABS: its id (the
@@ -80,6 +81,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     levels: ["organization", "site"],
     when: (ctx) => ctx.patchingConfigured,
     component: PatchingTab,
+  },
+  {
+    id: "security",
+    label: "Security",
+    permission: "defender.view",
+    levels: ["organization", "site"],
+    component: SecurityTab,
   },
   {
     id: "windows-modules",
