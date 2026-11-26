@@ -193,3 +193,51 @@ func TestSignature(t *testing.T) {
 		t.Error("a bad signature file")
 	}
 }
+
+// TestNoClaimOfCompliance keeps the words ADR-0078 forbids out of every text
+// the console shows from the content: a control "meets" or "does not meet",
+// and nothing is ever called compliant or certified.
+func TestNoClaimOfCompliance(t *testing.T) {
+	bad := []string{"compliant", "certified", "compliance with"}
+	err := fs.WalkDir(content.FS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".json") || p == "manifest.json" || p == "sources.json" {
+			return err
+		}
+		b, err := fs.ReadFile(content.FS, p)
+		if err != nil {
+			return err
+		}
+		var v any
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		var walk func(key string, v any)
+		walk = func(key string, v any) {
+			switch x := v.(type) {
+			case map[string]any:
+				for k, y := range x {
+					walk(k, y)
+				}
+			case []any:
+				for _, y := range x {
+					walk(key, y)
+				}
+			case string:
+				switch key {
+				case "title", "description", "remediation_text", "note", "what", "rationale":
+					low := strings.ToLower(x)
+					for _, w := range bad {
+						if strings.Contains(low, w) && !strings.Contains(low, "non"+w) {
+							t.Errorf("%s: %s says %q: %q", p, key, w, x)
+						}
+					}
+				}
+			}
+		}
+		walk("", v)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
