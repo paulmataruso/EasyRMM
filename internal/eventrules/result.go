@@ -50,7 +50,7 @@ const (
 	StopBytes  = "bytes"  // the page's bytes
 	StopRead   = "read"   // the events-read bound
 	StopTime   = "time"   // the builtin's own time limit
-	StopCancel = "cancel" // cancelled from the server
+	StopCancel = "cancel" // canceled from the server
 )
 
 // Begin is the first line: what was asked and what ran it.

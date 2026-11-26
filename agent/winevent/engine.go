@@ -24,7 +24,7 @@ import (
 var (
 	ErrNotFound  = errors.New("winevent: not found")
 	ErrDenied    = errors.New("winevent: access denied")
-	ErrCancelled = errors.New("winevent: cancelled")
+	ErrCancelled = errors.New("winevent: canceled")
 	// ErrAnalytic is an enabled circular Analytic or Debug channel, which
 	// Windows reads only while it is disabled.
 	ErrAnalytic = errors.New("winevent: analytic log enabled")
@@ -140,7 +140,7 @@ func marshalLine(v any) ([]byte, error) {
 
 // Run does one operation of the input and writes its lines to w. ctx ends
 // when the child's input closes or its own limit is reached; the backend's
-// queries are cancelled from outside. Whatever ends the run, the lines
+// queries are canceled from outside. Whatever ends the run, the lines
 // written so far end in an end line where the run could write one.
 func Run(ctx context.Context, in eventrules.Input, be Backend, w io.Writer, opt Options) error {
 	if err := in.Check(); err != nil {
@@ -220,7 +220,7 @@ func writeFailure(lw *lineWriter, channel string, err error) error {
 	case errors.Is(err, ErrTooComplex):
 		e.Code, e.Message = eventrules.ErrCodeFailed, "Windows refused the filter as too complex: use fewer IDs or providers."
 	case errors.Is(err, ErrCancelled):
-		e.Code, e.Message = eventrules.ErrCodeFailed, "The query was cancelled."
+		e.Code, e.Message = eventrules.ErrCodeFailed, "The query was canceled."
 	default:
 		e.Code, e.Message = eventrules.ErrCodeFailed, truncate("Windows could not read it: "+err.Error(), 512)
 	}

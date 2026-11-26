@@ -203,9 +203,7 @@ func exec(t *testing.T, be Backend, in eventrules.Input, opt Options) out {
 		t.Fatalf("run: %v", err)
 	}
 	var lines [][]byte
-	for _, l := range bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n")) {
-		lines = append(lines, l)
-	}
+	lines = append(lines, bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n"))...)
 	res, err := eventrules.ParseLines(lines)
 	if err != nil {
 		t.Fatalf("the engine's own result does not decode: %v\n%s", err, b.String())

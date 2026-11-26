@@ -98,7 +98,7 @@ func TestEventlogBuiltinAsSystem(t *testing.T) {
 	time.AfterFunc(time.Second, func() { cancel(errCanceled) })
 	start := time.Now()
 	res = Execute(ctx, payload(`{"v":1,"op":"query","rules":1,"sensitive":false,"channels":["System","Application"],"text":"easyrmm-no-event-holds-this"}`, 60), t.TempDir())
-	t.Logf("cancelled after %s: %s", time.Since(start), res.Status)
+	t.Logf("canceled after %s: %s", time.Since(start), res.Status)
 	if res.Status != agentproto.RunCanceled {
 		t.Fatalf("%+v", res)
 	}

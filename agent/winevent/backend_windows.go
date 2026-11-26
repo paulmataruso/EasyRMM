@@ -152,13 +152,13 @@ func mapErr(err error) error {
 	}
 	switch errnoOf(err) {
 	case errEvtChannelNotFound, errEvtQueryStale, errEvtInvalidChannel:
-		return fmt.Errorf("%w: %v", ErrNotFound, err)
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	case errAccessDenied:
-		return fmt.Errorf("%w: %v", ErrDenied, err)
+		return fmt.Errorf("%w: %w", ErrDenied, err)
 	case errCancelled:
 		return ErrCancelled
 	case errServiceNotActive, errRPCUnavailable:
-		return fmt.Errorf("%w: %v", ErrService, err)
+		return fmt.Errorf("%w: %w", ErrService, err)
 	case errEvtFilterTooComplx:
 		return ErrTooComplex
 	}
@@ -189,10 +189,12 @@ func u16(s string) (*uint16, error) { return windows.UTF16PtrFromString(s) }
 func getVariant(f func(size uint32, buf unsafe.Pointer, used *uint32) error) (*evtVariant, []uint64, error) {
 	buf := make([]uint64, 32)
 	var used uint32
-	err := f(uint32(len(buf)*8), unsafe.Pointer(&buf[0]), &used)
+	err := f(uint32(len(buf)*8), //nolint:gosec // a small buffer
+		unsafe.Pointer(&buf[0]), &used)
 	if errnoOf(err) == errInsufficientBuffer {
-		buf = make([]uint64, int(used)/8+2)
-		err = f(uint32(len(buf)*8), unsafe.Pointer(&buf[0]), &used)
+		buf = make([]uint64, int(used)/8+2) //nolint:gosec // a size Windows asked for
+		err = f(uint32(len(buf)*8),         //nolint:gosec // a size Windows asked for
+			unsafe.Pointer(&buf[0]), &used)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -230,17 +232,17 @@ func filetimeOf(ft uint64) time.Time {
 	if ft == 0 {
 		return time.Time{}
 	}
-	return time.Unix(0, (int64(ft)-116444736000000000)*100).UTC()
+	return time.Unix(0, (int64(ft)-116444736000000000)*100).UTC() //nolint:gosec // a FILETIME
 }
 
 type winBackend struct {
-	mu        sync.Mutex
-	open      map[windows.Handle]struct{}
-	cancelled bool
-	pubs      map[string]windows.Handle
-	pubsEn    map[string]windows.Handle
-	dtz       [432]byte
-	haveDTZ   bool
+	mu       sync.Mutex
+	open     map[windows.Handle]struct{}
+	canceled bool
+	pubs     map[string]windows.Handle
+	pubsEn   map[string]windows.Handle
+	dtz      [432]byte
+	haveDTZ  bool
 }
 
 // NewBackend is this computer's event logs.
@@ -258,10 +260,10 @@ func NewBackend() (Backend, error) {
 func (b *winBackend) Now() time.Time { return time.Now().UTC() }
 
 // Cancel asks every open query to stop, as Microsoft describes: the
-// operation returns ERROR_CANCELLED.
+// operation returns the cancel error.
 func (b *winBackend) Cancel() {
 	b.mu.Lock()
-	b.cancelled = true
+	b.canceled = true
 	hs := make([]windows.Handle, 0, len(b.open))
 	for h := range b.open {
 		hs = append(hs, h)
@@ -275,7 +277,7 @@ func (b *winBackend) Cancel() {
 func (b *winBackend) isCancelled() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.cancelled
+	return b.canceled
 }
 
 func (b *winBackend) CrashOnAuditFail() (int, bool) {
@@ -288,7 +290,7 @@ func (b *winBackend) CrashOnAuditFail() (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	return int(v), true
+	return int(v), true //nolint:gosec // a DWORD
 }
 
 // Offset is the computer's offset from UTC at an instant, with its dynamic
@@ -748,7 +750,7 @@ func (b *winBackend) Provider(name string) (*eventrules.ProviderLine, error) {
 	r, err := call(procEvtOpenPublisherMetadata, 0, uintptr(unsafe.Pointer(p)), 0, 0, 0)
 	if err != nil {
 		if errnoOf(err) == errEvtPublisherMeta || errnoOf(err) == errEvtChannelNotFound {
-			return nil, fmt.Errorf("%w: %v", ErrNotFound, err)
+			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
 		}
 		return nil, mapErr(err)
 	}

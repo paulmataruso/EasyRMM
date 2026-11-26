@@ -48,9 +48,7 @@ func runReal(t *testing.T, be Backend, in eventrules.Input) (*eventrules.Result,
 	}
 	took := time.Since(start)
 	var lines [][]byte
-	for _, l := range bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n")) {
-		lines = append(lines, l)
-	}
+	lines = append(lines, bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n"))...)
 	res, err := eventrules.ParseLines(lines)
 	if err != nil {
 		t.Fatalf("the result does not decode: %v\n%s", err, b.String())
@@ -241,7 +239,7 @@ func TestProviderAsSystem(t *testing.T) {
 }
 
 // TestCancelStopsTheServiceAsSystem: a text search that reads a large log is
-// cancelled from outside and ends promptly, with its last line.
+// canceled from outside and ends promptly, with its last line.
 func TestCancelStopsTheQueryAsSystem(t *testing.T) {
 	needSystem(t)
 	be := realBackend(t)
@@ -255,9 +253,7 @@ func TestCancelStopsTheQueryAsSystem(t *testing.T) {
 			return
 		}
 		var lines [][]byte
-		for _, l := range bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n")) {
-			lines = append(lines, l)
-		}
+		lines = append(lines, bytes.Split(bytes.TrimRight(b.Bytes(), "\n"), []byte("\n"))...)
 		res, _ := eventrules.ParseLines(lines)
 		done <- res
 	}()

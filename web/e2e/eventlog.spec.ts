@@ -114,7 +114,7 @@ test("a Windows computer enrolls with an agent that has the event viewer, and it
   await expect(logs.getByRole("checkbox", { name: "Security" })).toBeEnabled();
 });
 
-test("a search is a job: its input is the typed filters, its events are listed newest first, a command line is hidden", async () => {
+test("a search is a job: its input is the typed filters, its events are listed newest first, a hidden command line drops its event from a text search", async () => {
   const page = admin;
   await page.getByRole("checkbox", { name: "Application" }).uncheck();
   await page.getByRole("checkbox", { name: "Error" }).check();
@@ -133,15 +133,15 @@ test("a search is a job: its input is the typed filters, its events are listed n
     endLine({ returned: 2, read: 2, stoppedBy: "page", cursor: { channels: [{ channel: "System", record: 11 }] } }),
   ]);
   const table = page.getByRole("table", { name: "Events" });
-  await expect(table.getByRole("row")).toHaveCount(3, { timeout: 20_000 });
+  // The server hid the command line, and on a text query it drops the event it had to hide, since its presence alone would say
+  // that the text matched what was hidden: one event and the count of what was dropped.
+  await expect(table.getByRole("row")).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByText(/1 events were dropped from this text search/)).toBeVisible();
   await expect(page.getByText("e2e-secret-command-marker")).toHaveCount(0);
   await table.getByRole("row").nth(1).click();
   await expect(page.getByText("The Print Spooler service terminated unexpectedly. e2e-text-marker")).toBeVisible();
-  await table.getByRole("row").nth(2).click();
-  await expect(page.getByText(/needs permission to see command lines and scripts/).first()).toBeVisible();
   await page.getByRole("radio", { name: "Details" }).click();
-  await expect(page.getByRole("table", { name: "Event data" })).toContainText("hidden");
-  await expect(page.getByText("e2e-secret-command-marker")).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "Event data" })).toContainText("Print Spooler");
 });
 
 test("the next page names the run, and the server builds the rest", async () => {
@@ -158,7 +158,7 @@ test("the next page names the run, and the server builds the rest", async () => 
     event(10, 7034, 2, [{ name: "param1", value: "Spooler again" }], "e2e-text-marker again"),
     endLine({ returned: 1, read: 5, cursor: { channels: [{ channel: "System", record: 10, done: true }] } }),
   ]);
-  await expect(page.getByRole("table", { name: "Events" }).getByRole("row")).toHaveCount(4, { timeout: 20_000 });
+  await expect(page.getByRole("table", { name: "Events" }).getByRole("row")).toHaveCount(3, { timeout: 20_000 });
   await expect(page.getByRole("button", { name: "More" })).toHaveCount(0);
 });
 

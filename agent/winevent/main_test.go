@@ -60,7 +60,7 @@ func TestClosingTheInputCancelsTheRun(t *testing.T) {
 	n := be.cancels
 	be.mu.Unlock()
 	if n == 0 {
-		t.Fatal("the queries were not cancelled (EvtCancel)")
+		t.Fatal("the queries were not canceled (EvtCancel)")
 	}
 }
 

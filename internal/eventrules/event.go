@@ -74,11 +74,11 @@ func ParseXML(x string) (*Parsed, error) {
 	for {
 		before := int(dec.InputOffset())
 		tok, err := dec.RawToken()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrXML, err)
+			return nil, fmt.Errorf("%w: %w", ErrXML, err)
 		}
 		after := int(dec.InputOffset())
 		switch t := tok.(type) {
