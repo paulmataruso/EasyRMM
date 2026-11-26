@@ -1,0 +1,17 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    Assert-Ou ([string]$p.ou) $c
+    $scopes = @{ domain_local = 'DomainLocal'; global = 'Global'; universal = 'Universal' }
+    $categories = @{ security = 'Security'; distribution = 'Distribution' }
+    $args2 = @{
+        Name = [string]$p.name; SamAccountName = [string]$p.name; Path = [string]$p.ou
+        GroupScope = $scopes[[string]$p.scope]; GroupCategory = $categories[[string]$p.category]; PassThru = $true
+    }
+    if (Test-Param 'description') { $args2['Description'] = [string]$p.description }
+    $new = New-ADGroup @args2 @common
+    Write-Result $true ([ordered]@{ id = [string]$new.SID.Value; sam = [string]$new.SamAccountName; name = [string]$new.Name }) $null $null
+} catch {
+    Stop-ForError $_
+}

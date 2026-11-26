@@ -1,0 +1,38 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $members = @()
+    try {
+        $members = @(Get-ADGroupMember -Identity ([string]$p.id) @common)
+    } catch {
+        if ($_.Exception.Message -match 'MaxGroupOrMemberEntries|too many|exceed') { Stop-With 'too_many' 'This group has more members than the directory returns at once.' }
+        throw
+    }
+    if ($members.Count -gt 20000) { Stop-With 'too_many' 'This group has more than 20,000 members.' }
+    $after = ''
+    if (Test-Param 'after') { $after = [string]$p.after }
+    $size = 100
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $rows = @()
+    $more = $false
+    foreach ($m in ($members | Sort-Object { [string](Get-Prop $_ 'SamAccountName') + [string]$_.Name })) {
+        $sam = [string](Get-Prop $m 'SamAccountName')
+        $key = $sam
+        if ($key.Length -eq 0) { $key = [string]$m.Name }
+        if ($after.Length -gt 0 -and [string]::Compare($key, $after, $true) -le 0) { continue }
+        if ($rows.Count -ge $size) { $more = $true; break }
+        $cls = [string]$m.objectClass
+        $kind = 'other'
+        switch ($cls) { 'user' { $kind = 'user' } 'computer' { $kind = 'computer' } 'group' { $kind = 'group' } 'foreignSecurityPrincipal' { $kind = 'foreign' } }
+        $rows += [ordered]@{ id = [string]$m.SID.Value; sam = $sam; name = [string]$m.Name; kind = $kind; key = $key }
+    }
+    while ($rows.Count -gt 1 -and (ConvertTo-Json -InputObject $rows -Compress -Depth 4).Length -gt 58000) {
+        $rows = @($rows[0..($rows.Count - 2)]); $more = $true
+    }
+    $next = $null
+    if ($more -and $rows.Count -gt 0) { $next = [string]$rows[$rows.Count - 1].key }
+    Write-Result $true ([ordered]@{ items = @($rows); next = $next; total = $members.Count }) $null $null
+} catch {
+    Stop-ForError $_
+}

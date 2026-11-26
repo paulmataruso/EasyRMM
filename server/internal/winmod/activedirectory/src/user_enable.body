@@ -1,0 +1,13 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $u = Get-TargetUser ([string]$p.id) $c
+    Assert-Writable $u $set $c ([string](Get-Prop $p 'serviceConfirm'))
+    if ($null -eq (Get-Prop $u 'PasswordLastSet')) { Stop-With 'conflict' 'No password has ever been set on this account; reset its password first.' }
+    Enable-ADAccount -Identity $u @common
+    Write-Result $true ([ordered]@{ done = $true }) $null $null
+} catch {
+    Stop-ForError $_
+}

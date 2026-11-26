@@ -1,0 +1,22 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    if (-not (Test-Param 'password')) { Stop-With 'invalid' 'A password is required.' }
+    Assert-Ou ([string]$p.ou) $c
+    $secure = ConvertTo-Secure ([string]$p.password)
+    $must = $true
+    if (Test-Param 'mustChange') { $must = [bool]$p.mustChange }
+    $args2 = @{
+        Name = [string]$p.name; SamAccountName = [string]$p.sam; Path = [string]$p.ou
+        AccountPassword = $secure; Enabled = $true; ChangePasswordAtLogon = $must; PassThru = $true
+    }
+    if (Test-Param 'upn') { $args2['UserPrincipalName'] = [string]$p.upn }
+    if (Test-Param 'givenName') { $args2['GivenName'] = [string]$p.givenName }
+    if (Test-Param 'surname') { $args2['Surname'] = [string]$p.surname }
+    if (Test-Param 'displayName') { $args2['DisplayName'] = [string]$p.displayName }
+    $new = New-ADUser @args2 @common
+    Write-Result $true ([ordered]@{ id = [string]$new.SID.Value; sam = [string]$new.SamAccountName; name = [string]$new.Name }) $null $null
+} catch {
+    Stop-ForError $_
+}

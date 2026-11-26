@@ -1,0 +1,32 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $u = Get-ADUser -Identity ([string]$p.id) -Properties SamAccountName, UserPrincipalName, DisplayName, GivenName, Surname, Description, EmailAddress, OfficePhone, Title, Department, Company, Office, Enabled, LockedOut, PasswordLastSet, PasswordNeverExpires, PasswordExpired, CannotChangePassword, AccountExpirationDate, whenCreated, lastLogonTimestamp, MemberOf, adminCount, primaryGroupID, servicePrincipalName, userAccountControl, objectClass @common
+    $prot = Get-Protection $u $set ([string]$c.DomainSid)
+    $groups = @()
+    foreach ($dn in (Get-List $u 'MemberOf')) {
+        if ($groups.Count -ge 100) { break }
+        $first = ([string]$dn -split ',')[0]
+        $groups += ($first -replace '^CN=', '')
+    }
+    $last = Get-Prop $u 'lastLogonTimestamp'
+    $lastText = $null
+    if ($null -ne $last -and [int64]$last -gt 0) { $lastText = Get-UtcText ([datetime]::FromFileTimeUtc([int64]$last)) }
+    $data = [ordered]@{
+        id = [string]$u.SID.Value; sam = [string]$u.SamAccountName; upn = [string]$u.UserPrincipalName; name = [string]$u.Name
+        displayName = Get-Text $u 'DisplayName'; givenName = Get-Text $u 'GivenName'; surname = Get-Text $u 'Surname'
+        description = Get-Text $u 'Description'; mail = Get-Text $u 'EmailAddress'; telephone = Get-Text $u 'OfficePhone'
+        title = Get-Text $u 'Title'; department = Get-Text $u 'Department'; company = Get-Text $u 'Company'; office = Get-Text $u 'Office'
+        ou = (([string]$u.DistinguishedName -split ',', 2)[1])
+        enabled = ($u.Enabled -eq $true); lockedOut = ($u.LockedOut -eq $true); passwordExpired = ($u.PasswordExpired -eq $true)
+        passwordNeverExpires = ($u.PasswordNeverExpires -eq $true); cannotChangePassword = ($u.CannotChangePassword -eq $true)
+        passwordLastSetAt = Get-UtcText (Get-Prop $u 'PasswordLastSet'); accountExpiresAt = Get-UtcText (Get-Prop $u 'AccountExpirationDate')
+        createdAt = Get-UtcText (Get-Prop $u 'whenCreated'); lastLogonApproxAt = $lastText
+        groups = @($groups); protection = [string]$prot.level; reason = [string]$prot.reason
+    }
+    Write-Result $true $data $null $null
+} catch {
+    Stop-ForError $_
+}

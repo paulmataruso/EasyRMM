@@ -1,0 +1,56 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $base = [string]$c.DomainDn
+    if (Test-Param 'container') { $base = [string]$p.container }
+    if (-not (Test-UnderDn $base ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+    $scope = 'OneLevel'
+    if ((Test-Param 'scope') -and [string]$p.scope -eq 'subtree') { $scope = 'Subtree' }
+    $users = @(Get-ADUser -SearchBase $base -SearchScope $scope -Filter '*' -ResultSetSize 20001 -Properties SamAccountName, UserPrincipalName, DisplayName, Enabled, LockedOut, PasswordExpired, adminCount, primaryGroupID, servicePrincipalName, userAccountControl, lastLogonTimestamp, objectClass @common)
+    if ($users.Count -gt 20000) { Stop-With 'too_many' 'More than 20,000 accounts are in this container; narrow it to an organizational unit.' }
+    $state = 'all'
+    if (Test-Param 'state') { $state = [string]$p.state }
+    $staleDays = 90
+    if (Test-Param 'staleDays') { $staleDays = [int]$p.staleDays }
+    $match = ''
+    if (Test-Param 'match') { $match = [string]$p.match }
+    $after = ''
+    if (Test-Param 'after') { $after = [string]$p.after }
+    $size = 100
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $limit = (Get-Date).ToUniversalTime().AddDays(-$staleDays)
+    $rows = @()
+    $more = $false
+    foreach ($u in ($users | Sort-Object { [string]$_.SamAccountName })) {
+        $sam = [string]$u.SamAccountName
+        if ($after.Length -gt 0 -and [string]::Compare($sam, $after, $true) -le 0) { continue }
+        if ($match.Length -gt 0 -and -not ($sam.StartsWith($match, 'OrdinalIgnoreCase') -or ([string]$u.Name).StartsWith($match, 'OrdinalIgnoreCase') -or ([string]$u.UserPrincipalName).StartsWith($match, 'OrdinalIgnoreCase'))) { continue }
+        $last = Get-Prop $u 'lastLogonTimestamp'
+        $hasLast = ($null -ne $last -and [int64]$last -gt 0)
+        $skip = $false
+        if ($state -eq 'disabled' -and $u.Enabled -eq $true) { $skip = $true }
+        elseif ($state -eq 'locked' -and $u.LockedOut -ne $true) { $skip = $true }
+        elseif ($state -eq 'password_expired' -and $u.PasswordExpired -ne $true) { $skip = $true }
+        elseif ($state -eq 'never_logged_on' -and $hasLast) { $skip = $true }
+        elseif ($state -eq 'stale_over_days' -and (-not $hasLast -or [datetime]::FromFileTimeUtc([int64]$last) -gt $limit)) { $skip = $true }
+        if ($skip) { continue }
+        if ($rows.Count -ge $size) { $more = $true; break }
+        $prot = Get-Protection $u $set ([string]$c.DomainSid)
+        $rows += [ordered]@{
+            id = [string]$u.SID.Value; sam = $sam; name = [string]$u.Name; upn = [string]$u.UserPrincipalName
+            enabled = ($u.Enabled -eq $true); lockedOut = ($u.LockedOut -eq $true); passwordExpired = ($u.PasswordExpired -eq $true)
+            protection = [string]$prot.level; reason = [string]$prot.reason
+        }
+    }
+    # The result has a size limit: a page that is too big gives up rows, and says there are more.
+    while ($rows.Count -gt 1 -and (ConvertTo-Json -InputObject $rows -Compress -Depth 4).Length -gt 58000) {
+        $rows = @($rows[0..($rows.Count - 2)]); $more = $true
+    }
+    $next = $null
+    if ($more -and $rows.Count -gt 0) { $next = [string]$rows[$rows.Count - 1].sam }
+    Write-Result $true ([ordered]@{ items = @($rows); next = $next; scanned = $users.Count; domainSid = [string]$c.DomainSid }) $null $null
+} catch {
+    Stop-ForError $_
+}

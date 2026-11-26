@@ -387,7 +387,7 @@ func TestPlacement(t *testing.T) {
 // The Windows module permissions per built-in role (ADR-0073, section 3).
 func TestWindowsModulePermissions(t *testing.T) {
 	all := []Permission{
-		PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+		PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive, PermADHelpdesk,
 		PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 		PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 	}
@@ -395,7 +395,7 @@ func TestWindowsModulePermissions(t *testing.T) {
 		RoleReadOnly: {},
 		RoleTechnician: {
 			PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
-			PermDefenderManage, PermBackupManage, PermPrintManage,
+			PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
 		},
 	}
 	want[RoleSiteAdmin] = append(slices.Clone(want[RoleTechnician]),

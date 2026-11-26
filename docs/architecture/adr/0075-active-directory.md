@@ -903,6 +903,44 @@ eye, with defaults chosen in review:
    (section 3) is the designed fallback; storing a delegated account is not
    built.
 
+## Amendments from the first build (2026-11-26)
+
+*Amended 2026-11-26 (decided in review):* the first build (branch `ws/ad`) follows this ADR except where the code showed a better or a
+forced choice. Each is the builder's call, not the owner's.
+
+1. **A password becomes a SecureString without `ConvertTo-SecureString -AsPlainText`.** The AST check allows that call only inside
+   ADR-0077's one pinned helper. The scripts build the SecureString from the stdin variable one character at a time
+   (`AppendChar`), so a password is still never a literal and never part of a built string. The 4103 and 4104 sealing amendment to ADR-0060
+   is unchanged.
+2. **Pages use a sorted-name cursor, not a paged LDAP search with a sealed cookie.** `user_list` and `group_list` read the scope (at most
+   20,000 objects, then `too_many`), sort in memory and return the rows after the last name given. Each page re-reads the scope, which the
+   ADR's section 5 wanted to avoid; the cookie design stays the better one and is the follow-up if a real controller makes pages slow.
+3. **Tier 2 has no typed confirmation.** The framework confirms only `Destructive` actions, and `Destructive` also means step-up. Tier 3 is
+   `Destructive` (typed confirmation `active_directory.<action>:<SID>`, and step-up); tier 2 (`user_set`, `user_move`, `group_create`,
+   `group_remove_member`) is neither. The UI asks the person to type the account's name for tier 3.
+4. **A group's membership changes one member per request** (`member`, a SID), not up to 50: the framework has no list parameter.
+5. **`user_set` takes each attribute as its own optional parameter** (empty clears it), not a map. `userPrincipalName` and
+   `accountExpirationDate` are not offered yet.
+6. **The server's protected-target check refuses every SID that is not an ordinary domain account or group**: a domain SID with a relative ID of
+   1000 or more. That covers 500, 502, 512, 518, 519 and all the built-in and well-known principals without knowing the forest root, so it is
+   stricter than the ADR's table. The script's full guard (nested membership through the Global Catalog, `adminCount`, primary group, the
+   Domain Controllers OU, managed service accounts, fail closed) is the second check.
+7. **The service-account confirmation is sent as `serviceConfirm` (`service-account:<sam>`), and sending it needs `ad.manage`** (for a password
+   reset, `ad.reset_password`): the framework checks a parameter's own permission (`Param.Needs`). A Technician (`ad.helpdesk`) therefore
+   cannot touch a service account. `user_create`'s password needs `ad.reset_password` the same way.
+8. **`user_get` needs `ad.view_sensitive` to be asked at all** (not only to be read), and its result is kept for ten minutes.
+9. **A generated password is made by the framework** (`Param.Generate`): when the request leaves a secret parameter out, the server makes it, seals
+   it, and returns it once in the answer to the request (`generated`, `Cache-Control: no-store`). There is no retry with a longer one.
+10. **An OU is validated in the script at write time**, not against "the last OU tree read": it must exist, be an OU or container of this
+    domain, and not be under Domain Controllers. The server checks only its form (a DN of `CN`, `OU` and `DC` parts with letters, digits, space and
+    `. _ -`).
+11. **Not built in this slice:** controller selection and the pin (`ad_domains`; the tab works on the controller it is opened for, and says
+    which), `ou_tree`'s use as a picker in the UI, `computer_list`, `computer_disable`, `privileged_members` and the privileged-group-change
+    alert, the lockout alert (it needs ADR-0060's events), the organization Overview "Directory health" card, and the user and group
+    create, edit, move and membership dialogs (the actions exist and are tested; the UI offers unlock, enable, disable, reset a password and
+    delete for users, and lists groups and their members). `health_read` is scheduled hourly per controller, not per domain, and
+    `ad_replication_failed` opens on the controller's device.
+
 ## Amendments to ADR-0073 (decided in review)
 
 All are additive.

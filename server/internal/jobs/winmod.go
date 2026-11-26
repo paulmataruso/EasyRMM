@@ -77,6 +77,10 @@ type WinmodRun struct {
 	Action    string    `json:"action"`
 	Status    string    `json:"status"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	// Generated holds the secrets the server made for the request (a new
+	// password), by parameter name. It is in this answer only: the server
+	// keeps no copy and nothing shows it again (ADR-0075).
+	Generated map[string]string `json:"generated,omitempty"`
 }
 
 // errWinmodPin is a script that does not match the hash its job pinned.
@@ -162,6 +166,13 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 			if !s.gate.Allowed(ctx, t.org, t.site, a.Module) {
 				return nil, apperr.NotFound()
 			}
+			// A parameter that asks for more than the action's own
+			// permission gives needs its own.
+			for _, p := range a.Params {
+				if _, sent := chk.Audit[p.Name]; sent && p.Needs != "" && !c.Can(p.Needs, rbac.Site(t.org, t.site)) {
+					return nil, apperr.Forbidden()
+				}
+			}
 		}
 		if a.NeedsStepUp() {
 			return ts, s.stepUp.VerifyStepUp(ctx)
@@ -174,7 +185,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 	if len(job.Runs) != 1 {
 		return nil, fmt.Errorf("jobs: a winmod job has %d runs", len(job.Runs))
 	}
-	return &WinmodRun{JobID: job.ID, RunID: job.Runs[0].ID, Action: a.Name, Status: job.Runs[0].Status, ExpiresAt: job.ExpiresAt}, nil
+	return &WinmodRun{JobID: job.ID, RunID: job.Runs[0].ID, Action: a.Name, Status: job.Runs[0].Status, ExpiresAt: job.ExpiresAt, Generated: chk.Generated}, nil
 }
 
 func winmodAAD(job uuid.UUID, name string) []byte {

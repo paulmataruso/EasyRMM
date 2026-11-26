@@ -1,0 +1,25 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $false
+    $common = $c.Common
+    $base = [string]$c.DomainDn
+    if (Test-Param 'parent') { $base = [string]$p.parent }
+    if (-not (Test-UnderDn $base ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+    $found = @(Get-ADObject -SearchBase $base -SearchScope OneLevel -Filter '*' -Properties objectClass, ProtectedFromAccidentalDeletion @common)
+    $items = @()
+    foreach ($o in ($found | Sort-Object Name)) {
+        $cls = [string]$o.objectClass
+        if ($cls -ne 'organizationalUnit' -and $cls -ne 'container' -and $cls -ne 'builtinDomain') { continue }
+        if ($items.Count -ge 500) { break }
+        $items += [ordered]@{
+            dn                  = [string]$o.DistinguishedName
+            name                = [string]$o.Name
+            kind                = $(if ($cls -eq 'organizationalUnit') { 'ou' } else { 'container' })
+            protectedFromDelete = ($o.ProtectedFromAccidentalDeletion -eq $true)
+            writable            = (-not (Test-UnderDn ([string]$o.DistinguishedName) ([string]$c.ControllersDn)))
+        }
+    }
+    Write-Result $true ([ordered]@{ parent = $base; items = @($items) }) $null $null
+} catch {
+    Stop-ForError $_
+}

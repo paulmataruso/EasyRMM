@@ -22,6 +22,8 @@ export interface JobPayload {
   script: string;
   args: string[];
   timeoutSeconds: number;
+  /** The parameters a script reads on standard input (ADR-0073); a sealed secret is in them from delivery. */
+  params?: Record<string, unknown>;
 }
 
 /** The program a run started, as the agent reports it with the result (agentproto.Interpreter). */

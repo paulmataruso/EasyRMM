@@ -43,6 +43,7 @@ export type Permission =
   | "ad.manage"
   | "ad.reset_password"
   | "ad.view_sensitive"
+  | "ad.helpdesk"
   | "ca.view"
   | "ca.manage"
   | "dns.view"

@@ -1,0 +1,30 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $u = Get-TargetUser ([string]$p.id) $c
+    Assert-Writable $u $set $c ([string](Get-Prop $p 'serviceConfirm'))
+    # Parameter name in the request, the Set-ADUser parameter, the directory attribute.
+    $table = @(
+        @('givenName', 'GivenName', 'givenName'), @('surname', 'Surname', 'sn'), @('displayName', 'DisplayName', 'displayName'),
+        @('description', 'Description', 'description'), @('mail', 'EmailAddress', 'mail'), @('telephone', 'OfficePhone', 'telephoneNumber'),
+        @('title', 'Title', 'title'), @('department', 'Department', 'department'), @('company', 'Company', 'company'),
+        @('office', 'Office', 'physicalDeliveryOfficeName')
+    )
+    $args2 = @{}
+    $clear = @()
+    $changed = @()
+    foreach ($row in $table) {
+        if (-not (Test-Param ([string]$row[0]))) { continue }
+        $value = [string]$p.PSObject.Properties[[string]$row[0]].Value
+        if ($value.Length -eq 0) { $clear += [string]$row[2] } else { $args2[[string]$row[1]] = $value }
+        $changed += [string]$row[0]
+    }
+    if ($changed.Count -eq 0) { Stop-With 'nothing_to_change' 'No attribute was given.' }
+    if ($clear.Count -gt 0) { $args2['Clear'] = $clear }
+    Set-ADUser -Identity $u @args2 @common
+    Write-Result $true ([ordered]@{ changed = @($changed) }) $null $null
+} catch {
+    Stop-ForError $_
+}

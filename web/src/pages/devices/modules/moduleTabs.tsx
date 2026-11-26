@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { Device, DeviceRoles, Permission } from "../../../api/types";
+import { DirectoryTab } from "./directory/DirectoryTab";
 import { SecurityTab } from "./SecurityTab";
 
 // The Windows management modules' tabs on the device page (ADR-0073, section 7). A module is one line in
@@ -23,6 +24,13 @@ export const DEVICE_MODULE_TABS: readonly DeviceModuleTab[] = [
     module: "defender",
     permission: "defender.view",
     component: SecurityTab,
+  },
+  {
+    id: "directory",
+    label: "Directory",
+    module: "active_directory",
+    permission: "ad.view",
+    component: DirectoryTab,
   },
 ];
 

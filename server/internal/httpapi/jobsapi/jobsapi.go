@@ -238,6 +238,10 @@ func (a *API) runWinmod(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if len(run.Generated) > 0 {
+		// A password the server made is shown once, never cached.
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	httpapi.WriteJSON(w, http.StatusAccepted, run)
 	return nil
 }

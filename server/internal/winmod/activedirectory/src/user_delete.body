@@ -1,0 +1,13 @@
+try {
+    Import-DirectoryModule
+    $c = Get-Context $true
+    $common = $c.Common
+    $set = Get-ProtectedSet $c
+    $u = Get-TargetUser ([string]$p.id) $c
+    Assert-Writable $u $set $c ([string](Get-Prop $p 'serviceConfirm'))
+    if ((Get-Prop $u 'ProtectedFromAccidentalDeletion') -eq $true) { Stop-With 'not_enabled' 'This account is protected from accidental deletion. Clear that in the directory tools first; this console does not.' }
+    Remove-ADUser -Identity $u -Confirm:$false @common
+    Write-Result $true ([ordered]@{ done = $true }) $null $null
+} catch {
+    Stop-ForError $_
+}
