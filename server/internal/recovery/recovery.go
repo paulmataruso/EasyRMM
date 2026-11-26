@@ -154,6 +154,7 @@ type Service struct {
 	// the stable set outside the dev scope.
 	published func(org uuid.UUID, platform, arch string) []string
 	wake      chan struct{}
+	stored    func(device uuid.UUID)
 }
 
 // New builds the service. remote says whether this server runs remote
@@ -181,6 +182,24 @@ func (s *Service) UsePatching(p Patching) { s.patch = p }
 // FollowMesh makes repairs wait while EasyRMM's connection to MeshCentral
 // is down.
 func (s *Service) FollowMesh(l MeshLink) { s.link = l }
+
+// OnStored has f called with a device once a repair for its EasyRMM agent was
+// stored (asked for, or started automatically): the agent channel pushes the
+// step then (ADR-0059). The heartbeat hands it out anyway.
+func (s *Service) OnStored(f func(device uuid.UUID)) { s.stored = f }
+
+func (s *Service) storedFor(device uuid.UUID, target string) {
+	if s.stored != nil && carriedBy(target) == agentproto.TargetEasyRMMAgent {
+		s.stored(device)
+	}
+}
+
+// Pending returns the repair step the device's agent is to carry out now,
+// nil for none, without settling any report: AgentHeartbeat's reading half,
+// for a push. Like it, it marks the step sent.
+func (s *Service) Pending(ctx context.Context, deviceID uuid.UUID) *agentproto.SignedRepair {
+	return s.AgentHeartbeat(ctx, deviceID, nil)
+}
 
 func (s *Service) kick() {
 	select {
@@ -307,6 +326,7 @@ func (s *Service) Request(ctx context.Context, c access.Caller, deviceID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	s.storedFor(d.ID, target)
 	return out, nil
 }
 

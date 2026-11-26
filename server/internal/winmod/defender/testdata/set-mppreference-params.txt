@@ -1,0 +1,47 @@
+# The Set-MpPreference parameters the module may set, as Microsoft's cmdlet page lists them (read from the documentation,
+# not from a computer). A Windows change is noticed in review: the test fails when a field is not on this list or the
+# list names a field the module does not have.
+DisableRealtimeMonitoring
+DisableBehaviorMonitoring
+DisableIOAVProtection
+DisableScriptScanning
+DisableBlockAtFirstSeen
+DisableArchiveScanning
+DisableEmailScanning
+DisableRemovableDriveScanning
+DisableScanningNetworkFiles
+DisableScanningMappedNetworkDrivesForFullScan
+MAPSReporting
+SubmitSamplesConsent
+CloudBlockLevel
+CloudExtendedTimeout
+PUAProtection
+EnableNetworkProtection
+LowThreatDefaultAction
+ModerateThreatDefaultAction
+HighThreatDefaultAction
+SevereThreatDefaultAction
+QuarantinePurgeItemsAfterDelay
+ScanPurgeItemsAfterDelay
+ScanScheduleDay
+ScanScheduleTime
+ScanScheduleQuickScanTime
+ScanParameters
+RemediationScheduleDay
+RemediationScheduleTime
+DisableCatchupFullScan
+DisableCatchupQuickScan
+SignatureScheduleDay
+SignatureScheduleTime
+SignatureUpdateInterval
+SignatureUpdateCatchupInterval
+RandomizeScheduleTaskTimes
+CheckForSignaturesBeforeRunningScan
+MeteredConnectionUpdates
+ScanAvgCPULoadFactor
+ScanOnlyIfIdleEnabled
+EnableLowCpuPriority
+DisableCpuThrottleOnIdleScans
+EnableFullScanOnBatteryPower
+DisableRestorePoint
+DisableAutoExclusions

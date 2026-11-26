@@ -64,6 +64,8 @@ foreach ($s in $scripts) {
     # A catalogue script that takes no parameters still reads $p (ADR-0073), so for those the unused variable is expected.
     $skip = @()
     if ($s.FullName.Replace('\', '/') -like '*/server/internal/winmod/*') { $skip = @('PSUseDeclaredVarsMoreThanAssignments') }
+    # ADR-0077's one reviewed helper builds a credential from a sealed parameter; the AST check pins its body.
+    if ($s.Name -eq '_credential.ps1') { $skip += 'PSAvoidUsingConvertToSecureStringWithPlainText' }
     foreach ($r in @(Invoke-ScriptAnalyzer -Path $s.FullName -Settings $settings -ExcludeRule $skip)) {
         Write-Host "$($s.FullName):$($r.Line): $($r.RuleName): $($r.Message)"
         $failed = $true

@@ -161,32 +161,32 @@ func Actions() []winmod.Action {
 		zoneParam(), nameParam(false),
 		winmod.Param{Name: "type", Type: winmod.Enum, Values: append([]string{"SOA"}, recordTypes...)},
 		winmod.Param{Name: "offset", Type: winmod.Int, Min: 0, Max: 1000000})
-	recordList.Guard = guardRecordList
+	recordList.Check = guardRecordList
 
 	add := write("record_add", "Add a DNS record", 30, append(recordParams(), ttlParam("ttl"))...)
-	add.Guard = guardRecord(false)
+	add.Check = guardRecord(false)
 	set := write("record_set", "Change a DNS record", 30, append(recordParams(),
 		winmod.Param{Name: "newData", Type: winmod.Text, Required: true, Max: maxData}, ttlParam("newTtl"))...)
-	set.Guard = guardRecord(true)
+	set.Check = guardRecord(true)
 	remove := write("record_remove", "Remove a DNS record", 30, recordParams()...)
-	remove.Guard = guardRecord(false)
+	remove.Check = guardRecord(false)
 	removeAll := destructive(write("record_remove_all", "Remove every record of a name", 60, zoneParam(), nameParam(true)), "name")
-	removeAll.Guard = guardRemoveAll
+	removeAll.Check = guardRemoveAll
 
 	create := write("zone_create", "Create a DNS zone", 60, zoneParam(),
 		winmod.Param{Name: "storage", Type: winmod.Enum, Required: true, Values: []string{"file", "ad_domain", "ad_forest", "ad_legacy"}},
 		winmod.Param{Name: "dynamicUpdate", Type: winmod.Enum, Required: true, Values: []string{"None", "Secure"}})
-	create.Guard = guardZoneCreate
+	create.Check = guardZoneCreate
 	removeZone := destructive(write("zone_remove", "Remove a DNS zone", 60, zoneParam()), "zone")
-	removeZone.Guard = guardZoneRemove
+	removeZone.Check = guardZoneRemove
 	setUpdate := write("zone_set_update", "Set a zone's dynamic updates", 30, zoneParam(),
 		winmod.Param{Name: "mode", Type: winmod.Enum, Required: true, Values: []string{"None", "Secure"}})
-	setUpdate.Guard = guardZoneOnly
+	setUpdate.Check = guardZoneOnly
 	nonsecure := destructive(write("zone_allow_nonsecure", "Allow unauthenticated dynamic updates", 30, zoneParam()), "zone")
-	nonsecure.Guard = guardZoneOnly
+	nonsecure.Check = guardZoneOnly
 
 	zoneGet := read[ZoneDetail]("zone_get", "Read a DNS zone", 30, zoneParam())
-	zoneGet.Guard = guardZoneOnly
+	zoneGet.Check = guardZoneOnly
 
 	return []winmod.Action{status, zoneList, zoneGet, recordList, add, set, remove, removeAll, create, removeZone, setUpdate, nonsecure}
 }

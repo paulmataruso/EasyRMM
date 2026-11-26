@@ -150,6 +150,9 @@ type HeartbeatRequest struct {
 	// (ADR-0070); Windows agents send it only where the server's last
 	// answer allowed it.
 	Defender *DefenderReport `json:"defender,omitempty"`
+	// DefenderLog is a batch of Microsoft Defender events (ADR-0074), sent
+	// only where the server's last answer said Events.
+	DefenderLog *DefenderLogBatch `json:"defenderLog,omitempty"`
 	// InstalledFiles are the hashes of what is installed on the device
 	// (ADR-0070), sent when something changed, and once a day.
 	InstalledFiles *InstalledFiles `json:"installedFiles,omitempty"`

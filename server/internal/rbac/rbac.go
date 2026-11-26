@@ -92,11 +92,24 @@ const (
 	PermPrintManage     Permission = "print.manage"
 	PermBackupView      Permission = "backup.view"
 	PermBackupManage    Permission = "backup.manage"
+	// Windows Backup adds two (ADR-0077): target paths, shares and accounts
+	// name customers, and tier 3 actions erase, format or stop protecting.
+	PermBackupViewSensitive Permission = "backup.view_sensitive"
+	PermBackupDestroy       Permission = "backup.destroy"
 
 	// PermRDPCredentialsSave lets a person save, replace and delete their own
 	// saved RDP credential on a device they may open remote desktop on
 	// (ADR-0079). It is never a way to read one.
 	PermRDPCredentialsSave Permission = "device.rdp_credentials.save" //nolint:gosec // a permission name, not a credential
+)
+
+// ADR-0074's two added Defender permissions: PermDefenderViewSensitive reads
+// file paths, user names and the exclusions an administrator added;
+// PermDefenderWeaken does what lowers protection or restores a threat. Both
+// start at Site Administrator.
+const (
+	PermDefenderViewSensitive Permission = "defender.view_sensitive"
+	PermDefenderWeaken        Permission = "defender.weaken"
 )
 
 // AllPermissions lists every permission.
@@ -109,8 +122,10 @@ var AllPermissions = []Permission{
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
 	PermDocView, PermDocManage, PermLogView,
 	PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive,
+	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
+	PermBackupViewSensitive, PermBackupDestroy,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -199,7 +214,9 @@ var technicianPerms = union(viewPerms, []Permission{
 var siteAdminPerms = union(technicianPerms, []Permission{
 	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
+	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADView, PermADViewSensitive,
+	PermBackupViewSensitive, PermBackupDestroy,
 })
 
 var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,

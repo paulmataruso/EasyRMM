@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { Device, DeviceRoles, Permission } from "../../../api/types";
+import { BackupTab } from "../backup/BackupTab";
 import { SecurityTab } from "./SecurityTab";
 import { RolesTab } from "./roles/RolesTab";
 import { ROLE_VIEWS } from "./roles/registry";
@@ -36,6 +37,13 @@ export const DEVICE_MODULE_TABS: readonly DeviceModuleTab[] = [
     permission: "dns.view",
     views: ROLE_VIEWS,
     component: RolesTab,
+  },
+  {
+    id: "backup",
+    label: "Backup",
+    module: "windows_backup",
+    permission: "backup.view",
+    component: BackupTab,
   },
 ];
 

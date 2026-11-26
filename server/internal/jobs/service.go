@@ -257,6 +257,8 @@ type hub struct {
 	waiters map[uuid.UUID]map[chan struct{}]struct{}
 	done    chan struct{}
 	closed  bool
+	// after, when set, is told which devices have work (OnWork).
+	after func([]uuid.UUID)
 }
 
 func newHub() *hub {
@@ -284,8 +286,11 @@ func (h *hub) unsubscribe(device uuid.UUID, ch chan struct{}) {
 	}
 }
 
-// notify wakes the devices' polls.
+// notify wakes the devices' polls, and tells OnWork's function.
 func (h *hub) notify(devices ...uuid.UUID) {
+	if h.after != nil {
+		defer h.after(devices)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, d := range devices {

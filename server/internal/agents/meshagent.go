@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,9 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 )
 
@@ -203,4 +206,37 @@ func (s *Service) SignDownload(p *SignedRequest, target string, body []byte) str
 		return ""
 	}
 	return agentproto.SignDownload(s.updateKey, p.auth, target, sha256.Sum256(body))
+}
+
+// ChannelSettings is what a settings push carries for a device (ADR-0059):
+// the heartbeat answer's interval and MeshAgent fields, read the way a
+// heartbeat reads them but without the agent's report, so it settles
+// nothing: the hash of the settings the device must apply after a move,
+// until a heartbeat says it did. It is nil when the device is gone.
+func (s *Service) ChannelSettings(ctx context.Context, id uuid.UUID) (*agentproto.ChannelSettings, error) {
+	d := &Device{ID: id}
+	var pending bool
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT organization_id, site_id, mesh_settings_pending FROM devices WHERE id = $1`, id).
+			Scan(&d.OrganizationID, &d.SiteID, &pending)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading a device's settings: %w", err)
+	}
+	out := &agentproto.ChannelSettings{HeartbeatSeconds: int(HeartbeatInterval.Seconds())}
+	available, err := s.meshAvailable(ctx, d.SiteID)
+	if err != nil {
+		s.log.Warn("agents: checking remote access failed", "error", err, "device_id", id)
+	}
+	out.MeshAgent.Available = available
+	if available && pending {
+		if b, err := s.MeshAgentSettings(ctx, d); err == nil {
+			sum := sha256.Sum256(b)
+			out.MeshAgent.SettingsSHA256 = hex.EncodeToString(sum[:])
+		}
+	}
+	return out, nil
 }

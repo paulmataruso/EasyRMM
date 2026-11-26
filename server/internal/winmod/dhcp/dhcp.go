@@ -158,7 +158,7 @@ func destructive(a winmod.Action, subject string) winmod.Action {
 }
 
 func with(a winmod.Action, guard func(map[string]any) error) winmod.Action {
-	a.Guard = guard
+	a.Check = guard
 	return a
 }
 

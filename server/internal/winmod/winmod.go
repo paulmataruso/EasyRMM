@@ -65,6 +65,11 @@ type Param struct {
 	// Secret values are sealed apart, placed in the job at delivery only,
 	// and never audited or logged.
 	Secret bool
+	// Pattern, for a Text parameter, is a regular expression the whole
+	// value must match; Check returns why a value that does not suit
+	// is refused, or "". Both run after the common text checks.
+	Pattern *regexp.Regexp
+	Check   func(string) string
 	// Sensitive values are audited as their length and SHA-256 only.
 	Sensitive bool
 }
@@ -94,14 +99,21 @@ type Action struct {
 	// step-up; so does a Credential action (a password reset).
 	Destructive bool
 	Credential  bool
+	// Check, when set, is the module's own check of the parameters after
+	// the generic ones passed: the values in their canonical forms, by name.
+	// It returns an *apperr.Error (an invalid field, or a conflict).
+	Check func(params map[string]any) error
 	// Subject names the parameter that is the confirmation's subject.
 	Subject string
-	// Guard, when set, runs after the parameters are validated, on their
-	// canonical values (text, int64 or bool by name). It enforces what a
-	// schema cannot (an address parses, a name is not on a module's
-	// protected list) and returns an apperr error to refuse the request
-	// before any job exists.
-	Guard func(params map[string]any) error
+	// Confirm makes the action need the typed confirmation without a
+	// step-up (ADR-0077's tier 2: a change that is not a loss). A
+	// destructive action always needs it. The subject may be empty: the
+	// confirmation is then the action's name and a colon.
+	Confirm bool
+	// SubjectIsDeviceName says the subject parameter is the computer's name:
+	// the server compares it, trimmed and ignoring case, with the target
+	// device's real name when the job is created.
+	SubjectIsDeviceName bool
 	// Timeout is the script's time limit in seconds.
 	Timeout int
 	// Keep is how long the job, its params and its result are kept: an hour
@@ -136,6 +148,9 @@ func (a Action) shell() string {
 
 // ShellName is the shell the action's script runs in.
 func (a Action) ShellName() string { return a.shell() }
+
+// NeedsConfirm says whether the action needs the typed confirmation.
+func (a Action) NeedsConfirm() bool { return a.Destructive || a.Confirm }
 
 // NeedsStepUp says whether the action needs a step-up and a confirmation.
 func (a Action) NeedsStepUp() bool { return a.Destructive || a.Credential }
@@ -180,8 +195,8 @@ func (a Action) check() error {
 		return ErrScriptPin
 	case a.Sensitive && a.SensitivePermission == "":
 		return errors.New("a sensitive action names the permission that opens its result")
-	case a.Destructive && a.Subject == "":
-		return errors.New("a destructive action names its confirmation subject")
+	case (a.Destructive || a.Confirm) && a.Subject == "":
+		return errors.New("a confirmed action names its confirmation subject")
 	case a.Schedule > 0 && (a.Freshness <= 0 || a.Schedule < time.Hour || a.Destructive || a.Credential || a.Changes):
 		return errors.New("a scheduled action is a snapshot read, run at most hourly")
 	case a.Freshness > 0 && (a.Destructive || a.Credential || a.Changes):

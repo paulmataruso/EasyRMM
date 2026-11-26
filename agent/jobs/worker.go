@@ -45,6 +45,14 @@ type Worker struct {
 	MaxRetry time.Duration // 5 min
 	// Execute runs one job; tests replace it.
 	Execute func(ctx context.Context, p agentproto.JobPayload, workRoot string) agentproto.ResultRequest
+	// Live, when set, says the WebSocket channel is up (ADR-0059): the server
+	// then pushes jobs, and the worker holds no long poll. It makes one
+	// ordinary poll when PollNow is called. Changed signals that Live may
+	// have changed, so a connection that ends sends the worker back to long
+	// polls at once.
+	Live    func() bool
+	Changed <-chan struct{}
+
 	// Finished, when set, is called after each run ends: a script may have
 	// changed what the inventory shows (ADR-0028).
 	Finished func()
@@ -55,6 +63,8 @@ type Worker struct {
 	// paused holds new jobs back while the agent updates (ADR-0027).
 	paused  atomic.Bool
 	resumed chan struct{}
+	// pollNow asks for one ordinary poll while the channel is live.
+	pollNow chan struct{}
 
 	mu      sync.Mutex
 	active  map[string]*active
@@ -85,6 +95,7 @@ func (w *Worker) init() {
 		}
 		w.keySet = make(chan struct{}, 1)
 		w.resumed = make(chan struct{}, 1)
+		w.pollNow = make(chan struct{}, 1)
 		w.active = map[string]*active{}
 		w.pending = map[string]agentproto.ResultRequest{}
 		w.done = map[string]time.Time{}
@@ -164,6 +175,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 		w.flush(ctx)
+		if w.Live != nil && w.Live() && !w.waitLive(ctx) {
+			continue
+		}
 		resp, err := w.Client.Poll(ctx, Accepts())
 		switch {
 		case err == nil:
@@ -432,4 +446,46 @@ func jitter(d time.Duration) time.Duration {
 		return d
 	}
 	return d - time.Duration(spread/2) + time.Duration(rand.Int64N(spread)) //nolint:gosec // timing jitter, not security
+}
+
+// PollNow asks for one ordinary poll while the channel is live: a jobs wake,
+// or a heartbeat answer that says jobs wait (ADR-0059). Without a live
+// channel the worker is polling anyway.
+func (w *Worker) PollNow() {
+	w.init()
+	select {
+	case w.pollNow <- struct{}{}:
+	default:
+	}
+}
+
+// Deliver takes jobs and cancellations the server pushed over the channel,
+// as it would take a poll's answer. The journal dedupes a run delivered by
+// both. ctx is the agent's own, not the connection's.
+func (w *Worker) Deliver(ctx context.Context, resp *agentproto.PollResponse) {
+	w.init()
+	if resp == nil || w.key.Load() == nil {
+		return // the poll delivers them again
+	}
+	for _, j := range resp.Jobs {
+		w.accept(ctx, j)
+	}
+	for _, id := range resp.Cancel {
+		w.cancel(ctx, id)
+	}
+}
+
+// waitLive waits while the channel is live and reports whether to poll now:
+// true for a PollNow, false when ctx ended or the state may have changed.
+func (w *Worker) waitLive(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-w.pollNow:
+		return true
+	case <-w.Changed:
+		return false
+	case <-time.After(time.Minute):
+		return false
+	}
 }

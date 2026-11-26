@@ -111,3 +111,50 @@ func TestSameDefenderSeesAChangeInTheEasyPatchReport(t *testing.T) {
 		t.Fatal("an EasyPatch state change is a change")
 	}
 }
+
+type fakeLog struct {
+	batch *agentproto.DefenderLogBatch
+	reads int
+	acked []agentproto.DefenderLogAck
+}
+
+func (f *fakeLog) Next(context.Context) (*agentproto.DefenderLogBatch, error) {
+	f.reads++
+	return f.batch, nil
+}
+
+func (f *fakeLog) Acked(a *agentproto.DefenderLogAck, _ *agentproto.DefenderLogBatch) error {
+	f.acked = append(f.acked, *a)
+	return nil
+}
+
+// The event log is read only where the server said Events (module on), and
+// the bookmark moves only when the server acknowledges the batch.
+func TestDefenderLogIsReadOnlyWhereAskedAndAcknowledged(t *testing.T) {
+	l := &fakeLog{batch: &agentproto.DefenderLogBatch{Epoch: "e1", Through: 7, Events: []agentproto.DefenderLogEvent{}}}
+	r := &Runner{DefenderLog: l}
+	ctx := context.Background()
+	var req agentproto.HeartbeatRequest
+	r.defendRequest(ctx, &req)
+	r.defendAnswered(&agentproto.DefenderPolicy{Enabled: true}) // allowed, but the module is not on
+	r.defendRequest(ctx, &req)
+	if l.reads != 0 || req.DefenderLog != nil {
+		t.Fatal("the log was read where the server did not ask")
+	}
+	r.defendAnswered(&agentproto.DefenderPolicy{Enabled: true, Events: true})
+	r.defendRequest(ctx, &req)
+	if l.reads != 1 || req.DefenderLog == nil || req.DefenderLog.Through != 7 {
+		t.Fatalf("the log was not sent: %d reads, %+v", l.reads, req.DefenderLog)
+	}
+	r.defendAnswered(&agentproto.DefenderPolicy{Enabled: true, Events: true, EventsAck: &agentproto.DefenderLogAck{Epoch: "e1", RecordID: 7}})
+	if len(l.acked) != 1 || l.acked[0].RecordID != 7 {
+		t.Fatalf("acks %+v", l.acked)
+	}
+	// The module goes off: no more reads, and the batch on its way is forgotten.
+	r.defendAnswered(&agentproto.DefenderPolicy{Enabled: true})
+	var off agentproto.HeartbeatRequest
+	r.defendRequest(ctx, &off)
+	if l.reads != 1 || off.DefenderLog != nil {
+		t.Fatal("the log was read with the module off")
+	}
+}

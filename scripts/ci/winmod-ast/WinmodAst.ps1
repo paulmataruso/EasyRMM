@@ -14,6 +14,8 @@
 #   string-build    no expandable string, "+", "-f" or "-join" that includes $p or a variable assigned from it.
 #   dynamic-command no call operator or dot-sourcing of anything but a literal name (or a script block literal).
 #   remote-param    no -ComputerName, -CimSession, -Server or -Session from $p (ADR-0076).
+#   defender-list   Set-MpPreference never names a list parameter (exclusions, ASR rules, Controlled Folder Access
+#                   folders and applications): it would replace the whole list, ours included (ADR-0074 section 3).
 #   plaintext       ConvertTo-SecureString -AsPlainText only inside a reviewed helper whose body matches its pinned
 #                   SHA-256 (ADR-0077); ConvertFrom-SecureString -AsPlainText and Marshal.SecureStringTo* never.
 #   strict-mode     Set-StrictMode -Version Latest and $ErrorActionPreference = 'Stop' (scripts, not libraries).
@@ -164,6 +166,9 @@ function Test-WinmodScript {
             if (Test-WinmodParamName $el @('ComputerName', 'CimSession', 'Server', 'Session') 3) {
                 $arg = Get-WinmodParamArgument $c $el
                 if ($null -ne $arg -and @(Get-WinmodRefs $arg $taint).Count -gt 0) { & $add $c 'remote-param' "-$pn must not come from the parameters" }
+            }
+            if ($lower -eq 'set-mppreference' -and (Test-WinmodParamName $el @('ExclusionPath', 'ExclusionProcess', 'ExclusionExtension', 'AttackSurfaceReductionOnlyExclusions', 'AttackSurfaceReductionRules_Ids', 'AttackSurfaceReductionRules_Actions', 'ControlledFolderAccessProtectedFolders', 'ControlledFolderAccessAllowedApplications') 5)) {
+                & $add $c 'defender-list' "Set-MpPreference -$pn replaces a whole list; use Add-MpPreference and Remove-MpPreference one value at a time"
             }
             if ($lower -eq 'convertto-securestring' -and (Test-WinmodParamName $el @('AsPlainText') 2) -and -not (& $inExempt $c)) {
                 & $add $c 'plaintext' 'ConvertTo-SecureString -AsPlainText is allowed only inside the pinned helper New-EasyRmmCredential'

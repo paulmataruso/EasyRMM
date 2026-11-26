@@ -45,6 +45,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/update"
+	"github.com/paulmataruso/easyrmm/agent/winevents"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -461,6 +462,9 @@ func (e *env) run(ctx context.Context) error {
 		}
 		if dm := e.defenderManager(); dm != nil {
 			r.Defender = e.withEasyPatch(dm)
+			// The Defender event log, read once a heartbeat where the
+			// server asked for it (ADR-0074).
+			r.DefenderLog = &winevents.Collector{Source: winevents.NewDefenderSource(), File: winevents.BookmarkPath(e.paths.State())}
 		}
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
@@ -516,9 +520,23 @@ func (e *env) run(ctx context.Context) error {
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var ch *channel.Channel
+	send := sendLogs(c)
+	if os.Getenv(channelEnv) != "off" {
+		// The WebSocket channel (ADR-0059): wakes, and the server's pushes of
+		// jobs, repairs, settings and log instructions, each applied by the
+		// code that applies it from a heartbeat or poll answer. While
+		// someone follows the logs, batches go over it too, and over HTTPS
+		// whenever it cannot take one. EASYRMM_AGENT_CHANNEL=off turns it off.
+		ch = channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log, Device: key,
+			Handlers: channel.Handlers{Jobs: w.Deliver, Logs: ship.Apply, Repair: r.ApplyRepair, Settings: r.ApplySettings, PollNow: w.PollNow}})
+		r.Channel, r.Nudge, r.OnJobsWaiting = ch, ch.Checkin, w.PollNow
+		w.Live, w.Changed = ch.Live, ch.LiveChanged()
+		send = ch.LogSender(ship.Following, send)
+	}
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
-	g.Go(func() { ship.Run(ctx, sendLogs(c)) })
+	g.Go(func() { ship.Run(ctx, send) })
 	if ship != nil && mesh != nil {
 		// MeshAgent's side of the device's log: what the agent observes of it.
 		emit := func(level, msg string, attrs map[string]string) {
@@ -530,11 +548,7 @@ func (e *env) run(ctx context.Context) error {
 		obs := &meshagent.Observer{M: mesh, Emit: emit}
 		g.Go(func() { obs.Run(ctx) })
 	}
-	if os.Getenv(channelEnv) != "off" {
-		// The WebSocket channel (ADR-0059), which only shortens the wait for
-		// the next check-in. EASYRMM_AGENT_CHANNEL=off turns it off here.
-		ch := channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log})
-		r.Channel = ch
+	if ch != nil {
 		g.Go(func() { ch.Run(ctx) })
 	}
 	err = r.Run(ctx)

@@ -64,7 +64,7 @@ func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agen
 		return fail("Could not prepare a working directory: " + err.Error())
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	script, err := writeScript(dir, p.Shell, p.Script)
+	script, err := writeScript(dir, p.Shell, scriptBody(p))
 	if err != nil {
 		return fail("Could not write the script: " + err.Error())
 	}
