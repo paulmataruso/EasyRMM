@@ -764,3 +764,11 @@ time and stay with it when a device they name moves.
   `agent/easypatch/easypatch.go`, `easypatch/agent/`,
   `easypatch/backend/API/Endpoints/AgentEndpoints.cs`,
   `server/internal/easypatch/links.go`, `web/src/nav/`.
+
+### Amended 2026-11-26 (decided in review), what agents trust
+
+`device_tls_trust` and `device_tls_state` (migration `00080`, ADR-0055 slice
+5b1) hold what a device's agent trusts and the last answer it gave. That is a
+fact of the computer, not of the organization, so a move leaves the rows alone:
+they follow the device, like `device_hardening`. The disposition test lists
+both as "follows the device".

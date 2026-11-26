@@ -1013,7 +1013,7 @@ describes it. TLS never stops the server from starting.
 * **The trust is handled after the heartbeat confirmed the running build**
   (ADR-0027's `Reached`), so a probation rollback cannot lose it.
 * **The server** keeps `device_tls_trust` (one row per device, scope, host and
-  purpose) and `device_tls_state` (migration 90491). It asks when a device first
+  purpose) and `device_tls_state` (migration 00080). It asks when a device first
   announces the capability, when its build's hash changes (an update or a
   rollback), and when a chain it asks about changed; it drops the rows of a
   purpose a name no longer has. The source of chains is the edge's own

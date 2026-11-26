@@ -20,7 +20,7 @@ Chains are public certificates; nothing secret is stored or sent. The server sto
 - In 5b1 the edge supplies only the served chain, so no device shows as unprotected until 5b2 adds fallbacks. In `offload` mode nothing is asked.
 - Reinstall is offered when a failed result and an unconnected device go together, or a move's question stands unanswered for an hour on an unconnected device ("not seen within 30 days" needs no separate rule: such a device is not connected).
 - The reinstall token is one use, one day, made through the existing token route; the card reads state and sends nothing to the device.
-- Migration 90491 (renumbered by the integrator): `device_tls_trust`, `device_tls_state`.
+- Migration 00080: `device_tls_trust`, `device_tls_state`.
 - Coverage floors added: `agent/trust` 90, `server/internal/tlstrust` 85, `server/internal/httpapi/tlstrustapi` 75.
 - `devscope.Allowed(org)` gates every instruction and every stored question.
 

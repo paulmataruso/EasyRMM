@@ -530,7 +530,7 @@ ADR-0053, slice 4. Every table has row-level security enabled and forced.
 The down migration drops them, the triggers and functions, the alert rows of
 the journal, and the columns of `devices`.
 
-## What agents trust (migration 90491, renumbered by the integrator)
+## What agents trust (migration 00080)
 
 ADR-0055, slice 5b1. Both tables follow `devices`: read by whoever may see the device (row-level security enabled and forced), written with platform scope only. Neither holds a key or a secret: chains are public certificates.
 
