@@ -99,7 +99,7 @@
     <ExtensionData>
       <Extension xmlns:q5="http://www.microsoft.com/GroupPolicy/Settings/DriveMaps" xsi:type="q5:DriveMapSettings">
         <q5:DriveMapSettings clsid="{8FDDCC1A-0C3C-43cd-A6B4-71A6DF20DA8C}">
-          <q5:Drive clsid="{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" name="H:" status="H:" changed="2026-02-01 10:00:00" uid="{A1B2C3D4-0000-0000-0000-000000000001}" userContext="1" cpassword="j1Uyj3Vx8TY9LtLZil2uAuZkFQA/4latT76ZwgdHdhw">
+          <q5:Drive clsid="{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" name="H:" status="H:" changed="2026-02-01 10:00:00" uid="{A1B2C3D4-0000-0000-0000-000000000001}" userContext="1" cpassword="j1Uyj3Vx8TY9LtLZil2uAuZkFQA/4latT76ZwgdHdhw"> <!-- gitleaks:allow Microsoft's published sample cpassword: the report must hide it -->
             <q5:Properties action="U" thisDrive="NOCHANGE" allDrives="NOCHANGE" userName="CORP\svc_share" path="\\files\home\%LogonUser%" label="Home" persistent="1" useLetter="1" letter="H"/>
           </q5:Drive>
         </q5:DriveMapSettings>
