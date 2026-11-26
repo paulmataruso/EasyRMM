@@ -349,7 +349,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// group's is owned by the group.
 		"agent_log_verbose": ends,
 		// stays
-		"job_runs": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays,
+		"job_runs": stays, "registry_masked_values": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays,
 		// owned
 		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned,
 		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned,
