@@ -160,3 +160,24 @@ func deref(v *float64) any {
 	}
 	return *v
 }
+
+// A policy opens with at least half the measurements its window expects at the
+// device's interval, rounded up, and at least one (ADR-0058); at 60 seconds that is
+// today's (minutes+1)/2.
+func TestNeeded(t *testing.T) {
+	for _, c := range []struct{ minutes, interval, want int }{
+		{15, 60, 8}, {5, 60, 3}, {1, 60, 1}, {2, 60, 1}, {10, 60, 5}, {1440, 60, 720},
+		{15, 300, 2}, {5, 300, 1}, {1, 300, 1}, {60, 300, 6}, {15, 30, 15}, {1, 30, 1},
+		{15, 0, 8}, {15, -3, 8},
+	} {
+		if got := needed(c.minutes, c.interval); got != c.want {
+			t.Errorf("%d minutes at %d seconds: %d, want %d", c.minutes, c.interval, got, c.want)
+		}
+	}
+	// At 60 seconds it is the old rule for every window the policies allow.
+	for m := 1; m <= 1440; m++ {
+		if got, old := needed(m, 60), max(1, (m+1)/2); m != 1 && got != old {
+			t.Fatalf("%d minutes at 60 seconds: %d, the old rule says %d", m, got, old)
+		}
+	}
+}

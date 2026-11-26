@@ -21,23 +21,25 @@ type Permission string
 
 // Permissions. Keep this list in sync with docs/security/rbac.md.
 const (
-	PermOrgView       Permission = "org.view"
-	PermOrgManage     Permission = "org.manage"    // edit an organization, create sites in it
-	PermOrgCreate     Permission = "org.create"    // create and delete organizations (platform-wide)
-	PermSiteView      Permission = "site.view"     //
-	PermSiteManage    Permission = "site.manage"   // edit a site and its device groups
-	PermDeviceView    Permission = "device.view"   //
-	PermDeviceEdit    Permission = "device.edit"   // rename, move between groups, tags, custom fields
-	PermDeviceRetire  Permission = "device.retire" // revoke credentials, uninstall, delete
-	PermDeviceHarden  Permission = "device.harden" // apply and undo hardening (ADR-0051)
-	PermRemoteDesktop Permission = "device.remote_desktop"
-	PermTerminal      Permission = "device.terminal"
-	PermFiles         Permission = "device.files"
-	PermScriptView    Permission = "script.view"
-	PermScriptManage  Permission = "script.manage"
-	PermScriptRun     Permission = "script.run"
-	PermJobView       Permission = "job.view"
-	PermJobManage     Permission = "job.manage" // cancel, reschedule
+	PermOrgView      Permission = "org.view"
+	PermOrgManage    Permission = "org.manage"    // edit an organization, create sites in it
+	PermOrgCreate    Permission = "org.create"    // create and delete organizations (platform-wide)
+	PermSiteView     Permission = "site.view"     //
+	PermSiteManage   Permission = "site.manage"   // edit a site and its device groups
+	PermDeviceView   Permission = "device.view"   //
+	PermDeviceEdit   Permission = "device.edit"   // rename, move between groups, tags, custom fields
+	PermDeviceRetire Permission = "device.retire" // revoke credentials, uninstall, delete
+	PermDeviceHarden Permission = "device.harden" // apply and undo hardening (ADR-0051)
+	// PermDeviceConfigure changes devices' agent settings (ADR-0058).
+	PermDeviceConfigure Permission = "device.configure"
+	PermRemoteDesktop   Permission = "device.remote_desktop"
+	PermTerminal        Permission = "device.terminal"
+	PermFiles           Permission = "device.files"
+	PermScriptView      Permission = "script.view"
+	PermScriptManage    Permission = "script.manage"
+	PermScriptRun       Permission = "script.run"
+	PermJobView         Permission = "job.view"
+	PermJobManage       Permission = "job.manage" // cancel, reschedule
 	// PermJobViewSensitive opens what a run printed and a job's argument
 	// values, each read audited (ADR-0063). job.view shows the rest.
 	PermJobViewSensitive Permission = "job.view_sensitive"
@@ -192,7 +194,7 @@ var AddOnPermissions = []Permission{PermRecoveryKeyRead, PermRecoveryKeyApprove}
 // add-on roles can hold.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
-	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
+	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermDeviceConfigure, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
 	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive, PermRegistryView, PermRegistryEdit,
 	PermEventlogView, PermLogViewSensitive,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
@@ -306,7 +308,7 @@ var technicianPerms = union(viewPerms, []Permission{
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
-	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
+	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermDeviceConfigure, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
 	PermDefenderViewSensitive, PermDefenderWeaken,
 	PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADView, PermADViewSensitive,

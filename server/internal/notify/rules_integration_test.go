@@ -673,6 +673,33 @@ func TestTheFleetWideHold(t *testing.T) {
 	}
 }
 
+// Devices that check in every 5 minutes are silent after 15, not after 3: a fleet of them four minutes
+// after their last heartbeat is not a fleet gone silent (ADR-0058).
+func TestTheFleetWideHoldFollowsEachDevicesInterval(t *testing.T) {
+	f := newFx(t)
+	site := f.site(f.orgA, "Main", "UTC")
+	var devs []uuid.UUID
+	for i := range 24 {
+		devs = append(devs, f.device(f.orgA, site, "D"+string(rune('a'+i))))
+	}
+	f.svc.SetSeenFloor(func(time.Time) time.Time { return f.now().Add(-time.Hour) })
+	f.exec(`UPDATE devices SET agent_heartbeat_seconds = 300, agent_last_seen_at = $2::timestamptz, agent_online_until = $2::timestamptz + interval '15 minutes' WHERE id = ANY ($1)`, devs, f.now().Add(-4*time.Minute))
+	f.plan()
+	if f.n(`SELECT count(*) FROM fleet_silences`) != 0 {
+		t.Fatal("devices four minutes into a five-minute interval started the hold")
+	}
+	f.exec(`UPDATE devices SET agent_last_seen_at = $2::timestamptz, agent_online_until = $2::timestamptz + interval '15 minutes' WHERE id = ANY ($1)`, devs, f.now().Add(-21*time.Minute))
+	f.plan()
+	if f.n(`SELECT count(*) FROM fleet_silences`) != 0 {
+		t.Fatal("devices silent for longer than the window were counted as having been checking in")
+	}
+	f.exec(`UPDATE devices SET agent_last_seen_at = $2::timestamptz, agent_online_until = $2::timestamptz + interval '15 minutes' WHERE id = ANY ($1)`, devs, f.now().Add(-16*time.Minute))
+	f.plan()
+	if f.n(`SELECT count(*) FROM fleet_silences WHERE ended_at IS NULL AND counted_n = 24`) != 1 {
+		t.Fatal("devices past three of their intervals did not start the hold")
+	}
+}
+
 func TestTheHoldEndsWhenMoreThanHalfAreBack(t *testing.T) {
 	f := newFx(t)
 	site := f.site(f.orgA, "Main", "UTC")

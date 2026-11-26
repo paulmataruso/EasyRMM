@@ -61,7 +61,7 @@ var conditionSQL = map[string]string{
 	// its state), and MeshCentral has a group for the device's site but does
 	// not see MeshAgent connected.
 	agentproto.TargetMeshAgent: `SELECT d.id FROM devices d
-		WHERE d.agent_public_key IS NOT NULL AND d.agent_last_seen_at > $1::timestamptz - interval '3 minutes'
+		WHERE d.agent_public_key IS NOT NULL AND d.agent_online_until > $1::timestamptz
 		  AND d.meshagent_state IS NOT NULL AND NOT d.remote_online AND $2::int >= 0
 		  AND EXISTS (SELECT 1 FROM mesh_sites ms WHERE ms.site_id = d.site_id)
 		  AND NOT ` + devices.LeavingSQL,
@@ -71,10 +71,10 @@ var conditionSQL = map[string]string{
 	agentproto.TargetEasyPatchAgent: `SELECT d.id FROM devices d
 		JOIN easypatch_organizations lo ON lo.organization_id = d.organization_id
 		JOIN easypatch_devices e ON e.device_id = d.id AND e.state = 'linked'
-		WHERE d.agent_public_key IS NOT NULL AND d.agent_last_seen_at > $1::timestamptz - interval '3 minutes'
+		WHERE d.agent_public_key IS NOT NULL AND d.agent_online_until > $1::timestamptz
 		  AND e.agent_seen_at IS NOT NULL AND e.agent_seen_at < $1::timestamptz - make_interval(secs => $2::int)
 		  AND NOT ` + devices.LeavingSQL,
-	// The EasyRMM agent has not checked in for 3 minutes, though it did
+	// The EasyRMM agent has not checked in for three of its intervals, though it did
 	// before (it is enrolled and has been seen), while the device is
 	// patched and its EasyPatch agent is linked and checking in: the engine
 	// heard from it within the last SilentAfter. $2 is SilentAfter in
@@ -84,7 +84,7 @@ var conditionSQL = map[string]string{
 		JOIN easypatch_organizations lo ON lo.organization_id = d.organization_id
 		JOIN easypatch_devices e ON e.device_id = d.id AND e.state = 'linked'
 		WHERE d.agent_public_key IS NOT NULL AND d.agent_last_seen_at IS NOT NULL
-		  AND d.agent_last_seen_at <= $1::timestamptz - interval '3 minutes'
+		  AND d.agent_online_until <= $1::timestamptz
 		  AND e.agent_seen_at IS NOT NULL AND e.agent_seen_at > $1::timestamptz - make_interval(secs => $2::int)
 		  AND NOT ` + devices.LeavingSQL,
 }

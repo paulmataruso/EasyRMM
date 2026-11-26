@@ -8,6 +8,7 @@ import { useToast } from "../../components/Toast";
 import { Button, cx, Field, InlineError, Input, KeyValueList, Segmented, SelectField, TextareaField, TextField } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { CHECK_NAMES, CHECKS, conditionText, KIND_NAMES, KINDS, policyScope, POLICY_LIMITS } from "./alertText";
+import { SlowDevices, slowText, WAITS_FOR_INTERVAL } from "./SlowDevices";
 
 const FIELDS = ["name", "description", "kind", "checkName", "threshold", "minutes", "severity"];
 
@@ -144,6 +145,13 @@ export function PolicyDialog({ open, onClose, policy, fixed }: { open: boolean; 
       onSuccess: (p) => {
         toast.success(policy ? `Saved ${p.name}.` : `Added ${p.name}. It is checked every minute.`);
         onClose();
+        // A policy that waits longer on some devices, because of their heartbeat interval, says so (ADR-0058).
+        if (WAITS_FOR_INTERVAL.includes(p.kind)) {
+          api
+            .get<{ total: number }>(`/alert-policies/${p.id}/slow-devices`)
+            .then((r) => r.total > 0 && toast.info(slowText(r.total, p.minutes)))
+            .catch(() => undefined);
+        }
       },
     },
   );
@@ -366,6 +374,8 @@ export function PolicyDialog({ open, onClose, policy, fixed }: { open: boolean; 
                 ? checkHelp(checkName, driveLimit)
                 : `Every measurement in that time must reach the percentage${kind === "disk" ? " on the fullest filesystem" : ""}, and the alert resolves after 5 quiet minutes. 1 to 1,440 minutes.`}
           </p>
+
+          {policy && WAITS_FOR_INTERVAL.includes(policy.kind) && <SlowDevices policyId={policy.id} minutes={policy.minutes} />}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">

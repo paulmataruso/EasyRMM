@@ -10,6 +10,7 @@ export type Permission =
   | "device.edit"
   | "device.retire"
   | "device.harden"
+  | "device.configure"
   | "device.remote_desktop"
   | "device.rdp_credentials.save"
   | "device.recovery_key.read"
@@ -1904,6 +1905,18 @@ export type AlertResolution =
   | "policy_changed"
   | "policy_deleted"
   | "subject_gone";
+
+/** A device a policy covers whose heartbeat interval makes the policy wait longer than its minutes (ADR-0058). */
+export interface SlowDevice {
+  deviceId: string;
+  name: string;
+  siteId: string;
+  siteName: string;
+  /** Seconds between the device's heartbeats. */
+  heartbeatSeconds: number;
+  /** How long the policy really waits on the device, in minutes. */
+  waitMinutes: number;
+}
 
 export interface AlertPolicy {
   id: string;

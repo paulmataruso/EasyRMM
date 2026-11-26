@@ -156,8 +156,17 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID uuid.UUID, m agent
 			m.Load1, m.Load5, m.Load15, m.UptimeSeconds, m.Processes, fs); err != nil {
 			return err
 		}
+		// One sample per interval (ADR-0058): none when the last was stored
+		// less than 0.7 of the device's interval ago, which keeps the extra
+		// heartbeats between the regular ones out of monitoring. 0.7 sits
+		// below the 0.8 the agent waits and the tenth its jitter can take
+		// off, so regular heartbeats are all stored. The latest
+		// measurements above follow every heartbeat that carries them.
 		_, err := tx.Exec(ctx, `INSERT INTO device_metric_samples (device_id, at, cpu_percent, memory_percent, swap_percent, disk_percent, load1)
-			VALUES ($1, date_trunc('second', now()), $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+			SELECT $1, date_trunc('second', now()), $2, $3, $4, $5, $6
+			WHERE NOT EXISTS (SELECT 1 FROM device_metric_samples s WHERE s.device_id = $1
+				AND s.at > now() - make_interval(secs => 0.7 * (SELECT agent_heartbeat_seconds FROM devices WHERE id = $1)))
+			ON CONFLICT DO NOTHING`,
 			deviceID, m.CPUPercent, percent(m.MemoryUsed, m.MemoryTotal), percent(m.SwapUsed, m.SwapTotal), disk, m.Load1)
 		return err
 	})

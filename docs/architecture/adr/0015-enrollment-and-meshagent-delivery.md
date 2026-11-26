@@ -45,7 +45,10 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   agent backs off as after any failure.
 * **Heartbeat** every 60 seconds (`POST /api/agent/v1/heartbeat`) refreshes
   the device's facts and online state. The WebSocket channel of ADR-0009
-  arrives with jobs (phase 7).
+  arrives with jobs (phase 7). *Refined by ADR-0058, slice 1: 60 seconds is
+  the default of a setting (30 seconds to 5 minutes, set at the platform, an
+  organization, a site or a device), and the answer's `heartbeatSeconds` is
+  the device's effective interval.*
 * **MeshAgent comes from the running MeshCentral, through EasyRMM.** The
   agent asks EasyRMM for the MeshAgent binary for its architecture and the
   settings (`.msh`) of its site's device group, with signed requests. The
@@ -77,7 +80,9 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   another enrolled device held the node, that device gives it up. Each link
   is audited as `device.remote_link`.
 * **Online** means the agent reported in within the last three minutes or
-  MeshAgent is connected to MeshCentral. Remote sessions are offered only
+  MeshAgent is connected to MeshCentral. *Refined by ADR-0058, slice 1: three
+  of the device's own heartbeat intervals (`devices.agent_online_until`);
+  at 60 seconds, the same three minutes.* Remote sessions are offered only
   while MeshAgent is connected.
 * **Installers.** The server hands out the agent builds in
   `EASYRMM_AGENT_DIR` (the Docker image includes the Linux builds) with a

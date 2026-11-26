@@ -7,7 +7,12 @@
   the resolution `subject_gone`.
 
 ## Context
-ADR-0018 stores every device's measurements once a minute. Technicians need
+ADR-0018 stores every device's measurements once a minute. *Refined by
+ADR-0058, slice 1: once per heartbeat interval of the device, a window is
+never shorter than 1.2 intervals, and a policy expects the measurements of its
+window at that interval (at least half, rounded up, at least one). At 60
+seconds this is today's rule, except that a one-minute window becomes 72
+seconds.* Technicians need
 to be told when a device goes offline or runs short of processor, memory or
 disk, without watching charts, and need a list of what is wrong now across
 the devices they support. RBAC has had `monitoring.view` and
@@ -25,7 +30,8 @@ the devices they support. RBAC has had `monitoring.view` and
 * Conditions:
   * **Offline**: the device has not checked in for N minutes (3 to 1,440).
     A device counts as checking in while its EasyRMM agent or MeshAgent is
-    connected (the console's online state).
+    connected (the console's online state). *Refined by ADR-0058, slice 1:
+    the EasyRMM agent counts for three of its own heartbeat intervals.*
   * **Processor**, **Memory**, **Disk** (the fullest filesystem): every
     measurement in the last N minutes (1 to 1,440) is at or above a
     percentage (1 to 100), with at least half the expected measurements

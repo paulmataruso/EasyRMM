@@ -28,8 +28,9 @@ import (
 
 var domainSID = regexp.MustCompile(`^S-1-5-21-[0-9]+-[0-9]+-[0-9]+$`)
 
-// OnlineWithin is how recent a heartbeat must be for a controller to count as online.
-const OnlineWithin = 2 * time.Minute
+// OnlineIntervals is how many of the device's own heartbeat intervals (ADR-0058) may pass since its last heartbeat for
+// a controller to count as online: two, which is two minutes at the default.
+const OnlineIntervals = 2
 
 // Health of a controller, from its last health_read snapshot.
 const (
@@ -162,6 +163,7 @@ func (s *Service) Read(ctx context.Context, c access.Caller, org uuid.UUID) (*Do
 		id, site       uuid.UUID
 		name           string
 		seen           *time.Time
+		interval       int
 		status, health []byte
 		statusAt       *time.Time
 	}
@@ -169,7 +171,7 @@ func (s *Service) Read(ctx context.Context, c access.Caller, org uuid.UUID) (*Do
 	pins := map[string]uuid.UUID{}
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		r, err := tx.Query(ctx, `
-			SELECT d.id, d.site_id, d.name, d.agent_last_seen_at, st.data, st.taken_at, h.data
+			SELECT d.id, d.site_id, d.name, d.agent_last_seen_at, d.agent_heartbeat_seconds, st.data, st.taken_at, h.data
 			FROM devices d
 			LEFT JOIN windows_module_snapshots st ON st.device_id = d.id AND st.action = 'active_directory.status' AND st.params_hash = ''
 			LEFT JOIN windows_module_snapshots h  ON h.device_id = d.id AND h.action = 'active_directory.health_read' AND h.params_hash = ''
@@ -181,7 +183,7 @@ func (s *Service) Read(ctx context.Context, c access.Caller, org uuid.UUID) (*Do
 		defer r.Close()
 		for r.Next() {
 			var x row
-			if err := r.Scan(&x.id, &x.site, &x.name, &x.seen, &x.status, &x.statusAt, &x.health); err != nil {
+			if err := r.Scan(&x.id, &x.site, &x.name, &x.seen, &x.interval, &x.status, &x.statusAt, &x.health); err != nil {
 				return err
 			}
 			rows = append(rows, x)
@@ -222,7 +224,7 @@ func (s *Service) Read(ctx context.Context, c access.Caller, org uuid.UUID) (*Do
 		}
 		cand := Candidate{DeviceID: x.id, SiteID: x.site, Name: x.name, Controller: st.Controller, ReadOnly: st.ReadOnly, LastSeen: x.seen,
 			PDC: strings.EqualFold(st.Controller, st.PDCEmulator), Health: HealthUnknown, ReadAt: x.statusAt}
-		cand.Online = x.seen != nil && now.Sub(*x.seen) <= OnlineWithin
+		cand.Online = x.seen != nil && now.Sub(*x.seen) <= OnlineIntervals*time.Duration(x.interval)*time.Second
 		if len(x.health) > 0 {
 			var h Health
 			if json.Unmarshal(x.health, &h) == nil {

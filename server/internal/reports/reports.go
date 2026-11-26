@@ -317,8 +317,8 @@ func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Qu
 // Shared SQL: the scope columns every report filters on.
 const (
 	// online is a device's state as the device list shows it (ADR-0014,
-	// ADR-0018): either agent checked in recently.
-	onlineSQL   = `(d.remote_online OR coalesce(d.agent_last_seen_at > now() - interval '3 minutes', false))`
+	// ADR-0018): either agent checked in recently (an EasyRMM agent within three of its own intervals).
+	onlineSQL   = `(d.remote_online OR coalesce(d.agent_online_until > now(), false))`
 	lastSeenSQL = `greatest(d.last_seen_at, d.agent_last_seen_at)`
 	scopeSQL    = `NOT d.quick_assist AND ($1::uuid IS NULL OR d.organization_id = $1) AND ($2::uuid IS NULL OR d.site_id = $2) AND ($3 = '' OR d.platform = $3)`
 	fromSQL     = ` JOIN organizations o ON o.id = d.organization_id JOIN sites st ON st.id = d.site_id`

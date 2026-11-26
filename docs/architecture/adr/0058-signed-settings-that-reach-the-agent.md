@@ -1,6 +1,8 @@
 # ADR-0058: Signed settings that reach the agent
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21). Slice 1 built (2026-11-26; see *Amended
+  2026-11-26 (decided in review): as built in slice 1*); slices 2 and 3 not
+  implemented.
 * Revised 2026-11-21 after an independent review: what a longer interval
   does to monitoring and to online, a server rolled back, protocol levels
   in place of a fallback, what ADR-0057 must provide, technicians and the
@@ -731,3 +733,81 @@ turn the live connection on for one device first.
 * Adding a key is a catalogue entry in the server and in the agent, with
   its schema, default and permission at each scope, and a test of its
   effect; a key without an effect in the agent is not added.
+
+### Amended 2026-11-26 (decided in review): as built in slice 1
+
+Slice 1 is the server side and the interval for every agent. It signs
+nothing, so none of the signing cases (wrong key or context, another device,
+expired, replayed or older version, oversize, unknown fields) exist yet: they
+are slice 2's, which waits for ADR-0057 as written above. What was decided
+while building it:
+
+* **The catalog** (`server/internal/agentsettings`) holds integer keys with
+  bounds only: the one key so far, `agent.heartbeat_seconds`, is an integer.
+  Enumerations, structured values and the *schema versions* that only widen
+  arrive with the first key that needs them and with slice 2's report, which is
+  what reads them. An entry carries the platform's own floor for the key
+  (`Floor`), which is how the heartbeat key takes the platform's minimum.
+* **The platform's limits** live in the existing `settings` table
+  (`agent_settings.limits`), not in a table of their own; a missing or damaged
+  value means the defaults. The connection limit of ADR-0059 is not there yet.
+* **Online is worked out by the database.** A trigger on `devices`
+  (`easyrmm_device_online_until`) sets `agent_online_until` to the last-seen
+  time plus three of `agent_heartbeat_seconds` whenever `agent_last_seen_at`
+  changes and the writer does not set the column itself. The heartbeat sets
+  `agent_heartbeat_seconds` in the same statement as the last-seen time, so
+  the heartbeat, enrollment and Quick Assist agree, and nothing that wrote the
+  old column needed changing. The device list, its filter, reports,
+  monitoring, the Windows modules' sweep and the recovery conditions read
+  `agent_online_until`; the fixed `AgentOnlineWindow` is gone.
+* **Errors.** `setting_invalid` and `setting_scope` are answered with 400, as
+  this ADR says, though the rest of the API answers a field that needs
+  attention with 422; a malformed body is the usual 422.
+* **Clearing under an enforcement is allowed** (it only takes away what was
+  kept); setting is refused with 409 `setting_enforced`.
+* **The development scope.** A write at an organization, a site or a device is
+  refused (403) for an organization outside `devscope.Allowed`; a platform
+  write has no organization and is allowed, and takes effect only for the
+  organizations the scope allows: outside it the answer is 60 seconds, as
+  today.
+* **Rate limits are in memory, per server process**, with the existing keyed
+  limiter: 60 a minute per caller and 30 a minute per scope target. With
+  several servers on one database the limit is per server; refused writes
+  (no permission) use none of it. The per-wake queue and the spreading of a
+  change over devices belong to ADR-0059 and are not built.
+* **Device rows and moves.** ADR-0069 lets a device move to another site, so
+  "enrolled devices stay in their site" no longer holds. A device row names its
+  organization and site (a definer trigger checks them against the device, and
+  that it has the agent), and a move to another site deletes the device's rows;
+  ADR-0069 is amended to say so and the disposition test lists
+  `agent_settings`.
+* **What each answer carries.** The heartbeat answer and the channel's settings
+  push (ADR-0059) carry the effective interval. The enrollment answer and the
+  answer to a removed device keep 60 seconds: the first heartbeat corrects it.
+* **Measurements.** The server stores a sample only when 0.7 of the device's
+  interval has passed since its last (`RecordMetrics`); the agent's 0.8 rule is
+  slice 2's. A policy's window is never under 1.2 intervals and needs
+  `ceil(window / (2 x interval))` measurements, which is today's
+  `(minutes + 1) / 2` at 60 seconds. At 60 seconds the only difference is that
+  a one-minute window is 72 seconds.
+* **The policy page's list** is `GET /api/v1/alert-policies/{id}/slow-devices`
+  (the policy's devices the caller can see whose wait is longer than its
+  minutes, longest first, at most 500 and the total); at 60 seconds a
+  one-minute processor, memory or disk policy lists every device, as its 72
+  seconds are longer than its minute. Saving a policy shows the same count in a
+  notice.
+* **More readers of "online" than the ADR lists**, found by searching the
+  code for the three-minute window and moved to the device's own interval so a
+  device on 5 minutes is not mistaken for a silent one: the fleet-wide hold
+  (`silenceTick` in `server/internal/notify/due.go`: a device is silent after
+  three of its intervals), the recovery conditions and plan
+  (`server/internal/recovery`: `AgentFresh` is gone), and the Active Directory
+  controller choice (two intervals instead of two minutes). At 60 seconds each
+  keeps its old behavior.
+* **Verified:** unit and integration tests (the 300-second policies of every
+  kind, the 0.7 spacing, precedence, enforcement, row-level security, the
+  permissions at each scope, the minimum raising earlier values, the rate
+  limits, the audit rows, the dev scope, the move), the HTTP API tests,
+  vitest and one browser spec (`web/e2e/interval-settings.spec.ts`). **Not
+  verified:** the bundle's check with rc.4's real agent following a site's
+  interval, and a Windows agent; neither was run.

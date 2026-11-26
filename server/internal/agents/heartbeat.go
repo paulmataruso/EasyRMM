@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentsettings"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
@@ -43,6 +44,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	}
 	var (
 		before   string
+		interval = int(HeartbeatInterval.Seconds())
 		rescan   bool
 		logOn    bool
 		logAck   *agentproto.DefenderLogAck
@@ -53,15 +55,25 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	}
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, '') FROM devices WHERE id = $1`, d.ID).Scan(&before)
+		// The interval operators set for this device (ADR-0058). A failed
+		// read never fails the heartbeat: the agent keeps today's minute.
+		if n, err := agentsettings.EffectiveHeartbeat(ctx, tx, d.OrganizationID, d.SiteID, d.ID); err != nil {
+			s.log.Error("agents: reading the heartbeat interval failed", "error", err, "device_id", d.ID)
+		} else {
+			interval = n
+		}
 		// The name follows the hostname until someone renames the device.
+		// Online lasts three of the interval after this heartbeat; the
+		// database works that out (easyrmm_device_online_until).
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
 				hostname = $2, os_description = $3, platform = $4, agent_version = $5, agent_arch = $6,
 				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now(), agent_role = coalesce(NULLIF($9, ''), agent_role),
+				agent_heartbeat_seconds = $10,
 				meshagent_state = coalesce($8::jsonb, meshagent_state),
 				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
-			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role)
+			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role, interval)
 		if err != nil {
 			return err
 		}
@@ -133,7 +145,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	}
 	return &agentproto.HeartbeatResponse{
 		Protocol:         agentproto.Protocol,
-		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
+		HeartbeatSeconds: interval,
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available, SettingsSHA256: s.pendingSettings(ctx, d, f, available)},
 		JobKey:           s.jobKey,
 		Update:           update,

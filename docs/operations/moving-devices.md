@@ -73,6 +73,7 @@ so the old organization keeps its history and the new one does not see it.
 | `remote_grants`, `alerts`, `agent_log_records`, `agent_log_days`, `agent_log_follow`, `agent_repairs` | removed with a move to another organization |
 | `agent_conditions` | keyed by the device alone: how long a target has been down, follows it |
 | `agent_log_verbose` | a device's row is removed with a move to another site; a group's belongs to the group |
+| `agent_settings` | the platform's, an organization's and a site's rows are owned and untouched; a row set for the device alone is removed with a move to another site (its row names the old site, and its writer had rights there) |
 | `job_runs`, `audit_log`, `retired_devices`, `mail_sends` | keep the organization and site they were written with |
 | `alert_policies`, `contacts`, `device_groups`, `enrollment_tokens`, `mesh_sites`, `role_assignments`, `scripts`, `site_places`, `sites`, `easypatch_organizations`, `easypatch_sites` | owned by an organization or site, not by a device: untouched |
 | `easypatch_devices`, `easypatch_install_restarts`, `easypatch_installs`, `easypatch_opt_outs`, `easypatch_removals` | the patching engine's links: follow through its reconcile |

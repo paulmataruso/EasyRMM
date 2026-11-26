@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agentsettings"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
@@ -216,9 +217,16 @@ func (s *Service) SignDownload(p *SignedRequest, target string, body []byte) str
 func (s *Service) ChannelSettings(ctx context.Context, id uuid.UUID) (*agentproto.ChannelSettings, error) {
 	d := &Device{ID: id}
 	var pending bool
+	interval := int(HeartbeatInterval.Seconds())
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT organization_id, site_id, mesh_settings_pending FROM devices WHERE id = $1`, id).
-			Scan(&d.OrganizationID, &d.SiteID, &pending)
+		if err := tx.QueryRow(ctx, `SELECT organization_id, site_id, mesh_settings_pending FROM devices WHERE id = $1`, id).
+			Scan(&d.OrganizationID, &d.SiteID, &pending); err != nil {
+			return err
+		}
+		// The interval operators set for the device (ADR-0058).
+		var err error
+		interval, err = agentsettings.EffectiveHeartbeat(ctx, tx, d.OrganizationID, d.SiteID, id)
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -226,7 +234,7 @@ func (s *Service) ChannelSettings(ctx context.Context, id uuid.UUID) (*agentprot
 	if err != nil {
 		return nil, fmt.Errorf("agents: reading a device's settings: %w", err)
 	}
-	out := &agentproto.ChannelSettings{HeartbeatSeconds: int(HeartbeatInterval.Seconds())}
+	out := &agentproto.ChannelSettings{HeartbeatSeconds: interval}
 	available, err := s.meshAvailable(ctx, d.SiteID)
 	if err != nil {
 		s.log.Warn("agents: checking remote access failed", "error", err, "device_id", id)

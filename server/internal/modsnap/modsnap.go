@@ -185,8 +185,8 @@ func (s *Service) refresh(ctx context.Context, c access.Caller, d *devices.Devic
 	var online bool
 	var inflight uuid.UUID
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT coalesce(agent_last_seen_at > $2::timestamptz - make_interval(secs => $3), false)
-			FROM devices WHERE id = $1`, d.ID, s.now(), devices.AgentOnlineWindow.Seconds()).Scan(&online); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT coalesce(agent_online_until > $2::timestamptz, false)
+			FROM devices WHERE id = $1`, d.ID, s.now()).Scan(&online); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `SELECT r.id FROM job_runs r JOIN jobs j ON j.id = r.job_id
@@ -260,13 +260,13 @@ func (s *Service) Sweep(ctx context.Context) (int, error) {
 		err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `SELECT d.id, d.organization_id, d.site_id FROM devices d
 				WHERE d.platform = 'windows' AND d.agent_public_key IS NOT NULL
-				  AND d.agent_last_seen_at > $1::timestamptz - make_interval(secs => $2)
+				  AND d.agent_online_until > $1::timestamptz
 				  AND jsonb_path_exists(coalesce(d.roles, '[]'::jsonb),
-					'$[*] ? (@.name == $role && (@.state == "present" || @.state == "passive"))', jsonb_build_object('role', $3::text))
-				  AND NOT EXISTS (SELECT 1 FROM windows_module_snapshots s WHERE s.device_id = d.id AND s.action = $4 AND s.params_hash = ''
-					AND s.taken_at > $1::timestamptz - make_interval(secs => $5))
-				  AND NOT `+inflightSQL("d.id", "$4::text")+`
-				ORDER BY d.id LIMIT $6`, s.now(), devices.AgentOnlineWindow.Seconds(), def.Role, a.Name, a.Schedule.Seconds(), MaxPerSweep)
+					'$[*] ? (@.name == $role && (@.state == "present" || @.state == "passive"))', jsonb_build_object('role', $2::text))
+				  AND NOT EXISTS (SELECT 1 FROM windows_module_snapshots s WHERE s.device_id = d.id AND s.action = $3 AND s.params_hash = ''
+					AND s.taken_at > $1::timestamptz - make_interval(secs => $4))
+				  AND NOT `+inflightSQL("d.id", "$3::text")+`
+				ORDER BY d.id LIMIT $5`, s.now(), def.Role, a.Name, a.Schedule.Seconds(), MaxPerSweep)
 			if err != nil {
 				return err
 			}

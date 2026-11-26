@@ -772,3 +772,17 @@ time and stay with it when a device they name moves.
 fact of the computer, not of the organization, so a move leaves the rows alone:
 they follow the device, like `device_hardening`. The disposition test lists
 both as "follows the device".
+
+### Amended 2026-11-26 (decided in review), agent settings
+
+`agent_settings` (migration `90511`, ADR-0058 slice 1) holds the settings
+operators set for agents at the platform, an organization, a site or one
+device. The platform's, an organization's and a site's rows are owned by that
+level, so a device move leaves them alone. A row set for one device names the
+organization and site the device was in, and was written by someone with
+rights there, so it ends with a move to another site, as `agent_log_verbose`
+does: the move deletes it (`moveOne` in `server/internal/devices/move.go`).
+The disposition test lists the table as "ends", the nearest of its
+dispositions; what the code does, and `docs/operations/moving-devices.md`
+says, is the move to another site. ADR-0058's "enrolled devices stay in their
+site" is not true after this ADR, and the device rows do not rely on it.

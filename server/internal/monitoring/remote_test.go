@@ -45,6 +45,9 @@ func TestDecideRemote(t *testing.T) {
 		"silent, leaving, alert":         {with(silent, func(f *remoteFacts) { f.leaving, f.alertID = true, &alert }), true, actResolve, true},
 		"another kind":                   {remoteFacts{kind: KindOffline, minutes: 15}, true, actNone, false},
 	} {
+		// The agent counts as online for three of its intervals, a minute each here
+		// (devices.agent_online_until, ADR-0058).
+		c.f.agentOnline = c.f.agentSeen != nil && now.Sub(*c.f.agentSeen) < 3*time.Minute
 		got := decideRemote(c.f, now, floor, c.judge)
 		if got.act != c.want || got.gone != c.gone {
 			t.Errorf("%s: %+v, want %v gone %v", name, got, c.want, c.gone)
@@ -52,6 +55,7 @@ func TestDecideRemote(t *testing.T) {
 	}
 	// Just after the server began serving, an agent has had no chance to
 	// check in: its silence opens nothing yet.
+	silent.agentOnline = false
 	if got := decideRemote(silent, now, now.Add(-5*time.Minute), true); got.act != actNone {
 		t.Errorf("silent right after the start: %+v", got)
 	}

@@ -32,6 +32,7 @@ type remoteFacts struct {
 	hasGroup           bool
 	leaving            bool
 	agentSeen          *time.Time // the agent's last check-in, or its enrollment
+	agentOnline        bool       // the agent has not missed three of its intervals
 	changedAt          *time.Time // MeshCentral's view last changed, or the enrollment
 	state              []byte
 }
@@ -62,7 +63,7 @@ func decideRemote(f remoteFacts, now, floor time.Time, judge bool) remoteAction 
 		return remoteAction{}
 	}
 	limit := time.Duration(f.minutes) * time.Minute
-	agentOnline := f.agentSeen != nil && now.Sub(*f.agentSeen) < devices.AgentOnlineWindow
+	agentOnline := f.agentOnline
 	switch f.kind {
 	case KindRemoteDown:
 		if f.remoteOnline {
@@ -117,6 +118,7 @@ func loadRemoteFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]remoteFac
 				EXISTS (SELECT 1 FROM mesh_sites ms WHERE ms.site_id = d.site_id) AS has_group,
 				`+devices.LeavingSQL+` AS leaving,
 				coalesce(d.agent_last_seen_at, d.enrolled_at) AS agent_seen,
+				coalesce(d.agent_online_until > $1::timestamptz, false) AS agent_online,
 				coalesce(d.remote_changed_at, d.enrolled_at) AS changed_at,
 				d.meshagent_state
 			FROM alert_policies p
@@ -137,7 +139,7 @@ func loadRemoteFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]remoteFac
 	for rows.Next() {
 		var f remoteFacts
 		if err := rows.Scan(&f.policyID, &f.deviceID, &f.kind, &f.minutes, &f.alertID, &f.remoteOnline, &f.wrongGroup, &f.hasGroup,
-			&f.leaving, &f.agentSeen, &f.changedAt, &f.state); err != nil {
+			&f.leaving, &f.agentSeen, &f.agentOnline, &f.changedAt, &f.state); err != nil {
 			return nil, err
 		}
 		out = append(out, f)

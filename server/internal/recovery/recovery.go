@@ -52,9 +52,6 @@ const (
 	ManualWaitPatching = 7 * time.Minute
 	// MaxDiagnostics is the most bytes of diagnostics kept for a repair.
 	MaxDiagnostics = 256 * 1024
-	// AgentFresh is how recently the EasyRMM agent must have checked in to
-	// count as back, as the conditions count a check-in.
-	AgentFresh = 3 * time.Minute
 )
 
 // lockAdvance is the advisory lock that keeps two servers on one database
@@ -724,10 +721,10 @@ func (s *Service) Advance(ctx context.Context) error {
 		}
 		patchOK := s.patch != nil && s.patch.AgentsSettled(now)
 		rows, err := tx.Query(ctx, `SELECT r.id, r.target, r.trigger, r.steps, r.step, r.next_at, r.started_at, d.remote_online, d.remote_changed_at,
-				e.agent_seen_at, d.agent_last_seen_at, o.auto_repair, `+patchedSQL+`, `+devices.LeavingSQL+`
+				e.agent_seen_at, d.agent_last_seen_at, coalesce(d.agent_online_until > $1::timestamptz, false), o.auto_repair, `+patchedSQL+`, `+devices.LeavingSQL+`
 			FROM agent_repairs r JOIN devices d ON d.id = r.device_id JOIN organizations o ON o.id = d.organization_id
 			LEFT JOIN easypatch_devices e ON e.device_id = d.id AND e.state = 'linked'
-			WHERE r.state = 'running' ORDER BY r.started_at FOR UPDATE OF r`)
+			WHERE r.state = 'running' ORDER BY r.started_at FOR UPDATE OF r`, now)
 		if err != nil {
 			return err
 		}
@@ -750,7 +747,7 @@ func (s *Service) Advance(ctx context.Context) error {
 		for rows.Next() {
 			var r row
 			if err := rows.Scan(&r.id, &r.target, &r.trigger, &r.steps, &r.step, &r.nextAt, &r.startedAt, &r.facts.online, &r.facts.changedAt,
-				&r.facts.patchSeen, &r.facts.agentSeen, &r.autoRepair, &r.patched, &r.leaving); err != nil {
+				&r.facts.patchSeen, &r.facts.agentSeen, &r.facts.agentOnline, &r.autoRepair, &r.patched, &r.leaving); err != nil {
 				rows.Close()
 				return err
 			}
@@ -978,8 +975,11 @@ type targetFacts struct {
 	online    bool
 	changedAt *time.Time
 	patchSeen *time.Time
-	// agentSeen is the EasyRMM agent's last heartbeat.
-	agentSeen *time.Time
+	// agentSeen is the EasyRMM agent's last heartbeat; agentOnline says it
+	// has not missed three of its own intervals (ADR-0058), which is how the
+	// conditions count a check-in.
+	agentSeen   *time.Time
+	agentOnline bool
 }
 
 // back reports whether the target is back after a step done at doneAt,
@@ -990,7 +990,7 @@ func (f targetFacts) back(target string, now time.Time, doneAt *time.Time, waitO
 		if f.agentSeen == nil {
 			return false
 		}
-		return (doneAt != nil && !f.agentSeen.Before(*doneAt)) || (waitOver && now.Sub(*f.agentSeen) < AgentFresh)
+		return (doneAt != nil && !f.agentSeen.Before(*doneAt)) || (waitOver && f.agentOnline)
 	}
 	if target == agentproto.TargetEasyPatchAgent {
 		// Checked in since the step, or, when the wait is over, recently.

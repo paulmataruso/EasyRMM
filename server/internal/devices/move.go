@@ -223,6 +223,11 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 		if _, err := tx.Exec(ctx, `DELETE FROM agent_log_verbose WHERE device_id = $1`, m.id); err != nil {
 			return err
 		}
+		// Likewise the settings set for this device alone (ADR-0058): their
+		// rows name the old site, and the person who set them had rights there.
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_settings WHERE device_id = $1`, m.id); err != nil {
+			return err
+		}
 		// The escrow rows follow the device, and row-level security reads
 		// their site (ADR-0081); a move to another organization deletes them
 		// below.

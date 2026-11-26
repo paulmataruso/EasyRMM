@@ -35,6 +35,9 @@ floors=(
   "server/internal/httpapi/agentapi        88"
   # The agents' WebSocket channel (ADR-0059).
   "server/internal/agentchannel            90"
+  # Agent settings (ADR-0058): the catalogue, precedence, enforcement, the writes and their API.
+  "server/internal/agentsettings           90"
+  "server/internal/httpapi/agentsettingsapi 80"
   # Everything else.
   "server/internal/database                85"
   "server/internal/config                  90"

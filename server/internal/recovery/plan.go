@@ -206,19 +206,19 @@ func (s *Service) loadFacts(ctx context.Context, tx pgx.Tx, id uuid.UUID, f *Fac
 	now := s.now()
 	var seen *time.Time
 	var meshSite, orgLinked, linked bool
-	var lastSeen *time.Time
-	if err := tx.QueryRow(ctx, `SELECT d.agent_public_key IS NOT NULL, d.agent_last_seen_at, d.remote_online, `+devices.LeavingSQL+`,
+	var onlineUntil *time.Time
+	if err := tx.QueryRow(ctx, `SELECT d.agent_public_key IS NOT NULL, d.agent_online_until, d.remote_online, `+devices.LeavingSQL+`,
 			EXISTS (SELECT 1 FROM mesh_sites ms WHERE ms.site_id = d.site_id),
 			EXISTS (SELECT 1 FROM easypatch_organizations l WHERE l.organization_id = d.organization_id),
 			EXISTS (SELECT 1 FROM easypatch_devices e WHERE e.device_id = d.id AND e.state = 'linked'),
 			(SELECT e.agent_seen_at FROM easypatch_devices e WHERE e.device_id = d.id AND e.state = 'linked')
-		FROM devices d WHERE d.id = $1`, id).Scan(&f.Enrolled, &lastSeen, &f.MeshUp, &f.Leaving, &meshSite, &orgLinked, &linked, &seen); err != nil {
+		FROM devices d WHERE d.id = $1`, id).Scan(&f.Enrolled, &onlineUntil, &f.MeshUp, &f.Leaving, &meshSite, &orgLinked, &linked, &seen); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
 		return err
 	}
-	f.RMMUp = lastSeen != nil && now.Sub(*lastSeen) < AgentFresh
+	f.RMMUp = onlineUntil != nil && onlineUntil.After(now)
 	f.MeshExpected = s.remote && meshSite
 	f.PatchExpected = orgLinked && linked
 	f.PatchUp = seen != nil && now.Sub(*seen) < SilentAfter

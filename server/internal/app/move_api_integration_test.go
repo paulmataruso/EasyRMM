@@ -350,6 +350,8 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// a device's verbose setting ends with any move to another site; a
 		// group's is owned by the group.
 		"agent_log_verbose": ends,
+		// settings (ADR-0058): the platform's, an organization's and a site's are owned; a device's own end with a move to another site, like verbose logging
+		"agent_settings": ends,
 		// stays
 		"job_runs": stays, "registry_masked_values": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays, "compliance_fix_items": stays, "compliance_fix_agreements": stays, "hardening_setting_results": stays,
 		// owned

@@ -22,9 +22,11 @@ import (
 // The fleet-wide hold's thresholds (ADR-0053, "Restarts, and EasyRMM itself
 // unreachable").
 const (
-	FleetSilentAfter = 3 * time.Minute // a device is silent after this long
-	FleetWindow      = 5 * time.Minute // the window in which devices go silent
-	FleetMinDevices  = 20
+	// A device is silent after three of its own heartbeat intervals (ADR-0058), which is what it takes to stop counting
+	// as online.
+	FleetSilentIntervals = 3
+	FleetWindow          = 5 * time.Minute // the window in which devices go silent
+	FleetMinDevices      = 20
 )
 
 // Notice kinds raised by slice 4.
@@ -188,9 +190,9 @@ func (s *Service) silenceTick(ctx context.Context, tx pgx.Tx, now time.Time) (bo
 		}
 		return false, resolveNotice(ctx, tx, nil, NoticeFleetSilent, id.String())
 	}
-	rs, err := tx.Query(ctx, `SELECT id, organization_id, agent_last_seen_at FROM devices
-		WHERE agent_public_key IS NOT NULL AND agent_uninstalled_at IS NULL AND NOT quick_assist AND agent_last_seen_at >= $1`,
-		now.Add(-FleetWindow-FleetSilentAfter))
+	rs, err := tx.Query(ctx, `SELECT id, organization_id, agent_last_seen_at, agent_heartbeat_seconds FROM devices
+		WHERE agent_public_key IS NOT NULL AND agent_uninstalled_at IS NULL AND NOT quick_assist AND agent_online_until >= $1`,
+		now.Add(-FleetWindow))
 	if err != nil {
 		return false, err
 	}
@@ -199,7 +201,8 @@ func (s *Service) silenceTick(ctx context.Context, tx pgx.Tx, now time.Time) (bo
 	for rs.Next() {
 		var d, o uuid.UUID
 		var seen time.Time
-		if err := rs.Scan(&d, &o, &seen); err != nil {
+		var interval int
+		if err := rs.Scan(&d, &o, &seen, &interval); err != nil {
 			rs.Close()
 			return false, err
 		}
@@ -210,7 +213,7 @@ func (s *Service) silenceTick(ctx context.Context, tx pgx.Tx, now time.Time) (bo
 		if seen.Before(floor) {
 			seen = floor
 		}
-		if now.Sub(seen) >= FleetSilentAfter {
+		if now.Sub(seen) >= FleetSilentIntervals*time.Duration(interval)*time.Second {
 			silent++
 		}
 	}

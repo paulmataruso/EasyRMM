@@ -539,3 +539,61 @@ func TestSoftwareSearch(t *testing.T) {
 		t.Errorf("no name: %v", err)
 	}
 }
+
+// A sample is stored only when at least 0.7 of the device's interval has
+// passed since its last, so the extra heartbeats between the regular ones
+// stay out of monitoring, while the latest measurements follow every
+// heartbeat that carries them (ADR-0058).
+func TestSamplesAreSpacedByTheDevicesInterval(t *testing.T) {
+	f := newFixture(t)
+	pc := f.device(f.acme, f.hq, "HQ-PC")
+	samples := func() string {
+		return f.str(`SELECT count(*)::text FROM device_metric_samples WHERE device_id = $1`, pc)
+	}
+	record := func(cpu float64) {
+		t.Helper()
+		if err := f.svc.RecordMetrics(f.ctx, pc, agentproto.Metrics{CPUPercent: cpu, MemoryTotal: 100, MemoryUsed: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The last stored sample's age against the interval: 0.7 of 300 seconds
+	// is 210, so 200 is too soon and 215 is not; at 60 seconds, 42.
+	for _, c := range []struct {
+		interval, ago int
+		stored        bool
+	}{{300, 200, false}, {300, 215, true}, {300, 225, true}, {60, 41, false}, {60, 44, true}, {60, 54, true}, {30, 20, false}, {30, 22, true}} {
+		f.exec(`DELETE FROM device_metric_samples WHERE device_id = $1`, pc)
+		f.exec(`UPDATE devices SET agent_heartbeat_seconds = $2 WHERE id = $1`, pc, c.interval)
+		f.exec(`INSERT INTO device_metric_samples (device_id, at, cpu_percent, memory_percent, swap_percent, disk_percent, load1)
+			VALUES ($1, date_trunc('second', now()) - make_interval(secs => $2), 5, 5, 0, 5, 0)`, pc, c.ago)
+		record(77)
+		want := "1"
+		if c.stored {
+			want = "2"
+		}
+		if got := samples(); got != want {
+			t.Errorf("interval %d, last sample %d seconds ago: %s samples, want %s", c.interval, c.ago, got, want)
+		}
+		// Stored or not, the latest measurements are this heartbeat's.
+		if got := f.str(`SELECT cpu_percent::text FROM device_metrics WHERE device_id = $1`, pc); got != "77" {
+			t.Errorf("interval %d: the latest measurement is %s", c.interval, got)
+		}
+	}
+	// Two sent 0.8 apart, the first delayed on the way so they arrive 0.7
+	// (a tenth closer) apart, are both stored: the second arrives just past
+	// 0.7 of the interval.
+	f.exec(`DELETE FROM device_metric_samples WHERE device_id = $1`, pc)
+	f.exec(`UPDATE devices SET agent_heartbeat_seconds = 300 WHERE id = $1`, pc)
+	f.exec(`INSERT INTO device_metric_samples (device_id, at, cpu_percent, memory_percent, swap_percent, disk_percent, load1)
+		VALUES ($1, date_trunc('second', now()) - interval '211 seconds', 5, 5, 0, 5, 0)`, pc)
+	record(1)
+	if got := samples(); got != "2" {
+		t.Errorf("0.7 and a second apart: %s samples", got)
+	}
+	// And a device with no sample yet stores its first.
+	f.exec(`DELETE FROM device_metric_samples WHERE device_id = $1`, pc)
+	record(2)
+	if got := samples(); got != "1" {
+		t.Errorf("the first sample: %s", got)
+	}
+}

@@ -33,6 +33,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/alert-policies", a.listPolicies)
 	r("POST /api/v1/alert-policies", a.createPolicy)
 	r("GET /api/v1/alert-policies/{id}", a.getPolicy)
+	r("GET /api/v1/alert-policies/{id}/slow-devices", a.slowDevices)
 	r("PATCH /api/v1/alert-policies/{id}", a.updatePolicy)
 	r("DELETE /api/v1/alert-policies/{id}", a.deletePolicy)
 }
@@ -188,6 +189,21 @@ func (a *API) getPolicy(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, p)
+	return nil
+}
+
+// slowDevices lists the devices whose heartbeat interval makes the policy
+// wait longer than its minutes (ADR-0058).
+func (a *API) slowDevices(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	items, total, err := a.svc.SlowDevices(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 	return nil
 }
 

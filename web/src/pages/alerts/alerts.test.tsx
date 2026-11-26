@@ -27,6 +27,7 @@ function routes(alerts: AlertEntry[] = [DISK, CPU]) {
   return {
     ...baseRoutes(TECHNICIAN),
     "GET /organizations": ok({ items: [org("o1", "Northwind Traders"), org("o2", "Contoso Dental Group")] }),
+    "GET /alert-policies/:id/slow-devices": ok({ items: [], total: 0 }),
     "GET /alerts": (r: FakeRequest) => ok({ items: r.query.get("status") === "resolved" ? [] : alerts }),
     "GET /alert-policies": ok({ items: [] }),
     "GET /sites": ok({ items: [site("s1", "o1", "Head office")] }),

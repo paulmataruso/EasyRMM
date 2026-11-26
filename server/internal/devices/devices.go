@@ -6,7 +6,6 @@ package devices
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -21,10 +20,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/posture"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
-
-// AgentOnlineWindow is how recently the EasyRMM agent must have reported for
-// its device to count as online: three missed heartbeats.
-const AgentOnlineWindow = 3 * time.Minute
 
 // Agent is the EasyRMM agent of an enrolled device.
 type Agent struct {
@@ -295,8 +290,10 @@ const maxPostureScan = 100000
 // MaxList bounds one list response.
 const MaxList = 5000
 
-// agentOnline is the SQL form of Agent.Online.
-var agentOnline = fmt.Sprintf("coalesce(d.agent_last_seen_at > now() - interval '%d seconds', false)", int(AgentOnlineWindow.Seconds()))
+// agentOnline is the SQL form of Agent.Online: the device's agent has not
+// missed three of its own heartbeats (agent_online_until, set from the
+// interval the agent uses; ADR-0058).
+const agentOnline = "coalesce(d.agent_online_until > now(), false)"
 
 var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_group_id, coalesce(g.name, ''),
 	d.name, d.hostname, d.os_description, d.platform, coalesce(d.mesh_node_id, ''), d.remote_online,

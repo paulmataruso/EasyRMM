@@ -26,6 +26,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agentfiles"
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
+	"github.com/paulmataruso/easyrmm/server/internal/agentsettings"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
@@ -48,6 +49,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentfilesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentlogsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentsettingsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
@@ -203,6 +205,8 @@ type Deps struct {
 	// Keystore stores the recovery keys agents escrow and has the keystore
 	// process check them (ADR-0081); it holds no key.
 	Keystore *keystore.Service
+	// AgentSettings holds what operators set for agents (ADR-0058).
+	AgentSettings *agentsettings.Service
 	// TLSTrust asks agents to verify the certificate chains the edge serves
 	// and keeps their answers (ADR-0055, slice 5b1).
 	TLSTrust *tlstrust.Service
@@ -411,6 +415,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		ks = &keystore.Client{Path: cfg.KeystoreSocket}
 	}
 	d.Keystore = keystore.New(db, auditLog, ks, jobKey, log)
+	d.AgentSettings = agentsettings.New(db, auditLog, log)
 	d.TLSTrust = tlstrust.New(db, auditLog, jobKey, log)
 	d.TLSTrust.SetEasyPatchHost(easyPatchHost(db, cfg.PublicURL))
 	// Reading a key needs the session stepped up (ADR-0055) and mails the
@@ -721,6 +726,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		return nil, fmt.Errorf("web interface: %w", err)
 	}
 	keystoreapi.New(d.Keystore).Register(mux)
+	agentsettingsapi.New(d.AgentSettings).Register(mux)
 	notifyapi.New(d.Notify).Register(mux)
 	mux.Handle("/", webui.Handler(files))
 

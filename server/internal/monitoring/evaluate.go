@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/server/internal/database"
-	"github.com/paulmataruso/easyrmm/server/internal/devices"
 )
 
 // lockEvaluate is the advisory lock that keeps two servers on one database
@@ -181,12 +180,31 @@ type facts struct {
 	// was.
 	online bool
 	seen   *time.Time
+	// interval is the seconds between the device's heartbeats, which its
+	// measurements follow (ADR-0058).
+	interval int
 	// For processor, memory and disk: the measurements of the policy's
 	// minutes (n, the lowest, the latest) and of the resolve window (n and
 	// the highest).
 	n, nRecent int
 	lo, last   *float64
 	hiRecent   *float64
+}
+
+// A window is never shorter than 1.2 of the device's intervals, so the
+// jitter of a tenth either way never leaves it empty (ADR-0058). The SQL and
+// needed agree on it.
+const windowIntervals = "1.2"
+
+// needed is how many measurements a policy's window must hold before it
+// opens an alert: at least half of those expected at the device's interval,
+// rounded up, and at least one. At 60 seconds it is today's (minutes+1)/2.
+func needed(minutes, interval int) int {
+	if interval <= 0 {
+		interval = 60
+	}
+	tenths := max(600*minutes, 12*interval) // the window, in tenths of seconds
+	return max(1, (tenths+20*interval-1)/(20*interval))
 }
 
 // loadFacts reads, for every enabled policy and covered device, what the
@@ -196,7 +214,8 @@ type facts struct {
 func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, error) {
 	rows, err := tx.Query(ctx, `SELECT * FROM (
 			SELECT p.id AS policy_id, d.id AS device_id, p.kind, p.threshold, p.minutes, a.id AS alert_id,
-				d.remote_online OR coalesce(d.agent_last_seen_at > $1::timestamptz - make_interval(secs => $2), false) AS online,
+				d.remote_online OR coalesce(d.agent_online_until > $1::timestamptz, false) AS online,
+				d.agent_heartbeat_seconds AS hb_seconds,
 				greatest(d.last_seen_at, d.agent_last_seen_at) AS seen,
 				coalesce(s.n, 0) AS n, coalesce(s.n_recent, 0) AS n_recent, s.lo, s.last, s.hi_recent
 			FROM alert_policies p
@@ -205,23 +224,23 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
 			LEFT JOIN LATERAL (
 				SELECT count(*) AS n, min(v) AS lo, (array_agg(v ORDER BY at DESC))[1] AS last,
-					count(*) FILTER (WHERE at > $1::timestamptz - make_interval(mins => least(p.minutes, $3))) AS n_recent,
-					max(v) FILTER (WHERE at > $1::timestamptz - make_interval(mins => least(p.minutes, $3))) AS hi_recent
+					count(*) FILTER (WHERE at > $1::timestamptz - make_interval(secs => greatest(least(p.minutes, $2) * 60, `+windowIntervals+` * d.agent_heartbeat_seconds))) AS n_recent,
+					max(v) FILTER (WHERE at > $1::timestamptz - make_interval(secs => greatest(least(p.minutes, $2) * 60, `+windowIntervals+` * d.agent_heartbeat_seconds))) AS hi_recent
 				FROM (
 					SELECT ms.at, (CASE p.kind WHEN 'cpu' THEN ms.cpu_percent WHEN 'memory' THEN ms.memory_percent
 						ELSE ms.disk_percent END)::float8 AS v
 					FROM device_metric_samples ms
 					WHERE p.kind <> 'offline' AND ms.device_id = d.id
-					  AND ms.at > $1::timestamptz - make_interval(mins => p.minutes) AND ms.at <= $1
+					  AND ms.at > $1::timestamptz - make_interval(secs => greatest(p.minutes * 60, `+windowIntervals+` * d.agent_heartbeat_seconds)) AND ms.at <= $1
 				) x
 			) s ON true
 			WHERE p.enabled AND p.kind IN ('offline', 'cpu', 'memory', 'disk')
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)
-			AND $4::timestamptz <= $1::timestamptz - make_interval(mins => minutes))
+			AND $3::timestamptz <= $1::timestamptz - make_interval(mins => minutes))
 		   OR (kind <> 'offline' AND lo >= threshold)`,
-		now, devices.AgentOnlineWindow.Seconds(), ResolveWindow, floor)
+		now, ResolveWindow, floor)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +249,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 	for rows.Next() {
 		var f facts
 		if err := rows.Scan(&f.policyID, &f.deviceID, &f.kind, &f.threshold, &f.minutes, &f.alertID,
-			&f.online, &f.seen, &f.n, &f.nRecent, &f.lo, &f.last, &f.hiRecent); err != nil {
+			&f.online, &f.interval, &f.seen, &f.n, &f.nRecent, &f.lo, &f.last, &f.hiRecent); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -277,9 +296,9 @@ func decide(f facts, now, floor time.Time) (action, *float64) {
 	limit := float64(*f.threshold)
 	if f.alertID == nil {
 		// Every measurement of the window at or above the threshold, and at
-		// least half the window measured: a device that has just come back
-		// does not trip on one or two readings.
-		if f.n >= max(1, (f.minutes+1)/2) && f.lo != nil && *f.lo >= limit && f.last != nil {
+		// least half those expected at the device's interval: a device that
+		// has just come back does not trip on one or two readings.
+		if f.n >= needed(f.minutes, f.interval) && f.lo != nil && *f.lo >= limit && f.last != nil {
 			return actOpen, f.last
 		}
 		return actNone, nil
