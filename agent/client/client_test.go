@@ -642,3 +642,37 @@ func TestUnreachableServer(t *testing.T) {
 		t.Error("download from a closed server succeeded")
 	}
 }
+
+// TestStructuredResultFollowsTheServersLevel: a structured job's result, its
+// cut flag and the build that ran it (ADR-0067) go only to a server of level
+// 2 or higher, whose decoder ignores what it does not know; a server of the
+// release before, whose decoder is strict, gets the result without them.
+func TestStructuredResultFollowsTheServersLevel(t *testing.T) {
+	s := &levelServer{bodies: map[string][]string{}}
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+	c, err := New(Options{Server: srv.URL, Version: "9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	c.SetIdentity("dev-1", key)
+	ctx := context.Background()
+	zero := 0
+	result := agentproto.ResultRequest{Status: agentproto.RunSucceeded, ExitCode: &zero, Result: "e30K", ResultCut: true, AgentVersion: "1.5.0"}
+	beat := func(level int) {
+		t.Helper()
+		s.set(level)
+		if _, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beat(2)
+	if err := c.Result(ctx, "r1", result); err != nil || !strings.Contains(s.last("result"), `"result":"e30K","resultCut":true,"agentVersion":"1.5.0"`) {
+		t.Errorf("a level 2 server: %v, result sent %s", err, s.last("result"))
+	}
+	beat(1)
+	if err := c.Result(ctx, "r2", result); err != nil || strings.Contains(s.last("result"), "e30K") || strings.Contains(s.last("result"), "agentVersion") {
+		t.Errorf("a level 1 server: %v, result sent %s", err, s.last("result"))
+	}
+}

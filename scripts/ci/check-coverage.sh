@@ -23,6 +23,10 @@ floors=(
   "server/internal/audit                   85"
   # Agent identity: enrollment, request signatures, and their HTTP surface.
   "internal/agentproto                     95"
+  # The registry editor's shared rules (ADR-0067): what is refused and masked.
+  "internal/registryrules                  95"
+  # The event viewer's shared rules (ADR-0068): what is sensitive, the query, the server's check of a result.
+  "internal/eventrules                     80"
   "server/internal/agents                  88"
   # The development-only dev scope guard.
   "server/internal/devscope                95"
@@ -168,6 +172,10 @@ floors=(
   "agent/state                             75"
   "agent/cmd/easyrmm-agent                 75"
   "agent/jobs                              80"
+  # The registry builtin's engine (ADR-0067); its Windows half runs on the Windows runners.
+  "agent/registry                          80"
+  # The event viewer builtin's engine (ADR-0068); its Windows half runs on the Windows runners.
+  "agent/winevent                          75"
   "agent/update                            80"
   "agent/removal                           85"
   "agent/easypatch                         85"

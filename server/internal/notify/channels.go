@@ -569,7 +569,7 @@ func scanChannel(rows pgx.Rows) (channelRow, error) {
 }
 
 func (s *Service) list(ctx context.Context, scope database.Scope, where string, args ...any) ([]Channel, error) {
-	var out []Channel
+	out := []Channel{}
 	err := s.db.ReadTx(ctx, scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, channelSelect+" "+where+" ORDER BY c.owner <> '00000000-0000-0000-0000-000000000000', lower(c.name), c.id", args...)
 		if err != nil {

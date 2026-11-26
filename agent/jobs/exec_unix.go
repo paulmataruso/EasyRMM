@@ -70,6 +70,9 @@ func start(cmd *exec.Cmd) (group, error) {
 	return group{cmd}, cmd.Start()
 }
 
+// startLimited is start; a memory limit is the Windows job object's.
+func startLimited(cmd *exec.Cmd, _ uint64) (group, error) { return start(cmd) }
+
 func (g group) terminate() { _ = syscall.Kill(-g.cmd.Process.Pid, syscall.SIGTERM) }
 
 func (g group) kill() { _ = syscall.Kill(-g.cmd.Process.Pid, syscall.SIGKILL) }

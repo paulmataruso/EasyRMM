@@ -728,6 +728,19 @@ func TestTheDevScopeStopsAutomaticSends(t *testing.T) {
 	}
 }
 
+// An organization with no channels lists an empty array, never null: the
+// console reads the list's length (CI run 14's Settings → Notifications).
+func TestAnEmptyChannelListIsAnArray(t *testing.T) {
+	f := newFx(t)
+	list, err := f.svc.List(f.ctx, f.orgAdmin(f.orgA), &f.orgA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(map[string]any{"channels": list}); string(b) != `{"channels":[]}` {
+		t.Fatalf("an empty list encodes as %s", b)
+	}
+}
+
 func TestPermissionsAndSharing(t *testing.T) {
 	f := newFx(t)
 	r := newReceiver(t)

@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -31,6 +32,10 @@ type Output struct {
 // Arguments are a job's argument values.
 type Arguments struct {
 	Args []string `json:"args"`
+	// Input is a structured job's input (ADR-0067), read under the same
+	// checks as its result: the kind's permission, and for a query only by
+	// the person who asked.
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 // emptyOutput is the change that removes a run's output, by retention or
@@ -80,6 +85,8 @@ func readResult(result string) error {
 		return apperr.Conflict("run_open", "The run has not finished: its output arrives when it ends.")
 	case "output_removed":
 		return apperr.Conflict("output_removed", "This run's output was removed.")
+	case "result_removed":
+		return apperr.Conflict("result_removed", "This run's result was removed.")
 	}
 	return fmt.Errorf("jobs: a read answered %q", result)
 }
@@ -128,6 +135,9 @@ func (s *Service) readOutput(ctx context.Context, c access.Caller, id uuid.UUID,
 // those runs. A job without arguments answers an empty list and is not
 // recorded. A refusal is recorded as ReadOutput's is.
 func (s *Service) ReadArguments(ctx context.Context, c access.Caller, id uuid.UUID) (*Arguments, error) {
+	if in, ok, err := s.readStructuredInput(ctx, c, id); ok || err != nil {
+		return in, err
+	}
 	var result string
 	var args []string
 	if err := s.readCall(ctx, c, `SELECT result, job_args

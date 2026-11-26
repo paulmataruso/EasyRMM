@@ -24,6 +24,35 @@ export interface JobPayload {
   timeoutSeconds: number;
   /** The parameters a script reads on standard input (ADR-0073); a sealed secret is in them from delivery. */
   params?: Record<string, unknown>;
+  /** A structured job (ADR-0067, F2): the builtin it runs, its lane, and its input, base64 of the JSON bytes. */
+  executor?: string;
+  builtin?: string;
+  lane?: string;
+  input?: string;
+}
+
+/** What a structured job's input says (agentproto.RegistryInput). */
+export interface RegistryInput {
+  v: number;
+  op: string;
+  hive: string;
+  view: string;
+  path: string[];
+  valueName?: string;
+  term?: string;
+  depth?: number;
+  maxMatches?: number;
+}
+
+/** The capabilities of an agent that has F2 and the registry builtin (agentproto.CapJobStructured, CapBuiltin). */
+export const REGISTRY_ACCEPTS = ["job.pwsh", "job.params", "job.structured", "builtin.registry.v1"];
+
+/** The capabilities of an agent that has F2 and the event viewer's builtin (agentproto.CapBuiltin("eventlog", 1)). */
+export const EVENTLOG_ACCEPTS = ["job.pwsh", "job.params", "job.structured", "builtin.eventlog.v1"];
+
+/** The input of a structured job, decoded. */
+export function inputOf(job: JobPayload): RegistryInput {
+  return JSON.parse(Buffer.from(job.input ?? "", "base64").toString("utf8")) as RegistryInput;
 }
 
 /** The program a run started, as the agent reports it with the result (agentproto.Interpreter). */
@@ -97,6 +126,28 @@ export class Agent {
    */
   async heartbeatWith(request: { facts: unknown; defender?: unknown; installedFiles?: unknown }): Promise<{ defender?: { enabled: boolean } }> {
     return (await (await this.post("/api/agent/v1/heartbeat", request)).json()) as { defender?: { enabled: boolean } };
+  }
+
+  /**
+   * Reports a structured run (ADR-0067): the JSON lines the registry builtin wrote, base64 as the agent sends them. This
+   * agent is a stand-in: it does not run the builtin, which is tested on the Windows runners and on a real computer; the
+   * lines are what the real builtin writes.
+   */
+  async resulted(runId: string, lines: unknown[], status: "succeeded" | "failed" = "succeeded"): Promise<void> {
+    const now = new Date().toISOString();
+    await this.post(`/api/agent/v1/jobs/${runId}/result`, {
+      status,
+      exitCode: status === "succeeded" ? 0 : 1,
+      stdout: "",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      error: "",
+      startedAt: now,
+      finishedAt: now,
+      result: Buffer.from(lines.map((l) => JSON.stringify(l)).join("\n") + "\n").toString("base64"),
+      agentVersion: "0.6.0-e2e",
+    });
   }
 
   /** Reports that the run ended with exit code 0 and this output, and the program it started when given. */

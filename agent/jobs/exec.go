@@ -41,6 +41,9 @@ type program struct {
 // cause errCanceled stops it as canceled; any other cancellation stops it
 // as failed.
 func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agentproto.ResultRequest {
+	if p.Executor == agentproto.ExecutorBuiltin {
+		return executeBuiltin(ctx, p, workRoot)
+	}
 	res := agentproto.ResultRequest{StartedAt: time.Now().UTC()}
 	fail := func(msg string) agentproto.ResultRequest {
 		res.Status, res.Error, res.FinishedAt = agentproto.RunFailed, msg, time.Now().UTC()
