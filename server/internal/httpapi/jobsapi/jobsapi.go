@@ -71,9 +71,6 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/job-runs/{id}/output", a.runOutput)
 	r("DELETE /api/v1/job-runs/{id}/output", a.removeRunOutput)
 	r("POST /api/v1/job-runs/{id}/cancel", a.cancelRun)
-	r("POST /api/v1/devices/{id}/registry/query", a.registryQuery)
-	r("GET /api/v1/job-runs/{id}/result", a.runResult)
-	r("GET /api/v1/job-runs/{id}/export", a.registryExport)
 }
 
 func (a *API) listScripts(w http.ResponseWriter, r *http.Request) error {
@@ -518,59 +515,5 @@ func (a *API) windowsFleet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, f)
-	return nil
-}
-
-// registryQuery starts one read of a Windows device's registry (ADR-0067).
-func (a *API) registryQuery(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	in := jobs.RegistryQueryInput{DeviceID: id}
-	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
-		return err
-	}
-	run, err := a.svc.CreateRegistryQuery(r.Context(), httpapi.Caller(r), in)
-	if err != nil {
-		return err
-	}
-	httpapi.WriteJSON(w, http.StatusAccepted, run)
-	return nil
-}
-
-// runResult returns a structured run's result (ADR-0067): never cached, as
-// it may hold registry data.
-func (a *API) runResult(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	res, err := a.svc.ReadRegistryResult(r.Context(), httpapi.Caller(r), id)
-	if err != nil {
-		return err
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	httpapi.WriteJSON(w, http.StatusOK, res)
-	return nil
-}
-
-// registryExport downloads an export read as a .reg or JSON file.
-func (a *API) registryExport(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	f, err := a.svc.ExportRegistry(r.Context(), httpapi.Caller(r), id, r.URL.Query().Get("format"))
-	if err != nil {
-		return err
-	}
-	h := w.Header()
-	h.Set("Content-Type", f.ContentType)
-	h.Set("Content-Disposition", `attachment; filename="`+f.Filename+`"`)
-	h.Set("Content-Length", strconv.Itoa(len(f.Data)))
-	h.Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(f.Data) //nolint:gosec // an attachment of a text or JSON type, sent with nosniff: never rendered as a page
 	return nil
 }

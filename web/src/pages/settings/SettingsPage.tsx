@@ -10,6 +10,7 @@ import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { NotificationsTab } from "./NotificationsTab";
+import { ChannelsPanel } from "../notifications/ChannelsPanel";
 import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
@@ -21,7 +22,7 @@ const SUBTITLES: Record<string, string> = {
   remote: "The MeshCentral service behind remote desktop, terminal and files.",
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
   "agent-files": "Every file this server hands out or the agents install, with MD5 and SHA-256, kept current.",
-  notifications: "The mail server EasyRMM sends invitations, password resets and the patching engine's email through, and how much mail it sends.",
+  notifications: "The mail server EasyRMM sends invitations, password resets and the patching engine's email through, how much mail it sends, and the platform's notification channels, shared with organizations from here.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   "alert-policies": "Shared alert policies: what raises an alert on every device in every organization. An organization's or a site's own are on its page.",
   patching:
@@ -66,7 +67,14 @@ export function SettingsPage() {
       {part.id === "remote" && <RemoteAccessTab />}
       {part.id === "agent-updates" && <AgentUpdatesTab />}
       {part.id === "agent-files" && <AgentFilesTab />}
-      {part.id === "notifications" && <NotificationsTab />}
+      {part.id === "notifications" && (
+        <>
+          <NotificationsTab />
+          <div className="mt-5">
+            <ChannelsPanel organizationId={null} />
+          </div>
+        </>
+      )}
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "alert-policies" && <AlertPoliciesSettings />}
       {part.id === "patching" && <PatchingTab />}

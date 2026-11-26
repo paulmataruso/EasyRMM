@@ -146,20 +146,16 @@ const (
 	PermComplianceAdmin      Permission = "compliance.admin"
 )
 
-// The registry editor's permissions (ADR-0067): PermRegistryView browses,
-// reads, searches and exports a Windows computer's registry, and reads
-// changes; PermRegistryEdit changes it. Reading a result needs
-// job.view_sensitive as well.
-const (
-	PermRegistryView Permission = "registry.view"
-	PermRegistryEdit Permission = "registry.edit"
-)
-
 // The disk-recovery-key permissions (ADR-0081, section 6). They are held only
 // through the add-on roles below and are implied by no other role: a super
 // administrator can already run anything on every computer, but reading a key
 // must still be an explicit, recorded act of someone who holds the permission.
 const (
+	// PermNotificationManage changes, tests and reveals an organization's
+	// notification channels (ADR-0053): Organization Administrators, from
+	// organization-wide grants only (the role is never assigned at a site),
+	// and super administrators for the platform's own.
+	PermNotificationManage Permission = "notification.manage"
 	PermRecoveryKeyRead    Permission = "device.recovery_key.read"
 	PermRecoveryKeyApprove Permission = "device.recovery_key.approve"
 )
@@ -172,7 +168,7 @@ var AddOnPermissions = []Permission{PermRecoveryKeyRead, PermRecoveryKeyApprove}
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
 	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
-	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive, PermRegistryView, PermRegistryEdit,
+	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
@@ -185,6 +181,7 @@ var AllPermissions = []Permission{
 	PermComplianceView, PermComplianceScan, PermComplianceFix, PermComplianceFixHigh, PermComplianceFixApprove,
 	PermComplianceEdit, PermComplianceAttest, PermComplianceApprove, PermComplianceExport, PermComplianceAdmin,
 	PermQAView, PermQALinkCreate, PermQALinkPermanent, PermQASession, PermQATakeover, PermQAInstall,
+	PermNotificationManage,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -266,7 +263,7 @@ func union(sets ...[]Permission) []Permission {
 var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
-	PermDocManage, PermLogView, PermRegistryView, PermRegistryEdit,
+	PermDocManage, PermLogView,
 	// The Windows modules (ADR-0073): every view except ad.view_sensitive,
 	// ca.view, dns.view and shares.view, which start at Site Administrator,
 	// plus the reversible manage permissions. No Active Directory writes.
@@ -290,7 +287,8 @@ var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserMa
 	// Every compliance permission but compliance.admin, which is server-wide.
 	PermComplianceFixHigh, PermComplianceFixApprove, PermComplianceEdit, PermComplianceAttest, PermComplianceApprove,
 	PermComplianceExport,
-	PermQALinkPermanent, PermQATakeover, PermQAInstall})
+	PermQALinkPermanent, PermQATakeover, PermQAInstall,
+	PermNotificationManage})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{

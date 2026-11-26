@@ -82,10 +82,6 @@ commands:
   quick-assist [--clean]
             one support session for a user, from a Quick Assist link: asks
             first, installs nothing, removes itself when it ends
-  builtin NAME
-            run one of the agent's builtins as a child process of the agent
-            (what a job does); it reads and writes the files named in
-            EASYRMM_JOB_INPUT and EASYRMM_JOB_RESULT
   run       run the agent in the foreground (what the service does)
   status    show the enrollment and the last heartbeat
   uninstall stop and remove the agent and MeshAgent from this machine
@@ -178,8 +174,6 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.enroll(ctx, rest, false)
 	case "quick-assist":
 		return e.quickAssist(ctx, rest)
-	case "builtin":
-		return e.builtin(rest)
 	case "repair-install":
 		return e.repairInstall(ctx)
 	case "run":
@@ -464,7 +458,6 @@ func (e *env) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs.AgentVersion = Version
 	c.SetIdentity(cfg.DeviceID, key)
 	r := &runner.Runner{
 		Client:   c,

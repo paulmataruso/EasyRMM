@@ -35,6 +35,11 @@ type Message struct {
 	HTML    string
 	// Attachments are sent after the text, each as its own part.
 	Attachments []Attachment
+	// MessageID, when set, gives the local part of each recipient's
+	// Message-ID, so that a message sent again carries the same one and a
+	// mail client can drop the copy (ADR-0053). It must be 1 to 64 letters,
+	// digits, dots, dashes or underscores; otherwise a random one is made.
+	MessageID func(recipient string) string
 }
 
 // Attachment is a file sent with a message.
@@ -83,7 +88,13 @@ func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) []byte {
 	h("To", to.String())
 	h("Subject", fold("Subject", mime.QEncoding.Encode("utf-8", msg.Subject)))
 	h("Date", now.UTC().Format(time.RFC1123Z))
-	h("Message-ID", "<"+randomHex(16)+"@"+m.from.Address[strings.LastIndexByte(m.from.Address, '@')+1:]+">")
+	id := randomHex(16)
+	if msg.MessageID != nil {
+		if custom := msg.MessageID(to.Address); validMessageID(custom) {
+			id = custom
+		}
+	}
+	h("Message-ID", "<"+id+"@"+m.from.Address[strings.LastIndexByte(m.from.Address, '@')+1:]+">")
 	h("MIME-Version", "1.0")
 	// Automatic mail (RFC 3834): out-of-office replies are not sent back.
 	h("Auto-Submitted", "auto-generated")
@@ -183,4 +194,17 @@ func randomHex(n int) string {
 	id := make([]byte, n)
 	_, _ = rand.Read(id)
 	return hex.EncodeToString(id)
+}
+
+// validMessageID says whether s may be the local part of a Message-ID.
+func validMessageID(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
 }

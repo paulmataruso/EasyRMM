@@ -20,6 +20,7 @@ export type Permission =
   | "quickassist.session"
   | "quickassist.session.takeover"
   | "quickassist.install"
+  | "notification.manage"
   | "device.terminal"
   | "device.files"
   | "script.view"
@@ -45,8 +46,6 @@ export type Permission =
   | "doc.view"
   | "doc.manage"
   | "log.view"
-  | "registry.view"
-  | "registry.edit"
   | "defender.view"
   | "defender.manage"
   | "defender.view_sensitive"
@@ -1330,7 +1329,7 @@ export interface JobArguments {
   args: string[];
 }
 
-export type JobKind = "script" | "software" | "hardening" | "registry_query" | "registry_change";
+export type JobKind = "script" | "software" | "hardening";
 
 /** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
@@ -4237,120 +4236,95 @@ export interface DeviceComplianceResult {
   scanId: string;
 }
 
-// The registry editor (ADR-0067, slice 1).
+// Notification channels, notices and the delivery log (ADR-0053, slice 3).
+export type NotificationKind = "email" | "webhook";
+export type NotificationState = "sending" | "failing" | "waiting_for_approval" | "off";
 
-/** A read the server accepted: the run to follow, and the key as the server read it. */
-export interface RegistryRun {
-  jobId: string;
-  runId: string;
-  op: RegistryOp;
-  hive: RegistryHive;
-  view: RegistryView;
-  path: string[];
-  expiresAt: string;
+export interface NotificationApproval {
+  state: "requested" | "approved";
+  host: string;
+  port: number;
+  proposed: string[];
+  prefixes: string[];
+  requestedAt: string;
+  approvedAt?: string;
 }
 
-export type RegistryOp = "list" | "value" | "search" | "export";
-export type RegistryHive = "HKLM" | "HKU" | "HKCR" | "HKCC";
-export type RegistryView = "64" | "32";
-
-/** What a read asks for. Either `text` (the address bar) or `hive` and `path`. */
-export interface RegistryQuery {
-  op: RegistryOp;
-  view: RegistryView;
-  hive?: RegistryHive;
-  path?: string[];
-  text?: string;
-  valueName?: string;
-  cursor?: { subkey?: string; value?: string };
-  term?: string;
-  depth?: number;
-}
-
-/** reported: read; unavailable: Windows denied access; refused: EasyRMM's rule; not_found; unknown: no answer, with why. */
-export type RegistryState = "reported" | "unavailable" | "not_found" | "refused" | "unknown";
-
-export interface RegistryKeyInfo {
-  kernel: string;
-  subkeys: number;
-  values: number;
-  lastWrite?: string;
-  readAt: string;
-  link?: string;
-}
-
-export interface RegistrySubkey {
+export interface NotificationChannel {
+  id: string;
+  organizationId: string | null;
+  platform: boolean;
+  /** A platform channel seen by an organization it is shared with: its name and kind only. */
+  shared: boolean;
+  kind: NotificationKind;
   name: string;
-  rawName?: string;
-  /** -1 when the agent ran out of time before it opened the key. */
-  subkeys: number;
-  values: number;
-  lastWrite?: string;
-  state?: "" | "link" | "denied" | "refused";
-  target?: string;
-  rule?: string;
-  label?: string;
+  enabled: boolean;
+  state?: NotificationState;
+  recipients?: string[];
+  host?: string;
+  port?: number;
+  hasAuthority?: boolean;
+  legacyHeaders?: boolean;
+  lastError?: string;
+  failingSince?: string;
+  lastSuccessAt?: string;
+  lastAttemptAt?: string;
+  pending: number;
+  approval?: NotificationApproval;
+  sharedWith?: { organizationId: string; sharedAt: string }[];
 }
 
-export interface RegistryValue {
-  name: string;
-  rawName?: string;
-  /** The registry's type number. */
-  type: number;
-  size: number;
-  masked?: boolean;
-  noData?: boolean;
-  denied?: boolean;
-  text?: string;
-  items?: string[];
-  number?: number;
-  decimal?: string;
-  base64?: string;
-  raw?: string;
-  display?: string;
-  odd?: boolean;
-  cut?: boolean;
-}
-
-export interface RegistryMatch {
-  kind: "key" | "valueName" | "data" | "link";
-  path: string[];
+export interface NotificationChannelInput {
+  organizationId?: string | null;
+  kind?: NotificationKind;
   name?: string;
-  type?: number;
+  enabled?: boolean;
+  recipients?: string[];
+  url?: string;
+  trustedAuthority?: string;
 }
 
-export interface RegistryEnd {
-  complete: boolean;
-  stoppedBy?: "depth" | "matches" | "keys" | "time" | "size" | "exportKeys";
-  firstUnvisited?: string[];
-  visited?: number;
-  matches?: number;
-  moreSubkeys?: boolean;
-  moreValues?: boolean;
-  nextSubkey?: string;
-  nextValue?: string;
-  elapsedMs: number;
+export interface NotificationTestResult {
+  deliveryId: string;
+  status: "pending" | "sent" | "failed" | "dropped";
+  message: string;
 }
 
-export interface RegistryResult {
-  state: RegistryState;
-  reason?: string;
-  complete: boolean;
+export interface ChannelSecrets {
+  url: string;
+  secret: string;
+}
+
+export interface NotificationQuota {
+  channels: number;
+  rules: number;
+  testsPerHour: number;
+  messagesPerHour: number;
+}
+
+export interface PlatformNotice {
+  id: string;
+  organizationId: string | null;
   kind: string;
-  runStatus: string;
-  op?: RegistryOp;
-  hive?: RegistryHive;
-  view?: RegistryView;
-  path?: string[];
-  readAt?: string;
-  agentVersion?: string;
-  rules?: number;
-  key?: RegistryKeyInfo;
-  subkeys?: RegistrySubkey[];
-  values?: RegistryValue[];
-  matches?: RegistryMatch[];
-  end?: RegistryEnd;
-  refused?: { path: string[]; rule: string; kernel?: string }[];
-  exportKeys?: number;
-  exportValues?: number;
+  subject: string;
+  title: string;
+  detail: string;
+  openedAt: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+}
+
+export interface DeliveryLogRow {
+  id: string;
+  channelId: string | null;
+  kind: string;
+  event: string;
+  status: "pending" | "sent" | "failed" | "dropped";
+  attempts: number;
+  queuedAt: string;
+  endedAt?: string;
+  nextAttemptAt?: string;
+  lastError?: string;
+  mailReply?: string;
+  recipients: { recipient: string; status: string; error?: string; sentAt?: string }[];
 }

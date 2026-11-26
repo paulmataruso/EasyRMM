@@ -22,9 +22,8 @@ const (
 	// MaxPollJobs bounds the jobs in one poll answer.
 	MaxPollJobs = 8
 	// MaxResultBody is the largest result body the server reads: two streams
-	// of MaxStreamBytes, JSON-escaped, and a structured result of at most
-	// MaxResultFile, base64-encoded (ADR-0067, Sizes).
-	MaxResultBody = 8 << 20
+	// of MaxStreamBytes, JSON-escaped, and room to spare.
+	MaxResultBody = 4 << 20
 	// StreamHead and StreamTail are how much of each output stream the agent
 	// keeps from its start and its end.
 	StreamHead = 128 << 10
@@ -97,48 +96,6 @@ const (
 	// refuses such a job, and the server sends one only to an agent that
 	// lists it.
 	CapJobParams = "job.params"
-	// CapJobStructured is JobPayloadVersionStructured: a payload with an
-	// input, an executor, a builtin and a lane, and ResultRequest.Result
-	// (ADR-0067, F2). Every kind of that sort needs it.
-	CapJobStructured = "job.structured"
-)
-
-// CapBuiltin is the capability of one input version of a builtin, such as
-// builtin.registry.v1 (ADR-0067). A builtin kind needs CapJobStructured and
-// one of its versions.
-func CapBuiltin(name string, version int) string {
-	return fmt.Sprintf("builtin.%s.v%d", name, version)
-}
-
-// Executors of a structured job.
-const (
-	// ExecutorBuiltin is Go code in the agent's own program, run as a child
-	// process of it (ADR-0067).
-	ExecutorBuiltin = "builtin"
-	// BuiltinRegistry is the registry editor's builtin.
-	BuiltinRegistry = "registry"
-	// LaneQuick marks a run of at most QuickSeconds, which the agent keeps
-	// slots for beside its others.
-	LaneQuick    = "quick"
-	QuickSeconds = 60
-)
-
-// Bounds of structured jobs (ADR-0067, Sizes, and why one run cannot block
-// a device).
-const (
-	// MaxInputBytes bounds a structured job's input, as JSON.
-	MaxInputBytes = 1 << 20
-	// MaxSignedJob bounds a signed job's real bytes: the payload as
-	// SignJob base64-encodes it, with its signature.
-	MaxSignedJob = 2 << 20
-	// MaxAnswerBytes bounds the signed jobs of one poll answer, but for a
-	// single run, which always fits.
-	MaxAnswerBytes = 6 << 20
-	// MaxResultFile bounds a structured result: JSON lines in a file.
-	MaxResultFile = 2 << 20
-	// MaxDeliveries is how many times a run is delivered without starting
-	// before it fails.
-	MaxDeliveries = 5
 )
 
 // MaxAccepts bounds the capabilities a poll lists, and MaxAcceptLen each
@@ -190,12 +147,6 @@ const JobPayloadVersion = 1
 // its parameters.
 const JobPayloadVersionParams = 2
 
-// JobPayloadVersionStructured is the payload version of a structured job
-// (ADR-0067): it carries an input and runs as a builtin, with no script and
-// no shell. A build that does not know it refuses the job, which only an
-// agent listing CapJobStructured is sent.
-const JobPayloadVersionStructured = 3
-
 // MaxParamsBytes bounds a job's params, in their canonical form.
 const MaxParamsBytes = 16 << 10
 
@@ -226,16 +177,6 @@ type JobPayload struct {
 	// payload of version JobPayloadVersionParams.
 	ScriptSHA256 string `json:"scriptSha256,omitempty"`
 	ParamsSHA256 string `json:"paramsSha256,omitempty"`
-	// Input is the structured job's input: the exact bytes of a JSON
-	// object, which the agent writes to input.json in the run's folder and
-	// names in EASYRMM_JOB_INPUT. Only in a payload of version
-	// JobPayloadVersionStructured; the signature covers it with the rest.
-	Input []byte `json:"input,omitempty"`
-	// Lane is LaneQuick or empty; Executor is ExecutorBuiltin; Builtin
-	// names the builtin. Only in a structured payload.
-	Lane     string `json:"lane,omitempty"`
-	Executor string `json:"executor,omitempty"`
-	Builtin  string `json:"builtin,omitempty"`
 }
 
 // CanonicalParams is params as the job carries and hashes them: a JSON
@@ -293,15 +234,6 @@ type ResultRequest struct {
 	// before (ADR-0064); nil when nothing was started. Added after protocol
 	// level 2: sent only to a server of level 2 or higher.
 	Interpreter *Interpreter `json:"interpreter,omitempty"`
-	// Result is a structured job's result: the JSON lines the builtin wrote
-	// (a cut last line dropped), base64-encoded. Only for a job that carried
-	// an input, and only to a server of level 2 or higher.
-	Result string `json:"result,omitempty"`
-	// ResultCut says the agent dropped result lines from the end to fit
-	// MaxResultBody.
-	ResultCut bool `json:"resultCut,omitempty"`
-	// AgentVersion is the version of the build that ran a structured job.
-	AgentVersion string `json:"agentVersion,omitempty"`
 }
 
 // Editions of PowerShell, as $PSVersionTable.PSEdition names them.
@@ -346,16 +278,12 @@ const (
 const (
 	jobSigContext       = "EASYRMM-JOB-SIG-V1\n"
 	jobSigContextParams = "EASYRMM-JOB-SIG-V2\n"
-	jobSigContextStruct = "EASYRMM-JOB-SIG-V3\n"
 )
 
 // jobSigContextFor is the signature context of a payload version.
 func jobSigContextFor(v int) string {
-	switch v {
-	case JobPayloadVersionParams:
+	if v == JobPayloadVersionParams {
 		return jobSigContextParams
-	case JobPayloadVersionStructured:
-		return jobSigContextStruct
 	}
 	return jobSigContext
 }
@@ -368,17 +296,13 @@ var (
 	ErrJobExpired   = errors.New("agentproto: the job has expired")
 	ErrJobParams    = errors.New("agentproto: the job's params are not a JSON object of at most 16 KiB")
 	ErrJobHash      = errors.New("agentproto: the job's script or params do not match the hashes its signature covers")
-	ErrJobInput     = errors.New("agentproto: the job's input is missing, or not valid for a structured job")
 )
 
-// SignJob signs a payload with the server's job key. A payload with an
-// Executor becomes a JobPayloadVersionStructured one. A payload with Params
+// SignJob signs a payload with the server's job key. A payload with Params
 // becomes a JobPayloadVersionParams one: its params are put in canonical
 // form and both hashes are set, so the signature covers them.
 func SignJob(key ed25519.PrivateKey, p JobPayload) (SignedJob, error) {
-	if p.Executor != "" {
-		p.V = JobPayloadVersionStructured
-	} else if len(p.Params) > 0 {
+	if len(p.Params) > 0 {
 		c, err := CanonicalParams(p.Params)
 		if err != nil {
 			return SignedJob{}, err
@@ -426,13 +350,9 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 	if err := checkParams(p); err != nil {
 		return p, err
 	}
-	if p.V == JobPayloadVersionStructured {
-		return p, checkStructured(p, deviceID, now)
-	}
 	switch {
 	case (p.V != JobPayloadVersion && p.V != JobPayloadVersionParams) || p.RunID == "" || p.JobID == "" || !ValidShell(p.Shell) || p.Script == "" ||
-		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh ||
-		len(p.Input) > 0 || p.Lane != "" || p.Executor != "" || p.Builtin != "":
+		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh:
 		return p, ErrJobMalformed
 	case p.DeviceID != deviceID:
 		return p, ErrJobDevice
@@ -440,26 +360,6 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 		return p, ErrJobExpired
 	}
 	return p, nil
-}
-
-// checkStructured checks a structured payload (the signature is verified):
-// a builtin of the agent with an input, and no script, shell or params.
-func checkStructured(p JobPayload, deviceID string, now time.Time) error {
-	switch {
-	case p.RunID == "" || p.JobID == "" || p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 ||
-		p.Executor != ExecutorBuiltin || p.Builtin == "" || p.Shell != "" || p.Script != "" || len(p.Params) > 0 || p.PwshFallback ||
-		p.ScriptSHA256 != "" || p.ParamsSHA256 != "" || len(p.Args) > 0:
-		return ErrJobMalformed
-	case len(p.Input) == 0 || len(p.Input) > MaxInputBytes:
-		return ErrJobInput
-	case p.Lane != "" && (p.Lane != LaneQuick || p.TimeoutSeconds > QuickSeconds):
-		return ErrJobMalformed
-	case p.DeviceID != deviceID:
-		return ErrJobDevice
-	case !now.Before(p.ExpiresAt):
-		return ErrJobExpired
-	}
-	return nil
 }
 
 // checkParams checks what a version's payload may carry, and for a params

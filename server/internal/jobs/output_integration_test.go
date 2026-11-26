@@ -572,7 +572,7 @@ func TestTheServerRoleCannotReadOutputOrArguments(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(missing, []string{"job_runs.result", "job_runs.stderr", "job_runs.stdout", "jobs.args"}) {
+	if !slices.Equal(missing, []string{"job_runs.stderr", "job_runs.stdout", "jobs.args"}) {
 		t.Errorf("columns the server cannot read: %v", missing)
 	}
 

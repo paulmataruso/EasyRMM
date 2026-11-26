@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -149,76 +148,20 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		accepts = []string{}
 	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		// A run delivered MaxDeliveries times without starting fails, so a run
-		// whose answer the agent cannot take never holds a device's runs back
-		// for good (ADR-0067).
-		if _, err := tx.Exec(ctx, `UPDATE job_runs SET status = 'failed', finished_at = now(),
-				error = 'The agent did not take it after '||$3::text||' deliveries.'
-			WHERE device_id = $1 AND status = 'sent' AND deliveries >= $3 AND sent_at < now() - make_interval(secs => $2)`,
-			device, RedeliverAfter.Seconds(), agentproto.MaxDeliveries); err != nil {
-			return err
-		}
-		// Due runs, quick ones first, then oldest first.
-		rows, err := tx.Query(ctx, `SELECT r.id, r.status = 'sent',
-				coalesce(nullif(j.signed_bytes, 0), octet_length(j.body) * 2 + 4096)
-			FROM job_runs r JOIN jobs j ON j.id = r.job_id
-			WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
-			  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
-			  AND j.requires <@ $4::text[]
-			  AND `+oneChangeAtATime+`
-			ORDER BY (j.lane IS NOT NULL) DESC, r.created_at, r.id LIMIT $3
-			FOR UPDATE OF r SKIP LOCKED`,
+		rows, err := tx.Query(ctx, `WITH due AS (
+				SELECT r.id FROM job_runs r JOIN jobs j ON j.id = r.job_id
+				WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
+				  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
+				  AND j.requires <@ $4::text[]
+				  AND `+oneChangeAtATime+`
+				ORDER BY r.created_at, r.id LIMIT $3
+				FOR UPDATE OF r SKIP LOCKED
+			)
+			UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1
+			FROM due, jobs j
+			WHERE r.id = due.id AND j.id = r.job_id
+			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback, j.params, j.winmod`,
 			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs, accepts)
-		if err != nil {
-			return err
-		}
-		type candidate struct {
-			id     uuid.UUID
-			resent bool
-			size   int
-		}
-		var cands []candidate
-		for rows.Next() {
-			var c candidate
-			if err := rows.Scan(&c.id, &c.resent, &c.size); err != nil {
-				rows.Close()
-				return err
-			}
-			cands = append(cands, c)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		// An answer holds up to 8 runs and 6 MiB of signed jobs, and at
-		// least one run, which always fits. A run being sent again goes in
-		// an answer of its own, never with others.
-		var chosen []uuid.UUID
-		total := 0
-		for i, c := range cands {
-			if i == 0 && c.resent {
-				chosen = append(chosen, c.id)
-				break
-			}
-			if c.resent {
-				continue
-			}
-			if len(chosen) > 0 && total+c.size > agentproto.MaxAnswerBytes {
-				break
-			}
-			chosen = append(chosen, c.id)
-			total += c.size
-		}
-		order := make(map[uuid.UUID]int, len(chosen))
-		for i, id := range chosen {
-			order[id] = i
-		}
-		rows, err = tx.Query(ctx, `UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1,
-				ran_agent_sha256 = (SELECT d.agent_sha256 FROM devices d WHERE d.id = r.device_id)
-			FROM jobs j
-			WHERE r.id = ANY($1) AND j.id = r.job_id
-			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds, j.pwsh_fallback, j.params, j.winmod,
-				j.executor, j.builtin, j.lane`, chosen)
 		if err != nil {
 			return err
 		}
@@ -235,58 +178,19 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 				expires        time.Time
 				timeoutSeconds int
 				wm             json.RawMessage
-				builtin, lane  *string
 			)
-			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback, &p.Params, &wm,
-				&p.Executor, &builtin, &lane); err != nil {
+			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds, &p.PwshFallback, &p.Params, &wm); err != nil {
 				rows.Close()
 				return err
 			}
 			p.V, p.RunID, p.JobID, p.DeviceID = agentproto.JobPayloadVersion, runID.String(), jobID.String(), device.String()
 			p.TimeoutSeconds, p.IssuedAt, p.ExpiresAt = timeoutSeconds, now, expires.UTC()
-			if p.Executor == ExecBuiltin {
-				p.Builtin, p.Lane = deref(builtin), deref(lane)
-			} else {
-				p.Executor = ""
-			}
 			payloads, runIDs, winmods = append(payloads, p), append(runIDs, runID), append(winmods, wm)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		// UPDATE ... RETURNING does not keep the order the runs were chosen in.
-		idx := make([]int, len(payloads))
-		for i := range idx {
-			idx[i] = i
-		}
-		slices.SortFunc(idx, func(a, b int) int { return order[runIDs[a]] - order[runIDs[b]] })
-		payloads, runIDs, winmods = permute(payloads, idx), permute(runIDs, idx), permute(winmods, idx)
-		inputs, err := deliveryInputs(ctx, tx, device, runIDs)
-		if err != nil {
-			return err
-		}
-		for i := range payloads {
-			if payloads[i].Executor == ExecBuiltin {
-				in, ok := inputs[payloads[i].RunID]
-				if !ok {
-					// The input was removed with its results: nothing to run.
-					if err := refuseDelivery(ctx, tx, uuid.MustParse(payloads[i].RunID), StatusFailed, "The job's input is no longer kept, so it was not sent."); err != nil {
-						return err
-					}
-					payloads[i].RunID = ""
-					continue
-				}
-				payloads[i].Input = in
-			}
-		}
-		keep := make([]int, 0, len(payloads))
-		for i, p := range payloads {
-			if p.RunID != "" {
-				keep = append(keep, i)
-			}
-		}
-		payloads, runIDs, winmods = permute(payloads, keep), permute(runIDs, keep), permute(winmods, keep)
 		args, err := deliveryArgs(ctx, tx, device, runIDs)
 		if err != nil {
 			return err
@@ -342,52 +246,6 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 		return nil, fmt.Errorf("jobs: claiming runs: %w", err)
 	}
 	return resp, nil
-}
-
-// deref is the text a nullable column holds, or "".
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-// permute returns list in the order idx gives.
-func permute[T any](list []T, idx []int) []T {
-	out := make([]T, len(idx))
-	for i, j := range idx {
-		out[i] = list[j]
-	}
-	return out
-}
-
-// deliveryInputs reads the inputs of the structured runs just delivered, by
-// run, compacted: the bytes the payload carries and the signature covers.
-// Like the arguments, they are read through a function that answers only
-// under the system scope.
-func deliveryInputs(ctx context.Context, tx pgx.Tx, device uuid.UUID, runs []uuid.UUID) (map[string][]byte, error) {
-	out := map[string][]byte{}
-	if len(runs) == 0 {
-		return out, nil
-	}
-	rows, err := tx.Query(ctx, `SELECT run_id, run_input FROM easyrmm_job_delivery_inputs($1, $2)`, device, runs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id uuid.UUID
-		var in []byte
-		if err := rows.Scan(&id, &in); err != nil {
-			return nil, err
-		}
-		var buf bytes.Buffer
-		if err := json.Compact(&buf, in); err != nil {
-			return nil, err
-		}
-		out[id.String()] = buf.Bytes()
-	}
-	return out, rows.Err()
 }
 
 // deliveryArgs reads the arguments of the runs just delivered, by run.
@@ -517,11 +375,6 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 			p.edition, p.version, p.arch, p.path, p.fallback).
 			Scan(&job, &ran)
 		if err == nil {
-			// A structured run's result is checked against its input and
-			// kept as lines (ADR-0067).
-			if handled, herr := s.recordRegistryResult(ctx, tx, device, run, in); handled || herr != nil {
-				return herr
-			}
 			// A winmod run's result is kept typed, not as text (ADR-0073).
 			if handled, herr := s.recordWinmod(ctx, tx, device, run, in.Status, stdout); handled || herr != nil {
 				return herr

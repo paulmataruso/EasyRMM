@@ -36,6 +36,36 @@
   carries over only on the same policy, device, kind, check and
   subject; and `key` is the same for every alert of one condition on
   one device and subject.
+* Amended 2026-11-26 (decided in review), building slice 3:
+  * **No rules yet.** `notification_rules`, their list tables,
+    `notification_rule_channels` (and its composite keys to the shares) and
+    `alert_notifications` arrive with slice 4, where there are rules to hold
+    them. Until then the planner marks the journal's notice rows planned and
+    queues nothing, so the notices are shown in the console and journaled,
+    and no rule sends them; slice 3's own deliveries are tests. The
+    quarantine, retry and discard of journal rows and the *planning has
+    stopped* notice come with slice 4, since only rule matching can fail a
+    row.
+  * **Order is kept among one organization's deliveries** on a channel, not
+    across them: a platform channel is shared, and one organization's
+    message waiting for room under its quota must not hold another's back.
+    The hour's relaxation and the subject rule are as written.
+  * **One approval row per channel.** The sender asks for it itself when a
+    destination is refused only for want of an approval (and says so in a
+    notice); an organization's administrators may also ask. One refused
+    address among the addresses a name resolves to refuses the name.
+  * **A webhook's `413`** fails its delivery for now: the split needs a
+    delivery that carries several alerts, which comes with digests in
+    slice 4. The cap of 2,000 unsent deliveries per organization is
+    enforced where events are queued, in slice 4.
+  * **Tests answer sooner**: the request that queues a test waits up to 35
+    seconds, and answers as soon as the delivery has ended or has been tried
+    and is waiting to be tried again, with EasyRMM's sentence as the reason.
+  * **Quotas are read at platform scope**, because `notification_quotas` is
+    written and read there only; creating a channel and queuing a test check
+    them there, after authorizing the caller.
+  * `notification_channels.kind` admits email and webhook now; slice 5
+    widens it.
 * Part of [the feature plan](../feature-plan.md): F2 and feature 7. Where
   this ADR departs from the plan, the plan lists it.
 

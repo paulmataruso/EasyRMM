@@ -359,26 +359,6 @@ The functions check the scopes and the caller that the server passes them,
 so they guard against mistakes in the server's code, not against a
 compromised server, which holds the owner's credentials anyway.
 
-## Structured jobs: inputs and results (migrations 00072 and 00073, ADR-0067)
-
-A job may run a builtin of the agent instead of a script (`jobs.executor`,
-`jobs.builtin`, `jobs.lane`), and its kind (`registry_query`,
-`registry_change`) is tied to it by constraints; such a job holds no script
-(`shell` and `body` empty) and is hidden from the Jobs list without its
-filter. Its input is in `job_inputs` (one row per job, `input` emptied with
-the results) and its result in `job_runs.result`, a `jsonb` array of the
-lines the builtin wrote. The runtime role cannot select either, nor
-`registry_masked_values.data`; it reads them through
-`easyrmm_job_run_result` and `easyrmm_job_input`, which check
-`job.view_sensitive`, the kind's permission and, for a query, that the
-caller asked, and which run as their owner with a fixed `search_path`. The
-poll reads inputs through `easyrmm_job_delivery_inputs`, and the result path
-checks a result against its input through `easyrmm_job_run_input_system`,
-both only under the system scope. `jobs.signed_bytes` is the size of the
-signed job, bounded at creation; `job_runs` keeps the version and build that
-ran it. The retention sweep empties a kind's input, results and masked
-values together, after the kind's time counted from its last run's end.
-
 ## Functions that run as their owner (migration 00029)
 
 Every `SECURITY DEFINER` function sets `search_path = pg_catalog, public,
@@ -487,6 +467,28 @@ order, so 00036 follows 00032 to 00035.
 | `site_places` | A building, floor, room, rack or other within a site: `organization_id`, `site_id`, `parent_id` (NULL at the top), `depth` 1 to 4, `kind`, `name` (1 to 200 characters). The foreign key `(site_id, parent_id, parent_depth)` → `(site_id, id, depth)`, with the generated `parent_depth = depth - 1`, keeps a parent in the same site and exactly one level up, so no cycle can form, and refuses to delete a place with places inside (a move updates a place and the places inside it in one statement, so the key holds at its end). `site_places_name_key`: names unique, ignoring case, among one parent's places (`NULLS NOT DISTINCT`, the top included). Goes with its site |
 | `contacts` | `organization_id`, `site_id` (NULL for the organization's own) through the composite key to `sites`, `name` (1 to 200 characters), `job_title`, `email`, `office_phone`, `mobile_phone`, `note` (up to 2,000), `priority` (`primary`, `secondary` or `none`), `emergency`. `contacts_primary_org_key` and `contacts_primary_site_key`: one primary for the organization and one per site. Goes with its organization or site |
 | Policies `site_places_tenant`, `contacts_tenant` | `sites_tenant`'s, without `scope_read_orgs`: site-scoped people see their sites' rows, not the organization's own contacts. Enabled and forced |
+
+## Notification channels, the outbox, notices and their journal (migration 90421, renumbered by the integrator)
+
+ADR-0053, slice 3. Every table has row-level security enabled and forced, on
+`easyrmm_scope_all()` and `easyrmm_scope_ids('easyrmm.scope_orgs')`. The nil
+UUID is the platform's owner key.
+
+| Table | Notes |
+|---|---|
+| `organizations` | Gains `CHECK (id <> nil)` (`organizations_id_not_nil`) |
+| `notification_channels` | `owner` never NULL, equal to `organization_id` or the nil UUID (`notification_channels_owner`); `organization_id` is never the nil UUID; `kind` email or webhook; name 1 to 100 characters, unique per owner ignoring case (`notification_channels_name`); unique `(id, owner)` for the composite keys. Read: platform scope, the owner's own, and a platform channel in the scope of an organization it is shared with; written by the owner's scope |
+| `notification_channel_shares` | `owner` fixed to the nil UUID, composite foreign key `(channel_id, owner)`: platform channels only. Written at platform scope only |
+| `notification_channel_details` | Recipients (up to 20), webhook host and port, the sealed URL and signing secret, trusted authority, the `X-EasyPatch-*` switch, failing state and last error, the transport's generation. Its own policy on its own `owner`: no `EXISTS` on channels, no exception for platform rows |
+| `notification_channel_approvals` | One row per channel: host, port, proposed addresses, approved prefixes, state `requested` or `approved`. An organization's scope may insert `requested` rows and delete; updating (approving) is platform scope only |
+| `notification_deliveries` | The outbox. `charged_org` the organization charged (nil for the platform's own); `about` the organizations it concerns, `CHECK` that an organization's delivery is about that organization only (`notification_deliveries_owner_about`, `_owner_charged`); composite key `(channel_id, owner)` with `ON DELETE SET NULL (channel_id)`. An organization's scope inserts only its own tests |
+| `notification_delivery_recipients` | Each recipient's outcome (a webhook has one row, `(webhook)`); follows its delivery |
+| `notification_quotas` | Platform scope only; absent means the defaults (20 channels, 50 rules, 20 tests an hour, 600 messages an hour) |
+| `notices` | Raised and resolved at platform scope; read, and acknowledged, in the owner organization's scope (or the site's); one open notice per organization, kind and subject (`notices_open`) |
+| `notification_events` | The journal. Inserted only by `easyrmm_notice_journal()` (`SECURITY DEFINER`, owned by `easyrmm_owner`, policy `FOR INSERT TO easyrmm_owner`) on `notices` insert and on a change of resolution or acknowledgement; the runtime role has no `INSERT` and may update only `status`, `planned_at`, `failed_runs` and `error`, at platform scope |
+
+The down migration drops them all, the triggers and the function, and the
+constraint on `organizations`.
 
 ## Backups
 

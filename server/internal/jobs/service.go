@@ -173,10 +173,8 @@ func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 		// is required today.
 		tag, err := tx.Exec(ctx, `UPDATE job_runs r SET status = 'expired', finished_at = now(),
 				error = CASE `+heldSQL+`
-					WHEN 'unable' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent cannot open the registry editor, so the run waited until it expired. Update the agent.'
-						ELSE 'The device''s agent cannot run PowerShell 7 scripts, so the run waited until it expired. Update the agent.' END
-					WHEN 'unreported' THEN CASE WHEN j.executor = 'builtin' THEN 'The device''s agent did not say whether it can open the registry editor before the run expired. Update the agent if this happens again.'
-						ELSE 'The device''s agent did not say whether it can run PowerShell 7 scripts before the run expired. Update the agent if this happens again.' END
+					WHEN 'unable' THEN 'The device''s agent cannot run PowerShell 7 scripts, so the run waited until it expired. Update the agent.'
+					WHEN 'unreported' THEN 'The device''s agent did not say whether it can run PowerShell 7 scripts before the run expired. Update the agent if this happens again.'
 					ELSE 'The device did not pick up the job before it expired.' END
 			FROM jobs j, devices d
 			WHERE j.id = r.job_id AND d.id = r.device_id AND r.status IN ('queued', 'sent') AND r.expires_at <= now()`)
@@ -222,11 +220,6 @@ func (s *Service) Purge(ctx context.Context) (Purged, error) {
 			return err
 		}
 		p.Outputs = tag.RowsAffected()
-		n, err := s.purgeStructured(ctx, tx)
-		if err != nil {
-			return err
-		}
-		p.Outputs += n
 		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.created_at < now() - make_interval(secs => $1)
 			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
 			s.retention.Seconds())

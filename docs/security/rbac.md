@@ -26,6 +26,7 @@ enforce that higher roles are strict supersets of lower ones.
 | `ca.manage`, `ad.manage`, `ad.reset_password` | | | | ✓ | ✓ |
 | `quickassist.view`, `quickassist.link.create`, `quickassist.session` (Quick Assist, [ADR-0080](../architecture/adr/0080-quick-assist.md)) | | ✓ | ✓ | ✓ | ✓ |
 | `quickassist.link.permanent`, `quickassist.session.takeover`, `quickassist.install` | | | | ✓ | ✓ |
+| `notification.manage` (an organization's notification channels: change, test, reveal; the platform's own are a super administrator's; [ADR-0053](../architecture/adr/0053-one-notification-sender.md)) | | | | ✓ | ✓ |
 
 `job.view_sensitive` opens what a run printed and a job's argument values,
 which can hold secrets; `job.view` shows the jobs and runs without them.

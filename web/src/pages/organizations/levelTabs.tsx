@@ -9,6 +9,7 @@ import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { ContactsTab } from "./tabs/ContactsTab";
 import { HardeningTab } from "./tabs/HardeningTab";
 import { InstallTab } from "./tabs/InstallTab";
+import { NotificationsTab } from "./tabs/NotificationsTab";
 import { PatchingTab } from "./tabs/PatchingTab";
 import { PeopleTab } from "./tabs/PeopleTab";
 import { RecoveryKeysTab } from "./tabs/RecoveryKeysTab";
@@ -120,6 +121,14 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "compliance.view",
     levels: ["organization"],
     component: ComplianceTab,
+  },
+  {
+    // Notification channels, their tests and the delivery log (ADR-0053): an organization's administrators.
+    id: "notifications",
+    label: "Notifications",
+    permission: "notification.manage",
+    levels: ["organization"],
+    component: NotificationsTab,
   },
   {
     id: "install",

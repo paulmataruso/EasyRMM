@@ -38,8 +38,7 @@ type Worker struct {
 	// Dir holds the journal and the runs' working directories.
 	Dir string
 	Log *slog.Logger
-	// Concurrency is how many scripts run at once (4), beside QuickSlots
-	// for quick runs.
+	// Concurrency is how many scripts run at once (4).
 	Concurrency int
 	// Retry timing, shortened by tests.
 	MinRetry time.Duration // 5 s
@@ -72,20 +71,13 @@ type Worker struct {
 	pending map[string]agentproto.ResultRequest
 	done    map[string]time.Time
 	slots   chan struct{}
-	// quick holds the slots kept for quick runs (ADR-0067): a registry read
-	// never waits behind an install or a hardening run.
-	quick chan struct{}
-	wg    sync.WaitGroup
+	wg      sync.WaitGroup
 }
 
 // active is a run the worker has accepted and not yet finished.
 type active struct {
 	cancel context.CancelCauseFunc
 }
-
-// QuickSlots is how many quick runs (JobPayload.Lane) may run beside the
-// agent's other slots.
-const QuickSlots = 2
 
 func (w *Worker) init() {
 	w.once.Do(func() {
@@ -108,7 +100,6 @@ func (w *Worker) init() {
 		w.pending = map[string]agentproto.ResultRequest{}
 		w.done = map[string]time.Time{}
 		w.slots = make(chan struct{}, w.Concurrency)
-		w.quick = make(chan struct{}, QuickSlots)
 	})
 }
 
@@ -309,14 +300,13 @@ func (w *Worker) run(ctx context.Context, rec record, p agentproto.JobPayload) {
 		w.mu.Unlock()
 	}()
 	j := w.journal()
-	// A quick run takes one of the slots kept for it, or an ordinary one
-	// if that comes free first.
-	release, ok := w.acquire(ctx, p.Lane == agentproto.LaneQuick)
-	if !ok {
+	select {
+	case w.slots <- struct{}{}:
+	case <-ctx.Done():
 		_ = j.remove(rec.RunID) // the server delivers it again
 		return
 	}
-	defer release()
+	defer func() { <-w.slots }()
 
 	if !w.start(ctx, rec) {
 		_ = j.remove(rec.RunID)
@@ -335,32 +325,6 @@ func (w *Worker) run(ctx context.Context, rec record, p agentproto.JobPayload) {
 	res := w.Execute(ctx, p, w.workRoot())
 	w.Log.Info("job finished", "run_id", rec.RunID, "status", res.Status)
 	w.finish(ctx, rec, res)
-}
-
-// acquire waits for a slot. A quick run is first offered the slots kept for
-// quick runs, and then either kind.
-func (w *Worker) acquire(ctx context.Context, quick bool) (func(), bool) {
-	if quick {
-		select {
-		case w.quick <- struct{}{}:
-			return func() { <-w.quick }, true
-		default:
-		}
-		select {
-		case w.quick <- struct{}{}:
-			return func() { <-w.quick }, true
-		case w.slots <- struct{}{}:
-			return func() { <-w.slots }, true
-		case <-ctx.Done():
-			return nil, false
-		}
-	}
-	select {
-	case w.slots <- struct{}{}:
-		return func() { <-w.slots }, true
-	case <-ctx.Done():
-		return nil, false
-	}
 }
 
 // start asks the server whether the run may start, retrying until it

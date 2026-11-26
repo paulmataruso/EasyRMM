@@ -47,6 +47,8 @@ Everything about running, using and building EasyRMM. Start with the
 
 ## Secure
 
+* [Notification channels](operations/notifications.md): email and signed webhook
+  channels, who manages them, the address policy, retries and limits.
 * [Signing in](security/sign-in.md): passwords, second factors, security
   keys and passkeys, sessions.
 * [Single sign-on](security/single-sign-on.md) with OpenID Connect.

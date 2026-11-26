@@ -153,7 +153,6 @@ function KindSelect({ value, onChange }: { value: string; onChange: (v: string) 
         <option value="script">Scripts</option>
         <option value="software">Software</option>
         <option value="hardening">Hardening</option>
-        <option value="registry">Registry</option>
       </Select>
     </Field>
   );

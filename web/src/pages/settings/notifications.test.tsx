@@ -36,6 +36,11 @@ function routes(view: MailServerView = NONE) {
     ...baseRoutes(sessionView()),
     "GET /settings/mail-server": ok(view),
     "GET /audit": ok({ items: [] }),
+    // The platform's channels, below the mail server (ADR-0053).
+    "GET /organizations": ok({ items: [] }),
+    "GET /notifications/channels": ok({ channels: [] }),
+    "GET /notices": ok({ notices: [] }),
+    "GET /notifications/deliveries": ok({ deliveries: [], retentionDays: 30 }),
   };
 }
 

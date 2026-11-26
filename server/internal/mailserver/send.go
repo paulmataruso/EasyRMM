@@ -579,6 +579,26 @@ func (s *Service) SendAccountMail(ctx context.Context, to string, msg mailer.Mes
 	return mailer.FirstError(m.Send(ctx, msg, []string{to}, s.gate(accountCharge(by))))
 }
 
+// SendNotification sends one notification message to each recipient through
+// the mail server in force, counted against the limits as other mail: it
+// stops at 80% of the day's, so that account mail always has room, and is
+// never waited for. A message the limits did not let go is a LimitError, one
+// the mail server refused a mailer.ReplyError, per recipient (ADR-0053).
+func (s *Service) SendNotification(ctx context.Context, to []string, msg mailer.Message) ([]mailer.Outcome, error) {
+	cfg, err := s.InForce(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, ErrNoMailServer
+	}
+	m, err := mailer.New(*cfg)
+	if err != nil {
+		return nil, err
+	}
+	return m.Send(ctx, msg, to, s.gate(charge{kind: kindOther})), nil
+}
+
 // TestInput is a test message to send.
 type TestInput struct {
 	// To is the address to send it to.
