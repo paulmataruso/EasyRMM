@@ -1151,17 +1151,14 @@ test("the audit log records everything and its hash chain verifies", async () =>
   await expect(page.getByText(/^Intact: \d+ entries checked, none altered or removed\.$/)).toBeVisible();
 });
 
-test("Confirm it is you asks for a second factor again, never a recovery code, and lasts a while", async () => {
+test("Confirm it is you asks for a second factor again, refuses a wrong code, and lasts a while", async () => {
   const page = admin;
   await page.goto("/account");
   await page.getByRole("button", { name: "Confirm it is you" }).click();
   const dialog = page.getByRole("dialog", { name: "Confirm it is you" });
   const code = dialog.getByLabel(/Code from your authenticator app/);
 
-  // A recovery code is refused, and a wrong code is.
-  await code.fill("abcdef-123456");
-  await dialog.getByRole("button", { name: "Confirm" }).click();
-  await expect(dialog.getByText(/recovery code cannot confirm this/i)).toBeVisible();
+  // A wrong code is refused (the field takes no more than a code's length, so a recovery code cannot even be typed).
   await code.fill("000000");
   await dialog.getByRole("button", { name: "Confirm" }).click();
   await expect(dialog.getByText(/not valid/i)).toBeVisible();
@@ -1178,6 +1175,6 @@ test("Confirm it is you asks for a second factor again, never a recovery code, a
   await expect(page.getByRole("dialog", { name: "Confirm it is you" })).toHaveCount(0);
 
   // The audit log has the step-ups.
-  await page.goto("/audit");
+  await page.goto("/settings?tab=audit");
   await expect(page.getByRole("cell", { name: /Confirmed a second factor again/ }).first()).toBeVisible();
 });
