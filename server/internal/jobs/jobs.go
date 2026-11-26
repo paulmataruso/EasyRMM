@@ -342,6 +342,11 @@ type spec struct {
 	// the Jobs list and expires after ttl, not after the wait in hours.
 	winmod json.RawMessage
 	ttl    time.Duration
+	// executor, builtin, lane and input are a structured job's (ADR-0067):
+	// a builtin of the agent run with the input, kept in job_inputs. The
+	// job requires what its kind's table entry says instead of a shell's.
+	executor, builtin, lane string
+	input                   json.RawMessage
 	// inserted runs in the job's transaction after its runs are written:
 	// a winmod job seals its secrets there.
 	inserted func(ctx context.Context, tx pgx.Tx, jobID uuid.UUID, expires time.Time) error
@@ -382,6 +387,9 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		}
 		sum := sha256.Sum256([]byte(sp.body))
 		requires := agentproto.ShellRequires(sp.shell)
+		if isStructured(sp.kind) {
+			requires = Kinds[sp.kind].needs()
+		}
 		var params, paramsSum []byte
 		if len(sp.params) > 0 {
 			if params, err = agentproto.CanonicalParams(sp.params); err != nil {
@@ -391,14 +399,34 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 			paramsSum = h[:]
 			requires = append(slices.Clone(requires), agentproto.CapJobParams)
 		}
+		// The signed job's real bytes are bounded when it is created, for
+		// every kind (ADR-0067): what the claim will sign, at its longest.
+		signed, err := s.signedSize(sp, params, now, expires)
+		if err != nil {
+			return err
+		}
+		if signed > agentproto.MaxSignedJob {
+			return apperr.Invalid("input", "The job is too large to send to a device once it is signed and encoded.")
+		}
+		executor := sp.executor
+		if executor == "" {
+			executor = ExecScript
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
 				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires,
-				params, params_sha256, winmod, hidden)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+				params, params_sha256, winmod, hidden, executor, builtin, lane, signed_bytes)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
 			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening, sp.pwshFallback,
-			requires, params, paramsSum, nullJSON(sp.winmod), sp.kind == KindWinmod); err != nil {
+			requires, params, paramsSum, nullJSON(sp.winmod), !Kinds[sp.kind].Listed,
+			executor, nullText(sp.builtin), nullText(sp.lane), signed); err != nil {
 			return err
+		}
+		if len(sp.input) > 0 {
+			if _, err := tx.Exec(ctx, `INSERT INTO job_inputs (job_id, input, input_bytes) VALUES ($1, $2, $3)`,
+				jobID, []byte(sp.input), len(sp.input)); err != nil {
+				return err
+			}
 		}
 		for _, t := range targets {
 			var runID uuid.UUID
@@ -434,7 +462,35 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		return nil, err
 	}
 	s.hub.notify(ids...)
-	return s.getJob(ctx, c, jobID, sp.kind == KindWinmod)
+	return s.getJob(ctx, c, jobID, !Kinds[sp.kind].Listed)
+}
+
+// nullText is NULL for an empty string.
+func nullText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// signedSize is the size of the signed job a claim of this job will build,
+// with the run's own fields at their longest: the payload as SignJob
+// base64-encodes it, its signature and the framing around them.
+func (s *Service) signedSize(sp *spec, params []byte, now, expires time.Time) (int, error) {
+	id := uuid.Max.String()
+	p := agentproto.JobPayload{
+		V: agentproto.JobPayloadVersion, RunID: id, JobID: id, DeviceID: id, Shell: sp.shell, Script: sp.body, Args: sp.args,
+		TimeoutSeconds: sp.timeout, IssuedAt: now.UTC(), ExpiresAt: expires.UTC(), PwshFallback: sp.pwshFallback,
+		Params: params, Input: sp.input,
+	}
+	if sp.executor == ExecBuiltin {
+		p.Executor, p.Builtin, p.Lane = sp.executor, sp.builtin, sp.lane
+	}
+	signed, err := agentproto.SignJob(s.key, p)
+	if err != nil {
+		return 0, apperr.Invalid("params", "The job's parameters cannot be signed.")
+	}
+	return len(signed.Payload) + len(signed.Signature) + 64, nil
 }
 
 // nullJSON is NULL for an empty document.
@@ -457,6 +513,9 @@ type rule struct {
 	// (agentproto.ShellRequires); what names the jobs that need them.
 	requires []string
 	what     string // "PowerShell 7 scripts"
+	// cannot, when set, is what an agent that lacks a capability "cannot do",
+	// in place of "run " + what: "open the registry editor".
+	cannot string
 }
 
 // targets resolves and checks the devices of a new job.
@@ -519,15 +578,23 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids [
 		os := platformName(r.platforms)
 		return nil, apperr.Invalid("deviceIds", r.runsOn+" "+os+"; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not "+article(os)+" "+os+" device.")
 	case len(unable) == 1:
-		return nil, apperr.Invalid("deviceIds", unable[0]+"'s agent cannot run "+r.what+"; update the agent.")
+		return nil, apperr.Invalid("deviceIds", unable[0]+"'s agent cannot "+r.cannotDo()+"; update the agent.")
 	case len(unable) > 0:
-		return nil, apperr.Invalid("deviceIds", "The agents of "+names(unable)+" cannot run "+r.what+"; update them.")
+		return nil, apperr.Invalid("deviceIds", "The agents of "+names(unable)+" cannot "+r.cannotDo()+"; update them.")
 	case len(unreported) == 1:
 		return nil, apperr.Invalid("deviceIds", unreported[0]+"'s agent has not yet said whether it can run "+r.what+"; try again in a minute, and update the agent if it still has not.")
 	case len(unreported) > 0:
 		return nil, apperr.Invalid("deviceIds", "The agents of "+names(unreported)+" have not yet said whether they can run "+r.what+"; try again in a minute, and update them if they still have not.")
 	}
 	return found, nil
+}
+
+// cannotDo is what an agent without the rule's capabilities cannot do.
+func (r rule) cannotDo() string {
+	if r.cannot != "" {
+		return r.cannot
+	}
+	return "run " + r.what
 }
 
 // containsAll reports whether list holds every one of want.
@@ -635,9 +702,9 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 		return nil, apperr.Invalid("status", "Use open or finished.")
 	}
 	switch q.Kind {
-	case "", KindScript, KindSoftware, KindHardening, KindWinmod:
+	case "", KindScript, KindSoftware, KindHardening, KindWinmod, KindFilterRegistry, KindRegistryQuery, KindRegistryChange:
 	default:
-		return nil, apperr.Invalid("kind", "Use script, software or hardening.")
+		return nil, apperr.Invalid("kind", "Use script, software, hardening or registry.")
 	}
 	if !c.CanAnywhere(rbac.PermJobView) {
 		return []*Job{}, nil
@@ -657,13 +724,13 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			  AND ($3 = '' OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running')) = ($3 = 'open'))
 			  AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.organization_id = $5))
 			  AND ($6::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.site_id = $6))
-			  AND ($7 = '' OR j.kind = $7)
+			  AND ($7 = '' OR j.kind = $7 OR ($7 = 'registry' AND j.kind IN ('registry_query', 'registry_change')))
 			  AND ($8::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r JOIN devices rd ON rd.id = r.device_id
 			        WHERE r.job_id = j.id AND rd.device_group_id = $8))
 			  AND (NOT j.hidden OR $9)
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
 			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind,
-			nullUUID(q.GroupID), q.Kind == KindWinmod && c.CanAnywhere(rbac.PermJobViewSensitive))
+			nullUUID(q.GroupID), (q.Kind == KindWinmod || q.Kind == KindFilterRegistry || isStructured(q.Kind)) && c.CanAnywhere(rbac.PermJobViewSensitive))
 		if err != nil {
 			return err
 		}

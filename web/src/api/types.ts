@@ -45,6 +45,8 @@ export type Permission =
   | "doc.view"
   | "doc.manage"
   | "log.view"
+  | "registry.view"
+  | "registry.edit"
   | "defender.view"
   | "defender.manage"
   | "defender.view_sensitive"
@@ -1328,7 +1330,7 @@ export interface JobArguments {
   args: string[];
 }
 
-export type JobKind = "script" | "software" | "hardening";
+export type JobKind = "script" | "software" | "hardening" | "registry_query" | "registry_change";
 
 /** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
@@ -4233,4 +4235,122 @@ export interface DeviceComplianceResult {
   word: "meets" | "does not meet" | "cannot tell";
   checkedAt: string;
   scanId: string;
+}
+
+// The registry editor (ADR-0067, slice 1).
+
+/** A read the server accepted: the run to follow, and the key as the server read it. */
+export interface RegistryRun {
+  jobId: string;
+  runId: string;
+  op: RegistryOp;
+  hive: RegistryHive;
+  view: RegistryView;
+  path: string[];
+  expiresAt: string;
+}
+
+export type RegistryOp = "list" | "value" | "search" | "export";
+export type RegistryHive = "HKLM" | "HKU" | "HKCR" | "HKCC";
+export type RegistryView = "64" | "32";
+
+/** What a read asks for. Either `text` (the address bar) or `hive` and `path`. */
+export interface RegistryQuery {
+  op: RegistryOp;
+  view: RegistryView;
+  hive?: RegistryHive;
+  path?: string[];
+  text?: string;
+  valueName?: string;
+  cursor?: { subkey?: string; value?: string };
+  term?: string;
+  depth?: number;
+}
+
+/** reported: read; unavailable: Windows denied access; refused: EasyRMM's rule; not_found; unknown: no answer, with why. */
+export type RegistryState = "reported" | "unavailable" | "not_found" | "refused" | "unknown";
+
+export interface RegistryKeyInfo {
+  kernel: string;
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  readAt: string;
+  link?: string;
+}
+
+export interface RegistrySubkey {
+  name: string;
+  rawName?: string;
+  /** -1 when the agent ran out of time before it opened the key. */
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  state?: "" | "link" | "denied" | "refused";
+  target?: string;
+  rule?: string;
+  label?: string;
+}
+
+export interface RegistryValue {
+  name: string;
+  rawName?: string;
+  /** The registry's type number. */
+  type: number;
+  size: number;
+  masked?: boolean;
+  noData?: boolean;
+  denied?: boolean;
+  text?: string;
+  items?: string[];
+  number?: number;
+  decimal?: string;
+  base64?: string;
+  raw?: string;
+  display?: string;
+  odd?: boolean;
+  cut?: boolean;
+}
+
+export interface RegistryMatch {
+  kind: "key" | "valueName" | "data" | "link";
+  path: string[];
+  name?: string;
+  type?: number;
+}
+
+export interface RegistryEnd {
+  complete: boolean;
+  stoppedBy?: "depth" | "matches" | "keys" | "time" | "size" | "exportKeys";
+  firstUnvisited?: string[];
+  visited?: number;
+  matches?: number;
+  moreSubkeys?: boolean;
+  moreValues?: boolean;
+  nextSubkey?: string;
+  nextValue?: string;
+  elapsedMs: number;
+}
+
+export interface RegistryResult {
+  state: RegistryState;
+  reason?: string;
+  complete: boolean;
+  kind: string;
+  runStatus: string;
+  op?: RegistryOp;
+  hive?: RegistryHive;
+  view?: RegistryView;
+  path?: string[];
+  readAt?: string;
+  agentVersion?: string;
+  rules?: number;
+  key?: RegistryKeyInfo;
+  subkeys?: RegistrySubkey[];
+  values?: RegistryValue[];
+  matches?: RegistryMatch[];
+  end?: RegistryEnd;
+  refused?: { path: string[]; rule: string; kernel?: string }[];
+  exportKeys?: number;
+  exportValues?: number;
 }
