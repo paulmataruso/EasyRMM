@@ -566,6 +566,13 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	if err != nil {
 		return mapError(err)
 	}
+	if a.jobs != nil {
+		// What the build takes, with the build the heartbeat just stored:
+		// an agent on the channel does not poll (ADR-0059).
+		if err := a.jobs.KeepAccepts(r.Context(), d.ID, in.Accepts); err != nil {
+			return err
+		}
+	}
 	if a.channel.Enabled() {
 		// The heartbeat confirms the connection it names (ADR-0059).
 		c, _ := r.Context().Value(signedCallKey{}).(signedCall)

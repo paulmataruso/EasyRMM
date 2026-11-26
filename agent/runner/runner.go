@@ -144,6 +144,9 @@ type Runner struct {
 	Key func() ed25519.PublicKey
 	// Metrics measures the device for each heartbeat; nil sends none.
 	Metrics func(ctx context.Context) agentproto.Metrics
+	// Accepts is the job capabilities this build takes, sent with each
+	// heartbeat; nil sends none.
+	Accepts []string
 	// Inventory collects the device's inventory (ADR-0018); nil never
 	// uploads one.
 	Inventory func(ctx context.Context) agentproto.Inventory
@@ -358,6 +361,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	if r.Escrow != nil && r.Client.Level() >= 2 {
 		req.Caps = r.Escrow.Caps()
+	}
+	if r.Client.Level() >= 2 {
+		req.Accepts = r.Accepts
 	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {

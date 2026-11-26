@@ -1345,3 +1345,14 @@ dropped. To confirm when the owner next looks: that the per-device
   out), a group's verbose mode (its devices' next heartbeat finds it), the
   stored-steps of a later step in a repair (the settling heartbeat carries
   them).
+
+## Amended 2026-11-26 (decided in review): the heartbeat reports what the agent accepts
+
+An agent on the channel holds no poll, and the poll was the only place the
+server learned the job capabilities (`job.params`, `job.pwsh`) of a build.
+After a self-update the stored list, bound to the old build, went stale and
+every params job (ADR-0073) was refused as "too old". The heartbeat now
+carries `accepts` (additive; sent at protocol level 2 or higher), kept with
+the same build binding as the poll's list. The channel's claim and the
+waiting check read only a list bound to the build running now, as the poll
+path and the refusal do.

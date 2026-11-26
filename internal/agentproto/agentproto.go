@@ -165,6 +165,11 @@ type HeartbeatRequest struct {
 	// Caps lists what the agent can do beyond its protocol level, such as
 	// CapEscrow (ADR-0081); sent only to servers of level 2 or higher.
 	Caps []string `json:"caps,omitempty"`
+	// Accepts lists the job capabilities this build takes, as a poll's
+	// does (PollRequest.Accepts, ADR-0064), so that the server learns them
+	// from an agent that holds the channel and does not poll (ADR-0059).
+	// Older agents send none.
+	Accepts []string `json:"accepts,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so

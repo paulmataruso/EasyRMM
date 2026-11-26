@@ -158,6 +158,7 @@ func (f *chanFixture) startAgent() *chanAgent {
 		}})
 	a.r = &runner.Runner{
 		Client: c, Store: store, DeviceID: f.deviceID, Log: log, Channel: a.ch, Key: pinnedKey,
+		Accepts: agentjobs.Accepts(),
 		Facts: func() agentproto.Facts {
 			a.beats.Add(1)
 			return facts("chan-01")
@@ -411,4 +412,68 @@ func TestChannelWakesForARemoval(t *testing.T) {
 	beats := a.requests.count(agentproto.PathHeartbeat)
 	f.admin.expect(http.StatusOK, "POST", f.device+"/removal", nil, nil)
 	eventuallyT(t, 10*time.Second, "the agent checked in on the wake", func() bool { return a.requests.count(agentproto.PathHeartbeat) > beats })
+}
+
+// With the channel on an agent does not poll, so the heartbeat is what tells
+// the server what a new build accepts: after a build change, a params job is
+// accepted with no poll (ADR-0059, ADR-0073).
+func TestChannelHeartbeatKeepsWhatTheAgentAccepts(t *testing.T) {
+	f := newChanFixture(t, true)
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := f.h.db.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, q, args...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`UPDATE devices SET platform = 'windows' WHERE id = $1`, f.deviceID)
+	path := f.device + "/winmod/defender.status"
+	win := facts("chan-01")
+	win.Platform, win.OS = "windows", "Windows Server 2025 Datacenter"
+	ac := f.h.agentClient()
+	ac.SetIdentity(f.deviceID, f.key)
+	beat := func(version string, accepts []string) {
+		t.Helper()
+		fa := win
+		fa.AgentVersion = version
+		if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: fa, Accepts: accepts}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A build that has said nothing is refused; no poll is ever made here.
+	beat("1.0.0", nil)
+	f.admin.expect(http.StatusUnprocessableEntity, "POST", path, map[string]any{}, nil)
+	beat("1.0.0", []string{agentproto.CapJobPwsh, agentproto.CapJobParams})
+	f.admin.expect(http.StatusAccepted, "POST", path, map[string]any{}, nil)
+	// The agent updates: the new build has said nothing yet, so the old
+	// list is not trusted; its first heartbeat says it again.
+	beat("2.0.0", nil)
+	f.admin.expect(http.StatusUnprocessableEntity, "POST", path, map[string]any{}, nil)
+	beat("2.0.0", []string{agentproto.CapJobParams})
+	f.admin.expect(http.StatusAccepted, "POST", path, map[string]any{}, nil)
+}
+
+// The real agent, on the channel, says what it accepts with its heartbeat.
+func TestChannelAgentReportsAcceptsInItsHeartbeat(t *testing.T) {
+	f := newChanFixture(t, true)
+	ctx := context.Background()
+	if err := f.h.db.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE devices SET agent_accepts = '{}', agent_accepts_build = 'older-build' WHERE id = $1`, f.deviceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := f.startAgent()
+	f.live(a)
+	eventuallyT(t, 15*time.Second, "the heartbeat's list is kept for the running build", func() bool {
+		var n int
+		_ = f.h.db.DB.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM devices WHERE id = $1 AND 'job.params' = ANY(agent_accepts)
+				AND agent_accepts_build = coalesce(agent_sha256, agent_version)`, f.deviceID).Scan(&n)
+		})
+		return n == 1
+	})
 }
