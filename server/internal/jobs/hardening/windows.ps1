@@ -1,15 +1,26 @@
 # EasyRMM hardening for Windows computers and servers (ADR-0054), run by the
 # EasyRMM agent as LocalSystem with Windows PowerShell 5.1. This release has
-# one mode, check: for each chosen module it reports whether the module's
+# four modes. check: for each chosen module it reports whether the module's
 # settings are in effect, who else owns each (Group Policy, Tamper
 # Protection, another antivirus or firewall) or why that cannot be told (an
 # MDM, OSConfig and the others of internal/winpolicy, whose reader this
 # script includes), and what apply would change on this computer. It
-# changes nothing (see "What check writes").
+# changes nothing (see "What check writes"). apply and undo (ADR-0054, W2)
+# write and put back the registry settings, keeping each value's earlier
+# state in the manifest; confirm ends the connectivity guard (see "Apply,
+# undo and the guard").
 #
 # Arguments, which are never part of this script's text. The EasyRMM server
 # accepts only the names and forms below, and this script checks them again:
-#   check <modules> [option ...]
+#   check|apply|undo <modules> [option ...]
+#   check|apply|undo --settings ID,ID [option ...]
+#   confirm
+#   --settings             setting ids from windows-settings.json instead of
+#                          modules (ADR-0078): only those settings are read,
+#                          changed or put back
+#   guard-minutes=N        apply only: after a change, a task on the computer
+#                          undoes it in N minutes (1 to 60) unless confirm
+#                          ends it first; rolled-back marks that undo
 #   <modules>              all, or a comma-separated list of accounts,
 #                          firewall, defender, asr, smb, smb-signing, ntlm,
 #                          wdigest, lsa-protection, name-resolution,
@@ -42,7 +53,19 @@
 # back to the protected one, or move a file that fails the folder check
 # aside within the folder.
 #
-# The record, which apply and undo are to write (W2) and check reads:
+# Apply, undo and the guard. Apply writes only registry settings in this
+# release (the other kinds are reported as skipped, with why). Before a
+# module changes it writes its intent and each value's earlier state to
+# the manifest, writes each value, reads it back and puts it back when it
+# is not as intended; undo puts back each value that is still as apply
+# left it and leaves, and reports, any other. When apply changed something
+# and guard-minutes was given, a scheduled task (SYSTEM, from the script's
+# copy in the Hardening folder) undoes exactly those settings when its
+# time comes. The server queues a confirm job after each such apply; the
+# job can only run where the agent is reachable, and removes the task. An
+# agent that is cut off therefore loses the change by itself.
+#
+# The record, which apply and undo write and check reads:
 #   %ProgramData%\EasyRMM\Hardening\               SYSTEM and Administrators
 #   %ProgramData%\EasyRMM\Hardening\manifest.json  {"formatVersion":1,...}
 #   %ProgramData%\EasyRMM\Hardening\easyrmm-hardening.ps1  the script's copy
@@ -79,18 +102,38 @@ $ErOptionModule = @{
     'cloud-block-high' = 'defender'; 'asr-block' = 'asr'; 'lsa-uefi-lock' = 'lsa-protection'
     'lsa-unaudited' = 'lsa-protection'; 'lockout-exposed' = 'accounts'; 'uac-enable' = 'uac'
     'uac-builtin-admin' = 'uac'; 'deny-user-elevation' = 'uac'; 'winrm-basic-off' = 'winrm'; 'spooler-off' = 'printing'
+    'guard-minutes' = ''; 'rolled-back' = ''
 }
 $ErListOptions = @('allow-tcp', 'allow-udp', 'asr-block')
 
 function Read-ErArguments {
     param([string[]]$Arguments)
-    $r = @{ Mode = ''; Modules = @(); Options = @{}; Error = '' }
+    $r = @{ Mode = ''; Modules = @(); Settings = @(); Options = @{}; Error = '' }
     if ($Arguments.Count -lt 1) { $r.Error = 'no mode given.'; return $r }
     $r.Mode = $Arguments[0]
-    if ($r.Mode -ne 'check') { $r.Error = "unknown mode: $($r.Mode) (this release has check only)."; return $r }
+    if (@('check', 'apply', 'undo', 'confirm') -notcontains $r.Mode) { $r.Error = "unknown mode: $($r.Mode)."; return $r }
+    if ($r.Mode -eq 'confirm') {
+        if ($Arguments.Count -gt 1) { $r.Error = 'confirm takes no arguments.' }
+        return $r
+    }
     if ($Arguments.Count -lt 2) { $r.Error = 'no modules given.'; return $r }
     $chosen = @()
-    if ($Arguments[1] -eq 'all') {
+    $next = 2
+    if ($Arguments[1] -eq '--settings') {
+        # Setting ids, checked against the settings file; the modules are
+        # those the settings belong to.
+        if ($Arguments.Count -lt 3 -or $Arguments[2] -eq '') { $r.Error = 'no setting ids given.'; return $r }
+        $known = @((ConvertFrom-Json $ErSettingsJson).settings)
+        $ids = @()
+        foreach ($id in ($Arguments[2] -split ',')) {
+            $def = @($known | Where-Object { $_.id -eq $id })
+            if ($def.Count -ne 1) { $r.Error = "unknown setting: $id."; return $r }
+            if ($ids -notcontains $id) { $ids += $id; $chosen += [string]$def[0].module }
+        }
+        # The settings file's order, whatever the order given.
+        $r.Settings = @($known | Where-Object { $ids -contains $_.id } | ForEach-Object { [string]$_.id })
+        $next = 3
+    } elseif ($Arguments[1] -eq 'all') {
         $chosen = $ErAllModules
     } else {
         foreach ($m in ($Arguments[1] -split ',')) {
@@ -100,11 +143,19 @@ function Read-ErArguments {
     }
     # The script's own order, whatever the order given.
     $r.Modules = @($ErAllModules | Where-Object { $chosen -contains $_ })
-    for ($i = 2; $i -lt $Arguments.Count; $i++) {
+    for ($i = $next; $i -lt $Arguments.Count; $i++) {
         $name, $value = $Arguments[$i] -split '=', 2
         if (-not $ErOptionModule.ContainsKey($name)) { $r.Error = "unknown option: $name."; return $r }
         $module = $ErOptionModule[$name]
         if ($module -and $r.Modules -notcontains $module) { $r.Error = "option $name needs module $module."; return $r }
+        if ($name -eq 'guard-minutes') {
+            if ($r.Mode -ne 'apply') { $r.Error = 'guard-minutes is for apply.'; return $r }
+            if ($value -notmatch '^[1-9][0-9]?$' -or [int]$value -gt 60) { $r.Error = 'guard-minutes is a number of minutes from 1 to 60.'; return $r }
+            $r.Options[$name] = [int]$value
+            continue
+        }
+        if ($name -eq 'rolled-back' -and $r.Mode -ne 'undo') { $r.Error = 'rolled-back is for undo.'; return $r }
+        if ($r.Mode -eq 'undo' -and @('domain-controller', 'rolled-back') -notcontains $name) { $r.Error = 'undo takes no options but domain-controller.'; return $r }
         if ($ErListOptions -contains $name) {
             if ($null -eq $value -or $value -eq '') { $r.Error = "option $name needs a list."; return $r }
             $list = @($value -split ',')
@@ -251,10 +302,16 @@ if ($ErLanguageMode -ne 'FullLanguage') {
     # script cannot read or set what it needs, and must not try to get
     # around the computer's own control.
     if ($ErArgs.Error) { Write-Error "windows.ps1: $($ErArgs.Error)"; exit 2 }
+    if ($ErArgs.Mode -eq 'confirm') {
+        # The guard's end needs only cmdlets.
+        Unregister-ScheduledTask -TaskName 'EasyRMM Hardening Rollback' -TaskPath '\EasyRMM\' -Confirm:$false -ErrorAction SilentlyContinue
+        exit 0
+    }
     $p = Get-ErPlatform
     $mods = @()
     foreach ($m in $ErArgs.Modules) {
         $mods += @{ module = $m; state = 'not_supported'; reason = "PowerShell runs in $ErLanguageMode mode here (App Control or AppLocker), in which this script cannot read what it checks." }
+        if ($ErArgs.Mode -eq 'apply' -or $ErArgs.Mode -eq 'undo') { $mods[-1].outcome = 'refused'; $mods[-1].outcomeReason = $mods[-1].reason }
     }
     $line = @{ version = 1; mode = $ErArgs.Mode; platform = (ConvertTo-ErPlatformJson $p (Get-ErSupport $p) $ErLanguageMode $null); modules = $mods } | ConvertTo-Json -Depth 8 -Compress
     Write-Output "$ErResultTag $line"
@@ -274,7 +331,7 @@ function Say {
 
 if ($ErArgs.Error) {
     [Console]::Error.WriteLine("windows.ps1: $($ErArgs.Error)")
-    [Console]::Error.WriteLine('Usage: windows.ps1 check <all|module,...> [allow-tcp=LIST] [allow-udp=LIST] [asr-block=LIST] [switch ...]')
+    [Console]::Error.WriteLine('Usage: windows.ps1 check|apply|undo <all|module,...|--settings id,...> [allow-tcp=LIST] [allow-udp=LIST] [asr-block=LIST] [guard-minutes=N] [switch ...]; windows.ps1 confirm')
     exit 2
 }
 $ErIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -1378,7 +1435,7 @@ function Get-ErModuleGate {
 }
 
 function Invoke-ErModule {
-    param([string]$Name)
+    param([string]$Name, [string[]]$Only = @())
     $m = @{ module = $Name; settings = @(); managed = @(); notes = @() }
     $gate = Get-ErModuleGate $Name $m
     if ($gate) {
@@ -1386,7 +1443,7 @@ function Invoke-ErModule {
         $m.reason = Limit-ErText $gate.reason 300
         return $m
     }
-    foreach ($def in @($ErSettings | Where-Object { $_.module -eq $Name })) {
+    foreach ($def in @($ErSettings | Where-Object { $_.module -eq $Name -and ($Only.Count -eq 0 -or $Only -contains $_.id) })) {
         $applies = Get-ErApplies $def
         if ($applies -eq 'not_applicable') {
             $m.settings += New-ErSetting $def 'not_applicable' $null ''
@@ -1437,6 +1494,401 @@ function Invoke-ErModule {
 }
 
 # ---------------------------------------------------------------------------
+# Apply, undo and the guard (ADR-0054, W2). The record is the manifest:
+#   modules.<name> = { intent, done, settings.<id> = { kind, path, name,
+#     before = {exists, kind, data}, target, after = {exists, kind, data}, at } }
+# Only registry settings are written in this release.
+
+$ErReportOnly = @('audit', 'device-guard', 'bitlocker', 'laps')
+$ErTaskName = 'EasyRMM Hardening Rollback'
+$ErTaskPath = '\EasyRMM\'
+
+function Get-ErHardeningDir {
+    return (Join-Path (Join-Path $env:ProgramData 'EasyRMM') 'Hardening')
+}
+
+# ConvertTo-ErPlain: a manifest read as JSON, as hashtables.
+function ConvertTo-ErPlain {
+    param($Object)
+    if ($Object -is [System.Management.Automation.PSCustomObject]) {
+        $h = @{}
+        foreach ($p in $Object.PSObject.Properties) { $h[$p.Name] = ConvertTo-ErPlain $p.Value }
+        return $h
+    }
+    return $Object
+}
+
+function New-ErManifest {
+    return @{ formatVersion = 1; copySha256 = ''; modules = @{} }
+}
+
+# Where apply makes the Hardening folder: a plain folder for SYSTEM and
+# Administrators only. The chain above it is checked by Open-ErHardening.
+function New-ErHardeningFolder {
+    $base = Join-Path $env:ProgramData 'EasyRMM'
+    if (-not (Test-Path -LiteralPath $base)) { [void][IO.Directory]::CreateDirectory($base) }
+    $dir = Join-Path $base 'Hardening'
+    if (-not (Test-Path -LiteralPath $dir)) {
+        $sec = New-Object Security.AccessControl.DirectorySecurity
+        $sec.SetSecurityDescriptorSddlForm($ErProtectedFolder)
+        [void][IO.Directory]::CreateDirectory($dir, $sec)
+    }
+}
+
+# Save-ErManifest: written beside the old one and put in its place.
+function Save-ErManifest {
+    param($Manifest)
+    $dest = Join-Path (Get-ErHardeningDir) 'manifest.json'
+    $tmp = $dest + '.new'
+    $json = $Manifest | ConvertTo-Json -Depth 10
+    [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $dest) { [IO.File]::Replace($tmp, $dest, $null) } else { [IO.File]::Move($tmp, $dest) }
+}
+
+# Keep-ErCopy: the script's copy, for undo on the computer itself and the
+# guard's task; its hash goes in the manifest.
+function Save-ErCopy {
+    param($Manifest)
+    $copy = Join-Path (Get-ErHardeningDir) 'easyrmm-hardening.ps1'
+    $self = $PSCommandPath
+    if ($self -and ([IO.Path]::GetFullPath($self) -ne [IO.Path]::GetFullPath($copy))) {
+        [IO.File]::Copy($self, $copy, $true)
+    }
+    if (Test-Path -LiteralPath $copy) { $Manifest.copySha256 = Get-ErSha256 $copy }
+}
+
+function ConvertTo-ErDwordValue {
+    param($Value)
+    return [BitConverter]::ToInt32([BitConverter]::GetBytes([uint32][int64]$Value), 0)
+}
+
+function Set-ErRegistryData {
+    param([string]$Path, [string]$Name, [string]$Kind, $Data)
+    $sub = $Path -replace '^HKLM\\', ''
+    $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sub)
+    try {
+        if ($Kind -eq 'DWord') {
+            $k.SetValue($Name, (ConvertTo-ErDwordValue $Data), [Microsoft.Win32.RegistryValueKind]::DWord)
+        } else {
+            $k.SetValue($Name, [string]$Data, [Microsoft.Win32.RegistryValueKind]::String)
+        }
+    } finally {
+        $k.Close()
+    }
+}
+
+function Remove-ErRegistryData {
+    param([string]$Path, [string]$Name)
+    $sub = $Path -replace '^HKLM\\', ''
+    $k = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($sub, $true)
+    if ($null -eq $k) { return }
+    try {
+        $k.DeleteValue($Name, $false)
+    } finally {
+        $k.Close()
+    }
+}
+
+# A value as the manifest keeps it.
+function ConvertTo-ErValueRecord {
+    param($Read)
+    if ($Read.Exists) { return @{ exists = $true; kind = [string]$Read.Kind; data = $Read.Data } }
+    return @{ exists = $false; kind = ''; data = $null }
+}
+
+# Whether a read value is the manifest's value record.
+function Test-ErValueIs {
+    param($Read, $Record)
+    if (-not $Record.exists) { return (-not $Read.Exists) }
+    return ($Read.Exists -and "$($Read.Data)" -eq "$($Record.data)")
+}
+
+function Restore-ErValue {
+    param([string]$Path, [string]$Name, $Before)
+    if ($Before.exists) { Set-ErRegistryData $Path $Name $Before.kind $Before.data } else { Remove-ErRegistryData $Path $Name }
+}
+
+# What apply writes for a registry setting, from what it holds now.
+function Get-ErRegistryTarget {
+    param($Def, $Current)
+    $d = $Def.data
+    switch ([string]$Def.want) {
+        'eq' { return $d }
+        'min' { return $d }
+        'in' { return @($d)[0] }
+        'bits' {
+            if ($Current.Exists) { return [uint32](([int64]$Current.Data) -bor ([int64]$d)) }
+            return $d
+        }
+    }
+    return $null
+}
+
+# Set-ErOutcome: a module's outcome and why.
+function Set-ErOutcome {
+    param($Module, [string]$Outcome, [string]$Reason = '')
+    $Module.outcome = $Outcome
+    if ($Reason) { $Module.outcomeReason = Limit-ErText $Reason 300 }
+    return $Module
+}
+
+function Add-ErSettingOutcome {
+    param($Module, [string]$Id, [string]$Outcome, [string]$Note = '', $Before = $null, [string]$At = '')
+    foreach ($s in $Module.settings) {
+        if ($s.id -eq $Id) {
+            $s.outcome = $Outcome
+            if ($Note) { $s.note = Limit-ErText $Note 300 }
+            if ($null -ne $Before) { $s.before = Limit-ErText ([string]$Before) 120 }
+            if ($At) { $s.changedAt = $At }
+            return
+        }
+    }
+}
+
+# Invoke-ErApply: one module. Reads it, writes each registry setting that
+# is not in place and that no other owner holds, reads each back, and
+# reads the module again for its state. Returns the module's result, with
+# Changed (the ids written) in the $Changed list.
+function Invoke-ErApply {
+    param([string]$Name, [string[]]$Only, $Manifest, [string]$Now, [System.Collections.ArrayList]$Changed)
+    if ($ErReportOnly -contains $Name) {
+        return Set-ErOutcome (Invoke-ErModule $Name $Only) 'skipped' 'This module only reports; it has nothing to apply.'
+    }
+    $had = $Manifest.modules[$Name]
+    if ($had -and $had.intent -and -not $had.done) {
+        return Set-ErOutcome (Invoke-ErModule $Name $Only) 'refused' 'An earlier apply or undo of this module did not finish; undo it first.'
+    }
+    $pre = Invoke-ErModule $Name $Only
+    if (@($pre.settings).Count -eq 0) {
+        return Set-ErOutcome $pre 'skipped' $(if ($pre.reason) { $pre.reason } else { 'Nothing to apply.' })
+    }
+    $plans = @()
+    $skipped = 0
+    $readFailed = 0
+    foreach ($s in @($pre.settings)) {
+        if ($s.state -eq 'in_place') { continue }
+        $def = @($ErSettings | Where-Object { $_.id -eq $s.id })[0]
+        if ($s.state -ne 'not_in_place') {
+            if (@('reported', 'not_applicable') -notcontains $s.state) {
+                $skipped++
+                Add-ErSettingOutcome $pre $s.id 'skipped' "Left as it is: $($s.state)."
+            }
+            continue
+        }
+        $d = Get-ErOptionDef $def
+        if ([string]$d.kind -ne 'registry') {
+            $skipped++
+            Add-ErSettingOutcome $pre $s.id 'skipped' "This release does not write settings of kind $($d.kind); change it by hand or by policy."
+            continue
+        }
+        $cur = Get-ErRegistryValue $d.path $d.name
+        if ($cur.Error) {
+            $readFailed++
+            Add-ErSettingOutcome $pre $s.id 'failed' $cur.Error
+            continue
+        }
+        if ($cur.Exists -and @('DWord', 'String') -notcontains [string]$cur.Kind) {
+            $skipped++
+            Add-ErSettingOutcome $pre $s.id 'skipped' "The value holds a $($cur.Kind), which this release does not restore."
+            continue
+        }
+        $target = Get-ErRegistryTarget $d $cur
+        if ($null -eq $target) {
+            $skipped++
+            Add-ErSettingOutcome $pre $s.id 'skipped' 'What to write is not defined for this setting.'
+            continue
+        }
+        $plans += @{ id = [string]$d.id; path = [string]$d.path; name = [string]$d.name; cur = $cur; target = $target; kind = $(if ($target -is [string]) { 'String' } else { 'DWord' }) }
+    }
+    $mod = $pre
+    if ($plans.Count -gt 0) {
+        # Intent first, with every earlier value, so that an interruption
+        # leaves what undo needs.
+        $entry = @{ intent = $Now; done = $null; settings = @{} }
+        if ($had -and $had.settings) { foreach ($k in $had.settings.Keys) { $entry.settings[$k] = $had.settings[$k] } }
+        foreach ($p in $plans) {
+            $entry.settings[$p.id] = @{ kind = 'registry'; path = $p.path; name = $p.name; before = (ConvertTo-ErValueRecord $p.cur); target = $p.target; after = $null; at = $null }
+        }
+        $Manifest.modules[$Name] = $entry
+        Save-ErManifest $Manifest
+        foreach ($p in $plans) {
+            $rec = $entry.settings[$p.id]
+            $note = ''
+            try {
+                Set-ErRegistryData $p.path $p.name $p.kind $p.target
+                $back = Get-ErRegistryValue $p.path $p.name
+                if ($back.Exists -and "$($back.Data)" -eq "$($p.target)") {
+                    $rec.after = ConvertTo-ErValueRecord $back
+                    $rec.at = $Now
+                    [void]$Changed.Add($p.id)
+                    continue
+                }
+                $note = 'Read back, the value was not as written; it was put back.'
+            } catch {
+                $note = 'Writing failed: ' + $_.Exception.Message
+            }
+            try { Restore-ErValue $p.path $p.name $rec.before } catch { $note += ' It could not be put back: ' + $_.Exception.Message }
+            $entry.settings.Remove($p.id)
+            $p.failed = $note
+        }
+        $entry.done = $Now
+        if ($entry.settings.Count -eq 0) { $Manifest.modules.Remove($Name) }
+        Save-ErManifest $Manifest
+        $mod = Invoke-ErModule $Name $Only
+        foreach ($p in $plans) {
+            if ($p.failed) {
+                Add-ErSettingOutcome $mod $p.id 'failed' $p.failed
+            } else {
+                Add-ErSettingOutcome $mod $p.id 'applied' '' $(if ($p.cur.Exists) { $p.cur.Data } else { 'not set' }) $Now
+            }
+        }
+        foreach ($s in @($pre.settings)) {
+            if ($s.outcome -and -not ($plans | Where-Object { $_.id -eq $s.id })) { Add-ErSettingOutcome $mod $s.id $s.outcome $s.note }
+        }
+    } else {
+        foreach ($s in @($pre.settings)) {
+            if ($s.state -eq 'in_place' -and -not $s.outcome) { $s.outcome = 'unchanged' }
+        }
+    }
+    $wrote = @($plans | Where-Object { -not $_.failed }).Count
+    $failed = @($plans | Where-Object { $_.failed }).Count + $readFailed
+    $mod.recorded = [bool]$Manifest.modules.ContainsKey($Name)
+    $mod.done = @($plans | Where-Object { -not $_.failed } | ForEach-Object { $_.id } | Select-Object -First 50)
+    if ($wrote -gt 0) {
+        $why = ''
+        if ($failed -gt 0) { $why = "$failed setting(s) failed and were put back." }
+        return Set-ErOutcome $mod 'applied' $why
+    }
+    if ($failed -gt 0) { return Set-ErOutcome $mod 'failed' 'No setting could be written.' }
+    if ($skipped -gt 0) { return Set-ErOutcome $mod 'skipped' "$skipped setting(s) were left as they are; each says why." }
+    return Set-ErOutcome $mod 'unchanged' ''
+}
+
+# Whether undo leaves a value because an owner the reader cannot read may
+# write it again (ADR-0054, Before anything changes).
+function Get-ErLeaveReason {
+    param([string]$Path)
+    $r = @($ErCannotTell)
+    if ($r -contains 'group_policy_preferences' -or $r -contains 'mdm' -or $r -contains 'osconfig' -or $r -contains 'unreadable') {
+        return 'An owner this script cannot read (' + ($r -join ', ') + ') may write it.'
+    }
+    if ($r -contains 'group_policy_record_off' -and $Path -match '\\Policies\\') {
+        return 'Group Policy, whose record is turned off, may write it.'
+    }
+    return ''
+}
+
+# Invoke-ErUndo: one module, from the manifest.
+function Invoke-ErUndo {
+    param([string]$Name, [string[]]$Only, $Manifest, [string]$Now)
+    $e = $Manifest.modules[$Name]
+    $mod = Invoke-ErModule $Name $Only
+    if (-not $e -or -not $e.settings -or $e.settings.Count -eq 0) {
+        return Set-ErOutcome $mod 'nothing_to_undo' 'EasyRMM has no record of applying this module.'
+    }
+    $ids = @($e.settings.Keys | Where-Object { $Only.Count -eq 0 -or $Only -contains $_ } | Sort-Object)
+    if ($ids.Count -eq 0) { return Set-ErOutcome $mod 'nothing_to_undo' 'EasyRMM has no record of applying these settings.' }
+    $restored = @()
+    $left = @()
+    $failed = @()
+    foreach ($id in $ids) {
+        $rec = $e.settings[$id]
+        $note = ''
+        $cur = Get-ErRegistryValue $rec.path $rec.name
+        if ($cur.Error) {
+            $left += $id
+            $note = 'Left: ' + $cur.Error
+        } elseif ($cur.Exists -and "$($cur.Data)" -eq "$($rec.target)") {
+            $why = Get-ErLeaveReason $rec.path
+            if ($why) {
+                $left += $id
+                $note = "Left: $why"
+            } else {
+                try {
+                    Restore-ErValue $rec.path $rec.name $rec.before
+                    $back = Get-ErRegistryValue $rec.path $rec.name
+                    if (Test-ErValueIs $back $rec.before) {
+                        $restored += $id
+                        $e.settings.Remove($id)
+                        Add-ErSettingOutcome $mod $id 'restored' '' $null $Now
+                        continue
+                    }
+                    $failed += $id
+                    $note = 'Read back, the value was not as it was before.'
+                } catch {
+                    $failed += $id
+                    $note = 'Putting it back failed: ' + $_.Exception.Message
+                }
+            }
+        } elseif (Test-ErValueIs $cur $rec.before) {
+            # Still, or again, as it was: nothing to put back.
+            $e.settings.Remove($id)
+            Add-ErSettingOutcome $mod $id 'unchanged' 'Already as it was before EasyRMM changed it.'
+            $restored += $id
+            continue
+        } else {
+            $left += $id
+            $note = 'Left: it was changed after EasyRMM set it.'
+            $e.settings.Remove($id)
+        }
+        Add-ErSettingOutcome $mod $id $(if ($failed -contains $id) { 'failed' } else { 'left' }) $note
+    }
+    if ($e.settings.Count -eq 0) { $Manifest.modules.Remove($Name) }
+    Save-ErManifest $Manifest
+    $fresh = Invoke-ErModule $Name $Only
+    foreach ($s in @($mod.settings)) { if ($s.outcome) { Add-ErSettingOutcome $fresh $s.id $s.outcome $s.note } }
+    $mod = $fresh
+    $mod.recorded = [bool]$Manifest.modules.ContainsKey($Name)
+    $mod.done = @($restored | Select-Object -First 50)
+    if ($failed.Count -gt 0 -and $restored.Count -eq 0) { return Set-ErOutcome $mod 'failed' "$($failed.Count) setting(s) could not be put back." }
+    if ($left.Count -gt 0 -or $failed.Count -gt 0) { return Set-ErOutcome $mod 'partly_undone' "$($left.Count + $failed.Count) setting(s) were left; each says why." }
+    return Set-ErOutcome $mod 'undone' ''
+}
+
+# The guard: a scheduled task that undoes what apply just changed.
+function Register-ErRollback {
+    param([int]$Minutes, [string[]]$Ids)
+    $copy = Join-Path (Get-ErHardeningDir) 'easyrmm-hardening.ps1'
+    $argText = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $copy + '" undo --settings ' + ($Ids -join ',') + ' rolled-back'
+    $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $action = New-ScheduledTaskAction -Execute $exe -Argument $argText
+    $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes($Minutes))
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+    [void](Register-ScheduledTask -TaskName $ErTaskName -TaskPath $ErTaskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force)
+}
+
+function Unregister-ErRollback {
+    $t = Get-ScheduledTask -TaskName $ErTaskName -TaskPath $ErTaskPath -ErrorAction SilentlyContinue
+    if ($t) {
+        Unregister-ScheduledTask -TaskName $ErTaskName -TaskPath $ErTaskPath -Confirm:$false
+        return $true
+    }
+    return $false
+}
+
+# What a rolled-back undo leaves for the next check to report.
+function Save-ErRollbackNote {
+    param([string[]]$Ids, [string]$Now)
+    $f = Join-Path (Get-ErHardeningDir) 'last-rollback.json'
+    $json = @{ at = $Now; ids = @($Ids) } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText($f, $json, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Get-ErRollbackWarning {
+    $f = Join-Path (Get-ErHardeningDir) 'last-rollback.json'
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    try {
+        $n = ConvertFrom-Json ([IO.File]::ReadAllText($f))
+        $ids = @($n.ids) -join ', '
+        return "A change was undone by the guard at $($n.at), because the agent did not confirm it in time: $ids."
+    } catch {
+        return $null
+    }
+}
+
+
+# ---------------------------------------------------------------------------
 # The run.
 
 function Write-ErResult {
@@ -1447,7 +1899,7 @@ function Write-ErResult {
         # Too long: settings in place are left out, then every setting.
         foreach ($m in $Modules) {
             if ($m.settings) {
-                $m.settings = @($m.settings | Where-Object { $_.state -ne 'in_place' })
+                $m.settings = @($m.settings | Where-Object { $_.state -ne 'in_place' -or $_.outcome })
                 $m.settingsOmitted = 'in_place'
             }
         }
@@ -1487,38 +1939,133 @@ function Get-ErPlatformExtra {
     }
 }
 
+# New-ErRefused: a module an apply or undo did not touch, as the check
+# reports modules it cannot read; apply and undo name the refusal.
+function New-ErRefused {
+    param([string]$Name, [string]$Why)
+    $m = @{ module = $Name; state = 'not_supported'; reason = Limit-ErText $Why 300 }
+    if ($ErMode -eq 'apply' -or $ErMode -eq 'undo') { $m.outcome = 'refused'; $m.outcomeReason = Limit-ErText $Why 300 }
+    return $m
+}
+
+# Disarm the guard: what the server's confirm job runs, where the agent
+# is reachable.
+function Invoke-ErConfirm {
+    try {
+        $was = Unregister-ErRollback
+        Say $(if ($was) { 'The guard was ended: the change stands.' } else { 'No guard was armed.' })
+    } catch {
+        [Console]::Error.WriteLine('windows.ps1: the guard could not be ended: ' + $_.Exception.Message)
+        exit 1
+    }
+}
+
 Say "EasyRMM hardening ($ErMode) on Windows build $($ErPlatform.Build).$($ErPlatform.Ubr), $($ErPlatform.Role), support: $ErSupport"
+if ($ErMode -eq 'confirm') {
+    Invoke-ErConfirm
+    exit 0
+}
 $ErWork = New-ErWorkFolder 'easyrmm-hardening-'
 $ErFolder = $null
+$ErNow = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 try {
-    try {
-        $ErFolder = Open-ErHardening
-    } catch {
-        $ErFolder = @{ Folder = 'refused'; Refusal = 'The Hardening folder could not be checked: ' + $_.Exception.Message; Warnings = @(); SetAside = @(); Lock = $null; Manifest = $null; CopySha256 = '' }
+    if ($ErMode -eq 'apply') {
+        # The folder is made here and nowhere else; check never makes it.
+        try { New-ErHardeningFolder } catch { $ErFolder = @{ Folder = 'refused'; Refusal = 'The Hardening folder could not be made: ' + $_.Exception.Message; Warnings = @(); SetAside = @(); Lock = $null; Manifest = $null; CopySha256 = '' } }
+    }
+    if (-not $ErFolder) {
+        try {
+            $ErFolder = Open-ErHardening
+        } catch {
+            $ErFolder = @{ Folder = 'refused'; Refusal = 'The Hardening folder could not be checked: ' + $_.Exception.Message; Warnings = @(); SetAside = @(); Lock = $null; Manifest = $null; CopySha256 = '' }
+        }
     }
     $ErPolicy = Get-ErPolicyContext $ErWork
+    $ErCannotTell = @(Get-ErComputerReasons $ErPolicy)
+    if ($ErPolicy.GpPreferences) { $ErCannotTell += 'group_policy_preferences' }
+    if (@($ErPlatform.Unread).Count -gt 0 -and $ErCannotTell -notcontains 'unreadable') { $ErCannotTell += 'unreadable' }
     $modules = @()
+    $changed = New-Object System.Collections.ArrayList
+    $refusal = ''
     if ($ErFolder.Refusal) {
-        Say "Refused: $($ErFolder.Refusal)"
-        foreach ($name in $ErArgs.Modules) { $modules += @{ module = $name; state = 'not_supported'; reason = Limit-ErText $ErFolder.Refusal 300 } }
-    } elseif ($ErSupport -eq 'unsupported') {
-        foreach ($name in $ErArgs.Modules) { $modules += @{ module = $name; state = 'not_supported'; reason = "Windows build $($ErPlatform.Build) has not been tested with this script." } }
+        $refusal = $ErFolder.Refusal
+    } elseif ($ErSupport -eq 'unsupported' -and $ErMode -ne 'undo') {
+        $refusal = "Windows build $($ErPlatform.Build) has not been tested with this script."
+    } elseif ($ErMode -eq 'apply' -and $ErSupport -ne 'full') {
+        $refusal = 'This computer is check only (Windows, edition or architecture not yet tested for apply).'
+    } elseif ($ErMode -eq 'apply' -and $ErCannotTell.Count -gt 0) {
+        $refusal = 'An owner of this computer''s settings cannot be read yet (' + ($ErCannotTell -join ', ') + '), so apply is check only here.'
+    } elseif ($ErMode -eq 'apply' -and $ErPlatform.Role -eq 'unknown') {
+        $refusal = 'Windows did not report the computer''s role, which apply needs.'
+    } elseif (@('apply', 'undo') -contains $ErMode -and $ErPlatform.Role -eq 'domain_controller' -and -not (Test-ErOption 'domain-controller')) {
+        $refusal = 'This is a domain controller: some changes affect every computer that signs in to the domain; choose the domain-controller option.'
+    }
+    if ($refusal) {
+        Say "Refused: $refusal"
+        foreach ($name in $ErArgs.Modules) { $modules += New-ErRefused $name $refusal }
     } else {
-        foreach ($name in $ErArgs.Modules) {
-            Say "Checking $name"
-            try {
-                $m = Invoke-ErModule $name
-            } catch {
-                $m = @{ module = $name; state = 'failed'; reason = Limit-ErText ("The check stopped: " + $_.Exception.Message) 300 }
+        $manifest = $null
+        if (@('apply', 'undo') -contains $ErMode) {
+            $manifest = $(if ($ErFolder.Manifest) { ConvertTo-ErPlain $ErFolder.Manifest } else { New-ErManifest })
+            if ($ErMode -eq 'apply') {
+                Save-ErCopy $manifest
+                # The copy's hash is in the manifest, which therefore exists.
+                Save-ErManifest $manifest
+                Remove-Item -LiteralPath (Join-Path (Get-ErHardeningDir) 'last-rollback.json') -Force -ErrorAction SilentlyContinue
             }
-            if (Test-ErHalfApplied $ErFolder.Manifest $name) {
+        }
+        foreach ($name in $ErArgs.Modules) {
+            Say "$($ErMode): $name"
+            try {
+                if ($ErMode -eq 'apply') {
+                    $m = Invoke-ErApply $name $ErArgs.Settings $manifest $ErNow $changed
+                } elseif ($ErMode -eq 'undo') {
+                    $m = Invoke-ErUndo $name $ErArgs.Settings $manifest $ErNow
+                } else {
+                    $m = Invoke-ErModule $name $ErArgs.Settings
+                }
+            } catch {
+                $m = @{ module = $name; state = 'failed'; reason = Limit-ErText ("The $ErMode stopped: " + $_.Exception.Message) 300 }
+                if ($ErMode -ne 'check') { $m.outcome = 'failed'; $m.outcomeReason = $m.reason }
+            }
+            if ($ErMode -eq 'check' -and (Test-ErHalfApplied $ErFolder.Manifest $name)) {
                 $m.state = 'half_applied'
                 $m.reason = 'An apply or undo of this module began and did not finish.'
             }
-            Say "  $($m.state)"
+            Say "  $($m.state)$(if ($m.outcome) { ', ' + $m.outcome })"
             $modules += $m
         }
+        if ($ErMode -eq 'apply' -and $changed.Count -gt 0) {
+            Save-ErManifest $manifest
+            $minutes = $ErOptions['guard-minutes']
+            if ($minutes) {
+                try {
+                    Register-ErRollback ([int]$minutes) @($changed)
+                    Say "The guard is armed: these changes are undone in $minutes minutes unless confirmed."
+                } catch {
+                    # Without its guard a change that may cut access is
+                    # put back at once.
+                    $why = $_.Exception.Message
+                    Say 'The guard could not be armed; undoing what this apply changed.'
+                    foreach ($name in $ErArgs.Modules) { [void](Invoke-ErUndo $name @($changed) $manifest $ErNow) }
+                    foreach ($m in $modules) { $m.outcome = 'failed'; $m.outcomeReason = Limit-ErText ('The guard could not be armed, so the change was undone: ' + $why) 300 }
+                }
+            }
+        }
+        if ($ErMode -eq 'undo') {
+            if ($manifest.modules.Count -eq 0) {
+                # The record is consumed; so is the copy.
+                Remove-Item -LiteralPath (Join-Path (Get-ErHardeningDir) 'manifest.json') -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath (Join-Path (Get-ErHardeningDir) 'easyrmm-hardening.ps1') -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-ErOption 'rolled-back') {
+                if (Test-Path -LiteralPath (Get-ErHardeningDir)) { Save-ErRollbackNote @($ErArgs.Settings) $ErNow }
+                try { [void](Unregister-ErRollback) } catch { Say "The guard's task could not be removed: $($_.Exception.Message)" }
+            }
+        }
     }
+    $rolled = Get-ErRollbackWarning
+    if ($rolled) { $ErFolder.Warnings = @($ErFolder.Warnings) + $rolled }
     # After the modules: some records are read only when a setting needs
     # them, and add their notes.
     $platformJson = ConvertTo-ErPlatformJson $ErPlatform $ErSupport $ErLanguageMode (Get-ErPlatformExtra $ErFolder)

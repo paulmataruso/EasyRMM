@@ -100,6 +100,34 @@ func (s *Service) keepAccepts(ctx context.Context, device uuid.UUID, accepts []s
 	})
 }
 
+// oneChangeAtATime holds a hardening apply or undo back while another
+// hardening or software run of the device is sent, running or queued
+// before it, and holds those back while an apply or undo is (ADR-0054, One
+// change at a time on a device). A confirm job, which ends a hardening
+// guard, waits for nothing, and an apply or undo waits for one: the change
+// before it is not yet shown to be safe. r and j are the run and job of
+// the candidate.
+const oneChangeAtATime = `NOT EXISTS (
+	SELECT 1 FROM job_runs r2 JOIN jobs j2 ON j2.id = r2.job_id
+	WHERE r2.device_id = r.device_id AND r2.id <> r.id
+	  AND j.hardening->>'mode' IS DISTINCT FROM 'confirm'
+	  AND j2.kind IN ('hardening', 'software')
+	  AND (
+	    -- the candidate changes the computer: every other run of these kinds is ahead of it or in its way
+	    (j.kind = 'hardening' AND j.hardening->>'mode' IN ('apply', 'undo')
+	     AND (r2.status IN ('sent', 'running')
+	          OR (r2.status = 'queued' AND r2.expires_at > now() AND r2.cancel_requested_at IS NULL
+	              AND (j2.hardening->>'mode' = 'confirm' OR (r2.created_at, r2.id) < (r.created_at, r.id)))))
+	    OR
+	    -- the candidate only reads or installs: an apply or undo that is active or earlier is ahead of it
+	    (j.kind IN ('hardening', 'software') AND NOT (j.kind = 'hardening' AND j.hardening->>'mode' IN ('apply', 'undo'))
+	     AND j2.kind = 'hardening' AND j2.hardening->>'mode' IN ('apply', 'undo')
+	     AND (r2.status IN ('sent', 'running')
+	          OR (r2.status = 'queued' AND r2.expires_at > now() AND r2.cancel_requested_at IS NULL
+	              AND (r2.created_at, r2.id) < (r.created_at, r.id))))
+	  )
+)`
+
 // claim marks the device's due runs delivered and signs them, and collects
 // cancellations to send. A run whose job requires a capability the poll's
 // list lacks is left queued.
@@ -115,6 +143,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 				WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
 				  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
 				  AND j.requires <@ $4::text[]
+				  AND `+oneChangeAtATime+`
 				ORDER BY r.created_at, r.id LIMIT $3
 				FOR UPDATE OF r SKIP LOCKED
 			)
@@ -295,7 +324,7 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		started = &t
 	}
 	p := cleanProgram(in.Interpreter)
-	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var job uuid.UUID
 		var ran time.Time
 		err := tx.QueryRow(ctx, `UPDATE job_runs SET status = $3, exit_code = $4,
@@ -328,6 +357,12 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		}
 		return nil
 	})
+	if err == nil {
+		// A run that ended may release work held behind it (one change at a
+		// time on a device) or queue the confirmation of a hardening guard.
+		s.hub.notify(device)
+	}
+	return err
 }
 
 // program is a result's interpreter as a run keeps it: NULL columns for

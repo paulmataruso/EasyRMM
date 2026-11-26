@@ -93,6 +93,9 @@ type Service struct {
 	hub             *hub
 	// pollWait is how long a poll without work is held; tests shorten it.
 	pollWait time.Duration
+	// stepUp checks a step-up proof for changes of the highest risk tier
+	// (ADR-0055); nil until it is wired, when those changes are refused.
+	stepUp StepUpVerifier
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs
@@ -146,6 +149,9 @@ func (s *Service) Run(ctx context.Context) {
 type Swept struct {
 	Expired int64
 	Lost    int64
+	// GuardsTimedOut counts Windows hardening guards whose confirmation did
+	// not come: the computer's own timer undoes those changes.
+	GuardsTimedOut int64
 }
 
 // Sweep expires runs no device picked up in time and marks lost the runs
@@ -170,6 +176,10 @@ func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 				error = 'The device did not report a result before the deadline.'
 			WHERE status = 'running' AND deadline_at <= now()`)
 		out.Lost = tag.RowsAffected()
+		if err != nil {
+			return err
+		}
+		out.GuardsTimedOut, err = s.timeOutGuards(ctx, tx)
 		return err
 	})
 	return out, err

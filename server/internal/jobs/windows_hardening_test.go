@@ -73,7 +73,9 @@ func TestWindowsScriptKnowsTheServersNames(t *testing.T) {
 	for _, q := range regexp.MustCompile(`'([a-z-]+)' = '([a-z-]*)'`).FindAllStringSubmatch(m[1], -1) {
 		opts[q[1]] = q[2]
 	}
-	want := map[string]string{"allow-tcp": "firewall", "allow-udp": "firewall", "asr-block": "asr"}
+	// guard-minutes and rolled-back are the guard's: the server and the
+	// computer's timer set them, never a person.
+	want := map[string]string{"allow-tcp": "firewall", "allow-udp": "firewall", "asr-block": "asr", "guard-minutes": "", "rolled-back": ""}
 	for _, s := range windowsSwitches {
 		want[s.arg] = s.module
 	}
@@ -200,7 +202,12 @@ func TestWindowsHardeningInput(t *testing.T) {
 		field string
 	}{
 		"an unknown platform":          {Hardening{Platform: "macos", Mode: HardeningCheck, Modules: []string{"ssh"}}, "platform"},
-		"apply":                        {Hardening{Platform: HardeningWindows, Mode: "apply", Modules: []string{"uac"}}, "mode"},
+		"a mode that is not one":       {Hardening{Platform: HardeningWindows, Mode: "confirm", Modules: []string{"uac"}}, "mode"},
+		"modules and settings":         {Hardening{Platform: HardeningWindows, Mode: HardeningApply, Modules: []string{"uac"}, Settings: []string{"uac-secure-uia"}}, "settings"},
+		"a setting that is not one":    {Hardening{Platform: HardeningWindows, Mode: HardeningApply, Settings: []string{"nope"}}, "settings"},
+		"settings on Linux":            {Hardening{Mode: HardeningCheck, Settings: []string{"uac-secure-uia"}}, "settings"},
+		"undo with a port":             {Hardening{Platform: HardeningWindows, Mode: HardeningUndo, Modules: []string{"firewall"}, Options: HardeningOptions{AllowTCP: []string{"80"}}}, "options"},
+		"undo with an option":          {Hardening{Platform: HardeningWindows, Mode: HardeningUndo, Modules: []string{"uac"}, Options: wo(WindowsHardeningOptions{UACEnable: true})}, "options"},
 		"no module":                    {win(nil, HardeningOptions{}), "modules"},
 		"a Linux module":               {win([]string{"ssh"}, HardeningOptions{}), "modules"},
 		"a Windows module on Linux":    {Hardening{Mode: HardeningCheck, Modules: []string{"uac"}}, "modules"},
