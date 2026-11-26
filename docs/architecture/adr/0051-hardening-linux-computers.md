@@ -208,6 +208,14 @@ log collection feature will).
   services that are enabled but not running as *ports unknown* (they
   would be cut off when they start: the operator adds their ports or
   starts them first), and the result records them.
+  *Amended 2026-11-26 (decided in review):* apply still leaves open every
+  UDP socket listening when it runs, ephemeral range included (WireGuard,
+  Tailscale and Mosh listen there; closing them would cut the server off).
+  Only the check's "open in the table" comparison skips UDP ports in the
+  local ephemeral range (`net.ipv4.ip_local_port_range`; port 68 still
+  counts), since they may be client sockets that come and go and made the
+  check flap. The trade-off: a UDP service started after apply on such a
+  port is not reported as cut off.
 * **Managed elsewhere**, left alone and reported: an active ufw or
   firewalld (EasyRMM never turns either on: ufw drops forwarded traffic by
   default, and firewalld started after Docker breaks container

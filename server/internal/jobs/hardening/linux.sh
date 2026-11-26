@@ -1563,10 +1563,21 @@ check_firewall() {
 		set_ok firewall-table "loaded" 'table inet easyrmm loaded'
 		# Every port apply would leave open must be open in the table: a
 		# service that started listening since is cut off until it is.
+		# UDP ports in the local ephemeral range may be client sockets that
+		# come and go, so one missing from the table is not reported (a
+		# service started there after apply is not reported cut off).
+		# Apply still leaves open every UDP socket listening when it runs.
+		cf_lo=32768
+		cf_hi=60999
+		if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then
+			read -r cf_a cf_b </proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || cf_a=
+			case $cf_a$cf_b in *[!0-9]* | '') ;; *) cf_lo=$cf_a cf_hi=$cf_b ;; esac
+		fi
 		cf_closed=
 		for cf_pr in tcp udp; do
 			if [ "$cf_pr" = tcp ]; then cf_want=$M_TCP; else cf_want=$M_UDP; fi
 			for cf_p in $cf_want; do
+				if [ "$cf_pr" = udp ] && [ "$cf_p" != 68 ] && [ "$cf_p" -ge "$cf_lo" ] 2>/dev/null && [ "$cf_p" -le "$cf_hi" ] 2>/dev/null; then continue; fi
 				if fw_table_allows "$cf_table" "$cf_pr" "$cf_p"; then in_place; else
 					missing "$cf_pr port $cf_p open in table inet easyrmm (it is dropped now)"
 					cf_closed="$cf_closed $cf_pr/$cf_p"
