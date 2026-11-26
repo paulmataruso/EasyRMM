@@ -1281,14 +1281,37 @@ test("a domain controller's Directory tab reads the domain, and a password reset
   await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "ad_ds", state: "present" }] } });
   const caps = ["job.pwsh", "job.params"];
   // The agent says what its build takes (parameters on standard input) before the server sends it a module action.
-  await agent.poll(caps);
+  // Module reads an earlier spec's page re-asked for after it was left (the DNS tab's) may still be waiting for this
+  // device; they would be handed out before this tab's own read and take its answer. Finish them first.
+  for (let stale = true; stale; ) {
+    stale = false;
+    for (const j of await agent.poll(caps)) {
+      if (!j.script.includes("EASYRMM-WINMOD-RESULT-V1")) continue;
+      stale = true;
+      if (await agent.start(j.runId)) await agent.succeeded(j.runId, "");
+    }
+  }
   const SID = "S-1-5-21-1-2-3-1104";
   // The agent answers the next winmod job (the Repair step queued above, still waiting on the device, is not one) with the typed result its script would print.
+  // The tab may ask for more than one read at a time, and the agent is handed them in the order the server queued
+  // them, so each delivered job is looked up (by its run) and kept until the step that wants its action asks.
+  const held: { runId: string; action: string; params?: unknown }[] = [];
   const answer = async (action: string, data: unknown) => {
-    let job;
+    let job: (typeof held)[number] | undefined;
     await expect
-      .poll(async () => (job = (await agent.poll(caps)).find((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))), { timeout: 20_000 })
+      .poll(
+        async () => {
+          for (const j of await agent.poll(caps)) {
+            if (!j.script.includes("EASYRMM-WINMOD-RESULT-V1")) continue;
+            const run = (await (await admin.request.get(`/api/v1/winmod/runs/${j.runId}`)).json()) as { action: string };
+            held.push({ runId: j.runId, action: run.action, params: j.params });
+          }
+          return (job = held.find((h) => h.action === `active_directory.${action}`));
+        },
+        { timeout: 20_000 },
+      )
       .toBeTruthy();
+    held.splice(held.indexOf(job!), 1);
     expect(await agent.start(job!.runId)).toBe(true);
     await agent.succeeded(job!.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");
     return { action, params: job!.params ?? {} };

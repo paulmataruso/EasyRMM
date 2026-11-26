@@ -128,7 +128,7 @@ test("an organization's administrator adds an email channel, and a loopback webh
   await expect(page.getByRole("cell", { name: /^Loopback hook/ })).toBeVisible();
   const before = received.length;
   await page.getByRole("button", { name: "Test Loopback hook" }).click();
-  await expect(page.getByText(/does not connect to 127\.0\.0\.1/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/does not connect to 127\.0\.0\.1/).first()).toBeVisible({ timeout: 30_000 });
   // Nothing reached the receiver: the policy refused it after name resolution, before any connection.
   expect(received).toHaveLength(before);
 });
