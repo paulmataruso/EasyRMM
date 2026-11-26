@@ -1411,7 +1411,7 @@ listening() {
 	for li_f in tcp tcp6 udp udp6; do
 		[ -r "/proc/net/$li_f" ] || continue
 		case $li_f in tcp*) li_state=0A ;; *) li_state=07 ;; esac
-		awk -v proto="${li_f%6}" -v want="$li_state" -v dhcp=" $li_dhcp "'
+		awk -v proto="${li_f%6}" -v want="$li_state" -v dhcp=" $li_dhcp " '
 		function hex(h,  i, n) { n = 0; h = toupper(h); for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1; return n }
 		NR > 1 && $4 == want {
 			split($2, a, ":"); addr = toupper(a[1])
