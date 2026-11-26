@@ -373,11 +373,7 @@ func TestClip(t *testing.T) {
 }
 
 func TestRecordRedactsAndTagsTheSource(t *testing.T) {
-	dir := t.TempDir()
-	buf, err := OpenBuffer(dir, DefaultMaxBytes, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	buf := openBuf(t, t.TempDir(), DefaultMaxBytes)
 	s := New(buf)
 	s.Record(agentproto.LogSourceMeshAgent, agentproto.LogWarn, "token Bearer abcdefghijklmnop stopped", map[string]string{"password": "hunter2"})
 	recs, _ := buf.Next(10, 1<<20)
