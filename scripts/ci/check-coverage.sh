@@ -81,6 +81,8 @@ floors=(
   # EasyPatch: it holds a token that installs software on every linked
   # endpoint, and decides which EasyRMM user may act on which endpoint.
   "server/internal/easypatch               90"
+  # The hash list of everything installed (ADR-0070).
+  "server/internal/agentfiles              85"
   "server/internal/httpapi/easypatchapi    95"
   # Single sign-on: a way in that skips the password, and sometimes the
   # second factor.
@@ -117,6 +119,8 @@ floors=(
   "agent/client                            90"
   "agent/runner                            90"
   "agent/host                              85"
+  # Defender exclusions (ADR-0070); the Windows half runs in the windows-defender job.
+  "agent/defender                          83"
   "agent/meshagent                         80"
   "agent/state                             75"
   "agent/cmd/easyrmm-agent                 75"

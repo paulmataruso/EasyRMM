@@ -186,5 +186,7 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /alerts/devices": ok({ items: [] }),
     "GET /scripts": ok({ items: [] }),
     "GET /devices/recent-connections": ok({ items: [] }),
+    // A Windows device's Defender card (ADR-0070): a device that has reported nothing shows none.
+    "GET /devices/:id/defender": ok({ defender: null, defenderAt: null, installed: null }),
   };
 }

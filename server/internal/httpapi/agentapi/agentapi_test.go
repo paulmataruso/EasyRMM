@@ -167,6 +167,47 @@ func TestWindowsInstallScriptPerAddress(t *testing.T) {
 	}
 }
 
+// TestWindowsInstallScriptOrder: the script creates the folders, locks them
+// down, verifies them, excludes them and only then downloads (ADR-0070),
+// and it touches nothing it must not.
+func TestWindowsInstallScriptOrder(t *testing.T) {
+	a := newAPI(t, testCA)
+	for name, o := range map[string]*httpapi.Origin{"dns": {Console: "https://rmm.example.com"}, "ip": {Console: "https://203.0.113.10"}} {
+		script := serve(a, "/api/agent/v1/install.ps1", o).Body.String()
+		last := -1
+		for _, step := range []string{"Step 'create'", "Step 'lock'", "Step 'verify'", "Step 'exclude'", "Step 'download'"} {
+			i := strings.Index(script, step)
+			if i < 0 || i < last {
+				t.Fatalf("%s: %s is missing or out of order", name, step)
+			}
+			last = i
+		}
+		// Nothing is downloaded before the download step, and nothing is
+		// excluded before the folders are verified.
+		dl := strings.Index(script, "Step 'download'")
+		if i := strings.Index(script, "$web.DownloadFile"); i < dl {
+			t.Errorf("%s: a download comes before the download step", name)
+		}
+		if i := strings.Index(script, "    Add-Exclusions"); i < strings.Index(script, "Step 'exclude'") || i > dl {
+			t.Errorf("%s: the exclusions are not added in their own step", name)
+		}
+		for _, never := range []string{"DisableRealtimeMonitoring", "DisableIOAVProtection", "DisableScriptScanning", "Amsi", "AMSI", "ExclusionExtension", "Set-MpPreference", "DisableBehaviorMonitoring"} {
+			if strings.Contains(script, never) {
+				t.Errorf("%s: the script mentions %s", name, never)
+			}
+		}
+		for _, want := range []string{"ExclusionPath", "ExclusionProcess", "AttackSurfaceReductionOnlyExclusions", "ControlledFolderAccessAllowedApplications",
+			"EASYRMM_INSTALL_FAIL_AT", "Undo-Install", "defender-exclusions.json", "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"} {
+			if !strings.Contains(script, want) {
+				t.Errorf("%s: the script lacks %s", name, want)
+			}
+		}
+		if i, j := strings.Index(script, "} finally {"), strings.Index(script, "if (-not $ok) { Undo-Install }"); i < 0 || j < i {
+			t.Errorf("%s: the clean-up is not in the finally block", name)
+		}
+	}
+}
+
 // testCA stands in for the authority's certificate: the API only re-encodes it.
 var testCA = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("DER bytes")})
 
@@ -448,5 +489,19 @@ func TestRefusalsKeepConnectionsUsable(t *testing.T) {
 	}
 	if n := canceled.Load(); n != 0 {
 		t.Errorf("%d requests arrived on a connection whose context was canceled", n)
+	}
+}
+
+// TestWriteInstallScriptForCI writes the script a server hands out, for the
+// CI job that runs it on a real Windows (ADR-0070, step 0). It does nothing
+// unless EASYRMM_WRITE_INSTALL_PS1 names the file.
+func TestWriteInstallScriptForCI(t *testing.T) {
+	out := os.Getenv("EASYRMM_WRITE_INSTALL_PS1")
+	if out == "" {
+		t.Skip("only CI's Windows job asks for the script")
+	}
+	script := serve(newAPI(t, testCA), "/api/agent/v1/install.ps1", &httpapi.Origin{Console: "http://127.0.0.1:18080"}).Body.String()
+	if err := os.WriteFile(out, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

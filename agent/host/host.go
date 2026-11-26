@@ -32,6 +32,9 @@ func (p Paths) real() bool { return p.Root == "" || p.Root == "/" }
 
 func (p Paths) unix(rel string) string { return filepath.Join(cmp.Or(p.Root, "/"), rel) }
 
+// Real reports whether the paths are the machine's own, not a test root.
+func (p Paths) Real() bool { return p.real() }
+
 // programData is C:\ProgramData on a real Windows installation.
 func (p Paths) programData() string {
 	if p.real() {

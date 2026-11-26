@@ -64,7 +64,10 @@ func (windowsSystem) Reinstall(ctx context.Context, _ agentproto.EasyPatchPackag
 }
 
 func msiexec(ctx context.Context, sys, log string, args []string) error {
-	code, _, err := run(ctx, "", nil, filepath.Join(sys, "msiexec.exe"), args...)
+	// TEMP and TMP are the agent's own download folder, which is locked
+	// down and excluded, not the temp folder of whoever started it
+	// (ADR-0070).
+	code, _, err := run(ctx, "", tempEnv(filepath.Dir(log)), filepath.Join(sys, "msiexec.exe"), args...)
 	if err != nil {
 		return err
 	}

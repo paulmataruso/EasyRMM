@@ -21,6 +21,7 @@ import { SoftwarePanel } from "./DeviceSoftware";
 import { PatchesPanel } from "./DevicePatches";
 import { HardeningPanel } from "./DeviceHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
+import { DefenderPanel } from "./DeviceDefender";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
@@ -240,6 +241,7 @@ export function DeviceDetailPage() {
           />
         </Card>
         {hasAgent && <PerformanceCard deviceId={d.id} />}
+        {hasAgent && d.platform === "windows" && <DefenderPanel deviceId={d.id} />}
         </div>
         {side && (
           <div className="flex min-w-0 flex-col gap-5">

@@ -1039,6 +1039,57 @@ test("Update all now for a site installs every available update, and restarts th
   await expect(page.getByRole("dialog")).toBeHidden();
 });
 
+test("a Windows agent's Defender state and installed hashes show on the device, next to the list in Settings", async () => {
+  const page = admin;
+  // The device's agent reports as a Windows one (the suite's only device: nothing after this needs it as a Linux one).
+  const facts = { hostname: "dt-reception-01", os: "Windows 11 Pro 24H2", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  const answer = await agent.heartbeat({ facts });
+  // The server tells the agent it may act (no development scope is set here).
+  expect(answer.defender?.enabled).toBe(true);
+
+  // The list of everything the server hands out, from its own builds.
+  await page.goto("/settings?tab=agent-files");
+  await expect(page.getByRole("heading", { name: "Agent files", level: 1 })).toBeVisible();
+  const listed = page.getByRole("row", { name: /easyrmm-agent-windows-amd64\.exe/ });
+  await expect(listed).toBeVisible();
+  await expect(listed).toContainText("Served by this server");
+  const expected = (await (await page.request.get("/api/v1/settings/agent-files")).json()) as { entries: { name: string; sha256: string; md5: string; version: string }[] };
+  const build = expected.entries.find((e) => e.name === "easyrmm-agent-windows-amd64.exe");
+  expect(build?.md5).toMatch(/^[0-9a-f]{32}$/);
+  expect(build?.sha256).toMatch(/^[0-9a-f]{64}$/);
+
+  // The agent reports its exclusions and the hash of what it runs: the list's, for the version it reports.
+  const md5 = "d41d8cd98f00b204e9800998ecf8427e";
+  const report = {
+    state: "present_not_effective",
+    reason: "local exclusions are ignored (DisableLocalAdminMerge)",
+    method: "powershell",
+    kinds: [{ kind: "path", state: "effective" }, { kind: "process", state: "effective" }, { kind: "asr", state: "not_needed", reason: "No Attack Surface Reduction rule is set." }, { kind: "cfa", state: "effective" }],
+    folders: [{ path: "C:\\ProgramData\\EasyRMM\\Agent", listed: true, ours: true }, { path: "C:\\Program Files\\EasyRMM\\MeshAgent", listed: false, ours: false, reason: "can be changed by BUILTIN\\Users" }],
+    events: [{ kind: "add", exclusionKind: "path", path: "C:\\ProgramData\\EasyRMM\\Agent", at: new Date().toISOString() }],
+  };
+  const files = (sha: string) => ({
+    agentVersion: build?.version || "0.6.0-e2e",
+    observedAt: new Date().toISOString(),
+    files: [{ program: "easyrmm-agent", name: "easyrmm-agent.exe", size: 1, md5, sha256: sha }],
+  });
+  await agent.heartbeat({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, defender: report, installedFiles: files(build!.sha256) });
+
+  await page.goto(`/devices/${agent.deviceId}`);
+  const card = page.locator("section", { has: page.getByRole("heading", { name: "Microsoft Defender exclusions" }) });
+  await expect(card).toContainText("Listed, not in effect");
+  await expect(card).toContainText("DisableLocalAdminMerge");
+  await expect(card.getByLabel("C:\\Program Files\\EasyRMM\\MeshAgent: not excluded")).toBeVisible();
+  const installed = page.locator("section", { has: page.getByRole("heading", { name: "Installed files" }) });
+  await expect(installed).toContainText("Reported by the device");
+  if (build?.version) await expect(installed).toContainText("Matches the list");
+
+  // A different byte shows as a difference, and nothing is done about it.
+  await agent.heartbeat({ facts: { ...facts, agentVersion: build?.version || facts.agentVersion }, installedFiles: files("f".repeat(64)) });
+  await page.reload();
+  if (build?.version) await expect(page.locator("section", { has: page.getByRole("heading", { name: "Installed files" }) })).toContainText("Differs from the list");
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();

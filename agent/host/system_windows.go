@@ -592,6 +592,26 @@ func CheckTreeHolding(root string, links bool, hold func(path string) bool) (*He
 	return held, nil
 }
 
+// CheckSubtree checks root and everything in it as CheckTree does, without
+// the exclusive open: the agent's own files may be open, and an open file
+// does not change who may write it (ADR-0070: the folders the agent
+// excludes from Defender are verified before it does).
+func CheckSubtree(root string) error {
+	return filepath.WalkDir(root, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		why, err := entryProblem(p, false, false)
+		if err != nil {
+			return err
+		}
+		if why != "" {
+			return untrusted(p, why)
+		}
+		return nil
+	})
+}
+
 // CheckEntry checks one entry as CheckTree does, without what it holds.
 func CheckEntry(p string, links bool) error {
 	why, err := entryProblem(p, links, true)

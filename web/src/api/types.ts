@@ -3059,3 +3059,76 @@ export interface AgentLogPage {
   /** The device's agent reported recently. */
   online: boolean;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Defender exclusions and the hash list of everything installed (ADR-0070)
+// ---------------------------------------------------------------------------------------------
+
+export type DefenderState = "effective" | "present_not_effective" | "not_locked" | "refused" | "unavailable" | "not_applicable" | "not_needed";
+export type DefenderKindName = "path" | "process" | "asr" | "cfa";
+
+export interface DefenderReport {
+  state: DefenderState;
+  reason?: string;
+  kinds: { kind: DefenderKindName; state: DefenderState; reason?: string }[];
+  folders: { path: string; listed: boolean; ours: boolean; reason?: string }[];
+  method?: string;
+  agentVersion?: string;
+}
+
+export type InstalledStatus = "match" | "mismatch" | "not_current" | "no_expected";
+
+export interface ExpectedHash {
+  source: "server" | "meshcentral" | "patching";
+  version: string;
+  md5: string;
+  sha256: string;
+  computedAt: string;
+  stale: boolean;
+}
+
+export interface InstalledFileView {
+  program: string;
+  name: string;
+  size: number;
+  md5: string;
+  sha256: string;
+  status: InstalledStatus;
+  expected?: ExpectedHash;
+}
+
+export interface DeviceDefender {
+  defender: DefenderReport | null;
+  defenderAt: string | null;
+  installed: {
+    source: string;
+    observedAt: string | null;
+    agentVersion: string;
+    meshAgentVersion?: string;
+    patchAgentVersion?: string;
+    files: InstalledFileView[];
+    missing: { program: string; name: string; expected: ExpectedHash }[];
+    patchNote?: string;
+  } | null;
+}
+
+export interface AgentFileEntry {
+  id: string;
+  source: "server" | "meshcentral" | "patching";
+  name: string;
+  platform: string;
+  arch: string;
+  version: string;
+  size: number;
+  md5: string;
+  sha256: string;
+  signer?: string;
+  computedAt: string;
+  stale: boolean;
+  staleReason?: string;
+}
+
+export interface AgentFiles {
+  entries: AgentFileEntry[];
+  canRefresh: boolean;
+}

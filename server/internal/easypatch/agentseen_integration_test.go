@@ -4,6 +4,8 @@ package easypatch
 
 import (
 	"crypto/ed25519"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
@@ -170,5 +173,25 @@ func TestRepairOfferIsTheInstalledVersion(t *testing.T) {
 	f.exec(`INSERT INTO easypatch_opt_outs (device_id) VALUES ($1)`, f.lin)
 	if offer, why, _ := f.svc.RepairOffer(f.ctx, f.lin); offer != nil || !strings.Contains(why, "leaving") {
 		t.Errorf("a device that is leaving: %+v, %q", offer, why)
+	}
+}
+
+// PackageList and OpenPackage feed the hash list (ADR-0070): the engine's
+// packages, and each one's file, which the engine's stand-in does not serve.
+func TestPackageListForTheHashList(t *testing.T) {
+	f := newInstall(t)
+	list, err := f.svc.PackageList(f.ctx)
+	if err != nil || len(list) == 0 {
+		t.Fatalf("packages = %d, %v", len(list), err)
+	}
+	if _, err := f.svc.OpenPackage(f.ctx, list[0]); err == nil {
+		t.Error("a package the stand-in does not serve was opened")
+	}
+	bare := New(f.fixture.db, audit.New(f.fixture.db, nil), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if l, err := bare.PackageList(f.ctx); l != nil || err != nil {
+		t.Errorf("without an engine: %v, %v", l, err)
+	}
+	if _, err := bare.OpenPackage(f.ctx, list[0]); err == nil {
+		t.Error("a package was opened without an engine")
 	}
 }

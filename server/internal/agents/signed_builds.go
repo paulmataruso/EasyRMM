@@ -3,6 +3,7 @@ package agents
 import (
 	"bytes"
 	"context"
+	"crypto/md5"  //nolint:gosec // shown for allow lists, never trusted (ADR-0070)
 	"crypto/sha1" //nolint:gosec // a certificate's thumbprint, as Windows shows it; not for security
 	"crypto/sha256"
 	"encoding/hex"
@@ -133,6 +134,10 @@ func (s *Service) LoadSignedBuilds(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("agents: loading the signed builds: %w", err)
 	}
+	if s.builtChanged != nil {
+		// The hash list follows what is served (ADR-0070).
+		s.builtChanged()
+	}
 	return nil
 }
 
@@ -154,14 +159,19 @@ func serveSigned(ctx context.Context, tx pgx.Tx, b *Builds, kept []SignedBuild, 
 			return fmt.Errorf("the signed build %s for %s does not match its SHA-256", sb.Version, sb.Arch)
 		}
 		signer := sb.Signer
+		md := md5.Sum(content) //nolint:gosec // shown for allow lists, never trusted (ADR-0070)
 		served[file] = signedContent{content: content, older: !releaseOf(b, file, sb.ReleaseSHA256), build: Build{
-			OS: windowsOS, Arch: sb.Arch, File: file, Size: int64(len(content)), SHA256: sb.SHA256,
+			OS: windowsOS, Arch: sb.Arch, File: file, Size: int64(len(content)), SHA256: sb.SHA256, MD5: hex.EncodeToString(md[:]),
 			Version: sb.Version, Signed: &signer, modTime: sb.UploadedAt,
 		}}
 	}
 	b.serve(served, withheld)
 	return nil
 }
+
+// OnServedBuildsChanged has f called after the served builds were loaded
+// or changed: a signed build accepted or removed (ADR-0070).
+func (s *Service) OnServedBuildsChanged(f func()) { s.builtChanged = f }
 
 // releaseOf says whether the release's build with a file name has a
 // SHA-256.

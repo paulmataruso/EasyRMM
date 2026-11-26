@@ -142,6 +142,13 @@ type HeartbeatRequest struct {
 	// Repair is the outcome of the last repair step the agent carried out
 	// (ADR-0069), sent until RepairReported after it ended.
 	Repair *RepairReport `json:"repair,omitempty"`
+	// Defender is the state of the agent's Microsoft Defender exclusions
+	// (ADR-0070); Windows agents send it only where the server's last
+	// answer allowed it.
+	Defender *DefenderReport `json:"defender,omitempty"`
+	// InstalledFiles are the hashes of what is installed on the device
+	// (ADR-0070), sent when something changed, and once a day.
+	InstalledFiles *InstalledFiles `json:"installedFiles,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -186,6 +193,10 @@ type HeartbeatResponse struct {
 	// Logs says how the agent logs: verbose, and whether someone watches
 	// (ADR-0069).
 	Logs *LogInstructions `json:"logs,omitempty"`
+	// Defender says whether the agent may manage Defender exclusions and
+	// report installed-file hashes on this device (ADR-0070). Absent from
+	// older servers, which means no.
+	Defender *DefenderPolicy `json:"defender,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

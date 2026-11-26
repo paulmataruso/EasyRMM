@@ -306,6 +306,70 @@ jobs:
           Write-Output "Run as LocalSystem: $percent% of the $total statements of agent/powershell/powershell_windows.go (floor $floor%)"
           if ($percent -lt $floor) { throw "Below the floor of $floor%." }
 
+  # ADR-0070: the agent's Microsoft Defender exclusions on a real Windows
+  # with Defender running, not mocked. Step 0 runs the install script a
+  # server hands out against a stand-in and proves its order and its
+  # clean-up; the rest runs as LocalSystem, as the agent does: exclusions of
+  # all four kinds added and removed (a path added by hand survives), a
+  # folder Users may write never excluded, DisableLocalAdminMerge reported,
+  # not_applicable where Defender is not active, the installed-file hashes,
+  # and the AMSI probe, whose result is logged for the ADR and which fails if
+  # AMSI is not what it was. Real-time protection is on where the image
+  # allows it; where it does not, the tests that need it skip and say why.
+  # Not here, for want of a MeshAgent and the EasyPatch agent's slice: the
+  # moved work of the winget and agent-update runs, MeshAgent's update, and
+  # the .NET extraction folders (steps 5, 7 and 8; the EasyPatch side is
+  # slice B). They are untested until run on real devices.
+  windows-defender:
+    name: Defender exclusions on Windows (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-2022, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Defender as the image leaves it
+        run: |
+          Get-MpComputerStatus | Select-Object AMRunningMode, AntivirusEnabled, RealTimeProtectionEnabled, IsTamperProtected | Format-List | Out-String | Write-Output
+          Get-MpPreference | Select-Object DisableLocalAdminMerge, EnableControlledFolderAccess | Format-List | Out-String | Write-Output
+      - name: Build the agent, the install script and the tests
+        run: |
+          go build -o "$env:RUNNER_TEMP\easyrmm-agent.exe" ./agent/cmd/easyrmm-agent
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:EASYRMM_WRITE_INSTALL_PS1 = "$env:RUNNER_TEMP\install.ps1"
+          go test -count=1 -run TestWriteInstallScriptForCI ./server/internal/httpapi/agentapi/
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -c -o "$env:RUNNER_TEMP\defender.test.exe" ./agent/defender
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Step 0, the install script's order and its clean-up
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/defender-install-order.ps1 -Script "$env:RUNNER_TEMP\install.ps1" -Agent "$env:RUNNER_TEMP\easyrmm-agent.exe"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Steps 1 to 4, 6, 8a and 9, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\defender.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', '-test.timeout=30m' `
+            -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\defender" -Environment 'EASYRMM_TEST_SYSTEM=1' -TimeoutMinutes 35
+          exit $LASTEXITCODE
+      - name: Defender is as the image left it
+        if: always()
+        run: |
+          Get-MpComputerStatus | Select-Object AMRunningMode, AntivirusEnabled, RealTimeProtectionEnabled | Format-List | Out-String | Write-Output
+          $left = (Get-MpPreference).ExclusionPath | Where-Object { $_ -like '*EasyRMM*' }
+          if ($left) { throw "Exclusions were left behind: $left" }
+
   build:
     name: Build server
     runs-on: ubuntu-latest

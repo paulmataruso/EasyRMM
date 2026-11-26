@@ -379,6 +379,10 @@ func run(ctx context.Context, stdin string, env []string, name string, args ...s
 	return 0, out.Bytes(), nil
 }
 
+// tempEnv points a program's TEMP and TMP at dir, so that what it writes
+// there stays inside a folder the agent owns (ADR-0070).
+func tempEnv(dir string) []string { return []string{"TEMP=" + dir, "TMP=" + dir} }
+
 // tail returns the last lines of a program's output, for an error message.
 func tail(out []byte) string {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")

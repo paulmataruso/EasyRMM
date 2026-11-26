@@ -261,6 +261,9 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	if !service {
 		return nil
 	}
+	// The folders are locked down and excluded before the service starts
+	// (ADR-0070).
+	e.defenderInstall(ctx)
 	if err := e.putService(ctx); err != nil {
 		return err
 	}
@@ -327,6 +330,7 @@ func (e *env) repairInstall(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("this machine is not enrolled, and a repair makes no enrollment: %w", err)
 	}
+	e.defenderRepair(ctx)
 	if err := e.putService(ctx); err != nil {
 		return err
 	}
@@ -443,6 +447,12 @@ func (e *env) run(ctx context.Context) error {
 		// Disks are named as the inventory names them (ADR-0065).
 		hw := &hardware.Reader{Log: e.log}
 		r.Hardware = hw.Read
+		if in := e.installedFiles(); in != nil {
+			r.Installed = in
+		}
+		if dm := e.defenderManager(); dm != nil {
+			r.Defender = dm
+		}
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
 	if !supported() {
@@ -697,6 +707,11 @@ func (e *env) uninstall(ctx context.Context, args []string) error {
 // removeFiles deletes the agent's state and executables. later reports an
 // executable in use, which Windows deletes at the next restart.
 func (e *env) removeFiles() (later bool, err error) {
+	// What the agent excluded from Defender goes first, while the record
+	// and the folders are still there; what could not go is kept in the
+	// record for a new install (ADR-0070).
+	left := e.defenderRemove()
+	defer e.defenderKeep(left)
 	if err := e.store.Remove(); err != nil {
 		return false, err
 	}

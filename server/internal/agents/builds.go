@@ -2,6 +2,7 @@ package agents
 
 import (
 	"bytes"
+	"crypto/md5" //nolint:gosec // shown next to SHA-256 for allow lists that ask for MD5; never used to trust anything (ADR-0070)
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -24,6 +25,9 @@ type Build struct {
 	File   string `json:"file"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+	// MD5 is shown beside SHA-256 for allow lists that ask for it; nothing
+	// is ever trusted by it (ADR-0070).
+	MD5 string `json:"md5"`
 	// Version is what the build's "version" command prints, from the
 	// directory's VERSION file; empty without one.
 	Version string `json:"version"`
@@ -130,11 +134,11 @@ func (b *Builds) describe(name string) (Build, error) {
 	if err != nil {
 		return Build{}, fmt.Errorf("agent builds: %w", err)
 	}
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	h, m := sha256.New(), md5.New() //nolint:gosec // see the import
+	if _, err := io.Copy(io.MultiWriter(h, m), f); err != nil {
 		return Build{}, fmt.Errorf("agent builds: reading %s: %w", name, err)
 	}
-	return Build{File: name, Size: st.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), modTime: st.ModTime()}, nil
+	return Build{File: name, Size: st.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), MD5: hex.EncodeToString(m.Sum(nil)), modTime: st.ModTime()}, nil
 }
 
 // List returns the builds the server serves, by file name: a signed build

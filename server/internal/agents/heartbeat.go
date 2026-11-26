@@ -34,7 +34,16 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		update    *agentproto.SignedUpdate
 		uninstall *agentproto.SignedUninstall
 	)
+	// What the agent may do about Defender, and what it reported of it
+	// (ADR-0070); a bad report is refused before anything is stored.
+	allowed := s.defenderAllowed(d.OrganizationID)
+	report, err := checkDefenderReport(req)
+	if err != nil {
+		return nil, err
+	}
+	var before string
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, '') FROM devices WHERE id = $1`, d.ID).Scan(&before)
 		// The name follows the hostname until someone renames the device.
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
@@ -49,6 +58,11 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrUnknownDevice
+		}
+		if allowed {
+			if err := s.storeDefender(ctx, tx, d, f.hostname, ip, report); err != nil {
+				return err
+			}
 		}
 		if f.meshNode != "" && f.meshNode != d.MeshNodeID {
 			if linked, err = s.link(ctx, tx, d, f, ip); err != nil {
@@ -82,6 +96,10 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	if linked && s.mesh != nil {
 		s.mesh.Linked()
 	}
+	if s.version != nil && f.version != "" && f.version != before {
+		// A build the list may not hold yet (ADR-0070).
+		s.version(f.version)
+	}
 	available, err := s.meshAvailable(ctx, d.SiteID)
 	if err != nil {
 		s.log.Warn("agents: checking remote access failed", "error", err, "device_id", d.ID)
@@ -93,6 +111,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		JobKey:           s.jobKey,
 		Update:           update,
 		Uninstall:        uninstall,
+		Defender:         &agentproto.DefenderPolicy{Enabled: allowed},
 	}, nil
 }
 
