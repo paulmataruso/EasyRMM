@@ -57,6 +57,7 @@ type fakeServer struct {
 	reports []agentproto.EscrowVolumesReport
 	records []agentproto.EscrowRecord
 	need    []agentproto.EscrowNeed
+	watch   bool
 	answer  agentproto.EscrowAnswer
 	err     error
 }
@@ -65,7 +66,7 @@ func (f *fakeServer) EscrowVolumes(_ context.Context, r agentproto.EscrowVolumes
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reports = append(f.reports, r)
-	return agentproto.EscrowVolumesAnswer{Need: f.need}, nil
+	return agentproto.EscrowVolumesAnswer{Need: f.need, Watch: f.watch}, nil
 }
 
 func (f *fakeServer) EscrowUpload(_ context.Context, r agentproto.EscrowRecord) (agentproto.EscrowAnswer, error) {

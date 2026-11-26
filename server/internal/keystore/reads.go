@@ -364,7 +364,13 @@ func (s *Service) release(ctx context.Context, c access.Caller, e *escrowRef, in
 		key, kerr = s.ks.ReadEscrow(ctx, rid, e.id.String(), e.wrapped, EscrowContext{
 			Org: e.org.String(), Device: e.device.String(), Volume: e.volume, Protector: e.protector, OrgKey: e.orgKey.String(), Kind: e.kind,
 		}, e.enc, e.ct, e.finger)
-		return kerr
+		if kerr != nil {
+			return kerr
+		}
+		// A key that was read is rotated: the agent adds a new one, escrows it
+		// and removes this one, ten minutes from now (ADR-0081 section 5).
+		_, err := tx.Exec(ctx, `UPDATE recovery_key_escrows SET rotation_due = true, rotation_due_at = now(), updated_at = now() WHERE id = $1 AND state = 'verified'`, e.id)
+		return err
 	})
 	if err != nil {
 		clear(key) // a failed commit discards the key

@@ -199,6 +199,21 @@ type Settings struct {
 	// Approvers is how many people hold the approve permission here; two are
 	// needed to turn the rule on.
 	Approvers int `json:"approvers"`
+	// Key is the organization's escrow key as rotation sees it; nil before
+	// the organization's first escrow makes one.
+	Key *OrgKeyInfo `json:"key,omitempty"`
+}
+
+// OrgKeyInfo says where an organization's escrow key rotation stands: the
+// active key's version and the KEK version wrapping it, how many retired keys
+// are kept, and how many records still wait to be moved to the active key.
+// No key material.
+type OrgKeyInfo struct {
+	Version    int       `json:"version"`
+	KEKVersion int       `json:"kekVersion"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Retired    int       `json:"retired"`
+	ToMove     int       `json:"toMove"`
 }
 
 func (s *Service) approvers(ctx context.Context, org uuid.UUID) (int, error) {
@@ -224,7 +239,35 @@ func (s *Service) SettingsOf(ctx context.Context, c access.Caller, org uuid.UUID
 		return Settings{}, err
 	}
 	l, err := s.luksEscrowOn(ctx, org)
-	return Settings{TwoPerson: on, LUKSEscrow: l, Approvers: n}, err
+	if err != nil {
+		return Settings{}, err
+	}
+	info, err := s.orgKeyInfo(ctx, org)
+	return Settings{TwoPerson: on, LUKSEscrow: l, Approvers: n, Key: info}, err
+}
+
+func (s *Service) orgKeyInfo(ctx context.Context, org uuid.UUID) (*OrgKeyInfo, error) {
+	var k OrgKeyInfo
+	found := false
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT version, kek_version, created_at FROM keystore_org_keys
+			WHERE organization_id = $1 AND purpose = 'escrow' AND state = 'active'`, org).Scan(&k.Version, &k.KEKVersion, &k.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		return tx.QueryRow(ctx, `SELECT
+				(SELECT count(*) FROM keystore_org_keys WHERE organization_id = $1 AND purpose = 'escrow' AND state = 'retired'),
+				(SELECT count(*) FROM recovery_key_escrows e JOIN keystore_org_keys o ON o.id = e.org_key_id
+					WHERE e.organization_id = $1 AND o.state = 'retired' AND e.state IN ('verified', 'conflict', 'pending'))`, org).Scan(&k.Retired, &k.ToMove)
+	})
+	if !found {
+		return nil, err
+	}
+	return &k, err
 }
 
 // luksEscrowOn says whether the organization has turned LUKS escrow on.

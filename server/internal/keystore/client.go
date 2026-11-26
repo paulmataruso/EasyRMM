@@ -155,3 +155,32 @@ func (c *Client) Log(ctx context.Context, seq int64, limit int) (LogPage, error)
 	}
 	return LogPage{Prev: r.LogPrev, Entries: r.Entries}, nil
 }
+
+// RewrapOrgKey has the keystore move a wrapped organization key from the KEK
+// version that wraps it to the primary version. Only the new wrapped form and
+// its version come back.
+func (c *Client) RewrapOrgKey(ctx context.Context, org, keyID, purpose, wrappedPrivate string) (MadeKey, error) {
+	r, err := c.Do(ctx, Request{Op: OpRewrapOrgKey, Org: org, KeyID: keyID, Purpose: purpose, WrappedPrivate: wrappedPrivate})
+	if err != nil {
+		return MadeKey{}, err
+	}
+	if r.WrappedPrivate == "" || r.KEKVersion < 1 {
+		return MadeKey{}, fmt.Errorf("%w: unexpected answer", ErrUnavailable)
+	}
+	return MadeKey{WrappedPrivate: r.WrappedPrivate, KEKVersion: r.KEKVersion}, nil
+}
+
+// ResealEscrow has the keystore open a record under the organization's old key
+// and seal it to the new one. Old and next differ only in the key's ID. Only
+// ciphertext comes back.
+func (c *Client) ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newWrapped string, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error) {
+	r, err := c.Do(ctx, Request{Op: OpResealEscrow, ID: requestID, Record: record, WrappedPrivate: oldWrapped, Context: &old, NewContext: &next,
+		NewWrapped: newWrapped, Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: old.kindOrDefault()})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(r.Enc) != 32 || len(r.Ciphertext) == 0 {
+		return nil, nil, fmt.Errorf("%w: unexpected answer", ErrUnavailable)
+	}
+	return r.Enc, r.Ciphertext, nil
+}

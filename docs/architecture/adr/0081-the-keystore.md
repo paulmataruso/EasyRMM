@@ -800,6 +800,105 @@ Amended 2026-11-26 (decided in review, while building slice 3):
   capability; the console shows the card only for a Linux device that
   reported a LUKS volume.
 
+Amended 2026-11-26 (decided in review, while building slice 4):
+
+* **The native executor.** A native action is a job of shell `native` whose
+  script names a handler built into the agent. It is not a shell a person may
+  give a script (`agentproto.ValidShell` refuses it, and the jobs table's
+  `shell` check gains the value for the server's own jobs only); an agent
+  accepts it only if its poll lists the capability `job.native`, and the server
+  sends one only to such an agent; the payload must be of the params version,
+  so the signature covers the parameters' hash; the pin the job records is the
+  SHA-256 of the handler's name. The handler answers with the same single
+  result line a script prints (`agentproto.NativeResult`), so the server
+  records, types and audits it as it does any action, and no output is kept.
+  An agent without the handler fails the run and never runs the name as a
+  script.
+* **BitLocker `enable`** is `bitlocker.enable` of a module, `bitlocker`, that
+  is not in the modules catalogue: no role offers it and it has no toggle,
+  since turning BitLocker on is always a person's explicit act (the dev-scope
+  guard still applies). Its permission is `device.bitlocker.manage`, held by
+  organization administrators and the super administrator, and not by site
+  administrators or technicians; the action is `Destructive`, so it needs the
+  typed `bitlocker.enable:<computer's name>` (the name is compared with the
+  device's real name, as `SubjectIsDeviceName` does), a step-up and an audit
+  row recording both. The server's half of the gate (`EnableReady`) makes no
+  job unless the organization is in the dev scope, the keystore can wrap and
+  verify, and the organization has its escrow key. The agent's half is the
+  order in section 5, step 4, kept exactly: preconditions, add the
+  numerical-password protector, **report it, escrow it and wait for the server
+  to say verified**, then the TPM protector, then encryption. The agent also
+  refuses a computer that is not the one named, **a domain controller** (the
+  ADR allows none), a TPM that is not ready, an edition without BitLocker, a
+  pending restart, and a volume that already has BitLocker or any protector.
+  Clarified from step 4: a protector that the server did *not* verify (stale,
+  conflict, a failed upload) is removed again, because an unescrowed password
+  is useless to keep; one whose record is only *pending* (the keystore is
+  away) stays and encryption is still refused. The Windows reader now also
+  lists a volume with a drive letter that BitLocker is not on, as `decrypted`
+  with no protectors, which is what the console offers the action for. The
+  action does not run TPM+PIN (slice 6).
+* **Rotation after a read.** A read sets `rotation_due` and `rotation_due_at`
+  on the record in the same transaction that releases the key. Ten minutes
+  later (by the database's clock) the next report's answer carries
+  `Rotating` (BitLocker) or `Replace` (LUKS: its existing replace-after-verified
+  step is the rotation). The agent adds the new protector, reports it so that
+  the server knows it, escrows it, and only when the answer is *verified*
+  removes the old one. A new key that did not verify is removed again and the
+  old one stays. If the keystore was away (the answer is *pending*), nothing is
+  removed; when the new record is verified the server's next answer carries
+  `Remove` with the `Successor`, and the agent removes the old protector only
+  if the successor is on the volume (LUKS also through the backend's rules:
+  never the last slot, never a slot without EasyRMM's token, confirm-before-
+  remove). While a rotation is under way the answer says `Watch`, so the agent
+  reports every ten minutes instead of every hour. A rotation is complete when
+  the old protector is gone from a report and another verified record stands:
+  the old record becomes *superseded* and `recovery_key.rotated` is audited.
+* **The alert for a rotation that could not verify** (`rotation_unverified`,
+  warning, the organization's, mailed to its administrators once): raised when
+  a record that arrives for a volume whose key is due for rotation is stale,
+  and when a rotation has been due for more than a day (the computer is off or
+  its agent cannot finish). It carries no key, writes `recovery_key.rotation_failed`,
+  is behind `devscope.Allowed`, and closes when the rotation completes.
+* **KEK rotation.** `easyrmm-keystore new-version` and `verify-recovery` are
+  unchanged and still the host's. Once a version is verified it is the primary,
+  and the server's re-wrap job (`RewrapKEK`, every half minute with the pending
+  check) asks the keystore to unwrap each organization key with the version
+  that wraps it and wrap it with the primary (`rewrap_org_key`, on the service
+  socket; the key never leaves), and writes the new form and `kek_version` in
+  one update that succeeds only on the form it read. Nothing is deleted: the
+  old version stays in the keystore. The job is resumable because what is left
+  is what a query finds; it is an automatic behavior and checks
+  `devscope.Allowed` for each organization. The reconciliation compares each
+  key's recorded version with the version its wrapped form names and raises a
+  critical alert (`keystore_rewrap_drift`) on a difference. The console shows,
+  per version, how many organization keys it still wraps. **Not built, as the
+  slice list leaves them for slice 5:** `destroy-version`, and a console
+  request for a rotation (the ADR's text says only the host completes it).
+* **Organization-key rotation.** `POST /organizations/{id}/keystore/rotate-key`
+  (organization manager, step-up, refused as not found outside the dev scope)
+  makes the next escrow key, retires the active one in the same transaction and
+  audits it. Agents get the new key by the signed instruction at their next
+  heartbeat; they do not re-escrow, because the keystore moves the records:
+  `reseal_escrow` opens a record under the old key and seals it to the new one
+  inside the keystore, refusing unless the record's fingerprint is the one the
+  server holds and unless old and new contexts differ only in the key's ID; the
+  server then has the keystore open the result under the *new* key before it
+  replaces the stored record, and the replacement succeeds only on the record
+  it read. Verified and conflict records move; stale ones on a retired key are
+  superseded; pending ones wait for the check that settles them; superseded
+  ones are not moved. A retired key with no record left is marked drained once
+  and kept (wrapped, and still re-wrapped by a KEK rotation): its destruction
+  waits for the retention in section 4, which is slice 5.
+* **Honest limits.** The Windows manager's WMI calls (the numerical-password
+  protector, the TPM protector, `Encrypt` and its used-space flag, the TPM and
+  edition checks) were compiled and linted for Windows and exercised only
+  against a stand-in; the CI step on a file-backed virtual disk exercises the
+  recovery-password protectors where the runner's edition has BitLocker, and
+  nothing there has a TPM or encrypts. The agent cannot tell a removable drive
+  from a fixed one, so the console may offer the action for a USB drive with a
+  letter (its TPM step would then fail after the key is escrowed).
+
 ## References
 
 ADR-0007, 0009, 0023, 0037, 0047, 0052, 0053, 0054, 0055 (step-up), 0057, 0066,

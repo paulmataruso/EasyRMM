@@ -35,6 +35,25 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/keystore/alerts/{id}/resolve", a.resolveAlert)
 	r("GET /api/v1/organizations/{id}/keystore-settings", a.settings)
 	r("PUT /api/v1/organizations/{id}/keystore-settings", a.setSettings)
+	r("POST /api/v1/organizations/{id}/keystore/rotate-key", a.rotateKey)
+}
+
+// rotateKey makes a new escrow key for the organization and has the keystore
+// move the records to it (ADR-0081 section 10).
+func (a *API) rotateKey(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.RotateOrgKey(r.Context(), httpapi.Caller(r), id); err != nil {
+		return err
+	}
+	out, err := a.svc.SettingsOf(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusAccepted, out)
+	return nil
 }
 
 type readBody struct {

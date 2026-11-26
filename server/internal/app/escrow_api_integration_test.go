@@ -317,6 +317,38 @@ func readRecoveryKey(t *testing.T, h *harness, admin *client, adminTOTP, org, de
 	admin.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, adminTOTP, time.Now().Add(30*time.Second))}, nil)
 	wantStatus(t, admin.do("PUT", sp, map[string]any{"twoPerson": true}), http.StatusConflict, "need_approvers")
 
+	// ADR-0081 slice 4. The key that was just read is due for rotation, which
+	// the device's page shows; the platform status says what each KEK version
+	// still wraps; an organization's escrow key is rotated by its administrator
+	// with a step-up, never by a technician, and the new one is the next version.
+	var dev struct {
+		Volumes []struct {
+			Protectors []struct {
+				RotationDue bool `json:"rotationDue"`
+			} `json:"protectors"`
+		} `json:"volumes"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+device+"/escrow", nil, &dev)
+	if len(dev.Volumes) != 1 || len(dev.Volumes[0].Protectors) != 1 || !dev.Volumes[0].Protectors[0].RotationDue {
+		t.Fatalf("a key that was read is not shown as due for rotation: %+v", dev)
+	}
+	var plat struct {
+		KEKUsage []struct{ Version, Keys int } `json:"kekUsage"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/keystore", nil, &plat)
+	if len(plat.KEKUsage) != 1 || plat.KEKUsage[0].Version != 1 || plat.KEKUsage[0].Keys < 1 {
+		t.Fatalf("kek usage: %+v", plat.KEKUsage)
+	}
+	rk := "/api/v1/organizations/" + org + "/keystore/rotate-key"
+	wantStatus(t, rae.do("POST", rk, nil), http.StatusForbidden, "")
+	var rotated struct {
+		Key struct{ Version, Retired int } `json:"key"`
+	}
+	admin.expect(http.StatusAccepted, "POST", rk, nil, &rotated)
+	if rotated.Key.Version != 2 || rotated.Key.Retired != 1 {
+		t.Fatalf("after the rotation: %+v", rotated)
+	}
+
 	// With two approvers it turns on, and a read then waits for one of them.
 	type approver struct {
 		c      *client

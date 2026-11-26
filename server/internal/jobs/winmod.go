@@ -41,6 +41,18 @@ type ModuleGate interface {
 	Allowed(ctx context.Context, org, site uuid.UUID, m modules.Module) bool
 }
 
+// EscrowGate says whether a computer's recovery key can be escrowed and
+// verified now: the keystore is ready, the organization is in the development
+// scope and has its escrow key. It is the server's half of the verified-escrow
+// gate; the agent's half is that it starts no encryption before the server says
+// the key it sent is verified.
+type EscrowGate interface {
+	EnableReady(ctx context.Context, org, device uuid.UUID) error
+}
+
+// SetEscrowGate gives the service the gate native actions that need escrow ask.
+func (s *Service) SetEscrowGate(g EscrowGate) { s.escrow = g }
+
 // SetWinmod gives the service the catalog of actions, the module gate and
 // the sealer for secrets. Without them no winmod job is made.
 func (s *Service) SetWinmod(c *winmod.Catalog, g ModuleGate, sealer *secrets.Sealer) {
@@ -111,11 +123,15 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 	if !ok {
 		return nil, apperr.NotFound()
 	}
+	// A native action (ADR-0073 as amended by ADR-0081) is a job whose script
+	// names a handler built into the agent; everything else about it is a
+	// script action's.
+	shell, body := a.ShellName(), a.Script
 	if a.IsNative() {
-		// The catalog accepts native actions (ADR-0073 as amended by
-		// ADR-0081); the agent's native dispatch comes with the first one
-		// (BitLocker enable, ADR-0081 slice 4). Until then none runs.
-		return nil, apperr.Unavailable("winmod_native_unavailable", "This action needs an agent that runs native actions, which this server does not offer yet.")
+		shell, body = agentproto.ShellNative, a.Native
+	}
+	if a.NeedsEscrow && s.escrow == nil {
+		return nil, apperr.Unavailable("keystore_unavailable", "The keystore is not available on this server.")
 	}
 	chk, err := a.Validate(in.Params)
 	if err != nil {
@@ -134,7 +150,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 	if a.NeedsStepUp() && s.stepUp == nil {
 		return nil, apperr.Conflict("step_up_required", "This action needs step-up authentication (ADR-0055), which is not available yet.")
 	}
-	rec := winmodRecord{Module: string(a.Module), Action: a.Name, Version: a.Version, ScriptSHA256: agentproto.HashScript(a.Script),
+	rec := winmodRecord{Module: string(a.Module), Action: a.Name, Version: a.Version, ScriptSHA256: agentproto.HashScript(body),
 		Subject: chk.Subject, KeepSeconds: int(a.Keep.Seconds()), Automatic: in.Automatic}
 	for name := range chk.Secrets {
 		rec.Secrets = append(rec.Secrets, name)
@@ -149,7 +165,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 		ttl = winmodSecretWait
 	}
 	sp := &spec{
-		kind: KindWinmod, name: a.Label, shell: a.ShellName(), body: a.Script, args: []string{}, params: chk.Params,
+		kind: KindWinmod, name: a.Label, shell: shell, body: body, args: []string{}, params: chk.Params,
 		timeout: a.Timeout, auditAction: "winmod." + a.Name, winmod: recJSON, ttl: ttl,
 		details: map[string]any{"module": string(a.Module), "action": a.Name, "version": a.Version, "params": chk.Audit,
 			"sensitive": a.Sensitive, "destructive": a.Destructive, "confirmed": a.NeedsConfirm(), "stepUp": a.NeedsStepUp(), "automatic": in.Automatic},
@@ -167,7 +183,7 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 			return nil
 		},
 	}
-	r := rule{perm: a.Permission, verb: "use " + a.Label, platforms: agentproto.ShellPlatforms(a.ShellName()), runsOn: "Module actions run on", what: "module actions"}
+	r := rule{perm: a.Permission, verb: "use " + a.Label, platforms: agentproto.ShellPlatforms(shell), runsOn: "Module actions run on", what: "module actions"}
 	job, err := s.create(ctx, c, []uuid.UUID{in.DeviceID}, 1, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
 		ts, err := s.targets(ctx, tx, c, []uuid.UUID{in.DeviceID}, r)
 		if err != nil {
@@ -184,6 +200,13 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 			for _, p := range a.Params {
 				if _, sent := chk.Audit[p.Name]; sent && p.Needs != "" && !c.Can(p.Needs, rbac.Site(t.org, t.site)) {
 					return nil, apperr.Forbidden()
+				}
+			}
+			if a.NeedsEscrow {
+				// The verified-escrow gate, first half: no job for a computer
+				// whose key could not be escrowed and checked (ADR-0081 section 5).
+				if err := s.escrow.EnableReady(ctx, t.org, t.id); err != nil {
+					return nil, err
 				}
 			}
 			if a.SubjectIsDeviceName && !strings.EqualFold(strings.TrimSpace(chk.Subject), strings.TrimSpace(t.name)) {
