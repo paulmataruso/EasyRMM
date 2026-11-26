@@ -1167,8 +1167,9 @@ test("a Windows agent's roles are stored, and an organization turns a Windows mo
   await page.goto(`/organizations/${northwindId}?tab=windows-modules`);
   const dns = page.getByRole("checkbox", { name: "DNS" });
   await expect(dns).toBeChecked();
-  await dns.uncheck();
+  await dns.click();
   await expect(page.getByText("Saved.")).toBeVisible();
+  await expect(dns).not.toBeChecked();
   const list = (await (await page.request.get(`/api/v1/organizations/${northwindId}/windows-modules`)).json()) as { module: string; enabled: boolean }[];
   expect(list.find((m) => m.module === "dns")?.enabled).toBe(false);
 });
