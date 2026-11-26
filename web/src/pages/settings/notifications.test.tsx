@@ -41,6 +41,10 @@ function routes(view: MailServerView = NONE) {
     "GET /notifications/channels": ok({ channels: [] }),
     "GET /notices": ok({ notices: [] }),
     "GET /notifications/deliveries": ok({ deliveries: [], retentionDays: 30 }),
+    "GET /notifications/rules": ok({ rules: [] }),
+    "GET /maintenance-windows": ok({ windows: [] }),
+    "GET /notifications/silence": ok({ silence: null }),
+    "GET /notifications/quarantined": ok({ rows: [] }),
   };
 }
 

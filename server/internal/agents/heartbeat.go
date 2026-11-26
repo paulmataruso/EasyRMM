@@ -57,11 +57,11 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
 				hostname = $2, os_description = $3, platform = $4, agent_version = $5, agent_arch = $6,
-				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now(),
+				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now(), agent_role = coalesce(NULLIF($9, ''), agent_role),
 				meshagent_state = coalesce($8::jsonb, meshagent_state),
 				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
-			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState)
+			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role)
 		if err != nil {
 			return err
 		}
@@ -229,7 +229,14 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 	} else {
 		// Sessions started on the discovered device now belong to this one.
 		if _, err = tx.Exec(ctx, `UPDATE remote_grants SET device_id = $2 WHERE device_id = $1`, otherID, d.ID); err == nil {
-			_, err = tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, otherID)
+			// The journal reads the reason from this setting, so that the
+			// alerts the deletion takes read as merged, not removed.
+			if _, err = tx.Exec(ctx, `SELECT set_config('easyrmm.alert_delete_reason', 'merged', true)`); err == nil {
+				_, err = tx.Exec(ctx, `DELETE FROM devices WHERE id = $1`, otherID)
+			}
+			if err == nil {
+				_, err = tx.Exec(ctx, `SELECT set_config('easyrmm.alert_delete_reason', '', true)`)
+			}
 		}
 		details["mergedDevice"], details["mergedDeviceId"] = otherName, otherID.String()
 	}

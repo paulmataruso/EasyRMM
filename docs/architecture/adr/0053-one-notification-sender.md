@@ -66,6 +66,44 @@
     them there, after authorizing the caller.
   * `notification_channels.kind` admits email and webhook now; slice 5
     widens it.
+* Amended 2026-11-26 (decided in review), building slice 4:
+  * **One unsent digest per channel and organization charged**, not per
+    channel: a platform channel shared with several organizations is
+    charged to each organization whose rule produced the message, and a
+    digest has one charge. A channel's own recipients are the same for all
+    of them.
+  * **The planner does the fleet-wide hold's counting**, not `Evaluate`: it
+    reads `devices` and monitoring's serving floor (`Service.SeenFloor`) on
+    each run, and records the hold in `fleet_silences`. The devices counted
+    are those with an EasyRMM agent, not *Uninstalled*, that checked in
+    within the 8 minutes before the run (3 minutes online, then the 5-minute
+    window); a device that was already silent is not counted. The hold's
+    thresholds are the ADR's: at least half and at least 20, silent for 3
+    minutes, ended when more than half of those counted have checked in
+    after it began, or by a super administrator.
+  * **A policy change's hold is 5 minutes**; the restart extension (a
+    successor within ADR-0052's start delay after a restart) is not built:
+    a successor that opens after the planner released the resolution
+    starts a new incident. The acknowledgement of a held incident carries
+    over in the planner, not in `Evaluate`: the console's new alert does not
+    show it.
+  * **An alert acknowledged before its wait ended sends nothing**, as the
+    ADR says; an alert acknowledged after the wait but before the planner
+    saw it (up to 15 seconds) is still told, as acknowledged.
+  * **Stragglers in a site outage** are folded in silently: the channel
+    heard `sites.offline` once, with the alerts folded then; the later ones
+    are listed in `sites.online`.
+  * **Notice rules** (source *notices*) send a notice when it opens, when
+    it resolves (email, Slack and Teams: if the rule says so; webhooks
+    always) and, for webhooks that ask, when it is acknowledged. Maintenance
+    windows do not hold notices.
+  * **`agent_uninstalled_at`** is added in slice 4 (the outage and hold
+    queries name it); slice 7 sets it and adds the other columns of that
+    slice.
+  * **Not built in slice 4**: the `413` split at send time (a webhook
+    delivery carries one alert, or the alerts folded into one outage), the
+    transient-failure injection tests of the planner (its classification is
+    unit-tested), and `engine_handoffs`' journal row (slice 6).
 * Part of [the feature plan](../feature-plan.md): F2 and feature 7. Where
   this ADR departs from the plan, the plan lists it.
 

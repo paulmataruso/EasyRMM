@@ -109,6 +109,7 @@ function routes(session = ADMIN, extra: Record<string, unknown> = {}) {
     "GET /organizations/:id/compliance/settings": ok({ enabled: true, freshnessDays: 30, scanSchedule: null, scanProfile: null }),
     "GET /organizations/:id/compliance/summary": ok(SUMMARY),
     "GET /sites/:id/compliance/summary": ok(SUMMARY),
+    "GET /organizations/:id/compliance/assessments": ok({ items: [] }),
     "GET /organizations/:id/compliance/fixes": ok({ items: ITEMS }),
     "GET /organizations/:id/compliance/fix-settings": ok({ requireApproval: [] }),
     "GET /organizations/:id/compliance/packs": ok({

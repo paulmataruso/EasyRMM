@@ -214,6 +214,7 @@ type facts struct {
 	meshNode                              string            // MeshCentral encoding, "" if none
 	sha256                                string            // the agent's executable, "" if not reported
 	meshSettings                          string            // the MeshAgent settings the agent applied, "" if not reported
+	role                                  string            // server or workstation, "" if not reported (ADR-0053)
 	roles                                 []agentproto.Role // the roles the agent detected, nil if not reported (ADR-0073)
 }
 
@@ -240,6 +241,9 @@ func cleanFacts(f agentproto.Facts) (facts, error) {
 		out.sha256 = f.AgentSHA256
 	}
 	out.roles = f.Roles
+	if f.Role == "server" || f.Role == "workstation" {
+		out.role = f.Role
+	}
 	if agentproto.ValidSHA256(f.MeshSettingsSHA256) {
 		out.meshSettings = f.MeshSettingsSHA256
 	}

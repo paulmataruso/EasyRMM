@@ -31,6 +31,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance"
 	calerts "github.com/paulmataruso/easyrmm/server/internal/compliance/alerts"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/assess"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/content"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/fix"
@@ -148,6 +149,8 @@ type Deps struct {
 	Compliance *engine.Service
 	// ComplianceFix is the compliance fix queue (ADR-0078, slice C2).
 	ComplianceFix *fix.Service
+	// ComplianceAssess is the assessment workspace (ADR-0078, slice C5).
+	ComplianceAssess *assess.Service
 	// Posture is endpoint security posture (ADR-0082), and ComplianceAlerts the
 	// two compliance alerts.
 	Posture          *posture.Service
@@ -288,6 +291,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	d.ComplianceFix.SetStepUp(sessions)
+	d.ComplianceAssess = assess.New(db, auditLog, sealer, log)
+	d.ComplianceAssess.SetStepUp(sessions)
 	d.ComplianceAlerts = calerts.New(db, log)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
 		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
@@ -672,7 +677,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
-	complianceapi.New(d.Compliance, d.ComplianceFix).Register(mux)
+	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
 	postureapi.New(d.Posture).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
@@ -863,6 +868,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Recovery.Run(ctx) })
 	wg.Go(func() { deps.Keystore.Run(ctx) })
 	deps.Notify.SetHeld(hold.Held)
+	deps.Notify.SetSeenFloor(deps.Monitoring.SeenFloor)
 	wg.Go(func() { deps.Notify.Run(ctx) })
 	if deps.TLS != nil {
 		deps.TLS.SetHeld(hold.Held)

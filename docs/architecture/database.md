@@ -510,6 +510,26 @@ UUID is the platform's owner key.
 The down migration drops them all, the triggers and the function, and the
 constraint on `organizations`.
 
+## Device alert rules, incidents, windows and the fleet-wide hold (migration 00077, renumbered by the integrator)
+
+ADR-0053, slice 4. Every table has row-level security enabled and forced.
+
+| Table | Notes |
+|---|---|
+| `devices` | Gains `agent_role` (what the agent reported), `role` and `role_set_by` (what someone with `monitoring.manage` set; wins), and `agent_uninstalled_at` (set from slice 7) |
+| `notification_rules` | `owner` the organization or the nil UUID; `source` alerts or notices; `orgs_mode`, `sites_mode`, `groups_mode` any or list; `device_kinds`, `severities`, `conditions`, `checks` arrays (NULL is any, an empty array matches nothing); wait 0 to 1,440 minutes; reminders 0 to 720 hours; `ignore_windows` only for the platform's. Unique `(id, owner)`, name unique per owner. Read and written in the owner's scope |
+| `notification_rule_orgs`, `_sites`, `_groups` | The lists. Sites as `(organization_id, site_id)` and groups as `(site_id, device_group_id)` with composite keys that cascade; `CHECK` that an organization's rule lists only its own organization |
+| `notification_rule_channels` | `(rule_id, owner)` and `(channel_id, channel_owner)` composite keys; `channel_owner` is the rule's owner or the nil UUID. A trigger refuses a platform channel not shared with the organization and a twenty-first channel; unsharing deletes the links (`easyrmm_unshare_links`) |
+| `site_maintenance_windows` | Weekly (`days`, `start_local`, up to 24 hours) or once (`starts_local`, up to 7 days), as the site's clock reads it; `active` is what the planner last saw. Read with the site, written in the organization's or site's scope |
+| `alert_incidents`, `alert_incident_alerts` | An incident: the first alert's ID, the alert as it opened (device, site, names cleaned and clipped), its status (open, acknowledged, held after a policy change, resolved). No foreign keys, so a deletion takes nothing with it. Platform scope only |
+| `alert_notifications` | Per subject (incident, site outage or notice) and channel: the rule's settings as they were when it matched, when the opening is due, what was told, folded into which outage. Foreign key to the channel only. Platform scope only |
+| `site_outages` | A site's outage and when it ended; read with the site, written at platform scope |
+| `fleet_silences` | The fleet-wide hold: start, end, the devices counted, who ended it. One open at a time. Platform scope only |
+| `notification_events` | Gains the alert triggers: `easyrmm_alert_journal()` (`SECURITY DEFINER`) on `alerts` insert, on a change of status or acknowledgement, and on delete of an unresolved alert, with the deletion's reason (`merged`, or `device_removed`) from the transaction-local setting `easyrmm.alert_delete_reason` that the heartbeat's merge sets around its `DELETE` |
+
+The down migration drops them, the triggers and functions, the alert rows of
+the journal, and the columns of `devices`.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

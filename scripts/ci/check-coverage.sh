@@ -86,12 +86,21 @@ floors=(
   "server/internal/compliance/scan         92"
   "server/internal/compliance/engine       70"
   "server/internal/compliance/fix          72"
+  # The assessment workspace (ADR-0078, C5): the score range and its gate, the roll-up, the workflow
+  # and the freeze, evidence, the plan of action, exports and the OSCAL writer.
+  "server/internal/compliance/assess       75"
+  "server/internal/compliance/assess/export 85"
+  "server/internal/compliance/assess/oscal 90"
+  "server/internal/compliance/content/templates 75"
   # Security posture (ADR-0082) and the two compliance alerts.
   "server/internal/posture                 75"
   "server/internal/compliance/alerts       65"
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"
+  # The one notification sender and its address policy (ADR-0053).
+  "server/internal/notify                  78"
+  "server/internal/addrpolicy              88"
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"

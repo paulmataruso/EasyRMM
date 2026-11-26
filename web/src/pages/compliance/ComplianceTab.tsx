@@ -9,6 +9,7 @@ import { formatRelative } from "../../lib/format";
 import type { LevelTabProps } from "../organizations/levelTabs";
 import { ComplianceScan } from "./ComplianceScan";
 import { FixQueue } from "./FixQueue";
+import { CmmcWorkspace } from "./cmmc/CmmcWorkspace";
 import { FrameworkResults } from "./FrameworkResults";
 import { TIERS } from "./complianceText";
 
@@ -86,6 +87,8 @@ function On({ organizationId, settings, canEdit, canScan }: { organizationId: st
       <Card title="Results by framework">
         <FrameworkResults organizationId={organizationId} />
       </Card>
+
+      <CmmcWorkspace organizationId={organizationId} />
 
       {canEdit && <ApprovalSetting organizationId={organizationId} />}
       {canEdit && (

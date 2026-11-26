@@ -702,6 +702,11 @@ stay with that organization after a move (listed as stays, like `job_runs`),
 so evidence already shown for it is not rewritten; the device's next scan is
 the new organization's.
 
+The assessment workspace (ADR-0078 C5, migration `00076`): every table an assessment holds (`compliance_assessments`,
+`_implementations`, `_objective_results`, `_attestations`, `_evidence`, `_evidence_links`, `_org_keys`, `_poam_items`,
+`_poam_milestones`, `_documents`, `_document_sections`, `_score_snapshots`) is the organization's own record and is listed as
+owned: a device move leaves it alone. `compliance_scope_assets` names computers: its rows stay with the assessment
+(listed as stays), and a computer that has moved to another organization drops out of that organization's scope reading.
 ### Amended 2026-11-26 (decided in review), the registry editor's masked store
 
 `registry_masked_values` (ADR-0067, migration `00072`) holds a copy of the
@@ -743,6 +748,15 @@ ADR-0053's slice 3 tables (migration `00074`): `notification_channels`,
 `notification_channel_shares` and `notification_quotas` belong to their
 organization (owned). A notice in `notices` was raised to the organization
 of its time and stays with it when a device it names moves.
+
+### Amended 2026-11-26 (decided in review), device alert rules
+
+ADR-0053's slice 4 tables (migration `00077`): `notification_rules` and
+its `notification_rule_orgs`, `notification_rule_sites` and
+`notification_rule_groups`, and `site_maintenance_windows`, belong to
+their organization or site (owned). An incident in `alert_incidents` and a
+site outage in `site_outages` were raised in the organization of their
+time and stay with it when a device they name moves.
 
 ## References
 

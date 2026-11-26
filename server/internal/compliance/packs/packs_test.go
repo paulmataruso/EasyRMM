@@ -3,6 +3,7 @@ package packs_test
 import (
 	"encoding/json"
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -226,15 +227,32 @@ func TestNIST800171Catalogue(t *testing.T) {
 	if technical == 0 || organisational == 0 {
 		t.Errorf("classes: %d technical, %d organisational", technical, organisational)
 	}
-	// The DoD methodology's weights total 313. EasyRMM's transcription is not verified against the
-	// published table (ADR-0078 amended 2026-11-26), so the pack says so and the total is not asserted
-	// until it is; C5 must not compute a SPRS range from weights marked unverified.
-	if f.Framework.WeightsChecked {
-		if sum != 313 {
-			t.Errorf("verified weights total %d, want 313", sum)
+	// The weights are checked against a fixture of the DoD methodology's published table (our own
+	// transcription of the numbers, verified against Version 1.2.1, Annex A).
+	if !f.Framework.WeightsChecked {
+		t.Error("the weights are verified against the DoD methodology, and the pack must say so")
+	}
+	if sum != 313 {
+		t.Errorf("weights total %d, want 313", sum)
+	}
+	fx := sprsFixture(t)
+	for _, r := range f.Requirements {
+		if want := fx.Weights[r.ReqID]; *r.Weight != want {
+			t.Errorf("%s: weight %d, the methodology says %d", r.ReqID, *r.Weight, want)
 		}
-	} else if sum < 300 || sum > 313 {
-		t.Errorf("unverified weights total %d, far from 313", sum)
+		if p, ok := fx.Partial[r.ReqID]; ok && r.Flags["partial_points"] != float64(p) {
+			t.Errorf("%s: partial credit %v, want %d", r.ReqID, r.Flags["partial_points"], p)
+		}
+	}
+	if fx.Total != 313 {
+		t.Errorf("fixture total %d", fx.Total)
+	}
+	var fixtureSum int
+	for _, w := range fx.Weights {
+		fixtureSum += w
+	}
+	if fixtureSum != 313 || len(fx.Weights) != 110 {
+		t.Errorf("fixture: %d requirements totalling %d", len(fx.Weights), fixtureSum)
 	}
 	t.Logf("weights total %d (verified: %v)", sum, f.Framework.WeightsChecked)
 }
@@ -331,5 +349,54 @@ func TestLintCatchesARestrictedPackInACommercialBuild(t *testing.T) {
 	errs := packs.Lint(m, compliance.EditionCommercial)
 	if !errsHave(errs, "packs/fixture-restricted.json: licence class RESTRICTED is not allowed in a commercial build") {
 		t.Errorf("%v", errs)
+	}
+}
+
+type sprsFx struct {
+	Total   int            `json:"total"`
+	Weights map[string]int `json:"weights"`
+	Partial map[string]int `json:"partial"`
+}
+
+func sprsFixture(t *testing.T) sprsFx {
+	t.Helper()
+	b, err := os.ReadFile("testdata/dod-sprs-weights-v1.2.1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fx sprsFx
+	if err := json.Unmarshal(b, &fx); err != nil {
+		t.Fatal(err)
+	}
+	return fx
+}
+
+// The Level 2 pack carries the same weights under CMMC's practice ids, and the six practices a
+// plan of action may never hold are data.
+func TestCMMCL2WeightsAndBarred(t *testing.T) {
+	fx := sprsFixture(t)
+	l2 := pack(t, "cmmc-l2")
+	barred := map[string]bool{}
+	var sum int
+	for _, r := range l2.Requirements {
+		n, _ := r.Flags["nist"].(string)
+		if *r.Weight != fx.Weights[n] {
+			t.Errorf("%s: weight %d, want %d", r.ReqID, *r.Weight, fx.Weights[n])
+		}
+		sum += *r.Weight
+		if r.Flags["poam_barred"] == true {
+			barred[n] = true
+		}
+	}
+	if sum != 313 {
+		t.Errorf("level 2 weights total %d", sum)
+	}
+	for _, id := range []string{"3.1.20", "3.1.22", "3.12.4", "3.10.3", "3.10.4", "3.10.5"} {
+		if !barred[id] {
+			t.Errorf("%s is not marked barred from a plan of action", id)
+		}
+	}
+	if len(barred) != 6 {
+		t.Errorf("%d barred, want 6", len(barred))
 	}
 }

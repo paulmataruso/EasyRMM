@@ -1,0 +1,45 @@
+{
+ "id": "policy-v1",
+ "kind": "policy",
+ "title": "Policy",
+ "author": "EasyRMM",
+ "licence_class": "ORIGINAL",
+ "sections": [
+  {
+   "id": "purpose",
+   "heading": "Purpose",
+   "generate": "",
+   "body": "State in a few sentences what this policy protects and why."
+  },
+  {
+   "id": "scope",
+   "heading": "Who and what it applies to",
+   "generate": "",
+   "body": "Name the people, systems and information this policy covers."
+  },
+  {
+   "id": "statements",
+   "heading": "What the organization requires",
+   "generate": "",
+   "body": "Write each rule as a short, plain sentence that someone could check.\nUse 'must' for what is required and 'may' for what is allowed."
+  },
+  {
+   "id": "roles",
+   "heading": "Who is responsible",
+   "generate": "",
+   "body": "Name the roles that carry out and oversee the rules."
+  },
+  {
+   "id": "exceptions",
+   "heading": "Exceptions",
+   "generate": "",
+   "body": "Say how an exception is asked for, who may grant it and how it is recorded."
+  },
+  {
+   "id": "review",
+   "heading": "Review",
+   "generate": "",
+   "body": "Say how often the policy is reviewed and who approves changes."
+  }
+ ]
+}
