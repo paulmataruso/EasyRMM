@@ -238,6 +238,13 @@ const (
 	HardeningUnchecked = "unchecked"
 )
 
+// ComplianceFailing is Query.Compliance's one value (ADR-0078, section 7): a
+// computer with a stored compliance result that does not meet.
+const ComplianceFailing = "failing"
+
+// complianceFailingStates are the result states that do not meet.
+var complianceFailingStates = []string{"not_in_place", "partly", "half_applied", "failed"}
+
 // attentionStates are the module states HardeningAttention looks for, as
 // the jobs package names them.
 var attentionStates = []string{"partly", "not_in_place", "half_applied", "failed"}
@@ -269,6 +276,8 @@ type Query struct {
 	Hardening string
 	// DiskHealth is "" or one of the Disk* filters.
 	DiskHealth string
+	// Compliance is "" or ComplianceFailing.
+	Compliance string
 }
 
 // MaxList bounds one list response.
@@ -450,6 +459,9 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	default:
 		return nil, apperr.Invalid("hardening", "Use attention, in_place or unchecked.")
 	}
+	if q.Compliance != "" && q.Compliance != ComplianceFailing {
+		return nil, apperr.Invalid("compliance", "Use failing.")
+	}
 	switch q.DiskHealth {
 	case "", DiskFailing, DiskWarning, DiskUnknown, DiskHealthy, DiskUnavailable, DiskUnsupported, DiskNotReported:
 	default:
@@ -469,6 +481,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				WHEN 'in_place' THEN hc.device_id IS NOT NULL AND NOT coalesce(hs.states ?| $7::text[], false)
 				WHEN 'unchecked' THEN d.platform IN ('linux', 'windows') AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
 				ELSE true END
+			  AND ($11 = '' OR EXISTS (SELECT 1 FROM compliance_results cr WHERE cr.device_id = d.id AND cr.state = ANY ($12::text[])))
 			  AND CASE $8
 				WHEN '' THEN true
 				WHEN 'not_reported' THEN ds.label IS NULL
@@ -477,7 +490,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				ELSE ds.label IS NOT DISTINCT FROM $8 END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
 			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates,
-			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped)
+			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped, q.Compliance, complianceFailingStates)
 		if err != nil {
 			return err
 		}

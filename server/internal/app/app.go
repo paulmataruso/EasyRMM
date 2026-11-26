@@ -32,6 +32,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/compliance"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/content"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/fix"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/defenderlog"
@@ -134,6 +135,8 @@ type Deps struct {
 	// Compliance is the compliance engine: control library, packs and scans
 	// (ADR-0078).
 	Compliance *engine.Service
+	// ComplianceFix is the compliance fix queue (ADR-0078, slice C2).
+	ComplianceFix *fix.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
 	// Modules is the Windows management framework: roles and toggles
@@ -255,6 +258,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Compliance = engine.New(db, d.Jobs, auditLog, log)
 	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
 	d.Jobs.SetStepUp(sessions)
+	if d.ComplianceFix, err = fix.New(db, d.Jobs, d.Compliance, auditLog, log); err != nil {
+		return nil, err
+	}
+	d.ComplianceFix.SetStepUp(sessions)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
 		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
@@ -618,7 +625,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
-	complianceapi.New(d.Compliance).Register(mux)
+	complianceapi.New(d.Compliance, d.ComplianceFix).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
@@ -796,6 +803,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Compliance.Run(ctx) })
+	wg.Go(func() { deps.ComplianceFix.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })

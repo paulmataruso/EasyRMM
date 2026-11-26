@@ -9,16 +9,20 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
+	"github.com/paulmataruso/easyrmm/server/internal/compliance/fix"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/packs"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
 // API serves the compliance routes.
-type API struct{ svc *engine.Service }
+type API struct {
+	svc *engine.Service
+	fix *fix.Service
+}
 
 // New builds the API.
-func New(svc *engine.Service) *API { return &API{svc: svc} }
+func New(svc *engine.Service, fixes *fix.Service) *API { return &API{svc: svc, fix: fixes} }
 
 // Register mounts the routes. Every route requires a fully signed-in
 // session; the service checks each permission in the organization.
@@ -37,6 +41,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/organizations/{id}/compliance/scans/{scanId}", a.scan)
 	r("GET /api/v1/organizations/{id}/compliance/frameworks/{key}", a.framework)
 	r("GET /api/v1/devices/{id}/compliance", a.deviceResults)
+	a.registerFix(r)
 }
 
 func (a *API) controls(w http.ResponseWriter, r *http.Request) error {

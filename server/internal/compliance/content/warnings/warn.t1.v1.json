@@ -1,0 +1,14 @@
+{
+  "id": "warn.t1.v1",
+  "version": 1,
+  "tier": "T1",
+  "title": "A reversible change with no effect on services",
+  "paragraphs": [
+    "EasyRMM will change one setting on this computer. It does not stop a service or change who can sign in.",
+    "The old value is kept, so the change can be undone from this queue while the record of it is on the computer.",
+    "The setting is read again after the change. If it is not as intended, EasyRMM puts the old value back and marks the item as failed."
+  ],
+  "undoNote": "Undo puts back the value the computer had before.",
+  "typedRequired": false,
+  "stepUpRequired": false
+}

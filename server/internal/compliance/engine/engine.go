@@ -44,11 +44,21 @@ type Service struct {
 
 	mu     sync.Mutex
 	report []packs.Status
+	onDone func(ctx context.Context, scanID, org uuid.UUID, trigger string)
 }
 
 // New builds the service. jobs makes the hardening check jobs of a scan.
 func New(db *database.DB, j *jobs.Service, auditLog *audit.Logger, log *slog.Logger) *Service {
 	return &Service{db: db, jobs: j, audit: auditLog, log: log, now: time.Now}
+}
+
+// SetOnScanDone registers what runs once when a scan finishes (the fix queue
+// reads the results then, ADR-0078 slice C2). It runs on the goroutine that
+// finished the scan and must not block for long.
+func (s *Service) SetOnScanDone(f func(ctx context.Context, scanID, org uuid.UUID, trigger string)) {
+	s.mu.Lock()
+	s.onDone = f
+	s.mu.Unlock()
 }
 
 // SetClock replaces the clock, for tests.
@@ -319,6 +329,9 @@ type selection struct {
 	Unscanned  []string    `json:"notScanned,omitempty"`
 	WaitHours  int         `json:"waitHours,omitempty"`
 	Controlsum string      `json:"controlsSha256"`
+	// ControlIDs name the controls of a single-control re-scan (a fix's
+	// verification); such a scan has no profile.
+	ControlIDs []string `json:"controlIds,omitempty"`
 }
 
 // controlsOf loads a profile's hardening controls, at their latest versions.
@@ -353,6 +366,80 @@ func controlsOf(ctx context.Context, tx pgx.Tx, profile string) (ver string, fw 
 	}
 	return ver, fw, cs, other, rows.Err()
 }
+
+// controlsByID loads hardening controls by id, at their latest versions.
+func controlsByID(ctx context.Context, tx pgx.Tx, ids []string) ([]scan.Control, error) {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT ON (id) id, version, executor, executor_ref FROM compliance_controls
+		WHERE id = ANY ($1) ORDER BY id, version DESC`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cs []scan.Control
+	for rows.Next() {
+		var c scan.Control
+		var exec string
+		var ref compliance.HardeningRef
+		if err := rows.Scan(&c.ID, &c.Version, &exec, &ref); err != nil {
+			return nil, err
+		}
+		if exec != compliance.ExecHardening {
+			continue
+		}
+		c.Platform, c.Module, c.Setting = ref.Platform, ref.Module, ref.Setting
+		cs = append(cs, c)
+	}
+	return cs, rows.Err()
+}
+
+// StartVerify asks one computer for a fresh check of the modules of some
+// controls and records their results as a scan of its own (trigger
+// "verify"): the re-scan that follows a fix, the only thing that may move
+// a control's state (ADR-0078, section 6). It is an automatic behavior of
+// the fix queue and is refused for an organization outside the development
+// scope.
+func (s *Service) StartVerify(ctx context.Context, org, dev uuid.UUID, controlIDs []string) (uuid.UUID, error) {
+	if !devscope.Allowed(org) {
+		return uuid.Nil, apperr.Conflict("not_available", "Compliance is not available for this organization in this build.")
+	}
+	var (
+		ctrls  []scan.Control
+		d      device
+		scanID = uuid.New()
+	)
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var err error
+		if ctrls, err = controlsByID(ctx, tx, controlIDs); err != nil {
+			return err
+		}
+		if len(ctrls) == 0 {
+			return apperr.Invalid("controls", "No control of these can be asked of a computer.")
+		}
+		d.id = dev
+		if err := tx.QueryRow(ctx, `SELECT platform FROM devices WHERE id = $1 AND organization_id = $2`, dev, org).Scan(&d.platform); err != nil {
+			return err
+		}
+		sel := selection{DeviceIDs: []uuid.UUID{dev}, Run: true, Controls: len(ctrls), Controlsum: controlsSum(ctrls), ControlIDs: controlIDs}
+		sj, _ := json.Marshal(sel)
+		_, err = tx.Exec(ctx, `INSERT INTO compliance_scans (id, organization_id, trigger, selection, state, started_at)
+			VALUES ($1, $2, 'verify', $3, 'planned', $4)`, scanID, org, sj, s.now())
+		return err
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.dispatch(ctx, access.System("compliance"), scanID, org, ScanInput{Run: true}, ctrls, []device{d}); err != nil {
+		_ = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			_, e := tx.Exec(ctx, `UPDATE compliance_scans SET state = 'failed', finished_at = now() WHERE id = $1`, scanID)
+			return e
+		})
+		return uuid.Nil, err
+	}
+	return scanID, nil
+}
+
+// Advance moves one scan forward, for the fix queue's own tick.
+func (s *Service) Advance(ctx context.Context, scanID uuid.UUID) error { return s.advance(ctx, scanID) }
 
 type device struct {
 	id       uuid.UUID
@@ -660,6 +747,10 @@ func (s *Service) advance(ctx context.Context, scanID uuid.UUID) error {
 	var ctrls []scan.Control
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		var e error
+		if len(sel.ControlIDs) > 0 {
+			ctrls, e = controlsByID(ctx, tx, sel.ControlIDs)
+			return e
+		}
 		_, _, ctrls, _, e = controlsOf(ctx, tx, sel.Profile)
 		return e
 	})
@@ -698,7 +789,29 @@ func (s *Service) advance(ctx context.Context, scanID uuid.UUID) error {
 			}
 		}
 	}
-	return s.finish(ctx, scanID, partial)
+	if err := s.finish(ctx, scanID, partial); err != nil {
+		return err
+	}
+	s.notifyDone(ctx, scanID, org)
+	return nil
+}
+
+// notifyDone tells the fix queue that a scan has just finished.
+func (s *Service) notifyDone(ctx context.Context, scanID, org uuid.UUID) {
+	s.mu.Lock()
+	f := s.onDone
+	s.mu.Unlock()
+	if f == nil {
+		return
+	}
+	var state, trigger string
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT state, trigger FROM compliance_scans WHERE id = $1`, scanID).Scan(&state, &trigger)
+	})
+	if err != nil || state == "planned" || state == "running" {
+		return
+	}
+	f(ctx, scanID, org, trigger)
 }
 
 func deref(s *string) *string {
@@ -997,6 +1110,20 @@ type FrameworkStatus struct {
 // there is none); computers with results outside that scan are listed out
 // of scope.
 func (s *Service) Framework(ctx context.Context, c access.Caller, org uuid.UUID, key string) (*FrameworkStatus, error) {
+	return s.framework(ctx, c, org, key, uuid.Nil)
+}
+
+// FrameworkForDevice is Framework over one computer's latest results
+// (ADR-0078, section 7: the device's view by framework). The computer must be
+// in the organization.
+func (s *Service) FrameworkForDevice(ctx context.Context, c access.Caller, org, device uuid.UUID, key string) (*FrameworkStatus, error) {
+	if device == uuid.Nil {
+		return nil, apperr.NotFound()
+	}
+	return s.framework(ctx, c, org, key, device)
+}
+
+func (s *Service) framework(ctx context.Context, c access.Caller, org uuid.UUID, key string, only uuid.UUID) (*FrameworkStatus, error) {
 	if err := requireOrg(c, rbac.PermComplianceView, org); err != nil {
 		return nil, err
 	}
@@ -1033,8 +1160,18 @@ func (s *Service) Framework(ctx context.Context, c access.Caller, org uuid.UUID,
 		}
 		var sid uuid.UUID
 		var selJSON []byte
+		if only != uuid.Nil {
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM devices WHERE id = $1 AND organization_id = $2`, only, org).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				return apperr.NotFound()
+			}
+		}
+		// A single-control re-scan (a fix's verification) is not the scan the roll-up reads.
 		err = tx.QueryRow(ctx, `SELECT id, selection FROM compliance_scans WHERE organization_id = $1 AND state IN ('done', 'partial')
-			ORDER BY started_at DESC LIMIT 1`, org).Scan(&sid, &selJSON)
+			AND trigger <> 'verify' ORDER BY started_at DESC LIMIT 1`, org).Scan(&sid, &selJSON)
 		var in []uuid.UUID
 		switch {
 		case err == nil:
@@ -1049,6 +1186,9 @@ func (s *Service) Framework(ctx context.Context, c access.Caller, org uuid.UUID,
 		default:
 			return err
 		}
+		if only != uuid.Nil {
+			in = []uuid.UUID{only}
+		}
 		ctrl := map[string]bool{}
 		for _, r := range reqs {
 			for _, m := range r.Mappings {
@@ -1062,7 +1202,7 @@ func (s *Service) Framework(ctx context.Context, c access.Caller, org uuid.UUID,
 		results := map[string]map[uuid.UUID]rollup.Result{}
 		have := map[uuid.UUID]bool{}
 		rr, err := tx.Query(ctx, `SELECT control_id, device_id, state, checked_at, owner FROM compliance_results
-			WHERE organization_id = $1 AND control_id = ANY ($2)`, org, ids)
+			WHERE organization_id = $1 AND control_id = ANY ($2) AND ($3 = '00000000-0000-0000-0000-000000000000'::uuid OR device_id = $3)`, org, ids, only)
 		if err != nil {
 			return err
 		}
