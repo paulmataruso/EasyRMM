@@ -1,6 +1,6 @@
 # ADR-0075: Managing Active Directory from the console
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-26): "Basic AD detection and logic. If we
   detect a server as being an active directory server, we should allow basic
   task like adding/removing/changie users/groups etc. Password resets,
@@ -21,7 +21,7 @@
   [ADR-0060](0060-collecting-logs.md) (proposed: Windows event collection and
   its detections) and feature 12 of `docs/architecture/feature-plan-msp.md`
   (AD health), which this ADR folds in (section 8).
-* Amends: ADR-0073 (five points, below) and feature 12 (its carrier and its
+* Amends: ADR-0073 (six points, below), ADR-0060 (its sealing list, section 2 *Passwords*) and feature 12 (its carrier and its
   slices, section 8).
 
 ## Context
@@ -41,7 +41,8 @@ What ADR-0073 already fixes, and this ADR does not reopen:
 * The permissions are `ad.view`, `ad.manage`, `ad.reset_password` and
   `ad.view_sensitive`. Technicians hold `ad.view` but no AD management; Site
   Administrators add `ad.view_sensitive`; **every `ad.manage` write needs
-  Organization Administrator**. The directory is not scoped to a site: a
+  Organization Administrator** (review: `ad.helpdesk` is added for
+  ordinary-user help-desk work, section 6). The directory is not scoped to a site: a
   write through one controller changes the whole domain and replicates
   forest-wide.
 * Passwords travel only as sealed `winmod_job_secrets`, never in `jobs.args`,
@@ -118,9 +119,10 @@ GuardsProtected, Timeout}` per ADR-0073 section 4. The tiers:
 | 3 Credential or destructive | sets a credential, removes access, or cannot be undone | `ad.manage` (`ad.reset_password` for passwords) | typed confirmation naming the subject and the effect | **required** | as tier 2; the password is never in it |
 
 Which actions are tier 3 follows ADR-0073: password resets, account disabling
-and every destructive action need step-up. The duration is whatever ADR-0055
-defines (5 minutes); ADR-0073 wrote 10, see the amendments. Creating a user
-is tier 3 because it sets an initial password.
+and every destructive action need step-up. Review adds `user_enable` and
+`group_add_members` (access is granted by both). The step-up is ADR-0055's,
+**5 minutes**, in every place this ADR mentions it. Creating a user is tier 3
+because it sets an initial password.
 
 All user values are typed and validated on the server before they reach the
 script: a **user or group is named by its SID or object GUID**, which the
@@ -145,8 +147,8 @@ with a validated DN, and fixed literal filters such as `-Filter '*'`.
 | `group_members` | Direct members of a group (users, groups, computers), a page at a time | `id`, `cursor` | 0 | 60 s |
 | `privileged_members` | Members, nested, of the protected groups (section 4), as SIDs with names | none | 0, **sensitive** | 120 s |
 | `computer_list` | Computer accounts under a container, a page at a time, with operating system and enabled state | as `user_list` | 0 | 120 s |
-| `user_unlock` | `Unlock-ADAccount` | `id` | 1 | 60 s |
-| `user_enable` | `Enable-ADAccount`; refused when the account would be enabled with no password ever set | `id` | 1 | 60 s |
+| `user_unlock` | `Unlock-ADAccount` | `id` | 1 (`ad.helpdesk`) | 60 s |
+| `user_enable` | `Enable-ADAccount`; refused when the account would be enabled with no password ever set | `id` | 3 | 60 s |
 | `user_disable` | `Disable-ADAccount` | `id` | 3 | 60 s |
 | `user_set` | `Set-ADUser` with the allowed attributes only | `id`, a map of attribute to value (at most 8) | 2 (3 for `userPrincipalName`, which changes how the person signs in, and for `accountExpirationDate`) | 60 s |
 | `user_move` | `Move-ADObject` to a validated OU | `id`, `targetOu` | 2 | 60 s |
@@ -154,7 +156,7 @@ with a validated DN, and fixed literal filters such as `-Filter '*'`.
 | `user_reset_password` | `Set-ADAccountPassword -Reset`, then `-ChangePasswordAtLogon` when asked; optionally unlock | `id`, `password` (secret, typed or generated), `mustChange`, `unlock` | 3 | 2 min |
 | `user_delete` | `Remove-ADUser` | `id` | 3, **destructive** | 2 min |
 | `group_create` | `New-ADGroup` | `ou`, `name`, `scope` (domain local, global, universal), `category` (security, distribution), `description` | 2 | 60 s |
-| `group_add_members`, `group_remove_members` | `Add-`/`Remove-ADGroupMember` | `id`, `members` (SIDs or GUIDs, at most 50) | 2 | 2 min |
+| `group_add_members`, `group_remove_members` | `Add-`/`Remove-ADGroupMember` | `id`, `members` (SIDs or GUIDs, at most 50) | add 3, remove 2 | 2 min |
 | `group_delete` | `Remove-ADGroup` | `id` | 3, **destructive** | 2 min |
 | `computer_disable` | `Disable-ADAccount` on a computer account; never a domain controller | `id` | 3 | 60 s |
 | `health_read` | the read-only checks of section 8 | `checks` (a list from a fixed set) | 0 | 5 min |
@@ -162,7 +164,7 @@ with a validated DN, and fixed literal filters such as `-Filter '*'`.
 Each script returns `{ok, version, data, error}` as ADR-0073 specifies, with
 typed errors: `protected_target`, `service_account_confirmation_required`,
 `read_only_dc`, `module_missing`, `access_denied`, `not_found`,
-`password_policy` (with the policy's minimum length), `conflict`,
+`password_policy` (with the policy's minimum length), `adws_unavailable`, `conflict`,
 `too_many`, `partial` and `not_enabled`.
 
 **What is not in the catalogue**, on purpose: creating, moving, renaming or
@@ -216,6 +218,20 @@ only to `ad.view_sensitive` holders (section 6).
   replicates (section 3). The console says "other controllers may take a few
   moments to learn it" rather than promising a time.
 
+**What the script does with the password, and PowerShell logging.** ADR-0060
+collects the PowerShell script block and module logs (4104 and 4103), and
+module logging records parameter values. So the script reads the password
+from the stdin `params` into a variable and passes **that variable** straight
+to `ConvertTo-SecureString -AsPlainText -Force`; **a password is never a
+literal in script text and never part of a string built by the script**, and
+the AST check (section 9) fails a script that breaks this. Even so, a 4103
+record can hold the converted value's name or, with transcription, the
+parameters. **ADR-0060 is amended by name:** its sealing list (the fields it
+keeps out of stored events) must cover the parameter values of 4103 and the
+script text of 4104 for every `winmod` run (identified by the signed job's
+script hash), so the collector never stores or forwards them; this ADR's
+real-controller step 7 checks it.
+
 #### Deleting
 
 `user_delete` and `group_delete` need the typed confirmation
@@ -232,28 +248,35 @@ domains has one chosen controller per domain, each in its own request. This
 ADR serves the domains whose controllers are enrolled; a domain with no
 enrolled controller has no module.
 
-**Which identity.** The agent runs jobs as SYSTEM. On a controller, SYSTEM
-reaches the directory as the controller's own computer account. Feature
-12 already assumes this for its read-only checks and says which checks pass
-as that account is measured in its first slice. **Writes are the same open
-question and a bigger one**: whether the computer account may create users,
-reset passwords, change group membership and move objects under the default
-permissions is **not verified** (it is not asserted here; it is the first
-real-controller step of slice A1, a go or no-go for every write action). The
-design for each outcome:
+**Which identity.** The agent runs jobs as SYSTEM. SYSTEM on a domain
+controller holds the `SY` security identifier, which the default security
+descriptors of directory objects grant full control. **Reads and writes are
+therefore expected to work under the agent's own SYSTEM account, with no
+stored credential. To confirm at R1** (the first real-controller step of
+slice A1, a go or no-go for every write action), not asserted here: whether
+a given cmdlet reaches the directory as the computer account or as `SY`
+decides what it may do, and R1 records it per action.
 
-* **It can.** Writes run as SYSTEM. In the directory's own audit (4720, 4724,
-  4728 and the rest), the subject is the controller's computer account (for
-  example `DC01$`), **not the technician**. EasyRMM's audit row (`winmod.
-  active_directory.<action>`: the actor, the target, the changed attributes)
-  is then the only record of who asked. The console and this ADR say so
-  plainly.
-* **It cannot, for some actions.** Those actions return `access_denied`, the
-  tab shows them as unavailable on this domain with that reason, and nothing
-  is escalated. A delegated service account whose credentials EasyRMM would
-  store is **not** built here (feature 12's rule: no domain credentials are
-  stored); if the owner wants that, it is a later ADR with its own secret
-  handling.
+* **It works (expected).** Writes run as SYSTEM. In the directory's own audit
+  (4720, 4724, 4728 and the rest) the subject is the controller's computer
+  account (for example `DC01$`), **not the technician**; EasyRMM's audit row
+  (`winmod.active_directory.<action>`: the actor, the target, the changed
+  attributes) is the only record of who asked. The console says so.
+* **Fallback, designed now: a per-request credential.** Used **only if R1
+  shows SYSTEM cannot write some action, or if an organization wants its
+  changes attributed to a named administrator** (an organization setting,
+  default off). The operator types a domain administrator's user name and
+  password in the step-up dialog of that request; both travel as a sealed
+  secret exactly like a new password (ADR-0073: `winmod_job_secrets`, only
+  in `params`, deleted at delivery, in no log, audit, output or job row) and
+  are used for that one job through `-Credential`. **They are never stored,
+  never reused for another request, and never shown back.** The credential
+  must belong to an account that holds the rights the action needs, which is
+  the directory's own check; the protected-target guard still applies, since
+  a named administrator can reach more than the guard allows. The directory's
+  audit then names that administrator. The script builds the credential from
+  the params variable and never as a literal (same rule as passwords). A
+  stored, delegated service account is **not** built.
 
 **Choosing the controller** (*decided in review*), per request, among the
 domain's enrolled controllers that are `ad_ds`-present, online (a heartbeat in
@@ -271,6 +294,19 @@ call is; an Organization Administrator, who all writes need, sees all):
    re-read*; the choice is harmless if it is wrong).
 3. Otherwise the qualifying controller with the **most recent heartbeat**,
    then the lowest device id, so the choice is stable.
+
+"Qualifying" includes **directory health** (review), read by the hourly
+`health_read` and held with its age: **no failures** for that controller from
+`Get-ADReplicationFailure`, **replication lag within a threshold** (default 15
+minutes inside a site; the value is a constant to measure) from
+`Get-ADReplicationPartnerMetadata` (last successful replication per partner),
+and the **Active Directory Web Services service (ADWS) running**, which the
+module's cmdlets need. A controller whose health is unknown is chosen only
+when no healthy one qualifies, and the console says so. If ADWS is stopped,
+the script returns the typed error `adws_unavailable` (not a generic failure),
+and the console says "Active Directory Web Services is not running on this
+controller"; a write is never retried on another controller after it was
+sent (below).
 
 If none qualifies, the request is refused with the reason (all offline, only
 read-only controllers) and nothing is queued, as ADR-0073 says for offline
@@ -322,8 +358,11 @@ the owner's own list is extended, and how each class is treated.
 group actions, adding or removing members of it) returns `protected_target`
 for:
 
-* the groups **Domain Admins** (RID 512), **Enterprise Admins** (RID 519),
-  **Schema Admins** (RID 518) and **Administrators** (`S-1-5-32-544`), and
+* the groups **Domain Admins** (RID 512 under the *local* domain's SID),
+  **Enterprise Admins** (RID 519) and **Schema Admins** (RID 518), whose SIDs
+  are built on the **forest-root domain's SID**, not the local domain's
+  (in a child domain, `<child SID>-519` is not Enterprise Admins), and
+  **Administrators** (`S-1-5-32-544`), and
   every **member of them, directly or nested**, plus any account whose
   **primary group** is one of them (primary group membership is not in the
   `member` attribute and is checked by `primaryGroupID`);
@@ -349,7 +388,22 @@ for:
   (also covered by `adminCount`, listed so the server's check does not depend
   on it).
 
-**Matching is by SID and RID, never by name.** A built-in Administrator
+**Matching is by SID and RID, never by name, and the forest root decides
+519 and 518.** The forest-root domain SID comes from `status` (read from the
+forest root through the Global Catalog); the server's table builds 519 and 518
+from it and 500, 502, 512 from the local domain's.
+
+**Membership is resolved through the Global Catalog.** Members of the
+protected groups can be users of other domains of the forest (as
+foreign security principals), universal groups from other domains, and
+groups nested across domains. The script walks `member` breadth first
+through the **Global Catalog** (a GC server, `-Server` on port 3268), resolves
+every foreign security principal by SID, and follows universal groups across
+domains. **If any member cannot be resolved (a domain with no reachable GC,
+an unresolved foreign principal, a cap exceeded), the request is refused**:
+the guard fails closed. The check runs **in the pinned script on the agent at
+execution time**, as the second check; the server's RID table is only the
+first and cheaper one, and a result of `protected_target` is a failure. A built-in Administrator
 renamed to something else is still RID 500. The **server's check** is a
 fixed table of RIDs and well-known SIDs applied to the SID the request
 carries (domain SID plus 500, 502, 512, 518, 519; `S-1-5-32-544` and the
@@ -359,6 +413,13 @@ it builds the protected set by walking `member` of the protected groups
 breadth first (no filter; capped at 5,000 objects, **and exceeding the cap
 refuses the request, failing closed**), then checks the target's SID, its
 `primaryGroupID`, its `adminCount`, and its own membership in that set.
+
+**The Domain Controllers OU and everything under it** is refused as the `ou`
+of `user_create` and `group_create`, as the `targetOu` of `user_move`
+and of any move, and as a source of one: nothing is created in, moved into or
+moved out of it. The script compares the validated DN with the domain's
+`OU=Domain Controllers` (found by its well-known GUID container, not its
+name) and any DN under it.
 
 **Soft-protected: service accounts. Allowed with a second confirmation.** A
 service account is, *decided in review*, an account that is a **managed
@@ -405,15 +466,25 @@ module's purpose is the help-desk and onboarding work on ordinary accounts.
   EasyRMM never copies the directory into its own tables: no per-user table,
   no sync. This keeps personal data out of the database and keeps the cache
   small.
-* **A list is a page.** The result limit is 64 KiB (ADR-0073); a page is at
-  most 200 rows with a handful of columns (about 30 KiB), returned with an
-  opaque `cursor`. The directory's cmdlets cannot resume a query, so the
-  script reads a bounded scope and slices it: it enumerates the container
-  (`-SearchBase` with a validated DN, `one_level` by default, with the
-  needed properties only and the module's own `-ResultPageSize` so that the
-  directory service does not time out), orders by `sAMAccountName`, skips up
-  to the cursor (the last name returned, compared in memory), and returns the
-  next 200.
+* **A list is a page, from a resumable paged search.** The result limit is
+  64 KiB (ADR-0073); a page is at most 200 rows with a handful of columns
+  (about 30 KiB), returned with an opaque `cursor`. Review replaces
+  re-running `Get-ADUser -ResultPageSize` for every page, which re-reads the
+  whole scope each time: the script uses a **paged LDAP search**
+  (`System.DirectoryServices.Protocols`, a `SearchRequest` with a
+  `PageResultRequestControl`) whose **cookie** resumes the query on the
+  controller. The `cursor` carries the cookie, sealed (the server cannot
+  forge or read it), valid **only on the connection's controller and for 10
+  minutes**, because a cookie does not survive a new connection or another
+  controller. A page request after that restarts the walk from the last
+  name returned (a value compared in memory, never in a filter). For
+  **snapshots of a large directory** the server walks pages in sequence
+  within one job family on one controller, so each page costs one page of
+  directory work. The search's base is the validated `-SearchBase` DN; the
+  attribute list is fixed; the search filter is a **literal** chosen from
+  a fixed set (users, groups, computers), never built from a value.
+  Ordering is the directory's, not alphabetical, and the console sorts the
+  page it holds.
 * **Search is in memory and never a filter.** A name prefix is applied with
   `.StartsWith(..., 'OrdinalIgnoreCase')` on already-read objects; the state
   filters (disabled, locked, expired) are fixed literal tests on read
@@ -447,17 +518,23 @@ ADR-0073 section 3 stands; restated for this module:
 |---|---|---|
 | `ad.view` | Technician and above | users, groups, computers and OUs with basic columns: name, sAMAccountName, enabled, locked out, OU, protection |
 | `ad.view_sensitive` | Site Administrator and above | mail, telephone, title, department, last logon, group membership of privileged groups, `privileged_members`, `user_get` detail |
-| `ad.manage` | Organization Administrator and above | every write |
-| `ad.reset_password` | Organization Administrator and above | `user_reset_password`, and the password in `user_create` |
+| `ad.helpdesk` | Technician and above (**new**, review) | `user_unlock`, `user_reset_password`, `user_enable`, `user_disable`, **on non-protected users only** (never service accounts: those need `ad.manage`) |
+| `ad.manage` | Organization Administrator and above | create, delete, edit attributes, move, group membership, group create and delete, computer disable (and everything `ad.helpdesk` allows, on service accounts with their extra confirmation) |
+| `ad.reset_password` | Organization Administrator and above | the password in `user_create`, and reset of **service accounts** |
 
-A Site Administrator therefore reads but does not write the directory, and a
-Technician sees names and flags but not personal fields. ADR-0073's plain
+A Technician can therefore do the help-desk work (unlock, reset, enable,
+disable an ordinary user, each with step-up where the table says so) and
+sees names and flags but not personal fields; a Site Administrator reads
+more; only an Organization Administrator creates, deletes, edits, moves and
+changes group membership. `ad.helpdesk` never reaches a protected target:
+the guard (section 4) runs before the permission is consulted for that
+target, and a service account needs `ad.manage`. ADR-0073's plain
 statement applies: a technician with `ad.view` at one site sees the domain's
 users from every site through that site's controller, because the directory
 is not scoped by site. Per-row visibility is not attempted here. (See
 *Owner decisions*.)
 
-New permissions are not added by this ADR; the four exist in ADR-0073.
+`ad.helpdesk` is added to ADR-0073's four (see the amendments), to `AllPermissions` and to the Technician union by the same small additive edit in `rbac.go`.
 
 ### 7. Alerts
 
@@ -617,24 +694,19 @@ the owner's Proxmox host**, one VM at a time, torn back to a snapshot after
 each phase. (Credentials and addresses for the host are in the owner's
 notes and not in this repository.)
 
-* **The network.** A new Linux bridge with **no physical port, no address for
-  routing and forwarding off**, used by this VM and nothing else, so no frame
-  reaches a real subnet and none comes back. No DHCP server exists on it (the
-  controller is not given the DHCP role; its address is static). Its DNS is
-  the controller's own AD-integrated DNS with **no forwarders**, so it never
-  asks a real resolver and never answers one. The VM has one NIC.
-* **How the agent reaches a console.** An agent must reach an EasyRMM server.
-  Default: a **small EasyRMM test instance** (an LXC or a second small VM) on
-  **the same isolated bridge**, with a static address, in the manner of the
-  owner's "full real instance" tests; the operator reaches its console by
-  an SSH tunnel through the Proxmox host (the host holds an address on the
-  bridge but does not forward). *If the host's memory does not hold both*
-  (a few GiB are free; Windows Server wants about 4 GiB to be comfortable),
-  the fallback is a second NIC on the normal network with a static address,
-  no gateway, no DNS, no DHCP, with the Proxmox firewall allowing only the
-  console's address and port outbound, and the controller's DNS and locator
-  bound to the isolated NIC only. **That fallback puts a controller's NIC on
-  the real network and is the owner's call**; it is not used without a yes.
+* **The network (review).** The test controller is **one Proxmox VM on the
+  normal network**, not on an isolated bridge with a second NIC. It has **no
+  DHCP role** and a static address, its own AD-integrated DNS with **no
+  forwarders**, and a **fresh forest under a reserved name** (a `.test` name,
+  which is never delegated). The **Proxmox VM firewall allows only outbound
+  traffic and our server**: inbound to the VM is dropped except what the test
+  needs from the operator's host, and outbound is allowed only to the test
+  EasyRMM server's address and port (and the Proxmox-side time source if
+  needed), so the controller cannot serve DNS or DHCP to, or take them from,
+  the real network. The VM has one NIC.
+* **How the agent reaches a console.** The agent enrols against the test
+  EasyRMM server, the one address the VM firewall allows. No second NIC and
+  no isolated bridge are used.
 * **One VM at a time** limits what can be proved: a single controller has no
   replication partner. Controller selection, pin and failover, "reads from the
   same controller", the 2042 and replication-failure alert and the
@@ -669,9 +741,12 @@ notes and not in this repository.)
      an SPN (allowed only with the second confirmation), a group managed
      service account (the test enables a KDS root key; refused), an object
      protected from accidental deletion (refused, flag untouched).
-  7. Secrets: after a reset, search the server database, its logs and
-     the audit rows, the job output and the agent's own log for the test
-     password; check that the directory's 4724 event names the computer
+  7. Secrets: after a reset (and a create), search the server database, its
+     logs and the audit rows, the job output, the agent's own log **and its
+     job journal**, and **the PowerShell logs 4103 and 4104 as ADR-0060
+     collects them (module logging and script block logging switched on
+     for this test)** for the test password and, in the credential
+     fallback, the test administrator's password; check that the directory's 4724 event names the computer
      account as subject (the attribution caveat of section 3).
   8. Alerts: lock out 10 test accounts for the lockout policy; add a test
      user to a test privileged group (and to Domain Admins from the
@@ -715,7 +790,9 @@ subject fallback to the chosen controller. No mocks of our own code.
 every script of this module, with the rule that no `-Filter`,
 `-LDAPFilter` or `-SearchBase` argument takes a value that is not literal or
 the validated `$p.container`, and that `-Server` is never an argument taken
-from `$p`.
+from `$p`, and that a password or credential is read from `$p` into a
+variable and passed to `ConvertTo-SecureString`/`-Credential` from that
+variable, never as a literal or inside a built string.
 
 **Windows runner CI where feasible.** A `windows-latest` runner has no AD DS.
 What it can run: the AST check; every script's parse; the stdin parameter
@@ -746,9 +823,10 @@ Files named exist today (checked 2026-11-26) unless marked *new*. Builders
 make small additive edits to the hotspots: `server/internal/rbac/rbac.go`
 (none: the permissions exist after ADR-0073), `internal/agentproto/agentproto.go`
 (the role `detail`), `agent/runner/runner.go`, `web/src/pages/devices/DeviceDetailPage.tsx`,
-`web/src/pages/organizations/levelTabs.tsx` and `server/internal/app.go`.
-New: `server/internal/winmod/activedirectory/` (catalogue, scripts, guard,
-selection). A slice merges only when the catalogue lint and its
+`web/src/pages/organizations/levelTabs.tsx` and `server/internal/app/app.go`.
+New (proposed, not in the repository yet): `server/internal/winmod/` (ADR-0073's
+framework) and `server/internal/winmod/activedirectory/` (catalogue, scripts,
+guard, selection). A slice merges only when the catalogue lint and its
 Windows-runner tests pass. ADR-0073 slices 1 to 5 are required first
 (5 proven by Defender); 6 and 7 for slices A6 and A7.
 
@@ -793,9 +871,9 @@ A1 first; then A2 and A3 in parallel; then A4, A5; A6 and A8 alongside.
 * The console gets everyday AD tasks on ordinary accounts and cannot touch
   the accounts that hold the domain. An Organization Administrator cannot
   reset the domain administrator's password from here; that is the design.
-* **If the agent's rights as SYSTEM on a controller are narrower than
-  assumed, parts of the module are unavailable** until the owner chooses
-  another identity; this is the module's largest unknown, found first.
+* **SYSTEM is expected to be able to write (the `SY` SID); to confirm at
+  R1.** If some action fails there, the per-request credential fallback
+  carries it, at the cost of a typed administrator password per request.
 * In the directory's own audit trail, changes appear as the controller's
   computer account, not the technician; EasyRMM's audit row is the only
   record of who asked.
@@ -815,19 +893,15 @@ A1 first; then A2 and A3 in parallel; then A4, A5; A6 and A8 alongside.
 The owner's request is the only owner decision recorded. Worth the owner's
 eye, with defaults chosen in review:
 
-1. **Who may do help-desk work.** Every write (including unlock and enable)
-   needs Organization Administrator, as ADR-0073 decided; Technicians and
-   Site Administrators cannot reset a forgotten password. If the owner wants
-   a help-desk role (unlock, enable, reset on ordinary accounts), it is a
-   custom role with `ad.manage`; the protected-target guard still applies.
+1. **Help-desk split.** Review gave Technicians the new `ad.helpdesk`
+   (unlock, reset, enable, disable, ordinary users only) and kept create,
+   delete, edit, move and group changes at Organization Administrator. If the
+   owner wants a different split, it is a permission-table change.
 2. **Service accounts** are allowed with an extra confirmation (gMSA and MSA
    refused); the stricter alternative is to refuse them all.
-3. **The test network.** The default keeps the controller on an isolated
-   bridge with a test console beside it. If that does not fit in memory, the
-   fallback (a second NIC with a firewall to one address) needs the owner's
-   yes.
-4. **If the SYSTEM account cannot write**, whether to store a delegated
-   account's credentials is the owner's decision (a later ADR).
+3. **If the SYSTEM account cannot write**, the per-request credential
+   (section 3) is the designed fallback; storing a delegated account is not
+   built.
 
 ## Amendments to ADR-0073 (decided in review)
 
@@ -844,12 +918,21 @@ All are additive.
   other AdminSDHolder groups, DnsAdmins and Group Policy Creator Owners,
   matched by RID and SID; a guard that cannot finish its walk refuses.
   "No action adds anyone to a protected group" stands.
+* **Section 3, permissions:** `ad.helpdesk` (Technician and above) for
+  unlock, reset, enable and disable of non-protected users; `ad.manage` keeps
+  the rest and the service accounts. ADR-0073's "no Active Directory
+  management for Technicians" is amended to this one narrow permission.
+* **Section 4, execution:** the step-up is ADR-0055's 5 minutes, and
+  `user_enable` and `group_add_members` also need it.
 * **Section 6, alerts:** `ad_privileged_group_changed` is a third AD kind;
   the AD kinds' alert subject is the **domain**, not a device (the mechanism
   is feature 12's).
 * **Section 5, reads:** a list read returns a cursor of the last name and the
   script re-enumerates a bounded scope (20,000 objects); the cursor is a
   value compared in memory and never part of a filter.
+
+ADR-0060 is amended by name: its sealing list covers 4103 parameter values
+and 4104 script text of `winmod` runs.
 
 Feature 12 is amended as section 8 says: `winmod` instead of an `adhealth`
 kind, its slices mapped onto this ADR's.
