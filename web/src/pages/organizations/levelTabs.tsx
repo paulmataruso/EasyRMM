@@ -6,7 +6,9 @@ import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { ContactsTab } from "./tabs/ContactsTab";
+import { InstallTab } from "./tabs/InstallTab";
 import { PatchingTab } from "./tabs/PatchingTab";
+import { PeopleTab } from "./tabs/PeopleTab";
 
 // The tab strip of the organization and site pages (ADR-0072, slice S4). A tab is one line in LEVEL_TABS: its id (the
 // `?tab=` value), label, the permission it needs, the levels it appears at and its component. Order in the array is the
@@ -23,7 +25,7 @@ export interface LevelTabProps {
 /** What decides whether a tab shows for the selection. */
 export interface LevelContext {
   level: Level;
-  /** Whether the viewer holds the permission at this selection's level (today: in any scope, as `useAuth().can`). */
+  /** Whether the viewer holds the permission at this selection's level (`useAuth().canAt` for the page's organization or site). */
   can: (permission: Permission) => boolean;
   /** The patching engine is set up (ADR-0030). */
   patchingConfigured: boolean;
@@ -57,6 +59,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     component: ContactsTab,
   },
   {
+    id: "people",
+    label: "People",
+    permission: "user.view",
+    levels: ["organization"],
+    component: PeopleTab,
+  },
+  {
     id: "alert-policies",
     label: "Alert policies",
     permission: "monitoring.view",
@@ -70,6 +79,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     levels: ["organization", "site"],
     when: (ctx) => ctx.patchingConfigured,
     component: PatchingTab,
+  },
+  {
+    id: "install",
+    label: "Install",
+    permission: "enrollment.manage",
+    levels: ["organization", "site"],
+    component: InstallTab,
   },
 ];
 
@@ -102,13 +118,22 @@ export function activeTab(
 export function LevelTabs({
   level,
   id,
+  organizationId,
   overview,
 }: {
   level: Level;
   id: string;
+  /** The organization the site or group belongs to; an organization page can leave it out. */
+  organizationId?: string;
   overview: ReactNode;
 }) {
-  const { can } = useAuth();
+  const auth = useAuth();
+  // Each tab's permission is checked where the page is, not in any scope.
+  const can = (p: Permission) =>
+    auth.canAt(p, {
+      organizationId: organizationId ?? id,
+      siteId: level === "site" ? id : undefined,
+    });
   const url = useUrlState();
   // The same query the pages use for their Patch all button, so it is one request.
   const patching = useApi<PatchStatus>(

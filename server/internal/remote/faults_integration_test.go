@@ -340,6 +340,28 @@ func TestSyncKeepsEnrolledDevices(t *testing.T) {
 	if d, _ := r.dev.Get(r.ctx, tech, kept); d.RemoteOnline || !d.RemoteAgent || !d.Online {
 		t.Errorf("after MeshAgent disconnects: %+v", d)
 	}
+	// MeshCentral's view of the connection reaches the device's log, once per
+	// change: connected at the first sync, disconnected at the second.
+	var msgs []string
+	err = r.db.InTx(r.ctx, database.System, func(tx pgx.Tx) error {
+		rows, err := tx.Query(r.ctx, `SELECT level || ':' || message FROM agent_log_records
+			WHERE device_id = $1 AND source = 'meshagent' AND seq = -1 ORDER BY id`, kept)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var m string
+			if err := rows.Scan(&m); err != nil {
+				return err
+			}
+			msgs = append(msgs, m)
+		}
+		return rows.Err()
+	})
+	if err != nil || len(msgs) != 2 || msgs[0] != "info:MeshCentral sees MeshAgent connected." || msgs[1] != "warn:MeshCentral sees MeshAgent disconnected." {
+		t.Errorf("MeshAgent connection records = %q, %v", msgs, err)
+	}
 }
 
 // TestDiscoveryWaitsForTheEnrolledAgent checks the grace before a node no

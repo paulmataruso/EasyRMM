@@ -136,6 +136,13 @@ function SiteRoute() {
   return groupId ? <Navigate to={`/groups/${encodeURIComponent(groupId)}`} replace /> : <SiteDetailPage />;
 }
 
+/** /devices/add?siteId= opens that site's Install tab (ADR-0072). */
+function AddDevicesRoute() {
+  const [params] = useSearchParams();
+  const siteId = params.get("siteId");
+  return siteId ? <Navigate to={`/sites/${encodeURIComponent(siteId)}?tab=install`} replace /> : <AddDevicesPage />;
+}
+
 export function App() {
   useReloadWhenOutdated();
   return (
@@ -161,7 +168,7 @@ export function App() {
         <Route path="sites/:id" element={<SiteRoute />} />
         <Route path="groups/:id" element={<GroupDetailPage />} />
         <Route path="devices" element={<DevicesPage />} />
-        <Route path="devices/add" element={<AddDevicesPage />} />
+        <Route path="devices/add" element={<AddDevicesRoute />} />
         <Route path="devices/approvals" element={<ApprovalsPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />

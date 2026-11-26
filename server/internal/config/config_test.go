@@ -67,6 +67,23 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// TestAgentChannelSettings: the channel is off unless switched on, and the
+// connection maximum is bounded (ADR-0059).
+func TestAgentChannelSettings(t *testing.T) {
+	c, err := LoadFrom(env(base()), noFiles)
+	if err != nil || c.AgentChannel || c.AgentConnectionsMax != 10_000 {
+		t.Fatalf("defaults: %v %+v", err, c)
+	}
+	for value, want := range map[string]bool{"on": true, " ON ": true, "off": false, "": false} {
+		e := base()
+		e["EASYRMM_AGENT_CHANNEL"] = value
+		e["EASYRMM_AGENT_CONNECTIONS_MAX"] = "50"
+		if c, err := LoadFrom(env(e), noFiles); err != nil || c.AgentChannel != want || c.AgentConnectionsMax != 50 {
+			t.Errorf("EASYRMM_AGENT_CHANNEL=%q: %v", value, err)
+		}
+	}
+}
+
 // TestJobOutputRetention: 30 days, or the job retention when that is
 // shorter, unless set (ADR-0063).
 func TestJobOutputRetention(t *testing.T) {
@@ -123,6 +140,8 @@ func TestRejectsUnsafeOrInvalidValues(t *testing.T) {
 		"short output retention":   {"EASYRMM_JOB_OUTPUT_RETENTION": "1h"},
 		"output past jobs":         {"EASYRMM_JOB_RETENTION": "240h", "EASYRMM_JOB_OUTPUT_RETENTION": "241h"},
 		"short metrics retention":  {"EASYRMM_METRICS_RETENTION": "2h"},
+		"channel switch":           {"EASYRMM_AGENT_CHANNEL": "maybe"},
+		"no connections":           {"EASYRMM_AGENT_CONNECTIONS_MAX": "0"},
 		"short alert retention":    {"EASYRMM_ALERT_RETENTION": "2h"},
 		"hardware below metrics":   {"EASYRMM_METRICS_RETENTION": "720h", "EASYRMM_HARDWARE_RETENTION": "240h"},
 		"bad bool":                 {"EASYRMM_REQUIRE_MFA": "maybe"},

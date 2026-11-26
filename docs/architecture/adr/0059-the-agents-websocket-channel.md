@@ -1,6 +1,6 @@
 # ADR-0059: The agent's WebSocket channel
 
-* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). Not built yet.
+* Status: Accepted (2026-11-26, refreshed against the code and independently reviewed). C0, S1 and A1 built (see *Amended 2026-11-26 (decided in review): as built in C0 and S1* and *as built in A1*); the rest not built yet.
   after ADR-0069 and the dev-scope guard (see *Refresh, 2026-11-26*, which
   wins where it disagrees with what follows). Not implemented.
 * Revised 2026-11-21 after an independent review: features the server
@@ -202,6 +202,34 @@ slices at the end.
   `Connection` in its one `location /`, with a 1 h read timeout; the agent's
   route needs no change (*Behind the reverse proxy*).
 
+### Amended 2026-11-26 (decided in review): as built in C0 and S1
+* **The switch is off by default.** `EASYRMM_AGENT_CHANNEL` is `off` until the
+  agent client (A1) and the message kinds (M1 to M5) have landed and been
+  verified; the integrator turns the default to `on` then. Off, the route
+  is not served (404, as any unknown route) and heartbeat answers carry no
+  `features`, `instance` or `jobsWaiting`.
+* **The route is `GET /api/agent/v1/channel`** (`agentproto.PathChannel`);
+  *The connection* below, which says `/connect`, is superseded.
+* **What names a connection.** `HeartbeatRequest.Transport` is a
+  `ChannelReport` (`connId`, `since`); `Channel` (`["v1"]`) lists the
+  versions the agent speaks. ADR-0058's `transport` document is not needed.
+* **Confirmation is in S1, in memory.** The registry is the hub's own
+  (one confirmed and at most one pending connection per device); the
+  `agent_connections` table, `server_instances`, the clone guard and the
+  stored capability check (a 404 for a device whose last report lists no
+  `channel.v1`) stay in H1. Until then the server lists `channel` to every
+  device of an organization in scope, and a server restart forgets who was
+  confirmed (agents reconnect and are named again by their next heartbeat).
+* **The claim loop is a hook.** `agentchannel.Options.Claim` is called, with
+  the byte budget of a jobs frame, only for a confirmed connection of an
+  organization in scope; M2 supplies it. A result that still exceeds the
+  budget is not sent and sets `jobsWaiting` (`HeartbeatResponse.JobsWaiting`),
+  which the next heartbeat answer carries once.
+* **A pending connection's inbound `logs.batch`** is verified and counted
+  against its limits but not stored and not acked.
+* **Retry-After on a 503.** `httpapi.WriteError` now sends it for a 503
+  whose error sets one (`channel_busy`, `channel_full`, `held`).
+
 ### What does not change (authority and trust)
 * **Every instruction on the channel is the object the heartbeat answer
   or the poll answer would carry, byte for byte**: `SignedRepair`,
@@ -373,6 +401,25 @@ and poll still work.
   connection, a small bounded outbound queue, no database connection held,
   all as in *Server limits*.
 * **Per organization**: no limit of its own until ADR-0058.
+
+### Amended 2026-11-26 (decided in review): as built in A1
+* **Package `agent/channel`**, started beside the runner by `main.go`; the runner
+  only feeds it each heartbeat answer (`Answered(resp, reported)`), sends the
+  `channel: ["v1"]` capability and its `transport` report, and checks in when a
+  wake arrives (never sooner than `MinWake`, 1 s, after the last heartbeat).
+  The heartbeat's own timer never stops, so a channel that is down changes nothing.
+* **The agent connects only on an answer to a heartbeat that carried the
+  capability.** The first heartbeat of a process cannot (level not yet known); when
+  its answer lists `channel` the agent checks in again at once instead of
+  connecting, so the second heartbeat carries it.
+* **Dedupe by id is the sequence**: a repeated or skipped `seq` closes the
+  connection, so a frame is acted on at most once.
+* **Agent-side off switch**: `EASYRMM_AGENT_CHANNEL=off` in the agent's
+  environment; the agent then never connects.
+* **Not built in A1**: reporting `replayed` in the heartbeat (the contract has no
+  field for it; it is logged), and acting on `jobs`, `logs`, `repair` and `settings`
+  frames (M1 to M5); the agent treats them as unlisted for now. The sleep check is
+  unit-tested with a forced jump, not on a real suspend.
 
 ## Decision
 

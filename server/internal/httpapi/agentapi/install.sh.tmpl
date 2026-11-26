@@ -92,8 +92,22 @@ GOT="$(sha256sum "$TMP/easyrmm-agent" | awk '{ print $1 }')"
 fetch "$SERVER/api/agent/v1/ca.pem" "$TMP/ca.pem" || fail "download of the server's certificate authority failed"
 {{- end}}
 
-install -m 0755 "$TMP/easyrmm-agent" /usr/local/bin/easyrmm-agent
+BIN=/usr/local/bin/easyrmm-agent
+# The agent cannot tell a new build from the one it already runs, because the
+# installer places the file itself; so the installer notes whether the
+# installed program changed and restarts the service after it.
+OLD=""
+[ -f "$BIN" ] && OLD="$(sha256sum "$BIN" | awk '{ print $1 }')"
+install -m 0755 "$TMP/easyrmm-agent" "$BIN"
 # The token goes through the environment, not the command line, so other
 # users cannot read it from the process list. (No exec: the trap above
 # removes the downloads when the agent finishes.)
-EASYRMM_TOKEN="$TOKEN" /usr/local/bin/easyrmm-agent install --server "$SERVER"{{if .Pin}} --ca-file "$TMP/ca.pem"{{end}}
+EASYRMM_TOKEN="$TOKEN" "$BIN" install --server "$SERVER"{{if .Pin}} --ca-file "$TMP/ca.pem"{{end}}
+# A new build over an installed one: the running service still runs the old
+# program. try-restart leaves a service that is not running alone, and a
+# reinstall of the same build restarts nothing.
+if [ -n "$OLD" ] && [ "$OLD" != "$GOT" ]; then
+	systemctl try-restart easyrmm-agent.service || fail "the new agent is installed but the service did not restart"
+	echo "easyrmm: restarted the agent service on the new build"
+fi
+"$BIN" version

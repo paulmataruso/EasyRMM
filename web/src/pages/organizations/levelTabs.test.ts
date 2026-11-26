@@ -43,6 +43,30 @@ describe("visibleTabs", () => {
     ]);
   });
 
+  it("shows People at the organization only and Install at both, each by its own permission", () => {
+    expect(ids("organization", ["user.view", "enrollment.manage", "doc.view"])).toEqual([
+      "overview",
+      "contacts",
+      "people",
+      "install",
+    ]);
+    expect(ids("organization", ["enrollment.manage"])).toEqual(["overview", "install"]);
+    expect(ids("site", ["user.view", "enrollment.manage"])).toEqual(["overview", "install"]);
+    expect(ids("site", ["user.view"])).toEqual(["overview"]);
+  });
+
+  it("puts Alert policies between People and Patching, and Install last", () => {
+    expect(
+      ids("organization", ["doc.view", "user.view", "monitoring.view", "patch.configure", "enrollment.manage"], true),
+    ).toEqual(["overview", "contacts", "people", "alert-policies", "patching", "install"]);
+    expect(ids("site", ["monitoring.view", "patch.configure", "enrollment.manage"], true)).toEqual([
+      "overview",
+      "alert-policies",
+      "patching",
+      "install",
+    ]);
+  });
+
   it("shows Contacts at the organization only, and Patching at the site only with the engine set up", () => {
     expect(ids("site", ["doc.view", "patch.configure"], true)).toEqual([
       "overview",

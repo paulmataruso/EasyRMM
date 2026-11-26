@@ -6,6 +6,12 @@ import type { Permission, SessionView, SetupStatus } from "../api/types";
 /** Where the browser is in the sign-in pipeline. */
 export type AuthStage = "loading" | "error" | "setup" | "anonymous" | "mfa" | "mfa-setup" | "ready";
 
+/** The organization, and optionally the site in it, a permission is checked at. */
+export interface PermissionScope {
+  organizationId: string;
+  siteId?: string;
+}
+
 export const SESSION_KEY: QueryKey = ["auth", "session"];
 
 interface SessionResult {
@@ -21,6 +27,11 @@ interface AuthContextValue {
   isSuperAdmin: boolean;
   /** Whether the user holds the permission in at least one scope. */
   can: (permission: Permission) => boolean;
+  /**
+   * Whether the user holds the permission at an organization or site: platform-wide, over the whole organization, or
+   * (for a site) at that site. Pass `siteId` with its `organizationId`; without `siteId` it is the organization level.
+   */
+  canAt: (permission: Permission, scope: PermissionScope) => boolean;
   /** Whether the user holds the permission platform-wide. */
   canGlobal: (permission: Permission) => boolean;
   refresh: () => Promise<void>;
@@ -149,12 +160,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const session = data?.session ?? null;
     const permissions = new Set(session?.state === "active" ? session.permissions : []);
     const global = new Set(session?.state === "active" ? (session.globalPermissions ?? []) : []);
+    // A server that does not send scopes (older than this field) leaves the any-scope answer.
+    const scoped = session?.state === "active" ? session.scopedPermissions : undefined;
     return {
       stage,
       session,
       sessionEnded,
       isSuperAdmin: session?.state === "active" && session.isSuperAdmin,
       can: (p) => permissions.has(p),
+      canAt: (p, scope) => {
+        if (global.has(p)) return true;
+        if (!scoped) return permissions.has(p);
+        const where = scoped[p];
+        if (!where) return false;
+        return where.organizations.includes(scope.organizationId) || (!!scope.siteId && where.sites.includes(scope.siteId));
+      },
       canGlobal: (p) => global.has(p),
       refresh,
       applySession,

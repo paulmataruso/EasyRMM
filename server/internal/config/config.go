@@ -97,11 +97,16 @@ type Config struct {
 	// AgentLogRetentionDays is how many days agents' log records are kept,
 	// 1 to 90 (ADR-0069).
 	AgentLogRetentionDays int
-	PasswordResetTTL      time.Duration
-	LogLevel              string
-	LogFormat             string // "json" or "text"
-	ArgonMaxParallel      int
-	WebDir                string // optional override of the embedded UI
+	// AgentChannel is the agent WebSocket channel's server-wide switch
+	// (EASYRMM_AGENT_CHANNEL, "on" or "off", off by default), and
+	// AgentConnectionsMax the most connections it holds (ADR-0059).
+	AgentChannel        bool
+	AgentConnectionsMax int
+	PasswordResetTTL    time.Duration
+	LogLevel            string
+	LogFormat           string // "json" or "text"
+	ArgonMaxParallel    int
+	WebDir              string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
 	AgentDir string
 	// DevScopeOrg limits test builds and automatic actions to one
@@ -240,6 +245,8 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		AlertRetention:        l.duration("EASYRMM_ALERT_RETENTION", 90*24*time.Hour),
 		HardwareRetention:     l.duration("EASYRMM_HARDWARE_RETENTION", 730*24*time.Hour),
 		AgentLogRetentionDays: l.integer("EASYRMM_AGENT_LOG_RETENTION_DAYS", 14),
+		AgentChannel:          l.onOff("EASYRMM_AGENT_CHANNEL", false),
+		AgentConnectionsMax:   l.integer("EASYRMM_AGENT_CONNECTIONS_MAX", 10_000),
 		PasswordResetTTL:      l.duration("EASYRMM_PASSWORD_RESET_TTL", 30*time.Minute),
 		LogLevel:              l.str("EASYRMM_LOG_LEVEL", "info"),
 		LogFormat:             l.str("EASYRMM_LOG_FORMAT", "json"),
@@ -470,6 +477,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.AgentLogRetentionDays < 1 || c.AgentLogRetentionDays > 90 {
 		add("EASYRMM_AGENT_LOG_RETENTION_DAYS must be between 1 and 90")
+	}
+	if c.AgentConnectionsMax < 1 || c.AgentConnectionsMax > 1_000_000 {
+		add("EASYRMM_AGENT_CONNECTIONS_MAX must be between 1 and 1000000")
 	}
 	if c.PasswordResetTTL < 5*time.Minute || c.PasswordResetTTL > 24*time.Hour {
 		add("EASYRMM_PASSWORD_RESET_TTL must be between 5m and 24h")
@@ -816,6 +826,21 @@ func (l *loader) boolean(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// onOff reads a switch that is "on" or "off".
+func (l *loader) onOff(key string, def bool) bool {
+	v, _ := l.getenv(key)
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return def
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	l.errs = append(l.errs, fmt.Errorf("%s must be on or off", key))
+	return def
 }
 
 func (l *loader) integer(key string, def int) int {

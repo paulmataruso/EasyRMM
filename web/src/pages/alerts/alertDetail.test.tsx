@@ -217,7 +217,7 @@ describe("remote access alerts (ADR-0069)", () => {
     expect(within(repairs).getByText(/Automatic · meshagent · it did not come back/)).toBeInTheDocument();
     expect(within(repairs).getByText("download failed", { selector: "span.block" })).toBeInTheDocument();
     expect(within(repairs).getByText("MeshAgent did not connect to MeshCentral after the last step.")).toBeInTheDocument();
-    expect(within(dialog).getByText(/its Reconnect remote access button/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/its Repair button/)).toBeInTheDocument();
   });
 
   it("says when no repair was tried, and explains a silent agent", async () => {

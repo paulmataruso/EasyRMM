@@ -29,6 +29,8 @@ floors=(
   # Reads the signatures operators upload (ADR-0049).
   "server/internal/agents/authenticode     90"
   "server/internal/httpapi/agentapi        88"
+  # The agents' WebSocket channel (ADR-0059).
+  "server/internal/agentchannel            90"
   # Everything else.
   "server/internal/database                85"
   "server/internal/config                  90"
@@ -116,6 +118,7 @@ floors=(
   "updater/cmd/easyrmm-updater             75"
   # The endpoint agent. Its end-to-end run in a container is not
   # instrumented; these floors come from its unit tests.
+  "agent/channel                           90"
   "agent/client                            90"
   "agent/runner                            90"
   "agent/host                              85"

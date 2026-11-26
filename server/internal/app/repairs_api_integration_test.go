@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
 // TestRepairsAPI asks to reconnect a device's remote access through the
@@ -77,7 +80,8 @@ func TestRepairsAPI(t *testing.T) {
 
 	// Bad requests.
 	wantStatus(t, admin.do("GET", "/api/v1/devices/nope/repairs", nil), http.StatusNotFound, "not_found")
-	wantStatus(t, admin.do("POST", "/api/v1/devices/nope/repairs", map[string]string{"target": "meshagent"}), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/devices/nope/repairs", map[string]string{}), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("GET", "/api/v1/devices/nope/repair-plan", nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("POST", device+"/repairs", "not an object"), http.StatusBadRequest, "")
 
 	// Asking.
@@ -95,16 +99,41 @@ func TestRepairsAPI(t *testing.T) {
 	if len(list.Items) != 0 {
 		t.Fatalf("repairs before asking: %+v", list)
 	}
+	// The site has a MeshCentral group (the harness runs none), so MeshAgent is expected on the device.
+	if err := h.db.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO mesh_sites (site_id, organization_id, mesh_id, synced_name) VALUES ($1, $2, 'mesh-1234567890', 'HQ')`, hq.ID, acme)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The server decides what to repair; a target is not asked for.
 	wantStatus(t, admin.do("POST", device+"/repairs", map[string]string{"target": "everything"}), http.StatusUnprocessableEntity, "validation_failed")
-	var made struct {
-		ID    string `json:"id"`
-		State string `json:"state"`
+	var plan struct {
+		Down    []string `json:"down"`
+		Repairs []struct {
+			Target    string `json:"target"`
+			CarriedBy string `json:"carriedBy"`
+		} `json:"repairs"`
+		Summary string `json:"summary"`
 	}
-	admin.expect(http.StatusCreated, "POST", device+"/repairs", map[string]string{"target": "meshagent"}, &made)
-	if made.State != "running" {
-		t.Fatalf("repair = %+v", made)
+	admin.expect(http.StatusOK, "GET", device+"/repair-plan", nil, &plan)
+	if len(plan.Repairs) != 1 || plan.Repairs[0].Target != "meshagent" || plan.Repairs[0].CarriedBy != "easyrmm-agent" || plan.Summary == "" {
+		t.Fatalf("plan = %+v", plan)
 	}
-	wantStatus(t, admin.do("POST", device+"/repairs", map[string]string{"target": "meshagent"}), http.StatusConflict, "repair_running")
+	var outcome struct {
+		ID      string `json:"id"`
+		Repairs []struct {
+			ID     string `json:"id"`
+			Target string `json:"target"`
+			State  string `json:"state"`
+		} `json:"repairs"`
+	}
+	admin.expect(http.StatusCreated, "POST", device+"/repairs", map[string]string{}, &outcome)
+	if len(outcome.Repairs) != 1 || outcome.Repairs[0].State != "running" || outcome.Repairs[0].Target != "meshagent" {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	made := outcome.Repairs[0]
+	wantStatus(t, admin.do("POST", device+"/repairs", map[string]string{}), http.StatusConflict, "repair_running")
 
 	// The agent takes the step with its next heartbeat and reports it.
 	p := beat(nil, nil)

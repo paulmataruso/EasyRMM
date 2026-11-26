@@ -150,14 +150,13 @@ func TestAnEasyRMMAgentRepairRestartsThenRepairsFromTheRecoveryCopyAndEndsWhenTh
 	if got.Steps[0].State != StepDone || !strings.Contains(got.Steps[0].Note, "it is running") {
 		t.Fatalf("step = %+v", got.Steps[0])
 	}
-	var diagnostics string
-	if err := p.db.ReadTx(p.ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(p.ctx, `SELECT diagnostics FROM agent_repairs WHERE id = $1`, r.ID).Scan(&diagnostics)
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// The diagnostics are records of the device's agent log, from the EasyPatch agent, redacted.
+	diagnostics := p.logOf(d, r.ID)
 	if !strings.Contains(diagnostics, "started") || strings.Contains(diagnostics, "abc123456789") || strings.Contains(diagnostics, "ert_0123456789abcdef") {
 		t.Errorf("diagnostics = %q", diagnostics)
+	}
+	if p.count(`SELECT count(*) FROM agent_log_records WHERE device_id = $1 AND source = 'easypatch' AND attrs->>'repair' = $2 AND attrs->>'step' = 'restart'`, d, r.ID.String()) == 0 {
+		t.Error("the records do not say which repair and step they belong to")
 	}
 
 	// Still silent when the wait is over: the next step, with the hash of the build.
@@ -290,8 +289,8 @@ func TestAnEasyRMMAgentRepairStepNobodyCouldCarryOutEndsWithTheReason(t *testing
 		if got.Steps[0].State != StepFailed || !strings.Contains(got.Steps[0].Error, "is not installed") || got.State != Running {
 			t.Fatalf("repair = %+v", got)
 		}
-		if p.count(`SELECT count(*) FROM agent_repairs WHERE id = $1 AND diagnostics LIKE '%no service%'`, r.ID) != 1 {
-			t.Error("the failed step's diagnostics were not kept")
+		if !strings.Contains(p.logOf(d, r.ID), "no service") || p.count(`SELECT count(*) FROM agent_log_records WHERE device_id = $1 AND attrs->>'repair' = $2 AND level = 'warn'`, d, r.ID.String()) == 0 {
+			t.Error("the failed step's diagnostics were not kept in the log, as warnings")
 		}
 	})
 }
@@ -568,27 +567,28 @@ func TestDispatchWithoutPatchingDoesNothingAndDiagnosticsAreKeptShortAndRedacted
 	}
 }
 
-func TestDiagnosticsGoWithinFourteenDaysOfTheRepairEnding(t *testing.T) {
-	p := newPatched(t)
-	d := p.silent("pc")
-	r, err := p.requestRMM(d)
-	if err != nil {
-		t.Fatal(err)
+// logOf is the text of the log records a repair's steps left on a device, oldest first.
+func (p *patched) logOf(device, repair uuid.UUID) string {
+	p.t.Helper()
+	var out []string
+	if err := p.db.ReadTx(p.ctx, database.System, func(tx pgx.Tx) error {
+		rows, err := tx.Query(p.ctx, `SELECT message FROM agent_log_records WHERE device_id = $1 AND attrs->>'repair' = $2 ORDER BY logged_at, id`, device, repair.String())
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var m string
+			if err := rows.Scan(&m); err != nil {
+				return err
+			}
+			out = append(out, m)
+		}
+		return rows.Err()
+	}); err != nil {
+		p.t.Fatal(err)
 	}
-	p.exec(`UPDATE agent_repairs SET state = 'failed', ended_at = $2, diagnostics = 'some lines' WHERE id = $1`, r.ID, p.start.Add(-13*24*time.Hour))
-	if err := p.svc.purge(p.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if p.count(`SELECT count(*) FROM agent_repairs WHERE id = $1 AND diagnostics <> ''`, r.ID) != 1 {
-		t.Error("diagnostics went before 14 days")
-	}
-	p.exec(`UPDATE agent_repairs SET ended_at = $2 WHERE id = $1`, r.ID, p.start.Add(-15*24*time.Hour))
-	if err := p.svc.purge(p.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if p.count(`SELECT count(*) FROM agent_repairs WHERE id = $1 AND diagnostics = ''`, r.ID) != 1 {
-		t.Error("diagnostics stayed after 14 days")
-	}
+	return strings.Join(out, "\n")
 }
 
 func TestAnEasyRMMAgentRepairEndsQuietlyWhenPatchingIsOffOrAutomaticRepairsAre(t *testing.T) {

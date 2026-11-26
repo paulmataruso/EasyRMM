@@ -27,8 +27,11 @@ import (
 
 // Client is a connection to one EasyRMM server.
 type Client struct {
-	base   *url.URL
-	http   *http.Client
+	base *url.URL
+	http *http.Client
+	// ws is the HTTP client of the channel's connection: the same transport
+	// and roots, HTTP/1.1 only, and no overall timeout (ADR-0059).
+	ws     *http.Client
 	device string
 	key    ed25519.PrivateKey
 	now    func() time.Time
@@ -85,9 +88,17 @@ func New(o Options) (*Client, error) {
 		}
 		rt = t
 	}
+	wsRT := rt
+	if t, ok := rt.(*http.Transport); ok {
+		t = t.Clone()
+		t.ForceAttemptHTTP2 = false
+		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+		wsRT = t
+	}
 	return &Client{
 		base:    u,
 		http:    &http.Client{Transport: rt, Timeout: 5 * time.Minute},
+		ws:      &http.Client{Transport: wsRT},
 		now:     time.Now,
 		agent:   "easyrmm-agent/" + o.Version,
 		known:   make(chan struct{}),
@@ -137,6 +148,8 @@ type Error struct {
 	Status  int
 	Code    string
 	Message string
+	// RetryAfter is the answer's Retry-After header, 0 for none.
+	RetryAfter time.Duration
 }
 
 func (e *Error) Error() string {

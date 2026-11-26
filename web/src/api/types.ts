@@ -71,6 +71,8 @@ export interface SessionView {
   permissions: Permission[];
   /** Permissions held platform-wide, not only in some organizations or sites. */
   globalPermissions: Permission[];
+  /** Where each permission that is not platform-wide holds: whole organizations, and individual sites. */
+  scopedPermissions?: Partial<Record<Permission, { organizations: string[]; sites: string[] }>>;
   isSuperAdmin: boolean;
   /** Optional parts of the server that are turned on. */
   features: Features;
@@ -530,6 +532,24 @@ export interface Repair {
   endedAt: string | null;
   /** Why a failed repair failed. */
   error: string;
+}
+
+/** What pressing Repair does for a device now (ADR-0069, amended 2026-11-26). */
+export interface RepairPlan {
+  down: RepairTarget[];
+  repairs: { target: RepairTarget; carriedBy: RepairTarget }[];
+  later: RepairTarget[] | null;
+  running: RepairTarget[] | null;
+  summary: string;
+  /** A code when nothing can be started: nothing_to_repair, no_running_agent, repair_running, ... */
+  refusal?: string;
+}
+
+/** What pressing Repair did: the plan and the repairs it started. */
+export interface RepairOutcome {
+  id: string;
+  plan: RepairPlan;
+  repairs: Repair[];
 }
 
 /**

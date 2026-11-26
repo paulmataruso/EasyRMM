@@ -289,3 +289,50 @@ func (s *Service) Purge(ctx context.Context) error {
 	}
 	return nil
 }
+
+// MaxStoredLines is the most lines StoreText keeps from one text: the last.
+const MaxStoredLines = 5000
+
+// StoreText stores text the server holds about a device, such as the
+// diagnostics a repair step returned, as records of the device's log: one per
+// non-empty line, all at the time at, in the order of the lines (so that a
+// reader's tie-break by id keeps them). The text is redacted as every record
+// is, whole first (a PEM block spans lines), then each line again. It is
+// the server's own record (sequence -1), not counted against the device's
+// daily cap but added to the day's count.
+func StoreText(ctx context.Context, tx pgx.Tx, deviceID uuid.UUID, source, level string, at time.Time, body string, attrs map[string]string) error {
+	if !sources[source] {
+		source = agentproto.LogSourceAgent
+	}
+	if _, ok := levels[level]; !ok {
+		level = agentproto.LogInfo
+	}
+	var lines []string
+	for _, l := range strings.Split(logredact.Text(text(body, 1<<20)), "\n") {
+		if l = strings.TrimRight(l, "\r"); strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > MaxStoredLines {
+		lines = lines[len(lines)-MaxStoredLines:]
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	a := map[string]string{}
+	for k, v := range attrs {
+		a[text(k, agentproto.MaxLogAttrName)] = logredact.Attr(k, text(v, agentproto.MaxLogAttrValue))
+	}
+	msgs := make([]string, len(lines))
+	for i, l := range lines {
+		msgs[i] = logredact.Text(text(l, agentproto.MaxLogMessage))
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO agent_log_records (device_id, seq, source, logged_at, level, message, attrs)
+		SELECT $1, -1, $2, $3, $4, m, $5::jsonb FROM unnest($6::text[]) WITH ORDINALITY AS t(m, n) ORDER BY n`,
+		deviceID, source, at.UTC(), level, jsonObject(a), msgs); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO agent_log_days (device_id, day, stored) VALUES ($1, ($2::timestamptz AT TIME ZONE 'UTC')::date, $3)
+		ON CONFLICT (device_id, day) DO UPDATE SET stored = agent_log_days.stored + excluded.stored`, deviceID, at.UTC(), len(msgs))
+	return err
+}

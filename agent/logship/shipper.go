@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/internal/logredact"
 )
 
 // SendFunc sends a batch, signed, and returns the server's answer. It
@@ -76,6 +77,27 @@ func (s *Shipper) defaults() {
 // never fails the agent.
 func (s *Shipper) add(r agentproto.LogRecord) {
 	_, _ = s.Buf.Append(r)
+}
+
+// Record queues a record about another program, which the agent observes
+// itself: the message and the attributes are redacted and bounded as the
+// agent's own are.
+func (s *Shipper) Record(source, level, message string, attrs map[string]string) {
+	if s == nil {
+		return
+	}
+	r := agentproto.LogRecord{Time: s.Now().UTC(), Source: source, Level: level, Message: Clip(logredact.Text(message), agentproto.MaxLogMessage)}
+	for k, v := range attrs {
+		if len(r.Attrs) >= agentproto.MaxLogAttributes {
+			break
+		}
+		if r.Attrs == nil {
+			r.Attrs = map[string]string{}
+		}
+		k = Clip(k, agentproto.MaxLogAttrName)
+		r.Attrs[k] = logredact.Attr(k, Clip(v, agentproto.MaxLogAttrValue))
+	}
+	s.add(r)
 }
 
 // Apply takes the server's instructions: nil means none, which is the end

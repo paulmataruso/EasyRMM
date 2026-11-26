@@ -71,6 +71,12 @@ export class Agent {
     return jobs.map((j) => JSON.parse(Buffer.from(j.payload, "base64").toString("utf8")) as JobPayload);
   }
 
+  /** A heartbeat with these facts (agentproto.HeartbeatRequest): the device checks in. */
+  async heartbeat(facts: unknown): Promise<void> {
+    const r = await this.post("/api/agent/v1/heartbeat", { facts });
+    if (!r.ok()) throw new Error(`heartbeat: ${r.status()} ${await r.text()}`);
+  }
+
   /** Whether the server lets the run start now. */
   async start(runId: string): Promise<boolean> {
     return ((await (await this.post(`/api/agent/v1/jobs/${runId}/start`, {})).json()) as { proceed: boolean }).proceed;
@@ -93,7 +99,7 @@ export class Agent {
    * A heartbeat (agentproto.HeartbeatRequest) with the facts given, and what else the agent reports with it: the
    * Defender state and the installed files' hashes (ADR-0070). Returns the server's answer.
    */
-  async heartbeat(request: { facts: unknown; defender?: unknown; installedFiles?: unknown }): Promise<{ defender?: { enabled: boolean } }> {
+  async heartbeatWith(request: { facts: unknown; defender?: unknown; installedFiles?: unknown }): Promise<{ defender?: { enabled: boolean } }> {
     return (await (await this.post("/api/agent/v1/heartbeat", request)).json()) as { defender?: { enabled: boolean } };
   }
 

@@ -334,6 +334,14 @@ type HardeningPorts struct {
 type HardeningFinding struct {
 	Reason string `json:"reason,omitempty"`
 	// Missing lists what is not in place; Changes what apply would change.
+	// They are free text, kept for readers that predate Settings.
+	//
+	// Linux also reports Settings (the embedded WindowsFinding's), each by
+	// its ID in linux-settings.json with its state, current value and the
+	// wanted one (ADR-0078, slice C0). A result from a script that predates
+	// it has Missing and Changes only: a reader that needs a setting by ID
+	// treats a module without Settings as unknown, never as in place, and a
+	// module with SettingsOmitted the same for the settings left out.
 	Missing []string        `json:"missing,omitempty"`
 	Changes []string        `json:"changes,omitempty"`
 	Ports   *HardeningPorts `json:"ports,omitempty"`
@@ -464,6 +472,8 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 	windows := h.platform() == HardeningWindows
 	if windows {
 		r.tidyWindows()
+	} else {
+		r.tidyLinux()
 	}
 	switch {
 	case r.Version != 1:
@@ -490,7 +500,7 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 		case !slices.Contains(hardeningOutcomes[r.Mode], m.Outcome):
 			return fail("module " + m.Module + " has no outcome of " + r.Mode)
 		case !m.valid(!windows && m.Module == "firewall"),
-			windows && !m.validWindows(m.Module), !windows && m.hasWindowsFields():
+			windows && !m.validWindows(m.Module), !windows && !m.validLinuxSettings(m.Module):
 			return fail("module " + m.Module + "'s findings are not within their limits")
 		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
 			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):

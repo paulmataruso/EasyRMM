@@ -45,6 +45,9 @@ export function SettingsPage() {
     const org = url.get("organizationId");
     return <Navigate to={org ? `/organizations/${org}?tab=patching` : "/organizations"} replace />;
   }
+  // The organization's own people are its People tab (ADR-0072); the old filtered link goes there.
+  const peopleOf = url.get("organizationId");
+  if (requested === "users" && peopleOf) return <Navigate to={`/organizations/${encodeURIComponent(peopleOf)}?tab=people`} replace />;
   const part = parts.find((p) => p.id === requested) ?? first;
 
   return (

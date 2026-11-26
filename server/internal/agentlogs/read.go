@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,13 @@ type Query struct {
 	Text         string
 	Since, Until time.Time
 	Limit        int
+	// keyset continues a download after the record with this time and id.
+	keyset *keyset
+}
+
+type keyset struct {
+	at time.Time
+	id int64
 }
 
 // Verbose is a device's verbose mode as the console shows it.
@@ -84,7 +92,13 @@ func (q Query) where(args []any) (string, []any) {
 		add("id > $$", q.After)
 	}
 	if q.Before > 0 {
-		add("id < $$", q.Before)
+		// Older in the merged order: by time, then by id (the tie-break).
+		args = append(args, q.Before)
+		w = append(w, fmt.Sprintf("(logged_at, id) < (SELECT b.logged_at, b.id FROM agent_log_records b WHERE b.id = $%d AND b.device_id = $1)", len(args)))
+	}
+	if q.keyset != nil {
+		args = append(args, q.keyset.at, q.keyset.id)
+		w = append(w, fmt.Sprintf("(logged_at, id) > ($%d, $%d)", len(args)-1, len(args)))
 	}
 	if len(q.Sources) > 0 {
 		add("source = ANY ($$)", q.Sources)
@@ -181,6 +195,11 @@ func (s *Service) Read(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 		}
 	}
 	cond, args := q.where([]any{deviceID})
+	// The page is the merged view of every source, newest first: by the
+	// time a record was logged, ties broken by the order it was stored in
+	// (higher id first). The cursors: Before pages to older records in that
+	// order; After is for the live tail and means "stored after this id",
+	// because a late batch can hold records older than the newest one shown.
 	order := "DESC"
 	if q.After > 0 {
 		order = "ASC"
@@ -189,7 +208,7 @@ func (s *Service) Read(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		args = append(args, limit+1)
 		rows, err := tx.Query(ctx, `SELECT `+recordColumns+` FROM agent_log_records WHERE device_id = $1`+cond+
-			fmt.Sprintf(` ORDER BY id %s LIMIT $%d`, order, len(args)), args...)
+			fmt.Sprintf(` ORDER BY %s LIMIT $%d`, orderBy(order), len(args)), args...)
 		if err != nil {
 			return err
 		}
@@ -207,10 +226,8 @@ func (s *Service) Read(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 		if len(page.Items) > limit {
 			page.More, page.Items = true, page.Items[:limit]
 		}
-		if order == "DESC" {
-			for i, j := 0, len(page.Items)-1; i < j; i, j = i+1, j-1 {
-				page.Items[i], page.Items[j] = page.Items[j], page.Items[i]
-			}
+		if order == "ASC" {
+			SortNewestFirst(page.Items)
 		}
 		page.Verbose, err = verboseOf(ctx, tx, deviceID)
 		return err
@@ -219,6 +236,24 @@ func (s *Service) Read(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 		return nil, fmt.Errorf("agentlogs: reading records: %w", err)
 	}
 	return page, nil
+}
+
+func orderBy(dir string) string {
+	if dir == "ASC" {
+		return "id ASC"
+	}
+	return "logged_at DESC, id DESC"
+}
+
+// SortNewestFirst puts records in the merged order of the Logs tab: newest
+// logged time first, a higher id (stored later) first among equal times.
+func SortNewestFirst(items []Record) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if !items[i].Time.Equal(items[j].Time) {
+			return items[i].Time.After(items[j].Time)
+		}
+		return items[i].ID > items[j].ID
+	})
 }
 
 // Format names a download's format.
@@ -233,7 +268,7 @@ const (
 // maxDownload is the most records a download holds: a device's daily cap.
 const maxDownload = DailyCap
 
-// Download writes the device's records that match q, oldest first, up to
+// Download writes the device's records that match q, in time order, oldest first, up to
 // maxDownload of them, as text lines or JSON lines, and records the
 // download in the audit log. It returns how many it wrote.
 func (s *Service) Download(ctx context.Context, c access.Caller, deviceID uuid.UUID, q Query, format Format, w io.Writer) (int, error) {
@@ -249,15 +284,15 @@ func (s *Service) Download(ctx context.Context, c access.Caller, deviceID uuid.U
 	}
 	q.After, q.Before = 0, 0
 	written := 0
-	var last int64
+	var last *keyset
 	for written < maxDownload {
-		q.After = last
+		q.keyset = last
 		cond, args := q.where([]any{deviceID})
 		args = append(args, min(2000, maxDownload-written))
 		var batch []Record
 		err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `SELECT `+recordColumns+` FROM agent_log_records WHERE device_id = $1`+cond+
-				fmt.Sprintf(` ORDER BY id LIMIT $%d`, len(args)), args...)
+				fmt.Sprintf(` ORDER BY logged_at, id LIMIT $%d`, len(args)), args...)
 			if err != nil {
 				return err
 			}
@@ -279,7 +314,7 @@ func (s *Service) Download(ctx context.Context, c access.Caller, deviceID uuid.U
 				return written, err
 			}
 			written++
-			last = r.ID
+			last = &keyset{at: r.Time, id: r.ID}
 		}
 		if len(batch) < 2000 {
 			break

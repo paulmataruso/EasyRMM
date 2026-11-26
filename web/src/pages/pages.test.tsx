@@ -256,7 +256,7 @@ describe("users and invitations", () => {
     await user.selectOptions(await within(form).findByLabelText("Site"), "s1");
     await user.click(send);
 
-    const notice = await dialog("Send this invitation link");
+    const notice = await dialog("Copy the sign-up link");
     expect(within(notice).getByText("https://rmm.example.com/welcome#token=abc")).toBeInTheDocument();
     expect(within(notice).getByText(/shown only once/)).toBeInTheDocument();
     // Escape must not throw the link away before it is copied.
@@ -275,8 +275,8 @@ describe("users and invitations", () => {
     installFakeApi({ ...routes, "GET /auth/options": ok({ passwordResetAvailable: false, mfaRequired: true, passwordMinLength: 12 }) });
     renderApp("/settings?invite=1");
     const form = await dialog("Invite user");
-    expect(await within(form).findByRole("button", { name: "Create invitation link" })).toBeInTheDocument();
-    expect(within(form).getByText(/No mail server is set up, so nothing is emailed. A link is shown next/)).toBeInTheDocument();
+    expect(await within(form).findByRole("button", { name: "Create user" })).toBeInTheDocument();
+    expect(within(form).getByText(/No mail server is set up, so nothing is emailed. A sign-up link is shown next/)).toBeInTheDocument();
     expect(within(form).queryByRole("button", { name: "Send invitation" })).not.toBeInTheDocument();
     await user.click(within(form).getByRole("button", { name: "Cancel" }));
   });
@@ -287,6 +287,16 @@ describe("users and invitations", () => {
     const form = await dialog("Invite user");
     expect(await within(form).findByText(/The invitation is emailed to them/)).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Send invitation" })).toBeInTheDocument();
+  });
+
+  it("sends the old filtered link to the organization's People tab, which lists that organization's people", async () => {
+    const server = installFakeApi({ ...routes, "GET /organizations/:id": ok(org("o1", "Northwind Traders")) });
+    renderApp("/settings?tab=users&organizationId=o1");
+    expect(await screen.findByRole("tab", { name: "People" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("link", { name: "Sam Okafor" })).toBeInTheDocument();
+    expect(server.callsTo("GET /users").every((c) => c.query.get("organizationId") === "o1")).toBe(true);
+    // The scope is fixed: no organization filter.
+    expect(screen.queryByLabelText("Organization")).not.toBeInTheDocument();
   });
 
   it("puts a server's assignment error on the row it belongs to", async () => {
@@ -340,7 +350,7 @@ describe("users and invitations", () => {
     await user.selectOptions(await within(form).findByLabelText("Role"), "technician");
     await user.selectOptions(within(form).getByLabelText("Organization"), "o1");
     await user.click(within(form).getByRole("button", { name: "Send invitation" }));
-    const notice = await dialog("Send this invitation link");
+    const notice = await dialog("Copy the sign-up link");
     expect(within(notice).getByText("https://rmm.example.com/welcome#token=abc")).toBeInTheDocument();
     expect(within(notice).getByText(/It was not emailed: This organization's accounts have been emailed 500 .* Send it to riley@example\.com yourself\./)).toBeInTheDocument();
   });
