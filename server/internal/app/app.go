@@ -58,6 +58,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/quickassistapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/rdpcredsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
@@ -75,6 +76,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rdpcreds"
 	"github.com/paulmataruso/easyrmm/server/internal/recovery"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
@@ -166,6 +168,8 @@ type Deps struct {
 	MeshSecrets *remote.Secrets
 	// RDPCreds keeps the RDP credentials people save per device (ADR-0079).
 	RDPCreds *rdpcreds.Service
+	// QuickAssist is ad-hoc support sessions (ADR-0080).
+	QuickAssist *quickassist.Service
 }
 
 // Build constructs the services over an open database.
@@ -252,6 +256,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
 	})
 	d.Agents.OnDeviceGone(func(id uuid.UUID) { d.AgentChannel.Close(id, agentproto.ClosingRemoved) })
+	d.QuickAssist = quickassist.New(db, auditLog, jobKey, strings.TrimSuffix(cfg.PublicURL.String(), "/"))
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)
@@ -605,6 +610,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		remoteapi.New(d.Remote).WithStepUp(d.Sessions).Register(mux)
 		rdpcredsapi.New(d.RDPCreds, d.Sessions).Register(mux)
 	}
+	quickassistapi.New(d.QuickAssist, d.Sessions, d.AgentBuilds).Register(mux)
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)
 	jobsapi.New(d.Jobs).Register(mux)
@@ -653,7 +659,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -779,6 +785,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge, deps.Hardware.Purge, deps.AgentLogs.Purge, deps.DefenderLog.Cleanup)
 	wg.Go(func() { deps.Agents.Run(ctx) })
+	wg.Go(func() { deps.QuickAssist.Run(ctx) })
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })

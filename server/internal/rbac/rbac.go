@@ -109,6 +109,18 @@ const (
 	PermRDPCredentialsSave Permission = "device.rdp_credentials.save" //nolint:gosec // a permission name, not a credential
 )
 
+// Quick Assist (ADR-0080), all at the organization. Permanent links, taking a
+// session over and installing permanently start at Organization
+// Administrator.
+const (
+	PermQAView          Permission = "quickassist.view"
+	PermQALinkCreate    Permission = "quickassist.link.create"
+	PermQALinkPermanent Permission = "quickassist.link.permanent"
+	PermQASession       Permission = "quickassist.session"
+	PermQATakeover      Permission = "quickassist.session.takeover"
+	PermQAInstall       Permission = "quickassist.install"
+)
+
 // ADR-0074's two added Defender permissions: PermDefenderViewSensitive reads
 // file paths, user names and the exclusions an administrator added;
 // PermDefenderWeaken does what lowers protection or restores a threat. Both
@@ -132,6 +144,7 @@ var AllPermissions = []Permission{
 	PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 	PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 	PermBackupViewSensitive, PermBackupDestroy, PermPrintViewSensitive, PermPrintDestroy,
+	PermQAView, PermQALinkCreate, PermQALinkPermanent, PermQASession, PermQATakeover, PermQAInstall,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -215,6 +228,7 @@ var technicianPerms = union(viewPerms, []Permission{
 	// plus the reversible manage permissions. No Active Directory writes.
 	PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
 	PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
+	PermQAView, PermQALinkCreate, PermQASession,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
@@ -226,7 +240,8 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 })
 
 var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure,
-	PermCAManage, PermADManage, PermADResetPassword})
+	PermCAManage, PermADManage, PermADResetPassword,
+	PermQALinkPermanent, PermQATakeover, PermQAInstall})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{

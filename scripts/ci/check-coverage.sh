@@ -125,6 +125,11 @@ floors=(
   "server/cmd/easyrmm-server               80"
   # Saved RDP credentials (ADR-0079): a sealed password per device, opened
   # only for the gateway, and the routes that save and delete it.
+  # Quick Assist (ADR-0080): links, tickets, sessions, the runner.
+  "server/internal/quickassist             75"
+  "server/internal/httpapi/quickassistapi  80"
+  "internal/qaticket                       80"
+  "agent/quickassist                       45"
   "server/internal/rdpcreds                88"
   "server/internal/httpapi/rdpcredsapi     90"
   # The host updater (ADR-0052): it runs as root, verifies what it
