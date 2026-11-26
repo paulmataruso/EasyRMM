@@ -140,8 +140,12 @@ the client's. The owner's rule is absolute, so:
    a failure (`server/internal/agents/removal.go`). The copy-able script that
    removes only our service, folder and keys, by exact name and path, is in
    [removing-our-meshagent.md](../../operations/removing-our-meshagent.md).
-   **Not built: showing the flag and the script in the console.** The data
-   and the script exist; the page is a follow-up.
+   The console shows it: **Devices** lists, above the table, the removed
+   devices that may still have remote access installed, in plain words, with a
+   button that copies the script (`web/src/pages/devices/leftBehind.tsx`,
+   from `GET /api/v1/removed-devices/left-behind`, for those who may remove
+   devices in the device's site). A device leaves the list when its agent
+   later confirms it uninstalled itself, or after the 90-day retention.
 3. **MeshCentral configuration.** EasyRMM's `config.json`
    (`server/internal/meshcentral/config.go`) sets no option about the
    Diagnostic Agent, and MeshCentral has none: the agent is installed only
@@ -182,8 +186,13 @@ the client's. The owner's rule is absolute, so:
   go and a neighbouring key whose name starts with ours stays.
 * Integration (real PostgreSQL): `TestDeviceRemoval` asserts a Windows device whose
   agent reported a failure is retired with `platform = 'windows'` and
-  `mesh_may_remain`. The `removeRetired` skip is covered only by
-  `TestRemovedDeviceNode`'s setup (needs the MeshCentral container); not run here.
+  `mesh_may_remain`. `TestRemovedWindowsDeviceIsNeverAskedToUninstall` (real MeshCentral, host
+  networking) asserts no request is sent and the node is removed at once;
+  `TestRemovedDeviceNode` asserts the other platforms are still asked three times.
+* API (real PostgreSQL): `removal_api_integration_test.go` lists the row for an
+  administrator and not for a technician. Web: `leftBehind.test.tsx` (plain
+  words, copy button, nothing without the permission, the script has no stock
+  names, and equals the guide's).
 * Both are built here with `GOOS=windows go vet`; the Windows-only tests were
   not run on Windows.
 

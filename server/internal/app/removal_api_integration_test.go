@@ -171,6 +171,29 @@ func TestDeviceRemovalAPI(t *testing.T) {
 		t.Errorf("long id: %v", err)
 	}
 
+	// A removed Windows device whose MeshAgent may remain is listed for those
+	// who may remove devices, and for nobody else (ADR-0071).
+	if err := h.db.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO retired_devices (device_id, organization_id, site_id, name, mesh_node_id, expires_at, platform, mesh_may_remain)
+			VALUES (gen_random_uuid(), $1, $2, 'pc-win', 'node//x', now() + interval '80 days', 'windows', true)`, acme, hq.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var left struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/removed-devices/left-behind", nil, &left)
+	if len(left.Items) != 1 || left.Items[0].Name != "pc-win" {
+		t.Errorf("left behind for the administrator: %+v", left.Items)
+	}
+	tech.expect(http.StatusOK, "GET", "/api/v1/removed-devices/left-behind", nil, &left)
+	if len(left.Items) != 0 {
+		t.Errorf("left behind for a technician: %+v", left.Items)
+	}
+
 	// The audit trail.
 	for action, want := range map[string]int{
 		"device.removal_request": 3, "device.removal_cancel": 1, "device.removal_failed": 1, "device.remove": 2, "device.retired_cleanup": 1,

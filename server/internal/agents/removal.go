@@ -378,3 +378,43 @@ func nonEmpty(s, otherwise string) string {
 	}
 	return s
 }
+
+// LeftBehindMaxList bounds the list of devices that may have left MeshAgent behind.
+const LeftBehindMaxList = 200
+
+// LeftBehind is a removed Windows device whose EasyRMM agent was not there to
+// remove EasyRMM's MeshAgent (ADR-0071). EasyRMM does not ask MeshCentral to
+// uninstall it, so it may still be on the computer.
+type LeftBehind struct {
+	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	SiteID         uuid.UUID `json:"siteId"`
+	RemovedAt      time.Time `json:"removedAt"`
+}
+
+// ListLeftBehind returns the removed devices, within the retention period and
+// the caller's reach, whose MeshAgent may remain: those the caller may remove
+// devices from, whose agent has not since confirmed that it uninstalled itself.
+func (s *Service) ListLeftBehind(ctx context.Context, c access.Caller) ([]LeftBehind, error) {
+	out := []LeftBehind{}
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT device_id, name, organization_id, site_id, removed_at FROM retired_devices
+			WHERE mesh_may_remain AND cleaned_at IS NULL AND expires_at > now() ORDER BY removed_at DESC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var l LeftBehind
+			if err := rows.Scan(&l.ID, &l.Name, &l.OrganizationID, &l.SiteID, &l.RemovedAt); err != nil {
+				return err
+			}
+			if c.Can(rbac.PermDeviceRetire, rbac.Site(l.OrganizationID, l.SiteID)) && len(out) < LeftBehindMaxList {
+				out = append(out, l)
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
+}

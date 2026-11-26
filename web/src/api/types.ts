@@ -543,6 +543,15 @@ export interface DeviceRemovalResult {
   device?: Device;
 }
 
+/** A removed Windows device whose EasyRMM MeshAgent may remain on the computer (ADR-0071). */
+export interface LeftBehindDevice {
+  id: string;
+  name: string;
+  organizationId: string;
+  siteId: string;
+  removedAt: string;
+}
+
 export interface DeviceAgent {
   version: string;
   arch: string;

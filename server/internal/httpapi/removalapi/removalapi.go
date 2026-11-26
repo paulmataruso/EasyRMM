@@ -28,6 +28,18 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/devices/{id}/removal", a.request)
 	r("DELETE /api/v1/devices/{id}/removal", a.cancel)
 	r("DELETE /api/v1/devices/{id}", a.force)
+	r("GET /api/v1/removed-devices/left-behind", a.leftBehind)
+}
+
+// leftBehind lists removed Windows devices whose MeshAgent may remain
+// (ADR-0071).
+func (a *API) leftBehind(w http.ResponseWriter, r *http.Request) error {
+	items, err := a.agents.ListLeftBehind(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	return nil
 }
 
 // Result answers a removal request: the device while it waits for its
