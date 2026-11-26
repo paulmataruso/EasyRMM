@@ -23,3 +23,9 @@
 - Add a module's actions with `winmod.NewCatalogue(...)` in `app.go` (`defender.Actions()` is the model); `SensitivePermission` is required for a sensitive action.
 - Slice 6 (snapshots) reads `winmod_run_results` or stores its own; slice 9's AST check should walk `server/internal/winmod/**/*.ps1`.
 - `windows_module_snapshots` is not in migration 90161.
+
+## Other notes
+
+- `winmod_run_results` is "stays" in `TestMoveDispositionOfEveryTable` (like `job_runs`: a result stays with the org and site it was read under); add it to ADR-0069's list when that ADR is next touched.
+- Existing tests that assume their own migration is the last (`TestStepUpMigrationGoesDownAndUp`, `TestHardeningGuardMigrationDownUp`, and the move test's `hardening_guards` row) already fail on integration; this slice does not change that. The new migration test goes down to the version before its own and up again, so it holds whatever follows.
+- `scripts/ci/check-powershell.ps1` (PSScriptAnalyzer) does not yet scan `server/internal/winmod`; slice 9's AST check should cover it.

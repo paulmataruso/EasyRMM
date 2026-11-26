@@ -4,6 +4,7 @@ package database_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -52,7 +53,17 @@ func TestWinmodMigrationGoesDownAndUp(t *testing.T) {
 		VALUES (gen_random_uuid(), 't', 'powershell', 'x', decode(repeat('00', 32), 'hex'), 60, now() + interval '1 hour', now(), 'winmod', '{}', true)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.Down(ctx); err != nil {
+	// Down to the migration before this one, whatever comes after it.
+	var before int64 = -1
+	for _, src := range provider.ListSources() {
+		if strings.Contains(src.Path, "_winmod.sql") {
+			before = src.Version - 1
+		}
+	}
+	if before < 0 {
+		t.Fatal("the winmod migration is not in the sources")
+	}
+	if _, err := provider.DownTo(ctx, before); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	if got := count(objects); got != 0 {
@@ -61,7 +72,7 @@ func TestWinmodMigrationGoesDownAndUp(t *testing.T) {
 	if got := count(`SELECT count(*) FROM jobs WHERE kind = 'winmod'`); got != 0 {
 		t.Fatalf("after down: %d winmod jobs", got)
 	}
-	if _, err := provider.UpByOne(ctx); err != nil {
+	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
 	if got := count(objects); got != 4 {
