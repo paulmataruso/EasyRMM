@@ -59,7 +59,7 @@ test("group-wide verbose logging is switched on the Settings tab and shown, read
   // The device's Logs says the group's setting is on, and links back; it cannot turn it off there.
   await page.getByRole("tab", { name: "Overview" }).click();
   await page.getByRole("link", { name: "dt-reception-01" }).click();
-  await page.getByRole("tab", { name: "Logs" }).click();
+  await page.getByRole("tab", { name: "Logs", exact: true }).click();
   await expect(page.getByText(/set on the group\./)).toBeVisible();
   await expect(page.getByRole("button", { name: "Turn off" })).toHaveCount(0);
   await page.getByRole("link", { name: /Change it on the group Reception/ }).click();
