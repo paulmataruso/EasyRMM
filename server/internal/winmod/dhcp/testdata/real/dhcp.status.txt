@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"serviceState":"running","domainJoined":true,"authorized":true,"conflictDetectionAttempts":0,"bindings":[],"scopeCount":1,"activeScopeCount":0},"error":null}

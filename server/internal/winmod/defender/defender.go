@@ -34,7 +34,7 @@ func scriptText(name string) string {
 
 // StatusSHA256 is the pinned hash of status.ps1. Changing the script means
 // changing this line in review; a test and the catalog's build check it.
-const StatusSHA256 = "fcbc0fd4d138da91ab1604a2d018da09cf025486e362468bc19749a2b2653d6b"
+const StatusSHA256 = "ece7a930a128e323d61d1eb05b6ee75f5730931aaccdcfbccbf33eeb4169f9cc"
 
 // Status is defender.status's result, in the shapes Get-MpComputerStatus
 // shows: switches are true, false or null where the computer does not say.

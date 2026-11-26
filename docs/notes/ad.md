@@ -15,7 +15,7 @@ Branch `ws/ad`. No migration was needed (migrations 00059 to 90239 are unused): 
 ## Implementation-status rows
 
 - `active_directory` catalogue (19 actions), guard, results, alert kind: built; unit, real-PostgreSQL and stand-in tests pass.
-- The scripts: parse, pass the AST check, and pass 148 checks against a stand-in ActiveDirectory module under PowerShell 7 (`scripts/ci/winmod-ad`). **Not run on a real domain controller or against the real cmdlets.** Every real-controller step of ADR-0075 section 9 is still to do, starting with the SYSTEM write gate, `Get-ADDomainController -Identity <this computer>`, `Get-ADReplicationFailure`'s properties and the 20,000-object bound.
+- The scripts: parse, pass the AST check, and pass 148 checks against a stand-in ActiveDirectory module under PowerShell 7 (`scripts/ci/winmod-ad`). **Run on a real domain controller by `wtest` (see `wtest.md` and ADR-0075): the SYSTEM write gate is open and `Get-ADDomainController -Identity <this computer>` works; the replication cmdlets take no `-Server` (fixed).** Still to do from ADR-0075 section 9: more than one controller (replication failures and partners) and the 20,000-object bound.
 - Everything in ADR-0075's slices is built except the sealed-cookie paging, the Security-log event alerts, `userPrincipalName` and account-expiry edits, and a server refusal of a write sent to a controller that is not the chosen one (see the ADR's amendments 2, 12, 13).
 - Migration: `00059_ad_domains.sql` (the integrator renumbers). `ad_domains` is `owned` in the move test.
 

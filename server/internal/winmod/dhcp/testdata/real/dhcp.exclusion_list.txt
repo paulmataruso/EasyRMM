@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"exclusions":[{"startRange":"10.98.98.20","endRange":"10.98.98.25"}]},"error":null}

@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"serial":"5900000011eb1934e9faf60524000000000011","disposition":"revoked"},"error":null}

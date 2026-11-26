@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"not_on_hold","message":"Only a certificate on hold can be reinstated; any other revocation is final."}}

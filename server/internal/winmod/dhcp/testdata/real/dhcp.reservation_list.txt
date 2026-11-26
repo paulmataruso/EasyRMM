@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"reservations":[{"ipAddress":"10.98.98.30","clientId":"00-11-22-33-44-55","name":"res1b","description":"y"}]},"error":null}

@@ -807,3 +807,13 @@ Read on 2026-11-26 unless marked otherwise:
 * Repository: `agent/winevents` (proposed by ADR-0074),
   `server/internal/monitoring/policies.go`, `server/internal/rbac/rbac.go`,
   `internal/agentproto/agentproto.go`.
+
+## Amended after the first run on a real server (2026-11-26, decided in review)
+
+*Amended 2026-11-26 (decided in review):* the scripts were run in Windows PowerShell 5.1 as SYSTEM on Windows Server 2025 with Windows Server Backup, against a second disk (F:).
+
+* **A file spec** (`Get-WBFileSpec`) has `FilePath` (with a trailing backslash), `FileName` (`*` for everything), `IsRecursive` and `IsIncludeSpec`; the scripts read `FileSpec`, `Path` and `IsExclude`, so `sensitive` listed an empty include path. Read by the real names now.
+* **A backup target** has `TargetType` (`Volume`, `Disk`, `Network`), `Path`, `Label`, `WBVolume` (with `FreeSpace` and `TotalSpace`) and `WBDisk`; there is no `NetworkPath` or `TargetVolume`. `status` showed no free space for a volume target and called a network target a volume. Fixed.
+* **`Add-WBBackupTarget` for a disk asks whether to format it** and, with no console (`-NonInteractive`), failed; `-Force` answers it. A disk target takes the disk over: its volume letter goes away and the volume is hidden until the policy is removed, as Windows says, so a target that was a volume (F:) is not found as one afterwards.
+* Run and right: policy set and remove, volume, network (a share on the computer, with a credential) and disk targets, a backup run, jobs and versions, a file restore to a new folder and over the original, VSS full on and off, a prune of the older version, and the refusals (stop and stop recovery with nothing running, a policy needed first). Windows Server Backup lists no size for a version, so `sizeBytes` is always `null`.
+* Not run: bare-metal recovery and system state in a backup run, a backup from a policy to a remote share of another computer (SYSTEM reads the share as the computer account, so `online` of a network target may be false for a share only the stored credential can open).

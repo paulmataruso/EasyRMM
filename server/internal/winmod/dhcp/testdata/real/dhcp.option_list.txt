@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"options":[{"optionId":51,"name":"Lease","value":["14400"]},{"optionId":15,"name":"DNS Domain Name","value":["contoso.test"]},{"optionId":3,"name":"Router","value":["10.98.98.1"]}]},"error":null}

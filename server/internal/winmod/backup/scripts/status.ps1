@@ -56,12 +56,14 @@ try {
         $targets = @()
         foreach ($t in @(Get-WBBackupTarget -Policy $pol -ErrorAction SilentlyContinue)) {
             $net = Get-First $t @('NetworkPath', 'Path')
-            $vol = Get-Prop $t 'TargetVolume'
+            $vol = Get-First $t @('WBVolume', 'TargetVolume')
             $disk = Get-First $t @('WBDisk', 'Disk')
             $kind = 'volume'
             $free = $null; $total = $null; $online = $true
             if ($null -ne $disk -and $null -eq $vol) { $kind = 'disk' }
             if ($null -ne (Get-Prop $t 'NetworkPath') -and [string](Get-Prop $t 'NetworkPath') -ne '') { $kind = 'network' }
+            # What a real server reports is TargetType (Volume, Disk or Network), with the share in Path; there is no NetworkPath.
+            switch ([string](Get-Prop $t 'TargetType')) { 'Network' { $kind = 'network' } 'Disk' { $kind = 'disk' } 'Volume' { $kind = 'volume' } }
             if ($kind -eq 'network') {
                 $online = [bool](Test-Path -LiteralPath ([string]$net))
             } elseif ($null -ne $vol) {

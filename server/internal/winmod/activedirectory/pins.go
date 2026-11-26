@@ -11,7 +11,7 @@ var pins = map[string]string{ //nolint:gosec // SHA-256 of scripts, not credenti
 	"group_list":          "f3bdc38bd80859b9c5b8cf1b2a3a1464ab5aac72d3b63a4cfd26dbe87b02d779",
 	"group_members":       "e7db499988afa483c3490e11cffbee618cff3bfda7ec587adfabfbf5ccf65410",
 	"group_remove_member": "f4ad9d55d3b08f0ef2fe3a57fba9afda3a8e74eef76202d232aff9c6390684fb",
-	"health_read":         "8b0e55091d86dcc852304a8a28d5a87aadb9b47caaed9616f772c1195db33712",
+	"health_read":         "d60d2a0130480d92ab80c6cbb23b213f9d81de815493cdfca9f7bc93ddf0e762",
 	"ou_tree":             "01c2531130715e01a12bcb5b1b58f7630b48123600c8f806ef2c786925fda2bc",
 	"privileged_members":  "277de587b4a417395d842145fc19aa1d727a49ce2fe0ce5882263f03c16ea4c3",
 	"status":              "7f6b887a3e8ad9f35e299a52d25137277091b78ea38e5acb6c5670f13153f827",

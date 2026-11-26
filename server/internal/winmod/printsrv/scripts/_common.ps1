@@ -8,7 +8,7 @@ function Stop-Result($code, $message) {
     exit 0
 }
 function Get-Prop($o, $name) {
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-Number($v) {

@@ -112,20 +112,25 @@ try {
     Import-DirectoryModule
     $c = Get-Context $false
     $common = $c.Common
+    # The replication cmdlets take no -Server: Get-ADReplicationFailure has -EnumeratingServer and
+    # Get-ADReplicationPartnerMetadata -EnumerationServer (found on a real controller).
+    $rfail = @{ EnumeratingServer = [string]$common['Server'] }
+    $rmeta = @{ EnumerationServer = [string]$common['Server'] }
+    if ($common.ContainsKey('Credential')) { $rfail['Credential'] = $common['Credential']; $rmeta['Credential'] = $common['Credential'] }
     $checks = @()
     $failureCount = 0
     $oldest = $null
     $partners = @()
     # Replication: the failures the directory itself reports, and when each partner last succeeded.
     try {
-        $failures = @(Get-ADReplicationFailure -Scope Domain -Target ([string]$c.DomainName) @common)
+        $failures = @(Get-ADReplicationFailure -Scope Domain -Target ([string]$c.DomainName) @rfail)
         $failureCount = $failures.Count
         foreach ($f in $failures) {
             $when = Get-Prop $f 'FirstFailureTime'
             if ($null -ne $when -and ($null -eq $oldest -or [datetime]$when -lt $oldest)) { $oldest = [datetime]$when }
         }
         $lag = $false
-        foreach ($m in @(Get-ADReplicationPartnerMetadata -Target ([string]$c.Server) -Scope Server @common)) {
+        foreach ($m in @(Get-ADReplicationPartnerMetadata -Target ([string]$c.Server) -Scope Server @rmeta)) {
             if ($partners.Count -ge 20) { break }
             $ok = Get-Prop $m 'LastReplicationSuccess'
             $partnerName = ([string](Get-Prop $m 'Partner') -split ',')[1]

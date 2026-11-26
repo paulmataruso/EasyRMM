@@ -178,6 +178,6 @@ function New-ADGroup {
     Show-Call 'New-ADGroup' $SamAccountName @{ Path = $Path; GroupScope = $GroupScope; GroupCategory = $GroupCategory }
     New-Group $Name $SamAccountName ($script:DomainSid + '-2002') @()
 }
-function Get-ADReplicationFailure { [CmdletBinding()] param($Scope, $Target, $Server, $Credential) @() }
-function Get-ADReplicationPartnerMetadata { [CmdletBinding()] param($Target, $Scope, $Server, $Credential) @() }
+function Get-ADReplicationFailure { [CmdletBinding()] param($Scope, $Target, $EnumeratingServer, $Credential) @() }
+function Get-ADReplicationPartnerMetadata { [CmdletBinding()] param($Target, $Scope, $EnumerationServer, $Credential) @() }
 Export-ModuleMember -Function *-AD*

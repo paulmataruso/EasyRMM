@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-ServiceState([string]$name) {
@@ -54,8 +54,8 @@ try {
     $z = Get-DnsServerZone -Name $zone -ErrorAction SilentlyContinue
     if ($null -eq $z) { Write-Result $false $null 'zone_not_found' 'There is no zone of this name on this server.'; exit 0 }
     $row = Convert-Zone $z
-    $row.secondaryServers = @((Get-Prop $z 'SecondaryServers') | ForEach-Object { [string]$_ })
-    $row.notifyServers = @((Get-Prop $z 'NotifyServers') | ForEach-Object { [string]$_ })
+    $row.secondaryServers = @(@(Get-Prop $z 'SecondaryServers') | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { [string]$_ })
+    $row.notifyServers = @(@(Get-Prop $z 'NotifyServers') | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { [string]$_ })
     $row.transfer = [string](Get-Prop $z 'SecureSecondaries')
     $row.notify = [string](Get-Prop $z 'Notify')
     $row.zoneFile = [string](Get-Prop $z 'ZoneFile')

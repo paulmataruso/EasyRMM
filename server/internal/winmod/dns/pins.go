@@ -3,16 +3,16 @@ package dns
 // pins are the SHA-256 of each embedded script (ADR-0073). Changing a script means changing its
 // line here in the same reviewed change; a test and the catalog build check them.
 var pins = map[string]string{
-	"record_add":           "0e6aadad6eea760be72053845b53587a539416565c5a522dad21ea6bc9e1c412",
-	"record_list":          "214b5d7a407f0d1c4cef311b88637392556a05d58469116fdcc80bbff3a3f747",
-	"record_remove":        "31e26c80f57a73a681c6178345e0038dfbad23e4c5e1e02a9a6e192ad67d6966",
-	"record_remove_all":    "6b9db51a1d6e5b45e2e7f6e8d7a0a85c9573de6aef281303268d88353068bfc6",
-	"record_set":           "91bd4a0ec2f962512b0eb22e6616f99c524a1fe2fbb4d271b56528c582313bff",
-	"status":               "e3cfcce8d4ba233814166987556c64d64113c6e416beffb13309d86fd5b48b6f",
-	"zone_allow_nonsecure": "c7ada3ee3aef926d01d0162bdf2a1ab7e6771abccdabe284cfb7080c3cc91eca",
-	"zone_create":          "f2000d8b4a1dc56e21d66668623a3c7ac8b713b58b181faa85b2b51abd286a37",
-	"zone_get":             "89d0a1969d3d3158f52512ee3e42c34077cd8200d7ad0091fbc0113b099747d8",
-	"zone_list":            "ebe5e172591d2f48daeddb1dc418b1e1db26907e8faf9c0a954e2bc61c532292",
-	"zone_remove":          "59fde8efd53a2f69de515ad8877fcfe858311204aa3196b7b82993cf3b9932ee",
-	"zone_set_update":      "c3feb6a1f96569cbc5d65c870d0bc915f619fd08f4968e790316d3c9f9186c47",
+	"record_add":           "5059143ef7e6bdff08ce79b95e7dd1251f94a31f5459c021654cb1a77d4fc700",
+	"record_list":          "37315f3530f77625a42025a3ac26d7c2051a6299056d403eb21f7475eaaa7277",
+	"record_remove":        "74646ff689f1dec38b5b6864aa31186409a629e6de63f258557cc1598ee86126",
+	"record_remove_all":    "ba6464462f6ae420cd551701873c860be9840f7c57340aef79b4c5c93665d20e",
+	"record_set":           "13b9554cacb6ef356837ed88a101664683eeaa20a83b1ecaead2c050456b0a46",
+	"status":               "e952b462f714b11f8ca2bf2d409d539179828d69855d90fef787ff6177d54bcd",
+	"zone_allow_nonsecure": "5161f84067295ab2a3e0cc70a62effa27dbb19d66b25fe286bd98e4812841656",
+	"zone_create":          "d6d79c23ee1c219cbae0f57ab6d100339d6741084169acef96f20ec1a4424709",
+	"zone_get":             "25d970c3efb4e3f47da4a600529f5748ee485f4bfd11ee599d887aece82a2a72",
+	"zone_list":            "bae0afe05913a1cfc43fcb16921f6daf0a168af39cc4f6335e594184f35d93f9",
+	"zone_remove":          "4f7cd59c041b0e06d0eb032ea84b84cd70f0e86da8db4e2ae4c929b88443a6e0",
+	"zone_set_update":      "60a6521cbad3e02b798f2c10cfb367de5353706f2ee8422db4b6a45c387d795b",
 }

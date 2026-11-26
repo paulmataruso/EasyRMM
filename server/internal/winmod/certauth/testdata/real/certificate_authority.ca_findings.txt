@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"caName":"contoso-HQ-DC1-CA","findings":[],"notes":["The CA permissions could not be read, so ESC7 was not checked.","ESC5 (permissions on the other certificate objects in the directory) is not checked."]},"error":null}

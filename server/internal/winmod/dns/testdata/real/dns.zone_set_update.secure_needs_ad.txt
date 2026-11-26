@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"secure_needs_ad","message":"Secure dynamic updates need an Active Directory-integrated zone."}}

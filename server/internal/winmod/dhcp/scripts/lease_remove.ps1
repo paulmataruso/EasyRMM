@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-ServiceState([string]$name) {
@@ -74,11 +74,12 @@ try {
     if ($null -eq (Get-DhcpServerv4Scope -ScopeId $scopeId -ErrorAction SilentlyContinue)) { Write-Result $false $null 'scope_not_found' 'There is no scope of this ID on this server.'; exit 0 }
 
     $ip = [string](Get-Prop $p 'ipAddress')
-    if ($null -eq (Get-DhcpServerv4Lease -ScopeId $scopeId -IPAddress $ip -ErrorAction SilentlyContinue)) {
+    # Get-DhcpServerv4Lease takes -IPAddress or -ScopeId, never both (found on a real server), so the scope is matched here.
+    if ($null -eq (Get-DhcpServerv4Lease -ScopeId $scopeId -AllLeases -ErrorAction SilentlyContinue | Where-Object { [string]$_.IPAddress -eq $ip })) {
         Write-Result $false $null 'lease_not_found' 'There is no lease for this address in the scope.'
         exit 0
     }
-    Remove-DhcpServerv4Lease -ScopeId $scopeId -IPAddress $ip
+    Remove-DhcpServerv4Lease -IPAddress $ip
     Write-Result $true ([ordered]@{ count = 1 }) $null $null
 } catch {
     Write-Result $false $null 'command_failed' ('Removing the lease failed: ' + $_.Exception.GetType().Name)

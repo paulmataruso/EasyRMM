@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"scanType":"custom","finishedAt":"2026-11-26T13:25:37Z"},"error":null}
