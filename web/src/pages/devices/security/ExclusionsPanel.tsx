@@ -33,7 +33,7 @@ export function ExclusionsPanel({ device, canWeaken, canSeeSensitive }: { device
   };
   if (!canSeeSensitive) {
     return (
-      <ReadPanel title="Exclusions" read={read} readLabel="Read exclusions">
+      <ReadPanel title="Exclusions" read={read}>
         {() => null}
       </ReadPanel>
     );
@@ -42,7 +42,6 @@ export function ExclusionsPanel({ device, canWeaken, canSeeSensitive }: { device
     <ReadPanel
       title="Exclusions"
       read={read}
-      readLabel="Read exclusions"
       extra={<p className="text-sm text-muted">EasyRMM's own exclusions are locked: they keep Defender from blocking the agents.</p>}
     >
       {(d) => (

@@ -190,6 +190,11 @@ export function Spinner({ label = "Loading…", className }: { label?: string; c
   );
 }
 
+/** A placeholder bar for what is loading: it keeps the page's real layout until the data arrives. */
+export function Skeleton({ className }: { className?: string }) {
+  return <span aria-hidden className={cx("block h-4 animate-pulse rounded bg-hover", className)} />;
+}
+
 export function EmptyState({ title, children, icon, action, compact = false }: {
   title: string;
   children?: ReactNode;

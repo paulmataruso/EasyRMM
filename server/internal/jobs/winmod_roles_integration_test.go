@@ -84,8 +84,19 @@ func TestWinmodDNSAndDHCP(t *testing.T) {
 	}
 
 	// Tier 3 needs the confirmation by name, and a step-up.
-	before := jobs()
 	fieldErr(t, run(siteAdmin, "dhcp.scope_remove", `{"scopeId":"10.0.0.0"}`, ""), "confirm", "dhcp.scope_remove:10.0.0.0")
+	// Changing a scope's address range is tier 3 too: named by its scope, a step-up, and a range that makes sense.
+	fieldErr(t, run(siteAdmin, "dhcp.scope_range_set", `{"scopeId":"10.0.0.0","startRange":"10.0.0.10","endRange":"10.0.0.50"}`, ""), "confirm", "dhcp.scope_range_set:10.0.0.0")
+	fieldErr(t, run(siteAdmin, "dhcp.scope_range_set", `{"scopeId":"10.0.0.0","startRange":"10.0.0.50","endRange":"10.0.0.10"}`, "dhcp.scope_range_set:10.0.0.0"), "params.endRange", "ends before")
+	f.svc.SetStepUp(stepUpStub{err: errors.New("step up required")})
+	if err := run(siteAdmin, "dhcp.scope_range_set", `{"scopeId":"10.0.0.0","startRange":"10.0.0.10","endRange":"10.0.0.50"}`, "dhcp.scope_range_set:10.0.0.0"); err == nil {
+		t.Error("a scope's range changed without a step-up")
+	}
+	f.svc.SetStepUp(stepUpStub{})
+	if err := run(siteAdmin, "dhcp.scope_range_set", `{"scopeId":"10.0.0.0","startRange":"10.0.0.10","endRange":"10.0.0.50"}`, "dhcp.scope_range_set:10.0.0.0"); err != nil {
+		t.Errorf("a scope's range with the step-up: %v", err)
+	}
+	before := jobs()
 	fieldErr(t, run(siteAdmin, "dns.record_remove_all", `{"zone":"example.com","name":"old"}`, "dns.record_remove_all:other"), "confirm", "dns.record_remove_all:old")
 	f.svc.SetStepUp(stepUpStub{err: errors.New("step up required")})
 	if err := run(siteAdmin, "dhcp.option_set_network", `{"scopeId":"server","optionId":6,"value":"10.0.0.2"}`, "dhcp.option_set_network:server"); err == nil {

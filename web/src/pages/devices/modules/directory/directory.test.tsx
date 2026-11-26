@@ -74,6 +74,10 @@ function controller(refuse: Record<string, { code: string; message: string }> = 
     "GET /devices/:id/metrics": ok(history()),
     "GET /organizations/:id/ad/domains": ok(DOMAINS),
     "GET /devices/:id/disks": ok({ items: [] }),
+    "POST /devices/:id/winmod-read/:action": (req): FakeReply => {
+      const action = req.params.action!.replace("active_directory.", "");
+      return ok({ action, takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: `r-${action}` });
+    },
     "POST /devices/:id/winmod/:action": (req): FakeReply => {
       const action = req.params.action!.replace("active_directory.", "");
       const generated = action === "user_reset_password" && !(req.body as { params: { password?: string } }).params.password;
@@ -88,9 +92,7 @@ function controller(refuse: Record<string, { code: string; message: string }> = 
 }
 
 async function readAll() {
-  await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
   await screen.findByText("Directory health");
-  await userEvent.click(screen.getByRole("button", { name: "List users" }));
   await screen.findByText("Ann Ordinary");
 }
 
@@ -104,11 +106,10 @@ describe("the Directory tab", () => {
     expect(moduleTabState(tab, roles([]), can)).toBe("absent");
   });
 
-  it("reads the domain and its health only when asked, then lists users with their protection", async () => {
+  it("reads the domain and its health by itself, then lists users with their protection", async () => {
     const api = installFakeApi(controller());
     renderApp("/devices/d1?tab=roles");
-    await screen.findByText("Not read yet");
-    expect(api.callsTo("POST /devices/:id/winmod/:action")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /read now|list users|list groups|list computers/i })).toBeNull();
     await readAll();
     expect(screen.getAllByText("dc1.corp.test").length).toBeGreaterThan(0);
     expect(screen.getByText(/Off: a deleted object is gone for good/)).toBeInTheDocument();
@@ -184,7 +185,6 @@ describe("the Directory tab", () => {
   it("explains a controller without the PowerShell module", async () => {
     installFakeApi(controller({ status: { code: "module_missing", message: "x" } }));
     renderApp("/devices/d1?tab=roles");
-    await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
     await screen.findByText(/RSAT-AD-PowerShell/);
   });
 
@@ -192,7 +192,6 @@ describe("the Directory tab", () => {
     installFakeApi(controller());
     renderApp("/devices/d1?tab=roles");
     await readAll();
-    await userEvent.click(screen.getByRole("button", { name: "List groups" }));
     await userEvent.click(await screen.findByRole("button", { name: "Members" }));
     await screen.findByText(/1 direct member/);
     expect(screen.getAllByText("Ann Ordinary").length).toBeGreaterThan(0);
@@ -218,12 +217,10 @@ describe("the Directory tab", () => {
     installFakeApi(controller({}, ORGADMIN));
     renderApp("/devices/d1?tab=roles");
     await readAll();
-    await userEvent.click(screen.getByRole("button", { name: "List computers" }));
     const dc = (await screen.findByText("dc1.corp.test", { selector: "td" })).closest("tr")!;
     expect(within(dc).getByText("Domain controller")).toBeInTheDocument();
     expect(within(dc).queryByRole("button")).toBeNull();
     expect(within(screen.getByText("pc1.corp.test").closest("tr")!).getByRole("button", { name: "Disable" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Show who is in them" }));
     await screen.findByText("Administrator");
   });
 

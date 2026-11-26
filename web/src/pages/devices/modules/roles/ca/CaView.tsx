@@ -4,6 +4,7 @@ import { useAuth } from "../../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, Segmented, SelectField, TableWrap, TextField } from "../../../../../components/ui";
 import { formatDateTime } from "../../../../../lib/format";
 import { ModuleTab } from "../../ModuleTab";
+import { SkeletonKeyValue, SkeletonSegmented, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodChange, useWinmodRead } from "../../winmod";
 import { ActionDialog, FormDialog, send } from "../kit";
 import type { CaFindings, CaRequest, CaRequests, CaStatus, CaTemplate, CaTemplates } from "./types";
@@ -32,20 +33,18 @@ type Dialog =
 export function CaView({ device }: { device: Device }) {
   const { canAt } = useAuth();
   const manage = canAt("ca.manage", { organizationId: device.organizationId, siteId: device.siteId });
-  const [started, setStarted] = useState(false);
   const [panel, setPanel] = useState<"requests" | "templates" | "findings">("requests");
   const [kind, setKind] = useState<"issued" | "revoked" | "failed" | "denied">("issued");
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const status = useWinmodRead<CaStatus>(device.id, `${M}.status`, {}, started);
-  const pending = useWinmodRead<CaRequests>(device.id, `${M}.requests_pending`, {}, started && panel === "requests");
-  const issued = useWinmodRead<CaRequests>(device.id, `${M}.requests_list`, { disposition: kind }, started && panel === "requests");
-  const published = useWinmodRead<CaTemplates>(device.id, `${M}.template_list`, {}, started && panel === "templates");
-  const available = useWinmodRead<CaTemplates>(device.id, `${M}.template_available`, {}, started && panel === "templates");
-  const findings = useWinmodRead<CaFindings>(device.id, `${M}.ca_findings`, {}, started && panel === "findings");
+  const status = useWinmodRead<CaStatus>(device.id, `${M}.status`, {});
+  const pending = useWinmodRead<CaRequests>(device.id, `${M}.requests_pending`, {}, panel === "requests");
+  const issued = useWinmodRead<CaRequests>(device.id, `${M}.requests_list`, { disposition: kind }, panel === "requests");
+  const published = useWinmodRead<CaTemplates>(device.id, `${M}.template_list`, {}, panel === "templates");
+  const available = useWinmodRead<CaTemplates>(device.id, `${M}.template_available`, {}, panel === "templates");
+  const findings = useWinmodRead<CaFindings>(device.id, `${M}.ca_findings`, {}, panel === "findings");
   const change = useWinmodChange(device.id, M);
 
   const reads = [status, ...(panel === "requests" ? [pending, issued] : panel === "templates" ? [published, available] : [findings])];
-  const refresh = () => (started ? reads.forEach((r) => void r.refetch()) : setStarted(true));
   const failure = reads.map((r) => r.data?.failure).find(Boolean);
   const lost = reads.map((r) => r.data?.lost).find(Boolean);
   const st = status.data?.data ?? null;
@@ -60,8 +59,16 @@ export function CaView({ device }: { device: Device }) {
     <ModuleTab
       name="Certificate authority"
       asOf={st ? (status.data?.finishedAt ?? null) : null}
-      onRefresh={refresh}
       refreshing={reads.some((r) => r.isFetching)}
+      loading={!st && !failure && !lost && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Certificate authority" rows={5} />
+          <SkeletonSegmented />
+          <SkeletonTable title="Requests" columns={4} rows={4} />
+        </>
+      }
+      offline={status.data?.offline}
       unavailable={failure ? failureText(failure) : (lost ?? undefined)}
     >
       <InlineError error={reads.map((r) => r.error).find(Boolean)} />

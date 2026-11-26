@@ -1,12 +1,16 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, InlineError, TableWrap } from "../../../../components/ui";
 import { ActionDialog, Done } from "./ActionDialog";
 import type { ComputerPage, ComputerRow } from "./types";
 import { confirmFor, useWinmod } from "./useWinmod";
+import { useFirstPage } from "./useFirstPage";
+import { SkeletonGrid } from "../skeletons";
 
 /** The computer accounts of the domain. A domain controller is shown and never offered a change. */
 export function ComputersCard({ deviceId, canManage }: { deviceId: string; canManage: boolean }) {
   const run = useWinmod(deviceId);
+  const first = useFirstPage<ComputerPage>(deviceId, "computer_list", { scope: "subtree", pageSize: 100 });
+  const asked = useRef(false);
   const [rows, setRows] = useState<ComputerRow[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -19,6 +23,7 @@ export function ComputersCard({ deviceId, canManage }: { deviceId: string; canMa
       setError(null);
       setProblem(null);
       try {
+        asked.current = Boolean(after);
         const r = await run<ComputerPage>("computer_list", { scope: "subtree", pageSize: 100, ...(after ? { after } : {}) });
         if (!r.ok || !r.data) return setProblem(r.failure?.message ?? "The controller did not answer.");
         const page = r.data;
@@ -32,15 +37,18 @@ export function ComputersCard({ deviceId, canManage }: { deviceId: string; canMa
     },
     [run],
   );
+  useEffect(() => {
+    if (first.page && !asked.current) {
+      setRows(first.page.items);
+      setNext(first.page.next);
+    }
+  }, [first.page]);
   return (
     <Card title="Computers">
-      {!rows && (
-        <Button size="sm" onClick={() => void load()} loading={busy}>
-          List computers
-        </Button>
-      )}
       <InlineError error={error} />
-      {problem && <Alert tone="warn">{problem}</Alert>}
+      {(problem ?? first.problem) && !rows && <Alert tone="warn">{problem ?? first.problem}</Alert>}
+      {problem && rows && <Alert tone="warn">{problem}</Alert>}
+      {!rows && first.loading && !problem && <SkeletonGrid columns={4} rows={5} />}
       {rows && (
         <TableWrap>
           <table className="table-base">

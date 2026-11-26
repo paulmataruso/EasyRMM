@@ -50,11 +50,15 @@ function routes(session: ReturnType<typeof sessionView>, reads: Record<string, u
       ],
       gap: "2026-11-25T12:00:00Z",
     }),
+    "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) =>
+      ok({ action: req.params.action, takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: req.params.action }),
     "POST /devices/:id/winmod/:action": (req: { params: Record<string, string> }) => ok(run(req.params.action ?? "", req.params.action ?? "")),
     "GET /winmod/runs/:id": (req: { params: Record<string, string> }) => {
       const id = req.params.id ?? "";
       const name = id.replace(/^defender\./, "");
       if (name in reads) return ok(result(id, id, reads[name]));
+      // A panel the test did not give data for reads by itself too; the computer says it cannot.
+      if (name.endsWith("_read") || name === "status") return ok({ ...result(id, id, undefined), ok: false, failure: { code: "unsupported", message: "Not in this test." } });
       return ok(result(id, id, { applied: true, reason: "", before: "a", after: "b" }));
     },
   };
@@ -92,7 +96,6 @@ describe("the Protection panel", () => {
   it("locks a setting Group Policy owns, hides one the computer does not have, and says Tamper Protection is not changed here", async () => {
     installFakeApi(routes(SITE_ADMIN, { "preferences_read": PREFS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read settings" }));
     await screen.findByText("Managed by Group Policy");
     expect(screen.queryByLabelText("Disable behavior monitoring value")).toBeNull();
     expect(screen.getByLabelText("Disable realtime monitoring value")).toBeInTheDocument();
@@ -103,7 +106,6 @@ describe("the Protection panel", () => {
   it("changes a routine setting at once, with no confirmation", async () => {
     const api = installFakeApi(routes(TECH, { preferences_read: PREFS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read settings" }));
     const input = await screen.findByLabelText("Scan avg CPU load factor value");
     await userEvent.clear(input);
     await userEvent.type(input, "30");
@@ -116,7 +118,6 @@ describe("the Protection panel", () => {
   it("asks before lowering protection and sends the weakening action with its typed confirmation", async () => {
     const api = installFakeApi(routes(SITE_ADMIN, { preferences_read: PREFS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read settings" }));
     const select = await screen.findByLabelText("Disable realtime monitoring value");
     await userEvent.selectOptions(select, "true");
     await userEvent.click(within(select.closest("li")!).getByRole("button", { name: "Apply" }));
@@ -132,7 +133,6 @@ describe("the Protection panel", () => {
   it("gives a Technician no way to lower protection", async () => {
     installFakeApi(routes(TECH, { preferences_read: PREFS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read settings" }));
     const select = await screen.findByLabelText("Disable realtime monitoring value");
     await userEvent.selectOptions(select, "true");
     expect(within(select.closest("li")!).getByRole("button", { name: "Apply" })).toBeDisabled();
@@ -146,16 +146,17 @@ describe("the Protection panel", () => {
     const api = installFakeApi({
       ...routes(TECH, { preferences_read: PREFS }),
       "GET /winmod/runs/:id": (req: { params: Record<string, string> }) =>
-        ok(result("x", req.params.id ?? "", req.params.id === "defender.preferences_read" ? PREFS : { applied: false, reason: "Tamper Protection blocked it.", before: "50", after: "50" })),
+        (req.params.id ?? "").endsWith("_read") && req.params.id !== "defender.preferences_read"
+          ? ok({ ...result("x", req.params.id ?? "", undefined), ok: false, failure: { code: "unsupported", message: "Not in this test." } })
+          : ok(result("x", req.params.id ?? "", req.params.id === "defender.preferences_read" ? PREFS : { applied: false, reason: "Tamper Protection blocked it.", before: "50", after: "50" })),
     } as Parameters<typeof installFakeApi>[0]);
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read settings" }));
     const input = await screen.findByLabelText("Scan avg CPU load factor value");
     await userEvent.clear(input);
     await userEvent.type(input, "30");
     await userEvent.click(within(input.closest("li")!).getByRole("button", { name: "Apply" }));
     await screen.findByText("Tamper Protection blocked it.");
-    expect(api.callsTo("POST /devices/:id/winmod/:action").length).toBeGreaterThan(1);
+    expect(api.callsTo("POST /devices/:id/winmod/:action").length).toBeGreaterThan(0);
   });
 });
 
@@ -177,7 +178,6 @@ describe("the Exclusions panel", () => {
   it("shows EasyRMM's own locked first with no way to remove them, and an administrator's removable", async () => {
     const api = installFakeApi(routes(SITE_ADMIN, { exclusions_read: EXCLUSIONS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read exclusions" }));
     const paths = await screen.findByRole("region", { name: "Paths" });
     const items = within(paths).getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("EasyRMM");
@@ -197,7 +197,6 @@ describe("the Exclusions panel", () => {
   it("adds an exclusion only with a reason, behind a confirmation that says what stops being scanned", async () => {
     const api = installFakeApi(routes(SITE_ADMIN, { exclusions_read: EXCLUSIONS }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read exclusions" }));
     const form = await screen.findByRole("form", { name: "Add an exclusion" });
     await userEvent.type(within(form).getByLabelText("Value"), "D:\\NewApp");
     expect(within(form).getByRole("button", { name: "Add exclusion" })).toBeDisabled();
@@ -217,9 +216,9 @@ describe("the Exclusions panel", () => {
   it("is not offered to someone without view_sensitive, and a Technician cannot add", async () => {
     installFakeApi(routes(TECH, {}));
     renderApp("/devices/d1?tab=security");
-    await screen.findByRole("button", { name: "Read settings" });
-    expect(screen.queryByRole("button", { name: "Read exclusions" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Read quarantine" })).toBeNull();
+    await screen.findByText("Protection settings");
+    expect(screen.queryByText("Exclusions")).toBeNull();
+    expect(screen.queryByText("Quarantine")).toBeNull();
   });
 });
 
@@ -237,7 +236,6 @@ describe("the other panels", () => {
       }),
     );
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read rules" }));
     await screen.findByText("Unrecognized rule");
     const select = await screen.findByLabelText(/Block credential stealing.* mode/);
     await userEvent.selectOptions(select, "Enabled");
@@ -250,7 +248,6 @@ describe("the other panels", () => {
   it("restores a quarantined item only after a warning and with the typed confirmation", async () => {
     const api = installFakeApi(routes(SITE_ADMIN, { quarantine_read: { items: [{ name: "Virus:DOS/EICAR_Test_File", path: "C:\\x\\eicar.txt" }] }, threats_read: { threats: [] } }));
     renderApp("/devices/d1?tab=security");
-    await userEvent.click(await screen.findByRole("button", { name: "Read quarantine" }));
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/where Defender found it/)).toBeInTheDocument();

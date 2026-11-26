@@ -197,6 +197,9 @@ func Actions() []winmod.Action {
 		winmod.Param{Name: "subnetMask", Type: winmod.Text, Required: true, Min: 7, Max: 15}, leaseHours(true)), guardScopeCreate)
 
 	set := with(write("scope_set", "Change a DHCP scope", 30, scopeParam(), textParam("name", 100), textParam("description", 200), leaseHours(false)), guardScopeSet)
+	// The scope's address range (start and end) changes in place, inside the scope's own subnet; Windows cannot change a
+	// scope's network or mask, so no action offers it. A tier 3 change: every client's pool moves.
+	rangeSet := with(destructive(write("scope_range_set", "Change a DHCP scope's address range", 30, scopeParam(), ipParam("startRange"), ipParam("endRange")), "scopeId"), guardRange)
 	rng := func(name, label string) winmod.Action {
 		return with(write(name, label, 30, scopeParam(), ipParam("startRange"), ipParam("endRange")), guardRange)
 	}
@@ -221,7 +224,7 @@ func Actions() []winmod.Action {
 		with(read[Exclusions]("exclusion_list", "List the exclusion ranges", 30, scopeParam()), guardScope),
 		with(read[Reservations]("reservation_list", "List the reservations", 30, scopeParam()), guardScope),
 		optionList, leaseList,
-		create, set,
+		create, set, rangeSet,
 		with(write("scope_activate", "Activate a DHCP scope", 30, scopeParam()), guardScope),
 		with(destructive(write("scope_deactivate", "Deactivate a DHCP scope", 30, scopeParam()), "scopeId"), guardScope),
 		with(destructive(write("scope_remove", "Remove a DHCP scope", 60, scopeParam()), "scopeId"), guardScope),

@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { DhcpReservation, DhcpScope } from "../../../../../api/types";
 import { ConfirmDialog, Dialog } from "../../../../../components/Dialog";
 import { Alert, Button, InlineError, SelectField, TextField } from "../../../../../components/ui";
-import { confirmText, useWinmodChange } from "../../winmod";
-import { isIPv4, isMac, optionAction, OPTIONS } from "./dhcpText";
+import { confirmText, useWinmodChange, useWinmodRead } from "../../winmod";
+import { isIPv4, isMac, optionAction, OPTIONS, rangeProblem } from "./dhcpText";
 
 type Change = ReturnType<typeof useWinmodChange>;
 
@@ -60,8 +60,46 @@ export function EditScopeDialog({ scope, change, onClose }: { scope: DhcpScope; 
       >
         <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <TextField label="Lease time (hours)" value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" hint="The address range cannot be changed here." />
+        <TextField label="Lease time (hours)" value={hours} onChange={(e) => setHours(e.target.value)} inputMode="numeric" hint="The address range is changed with Change range." />
         <Actions change={change} onClose={onClose} label="Save" disabled={!name.trim() || !Number.isInteger(h) || h < 1 || h > 8760} />
+      </form>
+    </Dialog>
+  );
+}
+
+/**
+ * Changes the addresses a scope hands out (tier 3: the pool of every client on the network moves). The network and the
+ * mask do not change, because Windows cannot change them in place; the form says so and offers nothing for them.
+ * Confirmed by typing the scope, and a second factor.
+ */
+export function ScopeRangeDialog({ deviceId, scope, change, onClose }: { deviceId: string; scope: DhcpScope; change: Change; onClose: () => void }) {
+  const [start, setStart] = useState(scope.startRange);
+  const [end, setEnd] = useState(scope.endRange);
+  const [typed, setTyped] = useState("");
+  const exclusions = useWinmodRead<{ exclusions: { startRange: string; endRange: string }[] }>(deviceId, "dhcp.exclusion_list", { scopeId: scope.scopeId });
+  const loaded = exclusions.data?.data != null;
+  const problem = rangeProblem(scope, start, end, exclusions.data?.data?.exclusions ?? []);
+  const action = "dhcp.scope_range_set";
+  return (
+    <Dialog open onClose={onClose} title="Change the address range" description={`Scope ${scope.scopeId} (${scope.name || "no name"})`}>
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          change.mutate({ action, params: { scopeId: scope.scopeId, startRange: start.trim(), endRange: end.trim() }, confirm: confirmText(action, scope.scopeId) }, { onSuccess: onClose });
+        }}
+      >
+        <Alert tone="info">
+          The scope&apos;s network ({scope.scopeId}) and subnet mask ({scope.subnetMask}) cannot be changed: Windows does not change them in place. To move to another network, create a new scope.
+        </Alert>
+        <TextField label="First address" value={start} onChange={(e) => setStart(e.target.value)} required />
+        <TextField label="Last address" value={end} onChange={(e) => setEnd(e.target.value)} required />
+        {problem ? <p role="alert" className="text-xs text-danger">{problem}</p> : !loaded && <p className="text-xs text-muted">Checking the exclusions…</p>}
+        <Alert tone="warn" title="Every client on this network is affected">
+          Clients holding an address outside the new range keep it until the lease ends and then get another. It needs a second factor. Type <strong>{scope.scopeId}</strong> to confirm.
+          <TextField label="Scope" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+        </Alert>
+        <Actions change={change} onClose={onClose} label="Change range" danger disabled={!loaded || problem !== null || typed.trim() !== scope.scopeId} />
       </form>
     </Dialog>
   );

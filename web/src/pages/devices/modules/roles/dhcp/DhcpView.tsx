@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import type {
   Device,
@@ -14,6 +14,7 @@ import { useAuth } from "../../../../../auth/AuthContext";
 import { Alert, Badge, Button, Card, EmptyState, InlineError, KeyValueList, Mono, Segmented, TableWrap } from "../../../../../components/ui";
 import { UsageMeter } from "../../../../../components/Meter";
 import { ModuleTab } from "../../ModuleTab";
+import { SkeletonKeyValue, SkeletonSegmented, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodChange, useWinmodRead } from "../../winmod";
 import {
   ActivateDialog,
@@ -22,6 +23,7 @@ import {
   EditScopeDialog,
   OptionDialog,
   RangeDialog,
+  ScopeRangeDialog,
   ReservationDialog,
   SimpleConfirm,
 } from "./DhcpDialogs";
@@ -30,6 +32,7 @@ import { leaseText, rangeText } from "./dhcpText";
 type Dialog =
   | { kind: "createScope" }
   | { kind: "editScope"; scope: DhcpScope }
+  | { kind: "scopeRange"; scope: DhcpScope }
   | { kind: "activate"; scope: DhcpScope }
   | { kind: "deactivate" | "remove"; scope: DhcpScope }
   | { kind: "exclusionAdd"; scope: DhcpScope }
@@ -49,27 +52,22 @@ export function DhcpView({ device }: { device: Device }) {
   const { canAt } = useAuth();
   const at = { organizationId: device.organizationId, siteId: device.siteId };
   const manage = canAt("dhcp.manage", at);
-  const [started, setStarted] = useState(false);
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>("reservations");
   const [offset, setOffset] = useState(0);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const status = useWinmodRead<DhcpStatus>(device.id, "dhcp.status", {}, started);
-  const scopes = useWinmodRead<DhcpScopeList>(device.id, "dhcp.scope_list", {}, started);
+  const status = useWinmodRead<DhcpStatus>(device.id, "dhcp.status", {});
+  const scopes = useWinmodRead<DhcpScopeList>(device.id, "dhcp.scope_list", {});
   const sel = scopeId ?? "";
-  const on = (p: Panel) => started && scopeId !== null && panel === p;
+  const on = (p: Panel) => scopeId !== null && panel === p;
   const reservations = useWinmodRead<{ reservations: DhcpReservation[] }>(device.id, "dhcp.reservation_list", { scopeId: sel }, on("reservations"));
   const exclusions = useWinmodRead<{ exclusions: { startRange: string; endRange: string }[] }>(device.id, "dhcp.exclusion_list", { scopeId: sel }, on("exclusions"));
-  const options = useWinmodRead<{ options: DhcpOption[] }>(device.id, "dhcp.option_list", scopeId ? { scopeId } : {}, started && panel === "options");
+  const options = useWinmodRead<{ options: DhcpOption[] }>(device.id, "dhcp.option_list", scopeId ? { scopeId } : {}, panel === "options");
   // Leases name devices and people: only those who may change DHCP see them, and they are not kept.
   const leases = useWinmodRead<DhcpLeaseList>(device.id, "dhcp.lease_list", { scopeId: sel, offset }, on("leases") && manage);
   const change = useWinmodChange(device.id, "dhcp");
 
   const reads = [status, scopes, ...(scopeId ? [reservations, exclusions, leases] : [])].filter((r) => r.fetchStatus !== "idle" || r.data);
-  const refresh = () => {
-    if (!started) setStarted(true);
-    else reads.forEach((r) => void r.refetch());
-  };
   const failure = reads.map((r) => r.data?.failure).find(Boolean);
   const lost = reads.map((r) => r.data?.lost).find(Boolean);
   const st = status.data?.data ?? null;
@@ -80,6 +78,11 @@ export function DhcpView({ device }: { device: Device }) {
     setDialog(d);
   };
   const close = () => setDialog(null);
+  // The first scope opens by itself, so its reservations are there without a click.
+  const firstScope = list?.scopes[0]?.scopeId ?? null;
+  useEffect(() => {
+    if (scopeId === null && firstScope !== null) setScopeId(firstScope);
+  }, [scopeId, firstScope]);
   const select = (id: string) => {
     setScopeId(id);
     setOffset(0);
@@ -89,8 +92,15 @@ export function DhcpView({ device }: { device: Device }) {
     <ModuleTab
       name="DHCP Server"
       asOf={st ? (status.data?.finishedAt ?? null) : null}
-      onRefresh={refresh}
       refreshing={reads.some((r) => r.isFetching)}
+      loading={!st && !failure && !lost && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Server" rows={5} />
+          <SkeletonTable title="Scopes" columns={5} rows={3} />
+        </>
+      }
+      offline={status.data?.offline}
       unavailable={failure ? failureText(failure) : (lost ?? undefined)}
     >
       <InlineError error={status.error ?? scopes.error} />
@@ -143,6 +153,7 @@ export function DhcpView({ device }: { device: Device }) {
                       <td className="text-right whitespace-nowrap">
                         <Button size="sm" variant="ghost" onClick={() => select(s.scopeId)}>Open</Button>
                         {manage && <Button size="sm" variant="ghost" onClick={() => open({ kind: "editScope", scope: s })}>Edit</Button>}
+                        {manage && <Button size="sm" variant="ghost" onClick={() => open({ kind: "scopeRange", scope: s })}>Change range</Button>}
                         {manage && (s.state === "Active" ? (
                           <Button size="sm" variant="danger-ghost" onClick={() => open({ kind: "deactivate", scope: s })}>Deactivate</Button>
                         ) : (
@@ -217,7 +228,7 @@ export function DhcpView({ device }: { device: Device }) {
           )}
           {panel === "leases" && manage && (
             <>
-              <p className="mb-2 text-xs text-muted">Leases name devices and sometimes people, so they are read when you ask and kept for 15 minutes.</p>
+              <p className="mb-2 text-xs text-muted">Leases name devices and sometimes people, so they are read each time and kept for 15 minutes only.</p>
               <Rows
                 empty="No leases."
                 head={["Address", "Hardware address", "Host name", "State"]}
@@ -249,6 +260,7 @@ export function DhcpView({ device }: { device: Device }) {
       )}
       {dialog?.kind === "createScope" && <CreateScopeDialog change={change} onClose={close} />}
       {dialog?.kind === "editScope" && <EditScopeDialog scope={dialog.scope} change={change} onClose={close} />}
+      {dialog?.kind === "scopeRange" && <ScopeRangeDialog deviceId={device.id} scope={dialog.scope} change={change} onClose={close} />}
       {dialog?.kind === "activate" && <ActivateDialog scope={dialog.scope} change={change} onClose={close} />}
       {(dialog?.kind === "deactivate" || dialog?.kind === "remove") && <DangerScopeDialog kind={dialog.kind} scope={dialog.scope} change={change} onClose={() => { if (dialog.kind === "remove" && scopeId === dialog.scope.scopeId) setScopeId(null); close(); }} />}
       {dialog?.kind === "exclusionAdd" && <RangeDialog scope={dialog.scope} change={change} onClose={close} />}

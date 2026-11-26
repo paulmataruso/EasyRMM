@@ -1,4 +1,3 @@
-import { useCallback, useState } from "react";
 import { useApi } from "../../../../api/hooks";
 import type { Device } from "../../../../api/types";
 import { useAuth } from "../../../../auth/AuthContext";
@@ -11,7 +10,8 @@ import { PrivilegedCard } from "./PrivilegedCard";
 import { GroupsCard } from "./GroupsCard";
 import { UsersCard } from "./UsersCard";
 import type { AdDomains, CheckState, DirectoryHealth, DirectoryStatus } from "./types";
-import { useWinmod } from "./useWinmod";
+import { SkeletonKeyValue, SkeletonTable } from "../skeletons";
+import { useWinmodRead } from "../winmod";
 
 const CHECK_LABEL: Record<string, string> = {
   replication: "Replication",
@@ -35,51 +35,46 @@ const FAILURES: Record<string, string> = {
 
 /**
  * The device page's "Directory" tab: Active Directory on a domain controller (ADR-0075). Everything is read from the
- * controller this page is for, when asked; nothing is copied into EasyRMM. The help-desk actions (unlock, enable, disable,
+ * controller this page is for, by itself when the tab opens; the last result shows at once. Nothing is copied into EasyRMM. The help-desk actions (unlock, enable, disable,
  * reset a password) are on the users; what the person may do follows their permissions, and the server asks again.
  */
 export function DirectoryTab({ device }: { device: Device }) {
-  const run = useWinmod(device.id);
   const { can } = useAuth();
   const domains = useApi<AdDomains>(`/organizations/${device.organizationId}/ad/domains`, undefined, { staleTime: 30_000 });
-  const [status, setStatus] = useState<DirectoryStatus | null>(null);
-  const [health, setHealth] = useState<DirectoryHealth | null>(null);
-  const [readAt, setReadAt] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  const [generation, setGeneration] = useState(0);
+  // Both reads start together when the tab opens; each shows its stored result at once and is kept fresh while the tab is open.
+  const statusRead = useWinmodRead<DirectoryStatus>(device.id, "active_directory.status", {});
+  const healthRead = useWinmodRead<DirectoryHealth>(device.id, "active_directory.health_read", {});
+  const status = statusRead.data?.data ?? null;
+  const health = healthRead.data?.data ?? null;
+  const failureCode = statusRead.data?.failure;
+  const failure = failureCode ? (FAILURES[failureCode.code] ?? failureCode.message ?? "The controller did not answer.") : (statusRead.data && !status ? statusRead.data.lost : null);
+  const error = statusRead.error;
+  const loading = !status && !failure && !error;
 
   // The domain's writes go through one controller; when it is another computer, this view only reads.
   const mine = domains.data?.domains.find((x) => x.controllers.some((c) => c.deviceId === device.id));
   const chosen = mine?.controllers.find((c) => c.deviceId === mine.chosen);
   const other = chosen && chosen.deviceId !== device.id ? chosen : null;
 
-  const refresh = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    setFailure(null);
-    try {
-      const s = await run<DirectoryStatus>("status");
-      if (!s.ok) {
-        setStatus(null);
-        setFailure(FAILURES[s.failure?.code ?? ""] ?? s.failure?.message ?? "The controller did not answer.");
-        return;
-      }
-      setStatus(s.data ?? null);
-      setReadAt(s.finishedAt);
-      setGeneration((g) => g + 1);
-      const h = await run<DirectoryHealth>("health_read");
-      setHealth(h.ok ? (h.data ?? null) : null);
-    } catch (e) {
-      setError(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [run]);
-
   return (
-    <ModuleTab name="Active Directory" asOf={status ? readAt : null} onRefresh={() => void refresh()} refreshing={busy} unavailable={failure ?? undefined}>
+    <ModuleTab
+      name="Active Directory"
+      asOf={status ? (statusRead.data?.finishedAt ?? null) : null}
+      refreshing={statusRead.isFetching || healthRead.isFetching}
+      loading={loading}
+      skeleton={
+        <>
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+            <SkeletonKeyValue title="Domain" rows={8} />
+            <SkeletonKeyValue title="Directory health" rows={4} />
+          </div>
+          <SkeletonTable title="Users" columns={4} rows={5} toolbar />
+          <SkeletonTable title="Groups" columns={4} rows={4} />
+        </>
+      }
+      offline={statusRead.data?.offline}
+      unavailable={failure ?? undefined}
+    >
       <InlineError error={error} />
       {status && (
         <>
@@ -140,7 +135,7 @@ export function DirectoryTab({ device }: { device: Device }) {
                   ]}
                 />
               ) : (
-                <p className="text-sm text-muted">The health checks have not answered.</p>
+                <p className="text-sm text-muted">{healthRead.data === undefined ? "Reading the health checks…" : "The health checks have not answered."}</p>
               )}
             </Card>
           </div>
@@ -152,10 +147,10 @@ export function DirectoryTab({ device }: { device: Device }) {
               </Link>
             </Alert>
           )}
-          <UsersCard key={`u${generation}`} deviceId={device.id} status={status} writable={!other} />
-          <GroupsCard key={`g${generation}`} deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} recycleBin={status.recycleBinEnabled} />
-          <ComputersCard key={`c${generation}`} deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} />
-          {can("ad.view_sensitive") && <PrivilegedCard key={`p${generation}`} deviceId={device.id} />}
+          <UsersCard deviceId={device.id} status={status} writable={!other} />
+          <GroupsCard deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} recycleBin={status.recycleBinEnabled} />
+          <ComputersCard deviceId={device.id} canManage={can("ad.manage") && !status.readOnly && !other} />
+          {can("ad.view_sensitive") && <PrivilegedCard deviceId={device.id} />}
         </>
       )}
     </ModuleTab>

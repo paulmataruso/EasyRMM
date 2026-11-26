@@ -30,6 +30,8 @@ function routes(session: ReturnType<typeof sessionView>, r: DeviceRoles, results
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/disks": ok({ items: [] }),
     "GET /devices/:id/defender": fail(404, "not_found", "none"),
+    "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) =>
+      ok({ action: req.params.action, takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: req.params.action }),
     "POST /devices/:id/winmod/:action": (req: { params: Record<string, string> }) =>
       ok({ jobId: "j", runId: req.params.action, action: req.params.action, status: "queued", expiresAt: "2026-11-26T11:00:00Z" }),
     "GET /winmod/runs/:id": (req: { params: Record<string, string> }) =>
@@ -39,7 +41,6 @@ function routes(session: ReturnType<typeof sessionView>, r: DeviceRoles, results
 
 async function readNow() {
   await screen.findByRole("tab", { name: "Roles" });
-  await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
 }
 const winmod = (api: ReturnType<typeof installFakeApi>, action: string) => api.callsTo("POST /devices/:id/winmod/:action").find((c) => c.params.action === action);
 
@@ -191,5 +192,89 @@ describe("the certificate authority view", () => {
     await userEvent.click(await screen.findByRole("radio", { name: "Findings" }));
     expect(await screen.findByText("ESC6: Corp CA")).toBeInTheDocument();
     expect(screen.getByText(/does not offer a fix/)).toBeInTheDocument();
+  });
+});
+
+describe("modules read by themselves", () => {
+  const results: Results = {
+    "file_shares.status": SHARES_STATUS, "file_shares.share_list": SHARES, "file_shares.share_perms_get": ACCESS,
+    "file_shares.session_list": SESSIONS, "file_shares.openfile_list": FILES,
+  };
+  const admin = sessionView({ isSuperAdmin: false, permissions: [...base, "shares.view", "shares.manage"] });
+
+  it("shows the page's skeleton until the first result, with no button to read", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    installFakeApi({
+      ...routes(admin, roles([role("file_shares", "File shares")]), results),
+      "GET /winmod/runs/:id": async (req: { params: Record<string, string> }) => {
+        await gate;
+        return ok({ runId: req.params.id, deviceId: "d1", action: req.params.id, version: 1, status: "succeeded", finishedAt: "2026-11-26T10:00:00Z", ok: true, data: results[req.params.id!] });
+      },
+    } as Parameters<typeof installFakeApi>[0]);
+    renderApp("/devices/d1?tab=roles");
+    expect(await screen.findByRole("status", { name: "Loading File shares" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /read now|refresh/i })).toBeNull();
+    expect(screen.queryByText("Data", { selector: "td" })).toBeNull();
+    release();
+    expect(await screen.findByText("Data", { selector: "td" })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading File shares" })).toBeNull();
+  });
+
+  it("shows the stored result at once with its age, and puts the new one in place when it arrives", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const stored = { ...SHARES_STATUS, shareCount: 7 };
+    installFakeApi({
+      ...routes(admin, roles([role("file_shares", "File shares")]), results),
+      "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) =>
+        ok({
+          action: req.params.action, takenAt: "2026-11-26T09:58:00Z", stale: true, refreshing: true, offline: false, runId: req.params.action,
+          data: req.params.action === "file_shares.status" ? stored : results[req.params.action!],
+        }),
+      "GET /winmod/runs/:id": async (req: { params: Record<string, string> }) => {
+        await gate;
+        return ok({ runId: req.params.id, deviceId: "d1", action: req.params.id, version: 1, status: "succeeded", finishedAt: "2026-11-26T10:00:00Z", ok: true, data: results[req.params.id!] });
+      },
+    } as Parameters<typeof installFakeApi>[0]);
+    renderApp("/devices/d1?tab=roles");
+    expect(await screen.findByText(/\(7 with the administrative ones\)/)).toBeInTheDocument();
+    expect(screen.getByText(/As of/)).toBeInTheDocument();
+    expect(await screen.findByText("Updating")).toBeInTheDocument();
+    release();
+    expect(await screen.findByText(/\(4 with the administrative ones\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/\(7 with the administrative ones\)/)).toBeNull();
+  });
+
+  it("opens a share's permissions when Permissions is clicked, and changes them from the dialog", async () => {
+    const api = installFakeApi(routes(admin, roles([role("file_shares", "File shares")]), results));
+    renderApp("/devices/d1?tab=roles");
+    const row = (await screen.findByText("Data", { selector: "td" })).closest("tr")!;
+    const button = within(row).getByRole("button", { name: "Permissions" });
+    expect(button).toBeEnabled();
+    await userEvent.click(button);
+    const dialog = await screen.findByRole("dialog", { name: "Permissions of Data" });
+    expect(await within(dialog).findByText("CORP\\Staff")).toBeInTheDocument();
+    expect(api.callsTo("POST /devices/:id/winmod-read/:action").some((c) => c.params.action === "file_shares.share_perms_get" && JSON.stringify(c.body) === JSON.stringify({ params: { name: "Data" } }))).toBe(true);
+    // Edit: Grant access opens the grant form for this share; closing it returns to the permissions.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Grant access" }));
+    const grant = await screen.findByRole("dialog", { name: "Grant share access" });
+    await userEvent.type(within(grant).getByLabelText(/User or group/), "CORP\\Ops");
+    await userEvent.type(within(grant).getByLabelText(/Type/), "FS1");
+    await userEvent.click(within(grant).getByRole("button", { name: "Grant" }));
+    await screen.findByRole("dialog", { name: "Permissions of Data" });
+    expect(winmod(api, "file_shares.share_grant")!.body).toEqual({
+      params: { device: "FS1", name: "Data", account: "CORP\\Ops", right: "Read" }, confirm: "file_shares.share_grant:FS1",
+    });
+  });
+
+  it("shows a protected share's permissions and offers no change to them", async () => {
+    installFakeApi(routes(admin, roles([role("file_shares", "File shares")]), results));
+    renderApp("/devices/d1?tab=roles");
+    const row = (await screen.findByText("SYSVOL", { selector: "td" })).closest("tr")!;
+    await userEvent.click(within(row).getByRole("button", { name: "Permissions" }));
+    const dialog = await screen.findByRole("dialog", { name: "Permissions of SYSVOL" });
+    expect(within(dialog).queryByRole("button", { name: "Grant access" })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Revoke" })).toBeNull();
   });
 });

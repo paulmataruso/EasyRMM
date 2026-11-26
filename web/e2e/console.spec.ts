@@ -1202,7 +1202,7 @@ test("a device's Security tab follows the Defender module: shown, then off for i
   await expect(page.getByRole("checkbox", { name: "Microsoft Defender" })).toBeChecked();
 });
 
-test("a DNS server's zones are read in the Roles tab, and the server refuses to change a protected record", async () => {
+test("a DNS server's zones are read in the Roles tab with no click, and the server refuses to change a protected record", async () => {
   const page = admin;
   const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
   await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "dns", state: "present" }] } });
@@ -1215,7 +1215,8 @@ test("a DNS server's zones are read in the Roles tab, and the server refuses to 
     .toEqual(expect.arrayContaining(accepts));
   await page.goto(`/devices/${agent.deviceId}?tab=roles`);
   await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
-  await page.getByRole("button", { name: "Read now" }).click();
+  // No click: the tab reads by itself when it opens.
+  await expect(page.getByRole("button", { name: /Read now/ })).toHaveCount(0);
 
   // The agent answers the two reads, each in the result format its script prints.
   const line = (data: unknown) => `EASYRMM-WINMOD-RESULT-V1 ${JSON.stringify({ ok: true, version: 1, data, error: null })}\n`;
@@ -1233,7 +1234,7 @@ test("a DNS server's zones are read in the Roles tab, and the server refuses to 
     }
     if (answered < 2) waiting = agent.poll(accepts);
   }
-  expect(answered).toBe(2);
+  expect(answered).toBeGreaterThanOrEqual(2);
   await expect(page.getByRole("cell", { name: "corp.example.test" })).toBeVisible();
   await expect(page.getByText("AD-integrated (domain)")).toBeVisible();
 
@@ -1284,15 +1285,45 @@ test("a domain controller's Directory tab reads the domain, and a password reset
   await agent.poll(caps);
   const SID = "S-1-5-21-1-2-3-1104";
   // The agent answers the next winmod job (the Repair step queued above, still waiting on the device, is not one) with the typed result its script would print.
-  const answer = async (action: string, data: unknown) => {
-    let job;
-    await expect
-      .poll(async () => (job = (await agent.poll(caps)).find((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))), { timeout: 20_000 })
-      .toBeTruthy();
-    expect(await agent.start(job!.runId)).toBe(true);
-    await agent.succeeded(job!.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");
-    return { action, params: job!.params ?? {} };
+  // Which action a script is: by what it reports. The tab reads status, health, users, groups, computers and the privileged
+  // groups together when it opens, so jobs arrive in any order; each is answered by its own kind.
+  const kindOf = (script: string) =>
+    script.includes("recycleBinEnabled") ? "status"
+    : script.includes("oldestFailureAt") ? "health_read"
+    : script.includes("passwordExpired") && script.includes("scanned") ? "user_list"
+    : script.includes("dnsName") ? "computer_list"
+    : script.includes("scanned") && script.includes("category") ? "group_list"
+    : script.includes("tier") && script.includes("privileged") ? "privileged_members"
+    : "other";
+  const canned: Record<string, unknown> = {};
+  const answered = new Set<string>();
+  const reply = async (job: { runId: string; params?: Record<string, unknown> }, data: unknown) => {
+    expect(await agent.start(job.runId)).toBe(true);
+    await agent.succeeded(job.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");
   };
+  // Answers the winmod jobs that arrive until the one named (any job of a kind with no canned answer counts as it).
+  const answer = async (action: string, data: unknown) => {
+    canned[action] = data;
+    // A read the tab already sent was answered from `canned` with the same data.
+    if (answered.has(action)) return { action, params: {} as Record<string, unknown> };
+    for (let i = 0; i < 80; i++) {
+      let found: { action: string; params: Record<string, unknown> } | null = null;
+      for (const job of (await agent.poll(caps)).filter((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))) {
+        const kind = kindOf(job.script);
+        if (!found && (kind === action || (kind === "other" && !(action in KNOWN)))) {
+          answered.add(kind);
+          await reply(job, data);
+          found = { action, params: job.params ?? {} };
+        } else {
+          answered.add(kind);
+          await reply(job, canned[kind] ?? (kind === "privileged_members" ? { groups: [] } : { items: [], next: null, scanned: 0 }));
+        }
+      }
+      if (found) return found;
+    }
+    throw new Error(`no ${action} job arrived`);
+  };
+  const KNOWN: Record<string, true> = { status: true, health_read: true, user_list: true, computer_list: true, group_list: true, privileged_members: true };
   const status = {
     domain: "corp.test", domainSid: "S-1-5-21-1-2-3", forest: "corp.test", forestRootSid: "S-1-5-21-1-2-3", domainMode: "Windows2016Domain",
     forestMode: "Windows2016Forest", controller: "dc1.corp.test", readOnly: false, globalCatalog: true, pdcEmulator: "dc1.corp.test",
@@ -1314,12 +1345,14 @@ test("a domain controller's Directory tab reads the domain, and a password reset
 
   await page.goto(`/devices/${agent.deviceId}?tab=roles`);
   await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
-  await page.getByRole("button", { name: "Read now" }).click();
+  // No click: the tab opens, reads by itself, and shows the page's skeleton until the first result.
+  await expect(page.getByRole("button", { name: /Read now|List users/ })).toHaveCount(0);
+  canned.health_read = health;
+  canned.user_list = users;
   await answer("status", status);
-  await expect(page.getByText("Directory health")).toBeVisible();
+  await expect(page.getByText("Directory health", { exact: true }).first()).toBeVisible();
   await answer("health_read", health);
   await expect(page.getByText("Replication is succeeding.")).toBeVisible();
-  await page.getByRole("button", { name: "List users" }).click();
   await answer("user_list", users);
   const protectedRow = page.getByRole("row", { name: /Admin Two/ });
   await expect(protectedRow.getByText("Protected")).toBeVisible();

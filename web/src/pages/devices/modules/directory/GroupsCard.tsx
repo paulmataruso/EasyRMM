@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 import { Dialog } from "../../../../components/Dialog";
 import { AddMemberDialog, CreateGroupDialog, DeleteGroupDialog, RemoveMemberDialog } from "./GroupDialogs";
 import { Alert, Badge, Button, Card, InlineError, TableWrap } from "../../../../components/ui";
 import type { GroupMember, GroupPage, GroupRow, MemberPage } from "./types";
 import { useWinmod } from "./useWinmod";
+import { useFirstPage } from "./useFirstPage";
+import { SkeletonGrid } from "../skeletons";
 
 /** The groups of the domain, and who is directly in each. Reading only: membership changes are not offered here. */
 export function GroupsCard({ deviceId, canManage, recycleBin, minLength }: { deviceId: string; canManage: boolean; recycleBin: boolean; minLength?: number }) {
   void minLength;
   const run = useWinmod(deviceId);
+  const first = useFirstPage<GroupPage>(deviceId, "group_list", { scope: "subtree", pageSize: 100 });
+  const asked = useRef(false);
   const [rows, setRows] = useState<GroupRow[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -25,6 +29,7 @@ export function GroupsCard({ deviceId, canManage, recycleBin, minLength }: { dev
       setError(null);
       setProblem(null);
       try {
+        asked.current = Boolean(after);
         const r = await run<GroupPage>("group_list", { scope: "subtree", pageSize: 100, ...(after ? { after } : {}) });
         if (!r.ok || !r.data) {
           setProblem(r.failure?.message ?? "The controller did not answer.");
@@ -42,14 +47,16 @@ export function GroupsCard({ deviceId, canManage, recycleBin, minLength }: { dev
     [run],
   );
 
+  useEffect(() => {
+    if (first.page && !asked.current) {
+      setRows(first.page.items);
+      setNext(first.page.next);
+    }
+  }, [first.page]);
+
   return (
     <Card title="Groups">
       <div className="mb-3 flex gap-2">
-        {!rows && (
-          <Button size="sm" onClick={() => void load()} loading={busy}>
-            List groups
-          </Button>
-        )}
         {canManage && (
           <Button size="sm" onClick={() => setCreating(true)}>
             Create group
@@ -57,7 +64,9 @@ export function GroupsCard({ deviceId, canManage, recycleBin, minLength }: { dev
         )}
       </div>
       <InlineError error={error} />
-      {problem && <Alert tone="warn">{problem}</Alert>}
+      {(problem ?? first.problem) && !rows && <Alert tone="warn">{problem ?? first.problem}</Alert>}
+      {problem && rows && <Alert tone="warn">{problem}</Alert>}
+      {!rows && first.loading && !problem && <SkeletonGrid columns={4} rows={5} />}
       {rows && (
         <TableWrap>
           <table className="table-base">

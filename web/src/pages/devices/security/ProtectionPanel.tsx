@@ -93,7 +93,7 @@ function FieldRow({ device, f, canManage, canWeaken, reload }: { device: Device;
 export function ProtectionPanel({ device, canManage, canWeaken }: { device: Device; canManage: boolean; canWeaken: boolean }) {
   const read = useRead<DefenderPreferences>(device.id, "preferences_read");
   return (
-    <ReadPanel title="Protection settings" read={read} readLabel="Read settings">
+    <ReadPanel title="Protection settings" read={read}>
       {(d) => {
         const groups = Object.keys(GROUP_LABEL).filter((g) => d.fields.some((f) => f.group === g && f.supported));
         return (

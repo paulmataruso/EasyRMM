@@ -1,30 +1,38 @@
 import { Link } from "react-router";
-import { RefreshCw } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Device } from "../../../api/types";
 import { useAuth } from "../../../auth/AuthContext";
-import { Alert, Button, EmptyState } from "../../../components/ui";
+import { Alert, EmptyState } from "../../../components/ui";
 import { formatDateTime, formatRelative } from "../../../lib/format";
+import { Loading } from "./skeletons";
 
 /**
- * The frame every module's tab uses (ADR-0073, section 7): the module's name, when what is shown was read, a refresh
- * button and, when the module cannot answer, why. A module supplies its panels as children.
+ * The frame every module's tab uses (ADR-0073, section 7): the module's name, when what is shown was read and, when the
+ * module cannot answer, why. There is no read button: a tab shows its last result when it opens, reads again by itself
+ * when that is old and keeps it fresh while it stays open. A module supplies its panels as children and, for the
+ * time before the first result, a skeleton of its real layout.
  */
 export function ModuleTab({
   name,
   asOf,
-  onRefresh,
   refreshing = false,
-  canRefresh = true,
+  loading = false,
+  skeleton,
+  offline = false,
   unavailable,
   children,
 }: {
   name: string;
-  /** When the data shown was read; null before the first read. */
+  /** When the data shown was read; null before the first result. */
   asOf: string | null;
-  onRefresh: () => void;
+  /** A new read is on its way: what is shown is the last result. */
   refreshing?: boolean;
-  canRefresh?: boolean;
+  /** No result yet, stored or new: the skeleton is shown in place of the panels. */
+  loading?: boolean;
+  skeleton?: ReactNode;
+  /** The computer is not checking in; what is shown is its last result. */
+  offline?: boolean;
   /** Why the module cannot be read now (an offline device, a missing Windows feature). */
   unavailable?: ReactNode;
   children?: ReactNode;
@@ -36,26 +44,23 @@ export function ModuleTab({
         <span className="text-xs text-muted">
           {asOf ? (
             <>
-              Read <span title={formatDateTime(asOf)}>{formatRelative(asOf)}</span>
+              As of <span title={formatDateTime(asOf)}>{formatRelative(asOf)}</span>
             </>
+          ) : loading ? (
+            "Reading…"
           ) : (
             "Not read yet"
           )}
         </span>
-        {canRefresh && (
-          <Button
-            size="sm"
-            icon={<RefreshCw className="size-3.5" aria-hidden />}
-            onClick={onRefresh}
-            loading={refreshing}
-            className="ml-auto"
-          >
-            {asOf ? "Refresh" : "Read now"}
-          </Button>
+        {refreshing && !loading && (
+          <span className="inline-flex items-center gap-1 text-xs text-muted" role="status">
+            <Loader2 className="size-3 animate-spin" aria-hidden /> Updating
+          </span>
         )}
       </header>
+      {offline && <Alert tone="warn">This computer is not checking in. What is shown is its last result, from the time above.</Alert>}
       {unavailable && <Alert tone="warn">{unavailable}</Alert>}
-      {children}
+      {loading && skeleton ? <Loading name={name}>{skeleton}</Loading> : children}
     </section>
   );
 }

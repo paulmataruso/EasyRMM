@@ -16,7 +16,7 @@ import { device, history, inventory, metrics } from "../../../../test/fixtures";
 import { renderApp } from "../../../../test/render";
 import { DEVICE_MODULE_TABS, moduleTabState } from "../moduleTabs";
 import { isProtectedRecord, isProtectedZone, relName, storage } from "./dns/dnsText";
-import { fillTone, isMac, optionAction } from "./dhcp/dhcpText";
+import { fillTone, isMac, optionAction, rangeProblem } from "./dhcp/dhcpText";
 
 // The server roles' tab (ADR-0076): the tab rule, the DNS view and the DHCP view.
 
@@ -83,6 +83,8 @@ function routes(session: ReturnType<typeof sessionView>, r: DeviceRoles, results
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/disks": ok({ items: [] }),
     "GET /devices/:id/defender": fail(404, "not_found", "none"),
+    "POST /devices/:id/winmod-read/:action": (req: { params: Record<string, string> }) =>
+      ok({ action: req.params.action, takenAt: null, stale: true, data: null, refreshing: true, offline: false, runId: req.params.action }),
     "POST /devices/:id/winmod/:action": (req: { params: Record<string, string> }) =>
       ok({ jobId: "j", runId: req.params.action, action: req.params.action, status: "queued", expiresAt: "2026-11-26T11:00:00Z" }),
     "GET /winmod/runs/:id": (req: { params: Record<string, string> }) => {
@@ -144,16 +146,15 @@ describe("the DNS view", () => {
     const api = installFakeApi(routes(MANAGER, roles([DNS_ROLE]), results));
     renderApp("/devices/d1?tab=roles");
     await screen.findByRole("tab", { name: "Roles" });
-    await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
-    await screen.findByText("Zones", { selector: "h2" });
+    await screen.findByText("AD-integrated (domain)");
     return api;
   }
 
-  it("reads on request, and warns about a zone open to transfer", async () => {
+  it("reads by itself, and warns about a zone open to transfer", async () => {
     const api = await open();
     expect(await screen.findByText(/can be copied by anyone who asks/)).toBeInTheDocument();
     expect(screen.getByText("AD-integrated (domain)")).toBeInTheDocument();
-    expect(api.callsTo("POST /devices/:id/winmod/:action").map((c) => c.params.action)).toEqual(expect.arrayContaining(["dns.status", "dns.zone_list"]));
+    expect(api.callsTo("POST /devices/:id/winmod-read/:action").map((c) => c.params.action)).toEqual(expect.arrayContaining(["dns.status", "dns.zone_list"]));
   });
 
   it("locks the protected records and the protected zone", async () => {
@@ -205,7 +206,6 @@ describe("the DNS view", () => {
       "GET /winmod/runs/:id": ok({ runId: "x", deviceId: "d1", action: "dns.status", version: 1, status: "succeeded", finishedAt: "2026-11-26T10:00:00Z", ok: false, failure: { code: "module_missing", message: "x" } }),
     });
     renderApp("/devices/d1?tab=roles");
-    await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
     await screen.findByText(/management tools for this role are not installed/);
   });
 });
@@ -223,8 +223,7 @@ describe("the DHCP view", () => {
   async function open(session = MANAGER) {
     const api = installFakeApi(routes(session, roles([DHCP_ROLE]), results));
     renderApp("/devices/d1?tab=roles");
-    await userEvent.click(await screen.findByRole("button", { name: "Read now" }));
-    await screen.findByText("Scopes", { selector: "h2" });
+    await screen.findByText("Office");
     return api;
   }
 
@@ -281,6 +280,45 @@ describe("the DHCP view", () => {
     expect(call.body).toEqual({ params: { scopeId: "192.168.1.0", optionId: 6, value: "192.168.1.2" }, confirm: "dhcp.option_set_network:192.168.1.0" });
   });
 
+  it("changes a scope's address range with a confirmation that names the scope, and offers nothing for the network or mask", async () => {
+    const api = await open();
+    await userEvent.click(within(screen.getByText("Office").closest("tr")!).getByRole("button", { name: "Change range" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/cannot be changed: Windows does not change them in place/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/mask/i)).toBeNull();
+    const go = within(dialog).getByRole("button", { name: "Change range" });
+    expect(go).toBeDisabled();
+    // Outside the scope's network: refused before anything is sent.
+    const end = within(dialog).getByLabelText(/^Last address/);
+    await userEvent.clear(end);
+    await userEvent.type(end, "192.168.2.200");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/inside the scope's network/);
+    // Start after the end.
+    await userEvent.clear(end);
+    await userEvent.type(end, "192.168.1.5");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/ends before it starts/);
+    await userEvent.clear(end);
+    await userEvent.type(end, "192.168.1.250");
+    await userEvent.type(within(dialog).getByLabelText(/^Scope/), "192.168.1.0");
+    expect(go).toBeEnabled();
+    await userEvent.click(go);
+    await screen.findByText("Office");
+    const call = api.callsTo("POST /devices/:id/winmod/:action").find((c) => c.params.action === "dhcp.scope_range_set")!;
+    expect(call.body).toEqual({
+      params: { scopeId: "192.168.1.0", startRange: "192.168.1.10", endRange: "192.168.1.250" },
+      confirm: "dhcp.scope_range_set:192.168.1.0",
+    });
+  });
+
+  it("refuses a range that leaves an exclusion outside it", () => {
+    const scope = { scopeId: "192.168.1.0", subnetMask: "255.255.255.0", startRange: "192.168.1.10", endRange: "192.168.1.200" };
+    const ex = [{ startRange: "192.168.1.20", endRange: "192.168.1.30" }];
+    expect(rangeProblem(scope, "192.168.1.25", "192.168.1.200", ex)).toMatch(/exclusion 192\.168\.1\.20 to 192\.168\.1\.30/);
+    expect(rangeProblem(scope, "192.168.1.10", "192.168.1.250", ex)).toBeNull();
+    expect(rangeProblem(scope, "192.168.1.10", "192.168.1.200", ex)).toMatch(/now/);
+    expect(rangeProblem(scope, "192.168.1.9", "x", ex)).toMatch(/IPv4/);
+  });
+
   it("gives a Technician the state but no changes and no leases", async () => {
     const api = await open(TECH);
     expect(screen.queryByRole("button", { name: "Add scope" })).toBeNull();
@@ -288,10 +326,10 @@ describe("the DHCP view", () => {
     await userEvent.click(within(screen.getByText("Office").closest("tr")!).getByRole("button", { name: "Open" }));
     await screen.findByRole("radio", { name: "Reservations" });
     expect(screen.queryByRole("radio", { name: "Leases" })).toBeNull();
-    expect(api.callsTo("POST /devices/:id/winmod/:action").some((c) => c.params.action === "dhcp.lease_list")).toBe(false);
+    expect(api.callsTo("POST /devices/:id/winmod-read/:action").some((c) => c.params.action === "dhcp.lease_list")).toBe(false);
   });
 
-  it("reads leases for a manager, on request", async () => {
+  it("reads leases for a manager when the Leases view opens", async () => {
     await open();
     await userEvent.click(within(screen.getByText("Office").closest("tr")!).getByRole("button", { name: "Open" }));
     await userEvent.click(await screen.findByRole("radio", { name: "Leases" }));

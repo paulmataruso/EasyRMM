@@ -44,7 +44,7 @@ func TestCatalogPinsAndScripts(t *testing.T) {
 }
 
 func TestTiers(t *testing.T) {
-	tier3 := map[string]bool{"dhcp.scope_deactivate": true, "dhcp.scope_remove": true, "dhcp.option_set_network": true}
+	tier3 := map[string]bool{"dhcp.scope_deactivate": true, "dhcp.scope_remove": true, "dhcp.scope_range_set": true, "dhcp.option_set_network": true}
 	for _, a := range catalog(t).Actions() {
 		switch {
 		case tier3[a.Name]:
@@ -164,6 +164,12 @@ func TestReservationsAndRanges(t *testing.T) {
 	}
 	if run(t, "dhcp.exclusion_add", `{"scopeId":"192.168.1.0","startRange":"192.168.1.20","endRange":"192.168.1.10"}`) == nil {
 		t.Error("a reversed range was accepted")
+	}
+	if run(t, "dhcp.scope_range_set", `{"scopeId":"192.168.1.0","startRange":"192.168.1.200","endRange":"192.168.1.100"}`) == nil {
+		t.Error("a reversed scope range was accepted")
+	}
+	if err := run(t, "dhcp.scope_range_set", `{"scopeId":"192.168.1.0","startRange":"192.168.1.100","endRange":"192.168.1.200"}`); err != nil {
+		t.Error(err)
 	}
 	if run(t, "dhcp.scope_set", `{"scopeId":"192.168.1.0"}`) == nil {
 		t.Error("scope_set with nothing to set was accepted")

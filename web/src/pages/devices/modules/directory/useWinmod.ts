@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { api } from "../../../../api/client";
 import type { WinmodResult, WinmodRun } from "../../../../api/types";
+import { RUN_POLL_MS } from "../winmod";
 
 const FINISHED = new Set(["succeeded", "failed", "timed_out", "canceled", "expired", "lost"]);
 
@@ -29,7 +30,7 @@ export function useWinmod(deviceId: string) {
         `/devices/${deviceId}/winmod/active_directory.${action}`,
         { params, ...(confirm ? { confirm } : {}) },
       );
-      for (let i = 0; i < 150; i++) {
+      for (let i = 0; i < 250; i++) {
         const r = await api.get<WinmodResult>(`/winmod/runs/${run.runId}`);
         if (r.ok !== undefined || FINISHED.has(r.status)) {
           if (r.ok === true) return { ok: true, data: r.data as T, finishedAt: r.finishedAt, generated: run.generated };
@@ -39,7 +40,7 @@ export function useWinmod(deviceId: string) {
             finishedAt: r.finishedAt,
           };
         }
-        await wait(1000);
+        await wait(RUN_POLL_MS);
       }
       return { ok: false, failure: { code: "timeout", message: "The controller did not answer in time." }, finishedAt: null };
     },

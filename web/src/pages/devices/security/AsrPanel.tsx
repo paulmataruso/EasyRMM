@@ -61,7 +61,7 @@ function RuleRow({ device, r, canManage, canWeaken, reload }: { device: Device; 
 export function AsrPanel({ device, canManage, canWeaken }: { device: Device; canManage: boolean; canWeaken: boolean }) {
   const read = useRead<AsrRead>(device.id, "asr_read");
   return (
-    <ReadPanel title="Attack Surface Reduction" read={read} readLabel="Read rules">
+    <ReadPanel title="Attack Surface Reduction" read={read}>
       {(d) =>
         !d.supported ? (
           <p className="text-sm text-muted">This computer does not support Attack Surface Reduction rules.</p>

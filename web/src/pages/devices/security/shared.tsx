@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
-import { Lock, RefreshCw } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
 import { Dialog } from "../../../components/Dialog";
-import { Alert, Badge, Button, Card, InlineError } from "../../../components/ui";
+import { Alert, Badge, Button, Card, InlineError, Skeleton } from "../../../components/ui";
 import { formatDateTime, formatRelative } from "../../../lib/format";
 import { ActionFailed, type Read } from "./winmod";
 import { MANAGED_TEXT } from "./text";
@@ -33,18 +33,15 @@ export function Managed({ by }: { by: ManagedBy | null }) {
   );
 }
 
-/** A panel that reads on request: its name, when it was read, a Read button and the failure if any. */
+/** A panel that reads by itself: its name, when it was read, a skeleton while the first result loads, and the failure if any. */
 export function ReadPanel<T>({
   title,
   read,
-  readLabel,
   children,
   extra,
 }: {
   title: string;
   read: Read<T>;
-  /** The button's name, unique on the page so a person (and a test) can tell the panels apart. */
-  readLabel: string;
   children: (data: T) => ReactNode;
   extra?: ReactNode;
 }) {
@@ -53,21 +50,33 @@ export function ReadPanel<T>({
       title={title}
       actions={
         <div className="flex items-center gap-2">
-          {read.asOf && (
-            <span className="text-xs text-muted" title={formatDateTime(read.asOf)}>
-              Read {formatRelative(read.asOf)}
+          {read.refreshing && read.data && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted" role="status">
+              <Loader2 className="size-3 animate-spin" aria-hidden /> Updating
             </span>
           )}
-          <Button size="sm" icon={<RefreshCw className="size-3.5" aria-hidden />} onClick={read.load} loading={read.loading}>
-            {read.data ? "Refresh" : readLabel}
-          </Button>
+          {read.asOf && (
+            <span className="text-xs text-muted" title={formatDateTime(read.asOf)}>
+              As of {formatRelative(read.asOf)}
+            </span>
+          )}
         </div>
       }
     >
       <div className="flex flex-col gap-3">
         {read.error && <Alert tone="warn">{failureText(read.error)}</Alert>}
         {extra}
-        {read.data ? children(read.data) : !read.error && <p className="text-sm text-muted">Not read yet.</p>}
+        {read.data ? (
+          children(read.data)
+        ) : (
+          read.loading && (
+            <div role="status" aria-busy="true" aria-label={`Loading ${title}`} className="flex flex-col gap-2">
+              <Skeleton className="w-full" />
+              <Skeleton className="w-3/4" />
+              <Skeleton className="w-1/2" />
+            </div>
+          )
+        )}
       </div>
     </Card>
   );

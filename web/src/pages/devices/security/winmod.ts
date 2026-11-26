@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client";
 import type { WinmodResult, WinmodRun } from "../../../api/types";
+import { RUN_POLL_MS, useWinmodRead } from "../modules/winmod";
 
 const FINISHED = new Set(["succeeded", "failed", "timed_out", "canceled", "expired", "lost"]);
 
@@ -29,7 +29,7 @@ export async function runAction<T>(
   const body: Record<string, unknown> = { params: params ?? {} };
   if (confirm) body.confirm = confirm;
   const run = await api.post<WinmodRun>(`/devices/${deviceId}/winmod/defender.${action}`, body);
-  const pollMs = options.pollMs ?? 1500;
+  const pollMs = options.pollMs ?? RUN_POLL_MS;
   const deadline = Date.now() + (options.maxMs ?? 30 * 60_000);
   for (;;) {
     const r = await api.get<WinmodResult>(`/winmod/runs/${run.runId}`);
@@ -41,32 +41,33 @@ export async function runAction<T>(
   }
 }
 
-/** The state of a read panel: nothing until asked, then the result, the time it was read and any failure. */
+/** The state of a read panel: the last result, when it was read, and whether a new read is on its way. */
 export interface Read<T> {
   data: T | null;
   asOf: string | null;
+  /** No result yet, stored or new: the panel shows its skeleton. */
   loading: boolean;
+  /** A new read is on its way; what is shown is the last result. */
+  refreshing: boolean;
   error: Error | null;
+  /** Reads again now (after a change this panel made). */
   load: () => void;
 }
 
-/** A read action on a device, run on request (never on its own: every read is a job on the computer). */
+/**
+ * A read action on a device. It runs by itself when the panel opens, shows the stored result at once, and keeps it
+ * fresh while the panel is open (the shared module read, ADR-0073 section 5); there is no button for it.
+ */
 export function useRead<T>(deviceId: string, action: string): Read<T> {
-  const [state, setState] = useState<{ data: T | null; asOf: string | null; error: Error | null }>({ data: null, asOf: null, error: null });
-  const [loading, setLoading] = useState(false);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-  const load = useCallback(() => {
-    setLoading(true);
-    runAction<T>(deviceId, action, undefined)
-      .then((r) => alive.current && setState({ data: r.data, asOf: r.finishedAt, error: null }))
-      .catch((e: Error) => alive.current && setState((s) => ({ ...s, error: e })))
-      .finally(() => alive.current && setLoading(false));
-  }, [deviceId, action]);
-  return { data: state.data, asOf: state.asOf, loading, error: state.error, load };
+  const q = useWinmodRead<T>(deviceId, `defender.${action}`, {});
+  const o = q.data;
+  const error = o?.failure ? new ActionFailed(o.failure.code, o.failure.message) : o?.lost && !o.data ? new ActionFailed("lost", o.lost) : q.error instanceof Error ? q.error : null;
+  return {
+    data: o?.data ?? null,
+    asOf: o?.data ? o.finishedAt : null,
+    loading: o === undefined && !q.error,
+    refreshing: q.isFetching,
+    error,
+    load: () => void q.refetch(),
+  };
 }

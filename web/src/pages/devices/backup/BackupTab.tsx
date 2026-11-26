@@ -16,6 +16,7 @@ import { ConfirmDialog } from "../../../components/Dialog";
 import { Alert, Badge, Button, Card, InlineError, KeyValueList, Spinner, type Tone } from "../../../components/ui";
 import { formatDateTime, formatRelative, formatSize } from "../../../lib/format";
 import { ModuleTab } from "../modules/ModuleTab";
+import { SkeletonKeyValue, SkeletonTable } from "../modules/skeletons";
 import {
   PolicyDialog,
   PruneDialog,
@@ -46,7 +47,7 @@ export function BackupTab({ device }: { device: Device }) {
   const roles = useApi<DeviceRoles>(`/devices/${device.id}/roles`);
   const role = roles.data?.roles.find((r) => r.module === "windows_backup");
   const notInstalled = role?.state === "not_installed";
-  const status = useBackupRead<BackupStatus>(device.id, "status", {}, !notInstalled);
+  const status = useBackupRead<BackupStatus>(device.id, "status", {}, !notInstalled, 30);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +60,7 @@ export function BackupTab({ device }: { device: Device }) {
   const desktop = status.data?.ok === false && status.data.code === "not_offered";
 
   const refresh = () => {
-    void client.invalidateQueries({ queryKey: ["backup-read", device.id] });
+    void client.invalidateQueries({ queryKey: ["winmod", device.id] });
   };
 
   /** Runs an action, tells the result, and reads the state again. */
@@ -85,14 +86,22 @@ export function BackupTab({ device }: { device: Device }) {
 
   const unavailable = !online ? "This computer is offline. What is shown was read earlier; actions wait until it is back." : undefined;
 
-  if (desktop) return <DesktopCard device={device} onRefresh={refresh} />;
+  if (desktop) return <DesktopCard device={device} />;
 
   return (
     <ModuleTab
       name="Windows Backup"
-      asOf={st ? (status.data?.readAt ?? null) : null}
-      onRefresh={refresh}
+      asOf={st ? (status.data?.readAt || null) : null}
       refreshing={status.isFetching}
+      loading={status.data === undefined && !notInstalled && !status.error}
+      skeleton={
+        <>
+          <SkeletonKeyValue title="Status" rows={5} />
+          <SkeletonKeyValue title="Policy" rows={4} />
+          <SkeletonTable title="Backup versions" columns={3} rows={3} />
+        </>
+      }
+      offline={status.offline}
       unavailable={unavailable}
     >
       <InlineError error={status.error} />
@@ -415,9 +424,9 @@ function VersionsPanel({ st, canManage, canDestroy, onDialog }: { st: BackupStat
 }
 
 /** A desktop is watched, not managed (ADR-0077): what Windows allows, and what it does not. */
-function DesktopCard({ device, onRefresh }: { device: Device; onRefresh: () => void }) {
+function DesktopCard({ device }: { device: Device }) {
   return (
-    <ModuleTab name="Windows Backup" asOf={null} onRefresh={onRefresh} canRefresh={false}>
+    <ModuleTab name="Windows Backup" asOf={null}>
       <Card title="What Windows allows on a desktop">
         <div className="flex max-w-2xl flex-col gap-2 text-sm">
           <p>

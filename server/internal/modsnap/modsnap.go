@@ -7,6 +7,7 @@
 package modsnap
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,12 @@ const (
 	Keep          = 7 * 24 * time.Hour
 	KeepSensitive = 15 * time.Minute
 )
+
+// AutoReadAge is how old a result may be before a tab that opens starts a read
+// on its own, whatever the action's own freshness (a longer one is cut to
+// this). The owner's rule: what a person looks at is at most about two
+// minutes old.
+const AutoReadAge = 2 * time.Minute
 
 // SweepInterval is how often scheduled reads are started and old snapshots
 // deleted.
@@ -81,6 +88,9 @@ type Snapshot struct {
 	// because the computer is not checking in.
 	Refreshing bool `json:"refreshing"`
 	Offline    bool `json:"offline"`
+	// RunID is the read on its way, started by this call or found already
+	// running: the console follows it for the result.
+	RunID *uuid.UUID `json:"runId,omitempty"`
 }
 
 // Get returns the cached snapshot of a snapshot action at once and starts a
@@ -89,6 +99,13 @@ type Snapshot struct {
 // permission, and for a sensitive action its sensitive permission. No job is
 // started for a computer that is offline.
 func (s *Service) Get(ctx context.Context, c access.Caller, deviceID uuid.UUID, action string, params json.RawMessage) (*Snapshot, error) {
+	return s.GetWithin(ctx, c, deviceID, action, params, AutoReadAge)
+}
+
+// GetWithin is Get for a result that may be at most maxAge old (never more
+// than AutoReadAge or the action's own freshness): a tab that shows a running
+// operation asks for a short age.
+func (s *Service) GetWithin(ctx context.Context, c access.Caller, deviceID uuid.UUID, action string, params json.RawMessage, maxAge time.Duration) (*Snapshot, error) {
 	a, d, key, err := s.open(ctx, c, deviceID, action, params)
 	if err != nil {
 		return nil, err
@@ -109,10 +126,12 @@ func (s *Service) Get(ctx context.Context, c access.Caller, deviceID uuid.UUID, 
 	}
 	if data != nil {
 		out.TakenAt, out.Data = &taken, data
-		out.Stale = s.now().Sub(taken) > a.Freshness
+		out.Stale = s.now().Sub(taken) > min(a.Freshness, maxAge, AutoReadAge)
 	}
+	// An action that keeps no snapshot (a sensitive page of leases) is
+	// always read afresh; its result comes by the run.
 	if out.Stale {
-		out.Refreshing, out.Offline, err = s.refresh(ctx, c, d, a, params, key)
+		out.Refreshing, out.Offline, out.RunID, err = s.refresh(ctx, c, d, a, params, key, true)
 		if err != nil {
 			return nil, err
 		}
@@ -128,13 +147,13 @@ func (s *Service) Refresh(ctx context.Context, c access.Caller, deviceID uuid.UU
 		return nil, err
 	}
 	out := &Snapshot{Action: a.Name, Stale: true}
-	out.Refreshing, out.Offline, err = s.refresh(ctx, c, d, a, params, key)
+	out.Refreshing, out.Offline, out.RunID, err = s.refresh(ctx, c, d, a, params, key, false)
 	return out, err
 }
 
 func (s *Service) open(ctx context.Context, c access.Caller, deviceID uuid.UUID, action string, params json.RawMessage) (winmod.Action, *devices.Device, string, error) {
 	a, ok := s.catalog.Lookup(action)
-	if !ok || a.Freshness <= 0 {
+	if !ok || !a.IsPlainRead() {
 		return a, nil, "", apperr.NotFound()
 	}
 	d, err := s.modules.Offered(ctx, c, deviceID, a.Module)
@@ -142,6 +161,11 @@ func (s *Service) open(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 		return a, nil, "", err
 	}
 	res := rbac.Site(d.OrganizationID, d.SiteID)
+	// A computer outside the development scope, or whose module is off, is
+	// never read on its own and is not found.
+	if !s.gate.Allowed(ctx, d.OrganizationID, d.SiteID, a.Module) {
+		return a, nil, "", apperr.NotFound()
+	}
 	if !c.Can(a.Permission, res) || (a.Sensitive && !c.Can(a.SensitivePermission, res)) {
 		return a, nil, "", apperr.NotFound()
 	}
@@ -154,29 +178,48 @@ func (s *Service) open(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 }
 
 // refresh starts the read unless the computer is offline or a read of the
-// same action is queued or running.
-func (s *Service) refresh(ctx context.Context, c access.Caller, d *devices.Device, a winmod.Action, params json.RawMessage, key string) (refreshing, offline bool, err error) {
-	var online, inflight bool
+// same action is queued or running (one in flight per device and action).
+// automatic marks the job, and its audit rows, as started by the console on
+// its own rather than by a person's request.
+func (s *Service) refresh(ctx context.Context, c access.Caller, d *devices.Device, a winmod.Action, params json.RawMessage, key string, automatic bool) (refreshing, offline bool, run *uuid.UUID, err error) {
+	var online bool
+	var inflight uuid.UUID
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT coalesce(agent_last_seen_at > $2::timestamptz - make_interval(secs => $3), false)
 			FROM devices WHERE id = $1`, d.ID, s.now(), devices.AgentOnlineWindow.Seconds()).Scan(&online); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT `+inflightSQL("$1::uuid", "$2::text"), d.ID, a.Name).Scan(&inflight)
+		err := tx.QueryRow(ctx, `SELECT r.id FROM job_runs r JOIN jobs j ON j.id = r.job_id
+			WHERE r.device_id = $1 AND j.kind = 'winmod' AND j.winmod->>'action' = $2 AND r.status IN ('queued', 'sent', 'running')
+			  AND coalesce(j.params, '{}'::jsonb) = $3::jsonb
+			ORDER BY r.created_at DESC LIMIT 1`, d.ID, a.Name, asJSON(params)).Scan(&inflight)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
 	})
 	if err != nil {
-		return false, false, fmt.Errorf("modsnap: checking for a read on its way: %w", err)
+		return false, false, nil, fmt.Errorf("modsnap: checking for a read on its way: %w", err)
 	}
 	switch {
-	case inflight:
-		return true, !online, nil
+	case inflight != uuid.Nil:
+		return true, !online, &inflight, nil
 	case !online:
-		return false, true, nil
+		return false, true, nil, nil
 	}
-	if _, err := s.runner.RunWinmod(ctx, c, jobs.WinmodInput{DeviceID: d.ID, Action: a.Name, Params: params}); err != nil {
-		return false, false, err
+	r, err := s.runner.RunWinmod(ctx, c, jobs.WinmodInput{DeviceID: d.ID, Action: a.Name, Params: params, Automatic: automatic})
+	if err != nil {
+		return false, false, nil, err
 	}
-	return true, false, nil
+	return true, false, &r.RunID, nil
+}
+
+// asJSON is the parameters as the job keeps them: an empty object when none.
+func asJSON(p json.RawMessage) string {
+	if len(bytes.TrimSpace(p)) == 0 || string(bytes.TrimSpace(p)) == "null" {
+		return "{}"
+	}
+	return string(p)
 }
 
 // inflightSQL is a condition that is true when a run of the action is queued,
@@ -244,7 +287,7 @@ func (s *Service) Sweep(ctx context.Context) (int, error) {
 			if !s.gate.Allowed(ctx, t.org, t.site, a.Module) {
 				continue
 			}
-			if _, err := s.runner.RunWinmod(ctx, sys, jobs.WinmodInput{DeviceID: t.id, Action: a.Name}); err != nil {
+			if _, err := s.runner.RunWinmod(ctx, sys, jobs.WinmodInput{DeviceID: t.id, Action: a.Name, Automatic: true}); err != nil {
 				s.log.Warn("modsnap: a scheduled read was not started", "action", a.Name, "device", t.id, "error", err)
 				continue
 			}
