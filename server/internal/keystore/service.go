@@ -76,6 +76,10 @@ type Service struct {
 	mu       sync.Mutex
 	status   Status
 	statusAt time.Time
+	// down counts failed status checks in a row; sealedAt is when the monitor
+	// first saw the keystore sealed.
+	down     int
+	sealedAt time.Time
 	keys     map[uuid.UUID]cachedKey
 }
 

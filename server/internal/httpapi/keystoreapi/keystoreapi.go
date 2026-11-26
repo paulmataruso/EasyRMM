@@ -31,6 +31,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/keystore/requests/{id}/deny", a.decide(false))
 	r("GET /api/v1/keystore/notices", a.notices)
 	r("GET /api/v1/keystore/alerts", a.alerts)
+	r("POST /api/v1/keystore/alerts/{id}/resolve", a.resolveAlert)
 	r("GET /api/v1/organizations/{id}/keystore-settings", a.settings)
 	r("PUT /api/v1/organizations/{id}/keystore-settings", a.setSettings)
 }
@@ -127,6 +128,18 @@ func (a *API) alerts(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"alerts": out})
+	return nil
+}
+
+func (a *API) resolveAlert(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.ResolveAlert(r.Context(), httpapi.Caller(r), id); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

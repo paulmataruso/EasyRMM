@@ -12,6 +12,7 @@ import {
   Fingerprint,
   FolderTree,
   Hourglass,
+  KeyRound,
   Library,
   LifeBuoy,
   ListChecks,
@@ -987,6 +988,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "alert-policies", label: "Alert policies", icon: <Bell className="size-4" aria-hidden />, show: can("monitoring.view") },
     { id: "patching", label: "Patching", icon: <SlidersHorizontal className="size-4" aria-hidden />, show: can("patch.configure") },
+    { id: "keystore", label: "Keystore", icon: <KeyRound className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "sso", label: "Single sign-on", icon: <LogIn className="size-4" aria-hidden />, show: can("settings.manage") },
   ]
     .filter((p) => p.show)

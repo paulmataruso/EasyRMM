@@ -214,6 +214,9 @@ func (s *Service) Upload(ctx context.Context, d Device, ip netip.Addr, rec agent
 		answer, err = s.settle(ctx, tx, d, ip, in, verified, result)
 		return err
 	})
+	if err == nil && answer.State == agentproto.EscrowConflict {
+		s.raiseConflict(ctx, d, in.volume, in.protector)
+	}
 	return answer, err
 }
 
@@ -384,6 +387,7 @@ func (s *Service) VerifyPending(ctx context.Context) (int, error) {
 // Run checks pending records every half minute until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	go s.reconcileLoop(ctx)
+	go s.monitorLoop(ctx)
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {

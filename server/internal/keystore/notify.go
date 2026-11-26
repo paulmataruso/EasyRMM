@@ -137,6 +137,7 @@ type Alert struct {
 	ID       uuid.UUID  `json:"id"`
 	Org      *uuid.UUID `json:"organizationId,omitempty"`
 	Kind     string     `json:"kind"`
+	Subject  string     `json:"subject,omitempty"`
 	Severity string     `json:"severity"`
 	Detail   string     `json:"detail"`
 	OpenedAt time.Time  `json:"openedAt"`
@@ -150,7 +151,7 @@ func (s *Service) Alerts(ctx context.Context, c access.Caller) ([]Alert, error) 
 	}
 	out := []Alert{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, organization_id, kind, severity, detail, opened_at FROM keystore_alerts
+		rows, err := tx.Query(ctx, `SELECT id, organization_id, kind, subject, severity, detail, opened_at FROM keystore_alerts
 			WHERE resolved_at IS NULL ORDER BY opened_at DESC LIMIT 100`)
 		if err != nil {
 			return err
@@ -158,7 +159,7 @@ func (s *Service) Alerts(ctx context.Context, c access.Caller) ([]Alert, error) 
 		defer rows.Close()
 		for rows.Next() {
 			var a Alert
-			if err := rows.Scan(&a.ID, &a.Org, &a.Kind, &a.Severity, &a.Detail, &a.OpenedAt); err != nil {
+			if err := rows.Scan(&a.ID, &a.Org, &a.Kind, &a.Subject, &a.Severity, &a.Detail, &a.OpenedAt); err != nil {
 				return err
 			}
 			if (a.Org == nil && c.CanGlobal(rbac.PermSettingsManage)) || (a.Org != nil && c.Can(rbac.PermUserManage, rbac.Org(*a.Org))) {

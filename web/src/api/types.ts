@@ -3941,6 +3941,56 @@ export interface KeystoreSummary {
   fileMode: boolean;
 }
 
+/** One of the keystore's open alerts (ADR-0081 section 7). `organizationId` is absent for a keystore-wide one. */
+export interface KeystoreAlert {
+  id: string;
+  organizationId?: string;
+  kind: string;
+  subject?: string;
+  severity: "warning" | "critical";
+  detail: string;
+  openedAt: string;
+}
+
+/** The notice of a read: who read which device's key, why. Never the key. */
+export interface KeystoreNotice {
+  id: string;
+  device: string;
+  deviceId: string;
+  organizationId: string;
+  by: string;
+  approver?: string;
+  reason: string;
+  at: string;
+}
+
+/** An organization's keystore settings. The two-person switch is off until an organization turns it on. */
+export interface KeystoreOrgSettings {
+  twoPerson: boolean;
+  /** People holding the Recovery Key Approver add-on here. */
+  approvers: number;
+}
+
+/** One KEK version, metadata only. */
+export interface KeystoreKekVersion {
+  version: number;
+  mode: string;
+  state: string;
+  open: boolean;
+  createdAt: string;
+  recoveryVerifiedAt?: string;
+}
+
+/** The keystore's own status, for whoever manages platform settings. */
+export interface KeystoreStatus {
+  state: KeystoreSummary["state"];
+  mode?: KeystoreSummary["mode"];
+  primary: number;
+  versions: KeystoreKekVersion[];
+  recoveryVerified: boolean;
+  detail?: string;
+}
+
 /** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
 export interface RecoveryKeyRequest {
   id: string;
