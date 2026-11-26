@@ -236,8 +236,8 @@ describe("a device's hardening", () => {
     expect(within(moduleItem("Kernel parameters")).queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("has a Hardening tab only on Linux devices with the agent", async () => {
-    installFakeApi(routes(TECHNICIAN, { "GET /devices/:id": ok({ ...SERVER, platform: "windows", osDescription: "Windows Server 2025" }) }));
+  it("has a Hardening tab only on Linux and Windows devices with the agent", async () => {
+    installFakeApi(routes(TECHNICIAN, { "GET /devices/:id": ok({ ...SERVER, platform: "macos", osDescription: "macOS 15" }) }));
     const { unmount } = renderApp("/devices/d1?tab=hardening");
     expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: "Hardening" })).not.toBeInTheDocument();

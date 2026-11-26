@@ -4,6 +4,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList } from "../../api/hooks";
 import type { Device, DeviceGroupDetail } from "../../api/types";
+import { useAuth } from "../../auth/AuthContext";
 import { useToast } from "../../components/Toast";
 import {
   Alert,
@@ -23,6 +24,7 @@ import {
 import { formatDateTime } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { DEFAULT_VERBOSE_HOURS, VERBOSE_HOURS } from "../devices/agentLogsText";
+import { HardeningTab } from "./tabs/HardeningTab";
 import { DeleteGroupDialog, DeviceGroupDialog } from "./GroupDialogs";
 
 /** What a change to a group's logging refreshes. */
@@ -36,6 +38,7 @@ export function GroupDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const url = useUrlState();
+  const { canAt } = useAuth();
   const group = useApi<DeviceGroupDetail>(GROUP_PATH(id));
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -44,7 +47,8 @@ export function GroupDetailPage() {
   if (group.isError) return <ErrorState error={group.error} onRetry={() => void group.refetch()} />;
   const g = group.data;
   // A tab that does not apply is hidden, never greyed.
-  const tab = g.canEditDevices && url.get("tab") === "settings" ? "settings" : "overview";
+  const showHardening = canAt("device.view", { organizationId: g.organizationId, siteId: g.siteId });
+  const tab = g.canEditDevices && url.get("tab") === "settings" ? "settings" : showHardening && url.get("tab") === "hardening" ? "hardening" : "overview";
 
   return (
     <>
@@ -87,6 +91,7 @@ export function GroupDetailPage() {
       <Tabs
         tabs={[
           { id: "overview", label: "Overview" },
+          { id: "hardening", label: "Hardening", hidden: !showHardening },
           { id: "settings", label: "Settings", hidden: !g.canEditDevices },
         ]}
         active={tab}
@@ -94,6 +99,11 @@ export function GroupDetailPage() {
       />
 
       {tab === "overview" && <Overview group={g} />}
+      {tab === "hardening" && (
+        <div role="tabpanel" aria-labelledby="tab-hardening">
+          <HardeningTab level="group" id={g.id} />
+        </div>
+      )}
       {tab === "settings" && (
         <div role="tabpanel" aria-labelledby="tab-settings">
           <VerboseLogging group={g} />

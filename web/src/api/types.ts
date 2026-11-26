@@ -1289,7 +1289,24 @@ export interface HardeningJob {
   options: HardeningOptions;
 }
 
-export interface HardeningOptions {
+/** Windows' options without a value; each applies to one module (ADR-0054). */
+export type WindowsHardeningSwitch =
+  | "portsChecked"
+  | "firewallServer"
+  | "domainController"
+  | "defenderServerRealtime"
+  | "smartScreenBlock"
+  | "cloudBlockHigh"
+  | "lsaUefiLock"
+  | "lsaUnaudited"
+  | "lockoutExposed"
+  | "uacEnable"
+  | "uacBuiltinAdmin"
+  | "denyUserElevation"
+  | "winrmBasicOff"
+  | "spoolerOff";
+
+export interface HardeningOptions extends Partial<Record<WindowsHardeningSwitch, boolean>> {
   /** Ports and ranges the firewall leaves open besides those in use. */
   allowTcp?: string[];
   allowUdp?: string[];
@@ -1303,9 +1320,15 @@ export interface HardeningOptions {
 /** Asks for a hardening job (POST /jobs/hardening). */
 export interface HardeningInput {
   deviceIds: string[];
+  /** Absent is Linux. */
+  platform?: "linux" | "windows";
   mode: HardeningJob["mode"];
   modules: string[];
+  /** Windows: single settings by ID, instead of modules. */
+  settings?: string[];
   options: HardeningOptions;
+  /** Windows apply and undo: the agreement, and for tier 3 the computer's name typed. */
+  confirm?: { agreed: boolean; typed?: string };
   /** Hours to wait for an offline device; 0 is the server's default. */
   waitHours: number;
 }
@@ -1326,11 +1349,38 @@ export interface HardeningPlatform {
   /** os-release's ID and VERSION_ID: "debian", "12". */
   id: string;
   versionId: string;
-  family: "debian" | "rhel" | "fedora" | "other";
+  family: "debian" | "rhel" | "fedora" | "other" | "windows";
   /** "none", or the kind of container the script ran in ("lxc", "docker", …). */
   container: string;
   /** full: check, apply and undo; check_only: check runs, apply and undo do not; unsupported: neither apply nor undo. */
   support: "full" | "check_only" | "unsupported";
+  /** A Windows computer's own facts (ADR-0054). */
+  windows?: HardeningWindowsPlatform;
+}
+
+/** What a Windows check reads of the computer. */
+export interface HardeningWindowsPlatform {
+  build: number;
+  displayVersion: string;
+  edition: string;
+  installationType: string;
+  role: "workstation" | "member_server" | "standalone_server" | "domain_controller" | "unknown";
+  joined: "none" | "domain" | "entra" | "domain_entra" | "unknown";
+  /** Null where the enrolments could not be read. */
+  mdm: boolean | null;
+  /** Who else holds settings on the computer. */
+  owners?: {
+    groupPolicyRecord: string;
+    mdm: boolean;
+    defenderForEndpoint: boolean;
+    configMgr: boolean;
+    dsc: boolean;
+    azureMachineConfiguration: boolean;
+    tamperProtected: boolean;
+  };
+  /** Why apply is check only here. */
+  checkOnlyReasons?: string[];
+  notes?: string[];
 }
 
 /** The firewall's ports: left open to TCP and UDP, published by Docker past the input hook, and services enabled but not running. */
@@ -1370,9 +1420,95 @@ export interface HardeningModule {
   ports?: HardeningPorts;
   /** Windows' accounts module only. */
   exposure?: HardeningExposure;
+  /** Windows: each setting as the check found it (ADR-0054). */
+  settings?: HardeningSettingFinding[];
+  /** Windows: settings another owner holds. */
+  managed?: HardeningManagedSetting[];
+  notes?: string[];
+  /** Windows: a result that left settings out to stay within its limit. */
+  settingsOmitted?: "in_place" | "all";
+  /** Windows: a change waits for a restart. */
+  restart?: boolean;
+  /** What an apply or undo did to the module. */
+  outcome?: string;
+  outcomeReason?: string;
+  /** Windows: the controls the module's settings relate to; never a statement of compliance. */
+  related?: HardeningRelated;
   /** Null once the job is deleted. */
   jobId: string | null;
   checkedAt: string;
+}
+
+export type HardeningSettingState = "in_place" | "not_in_place" | "managed_elsewhere" | "check_only" | "not_applicable" | "reported" | "unknown";
+
+/** One Windows setting as a check found it. */
+export interface HardeningSettingFinding {
+  id: string;
+  item?: string;
+  state: HardeningSettingState;
+  value?: string;
+  want?: string;
+  note?: string;
+  reasons?: string[];
+  mdm?: { csp: string; config: string; current: string; provider: string };
+  /** What an apply or undo did: applied, unchanged, skipped, failed, restored or left. */
+  outcome?: string;
+  before?: string;
+  changedAt?: string;
+}
+
+export interface HardeningManagedSetting {
+  id: string;
+  item?: string;
+  owner: string;
+  policy: string;
+  value: string;
+  state: "in_place" | "managed_elsewhere";
+}
+
+export interface HardeningRelated {
+  sp80053R5: { id: string; title: string }[];
+  sp800171R2: string[];
+  sp800171R3: string[];
+  iso27001: string[];
+}
+
+/** Windows' modules and settings with their tiers (GET /hardening/windows/catalog). */
+export interface WindowsCatalogModule {
+  id: string;
+  /** 0 reports only; 1 safe; 2 can break a workflow; 3 can cut access. */
+  tier: 0 | 1 | 2 | 3;
+  settings: { id: string; what: string; tier: 0 | 1 | 2 | 3; cite: "meets" | "differs" | "not_set"; option?: string }[];
+  /** The options without a value the module takes, by the name a request uses. */
+  switches: string[];
+}
+
+/** A change waiting for the agent's confirmation, or how that ended (ADR-0054, the guard). */
+export interface HardeningGuard {
+  applyJobId: string;
+  settings: string[];
+  armedAt: string;
+  rollbackAt: string;
+  state: "armed" | "confirmed" | "timed_out";
+  decidedAt: string | null;
+  keepRequestedAt: string | null;
+}
+
+export interface HardeningFleetDevice {
+  id: string;
+  name: string;
+  siteName: string;
+  groupName: string;
+  checkedAt: string | null;
+  states: Partial<Record<HardeningState, number>>;
+  /** The state of the latest guard, empty without one. */
+  guard: "" | HardeningGuard["state"];
+}
+
+export interface HardeningFleet {
+  devices: HardeningFleetDevice[];
+  modules: { module: string; states: Partial<Record<HardeningState, number>> }[];
+  truncated: boolean;
 }
 
 /** What hardening jobs found on a device (GET /devices/{id}/hardening). */
@@ -1383,6 +1519,8 @@ export interface DeviceHardening {
   checkedAt: string | null;
   /** Each module the device was checked for, in the order the script runs them. */
   modules: HardeningModule[];
+  /** The files a Windows computer's related controls come from. */
+  controlSources?: { name: string; version: string; date: string; url: string; note?: string }[];
 }
 
 export type SoftwareVerb = "install" | "upgrade" | "uninstall";
