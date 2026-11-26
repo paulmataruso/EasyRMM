@@ -4431,6 +4431,8 @@ export interface RefreshResult {
   keptStated: number;
   inScope: number;
   notes: string[];
+}
+
 // The registry editor (ADR-0067, slice 1).
 
 /** A read the server accepted: the run to follow, and the key as the server read it. */
