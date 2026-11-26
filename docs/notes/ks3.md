@@ -39,7 +39,7 @@
 
 ## For the integrator
 
-* Migration `server/migrations/90381_keystore_alerts_luks.sql` (renumber; it needs 00068 before it): `keystore_alerts`
+* Migration `server/migrations/00070_keystore_alerts_luks.sql` (renumber; it needs 00068 before it): `keystore_alerts`
   gains `resolved_by`, `resolved_by_label`; `device_encrypted_volumes` gains `escrow_state`, `reason` and a mount
   length of 64; `recovery_key_escrows` gains `slot_hash`. Down reverses all (it deletes volume rows whose mount is
   longer than 16 so the old check can return).
