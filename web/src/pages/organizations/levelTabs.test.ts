@@ -22,6 +22,13 @@ const ids = (
   ).map((t) => t.id);
 
 describe("visibleTabs", () => {
+  it("shows Compliance at the organization only, to who may view it (ADR-0078)", () => {
+    expect(ids("organization", ["compliance.view"])).toEqual(["overview", "compliance"]);
+    expect(ids("site", ["compliance.view"])).toEqual(["overview"]);
+    expect(ids("group", ["compliance.view"])).toEqual([]);
+    expect(ids("organization", [])).toEqual(["overview"]);
+  });
+
   it("shows only Overview to a viewer with no further permission", () => {
     expect(ids("organization", [])).toEqual(["overview"]);
     expect(ids("site", [])).toEqual(["overview"]);
