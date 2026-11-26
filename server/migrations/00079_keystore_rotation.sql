@@ -16,12 +16,13 @@ ALTER TABLE keystore_org_keys ADD COLUMN drained_at timestamptz;
 -- BitLocker's `enable` is a native action: the job names a handler built into
 -- the agent instead of a script (ADR-0073 as amended by ADR-0081).
 ALTER TABLE jobs DROP CONSTRAINT jobs_shell_check;
-ALTER TABLE jobs ADD CONSTRAINT jobs_shell_check CHECK (shell IN ('powershell', 'pwsh', 'cmd', 'sh', 'bash', 'python3', 'native'));
+-- A builtin job (ADR-0067, migration 00072) still has no shell.
+ALTER TABLE jobs ADD CONSTRAINT jobs_shell_check CHECK (shell IN ('powershell', 'pwsh', 'cmd', 'sh', 'bash', 'python3', 'native') OR (executor = 'builtin' AND shell = ''));
 
 -- +goose Down
 DELETE FROM jobs WHERE shell = 'native';
 ALTER TABLE jobs DROP CONSTRAINT jobs_shell_check;
-ALTER TABLE jobs ADD CONSTRAINT jobs_shell_check CHECK (shell IN ('powershell', 'pwsh', 'cmd', 'sh', 'bash', 'python3'));
+ALTER TABLE jobs ADD CONSTRAINT jobs_shell_check CHECK (shell IN ('powershell', 'pwsh', 'cmd', 'sh', 'bash', 'python3') OR (executor = 'builtin' AND shell = ''));
 ALTER TABLE keystore_org_keys DROP COLUMN drained_at;
 DROP INDEX recovery_key_escrows_rotation_idx;
 ALTER TABLE recovery_key_escrows DROP COLUMN rotation_due_at;
