@@ -29,13 +29,6 @@ export const DEVICE_MODULE_TABS: readonly DeviceModuleTab[] = [
     permission: "defender.view",
     component: SecurityTab,
   },
-  {
-    id: "backup",
-    label: "Backup",
-    module: "windows_backup",
-    permission: "backup.view",
-    component: BackupTab,
-  },
   // Server roles (ADR-0076): one tab, a view per role; a role adds its line to roles/registry.ts, not here.
   {
     id: "roles",
@@ -44,6 +37,13 @@ export const DEVICE_MODULE_TABS: readonly DeviceModuleTab[] = [
     permission: "dns.view",
     views: ROLE_VIEWS,
     component: RolesTab,
+  },
+  {
+    id: "backup",
+    label: "Backup",
+    module: "windows_backup",
+    permission: "backup.view",
+    component: BackupTab,
   },
 ];
 

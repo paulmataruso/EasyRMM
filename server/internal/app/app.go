@@ -12,6 +12,7 @@ import (
 	"net/mail"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/backup"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
 )
 
 // Version is set at build time with -ldflags.
@@ -255,7 +257,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetRoleStore(d.Modules)
 	// The winmod job kind runs the catalog's actions where the module is
 	// on (ADR-0073, slice 5).
-	catalog, err := winmod.NewCatalog(append(defender.Actions(), backup.Actions()...)...)
+	catalog, err := winmod.NewCatalog(slices.Concat(defender.Actions(), backup.Actions(), roles.Actions())...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,6 +270,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	if err := monitoring.RegisterModuleAlerts(backup.AlertKinds()); err != nil {
+		return nil, err
+	}
+	if err := roles.Register(); err != nil {
 		return nil, err
 	}
 	d.ModSnap = modsnap.New(db, catalog, d.Modules, d.Modules, d.Jobs, log)

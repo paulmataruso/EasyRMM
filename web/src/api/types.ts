@@ -3496,104 +3496,6 @@ export interface DefenderStatus {
   fullScanAgeDays: number | null;
 }
 
-/** Windows Backup (ADR-0077). `windows_backup.status`'s data. */
-export interface BackupTarget {
-  kind: "volume" | "disk" | "network";
-  freeBytes: number | null;
-  totalBytes: number | null;
-  online: boolean;
-}
-
-export interface BackupJob {
-  type: string;
-  state: string;
-  startTime: string | null;
-  endTime: string | null;
-  percent: number | null;
-  hresult: number | null;
-  detailedHResult: number | null;
-}
-
-export interface BackupStatus {
-  installed: boolean;
-  configured: boolean;
-  running: boolean;
-  nextRun: string | null;
-  lastSuccess: string | null;
-  lastFailure: string | null;
-  lastResultHR: number | null;
-  lastSuccessAgeDays: number | null;
-  versionCount: number | null;
-  oldestVersion: string | null;
-  newestVersion: string | null;
-  schedule: string[];
-  systemState: boolean;
-  bareMetal: boolean;
-  volumeCount: number;
-  fileSpecCount: number;
-  vssFull: boolean;
-  targets: BackupTarget[];
-  job: BackupJob | null;
-}
-
-export interface BackupSensitive {
-  targets: { path: string; label: string; kind: string }[];
-  include: string[];
-  exclude: string[];
-}
-
-export interface BackupVersion {
-  id: string;
-  time: string | null;
-  sizeBytes: number | null;
-  kinds: string[];
-}
-
-export interface BackupDisk {
-  number: number | null;
-  id: string;
-  name: string;
-  sizeBytes: number | null;
-  online: boolean;
-  hasData: boolean;
-  volumes: { label: string; sizeBytes: number | null; freeBytes: number | null }[];
-}
-
-export interface BackupJobs {
-  running: boolean;
-  jobs: BackupJob[];
-}
-
-export interface BackupPrunePreview {
-  total: number;
-  sets: { id: string; time: string | null }[];
-}
-
-/** The organization and site Backup cards. */
-export interface BackupFleetDevice {
-  deviceId: string;
-  siteId: string;
-  name: string;
-  state: "ok" | "stale" | "failed" | "overdue" | "not_configured" | "not_installed" | "no_data";
-  lastSuccess: string | null;
-  lastFailure: string | null;
-  openAlerts: number;
-}
-
-export interface BackupFleet {
-  enabled: boolean;
-  counts: {
-    backedUp: number;
-    stale: number;
-    failed: number;
-    overdue: number;
-    notConfigured: number;
-    notInstalled: number;
-    noData: number;
-  };
-  devices: BackupFleetDevice[];
-}
-
 // Server roles (ADR-0076): the DNS Server and DHCP Server modules' typed results.
 
 /** `dns.status`'s data; only `serviceState` is filled in where the DNS service is not running. */
@@ -3704,4 +3606,102 @@ export interface DhcpLeaseList {
   offset: number;
   next: number | null;
   leases: DhcpLease[];
+}
+
+/** Windows Backup (ADR-0077). `windows_backup.status`'s data. */
+export interface BackupTarget {
+  kind: "volume" | "disk" | "network";
+  freeBytes: number | null;
+  totalBytes: number | null;
+  online: boolean;
+}
+
+export interface BackupJob {
+  type: string;
+  state: string;
+  startTime: string | null;
+  endTime: string | null;
+  percent: number | null;
+  hresult: number | null;
+  detailedHResult: number | null;
+}
+
+export interface BackupStatus {
+  installed: boolean;
+  configured: boolean;
+  running: boolean;
+  nextRun: string | null;
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  lastResultHR: number | null;
+  lastSuccessAgeDays: number | null;
+  versionCount: number | null;
+  oldestVersion: string | null;
+  newestVersion: string | null;
+  schedule: string[];
+  systemState: boolean;
+  bareMetal: boolean;
+  volumeCount: number;
+  fileSpecCount: number;
+  vssFull: boolean;
+  targets: BackupTarget[];
+  job: BackupJob | null;
+}
+
+export interface BackupSensitive {
+  targets: { path: string; label: string; kind: string }[];
+  include: string[];
+  exclude: string[];
+}
+
+export interface BackupVersion {
+  id: string;
+  time: string | null;
+  sizeBytes: number | null;
+  kinds: string[];
+}
+
+export interface BackupDisk {
+  number: number | null;
+  id: string;
+  name: string;
+  sizeBytes: number | null;
+  online: boolean;
+  hasData: boolean;
+  volumes: { label: string; sizeBytes: number | null; freeBytes: number | null }[];
+}
+
+export interface BackupJobs {
+  running: boolean;
+  jobs: BackupJob[];
+}
+
+export interface BackupPrunePreview {
+  total: number;
+  sets: { id: string; time: string | null }[];
+}
+
+/** The organization and site Backup cards. */
+export interface BackupFleetDevice {
+  deviceId: string;
+  siteId: string;
+  name: string;
+  state: "ok" | "stale" | "failed" | "overdue" | "not_configured" | "not_installed" | "no_data";
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  openAlerts: number;
+}
+
+export interface BackupFleet {
+  enabled: boolean;
+  counts: {
+    backedUp: number;
+    stale: number;
+    failed: number;
+    overdue: number;
+    notConfigured: number;
+    notInstalled: number;
+    noData: number;
+  };
+  devices: BackupFleetDevice[];
 }

@@ -1201,6 +1201,51 @@ test("a device's Security tab follows the Defender module: shown, then off for i
   await expect(page.getByRole("checkbox", { name: "Microsoft Defender" })).toBeChecked();
 });
 
+test("a DNS server's zones are read in the Roles tab, and the server refuses to change a protected record", async () => {
+  const page = admin;
+  const facts = { hostname: "dt-reception-01", os: "Windows Server 2025", platform: "windows", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  await agent.heartbeatWith({ facts: { ...facts, roles: [{ name: "dns", state: "present" }] } });
+  // The agent says what its build accepts (the server refuses parameters to an agent that has not), and keeps its
+  // poll open; the reads the tab asks for reach it there.
+  const accepts = ["job.pwsh", "job.params"];
+  let waiting = agent.poll(accepts);
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/v1/devices/${agent.deviceId}`)).json()) as { agent: { accepts: string[] | null } }).agent.accepts)
+    .toEqual(expect.arrayContaining(accepts));
+  await page.goto(`/devices/${agent.deviceId}?tab=roles`);
+  await expect(page.getByRole("tab", { name: "Roles" })).toBeVisible();
+  await page.getByRole("button", { name: "Read now" }).click();
+
+  // The agent answers the two reads, each in the result format its script prints.
+  const line = (data: unknown) => `EASYRMM-WINMOD-RESULT-V1 ${JSON.stringify({ ok: true, version: 1, data, error: null })}\n`;
+  const status = { serviceState: "running", zoneCount: 1, adIntegratedCount: 1, recursionEnabled: true, forwarders: [], listenAddresses: [], scavengingHours: 168, transferAnyZones: [] };
+  const zones = {
+    truncated: false,
+    zones: [{ name: "corp.example.test", type: "primary", adIntegrated: true, replicationScope: "Domain", dynamicUpdate: "Secure", reverse: false, paused: false, shutdown: false, signed: false, agingEnabled: true }],
+  };
+  let answered = 0;
+  while (answered < 2) {
+    for (const job of await waiting) {
+      await agent.start(job.runId);
+      await agent.succeeded(job.runId, line(job.script.includes("scavengingHours") ? status : zones));
+      answered++;
+    }
+    if (answered < 2) waiting = agent.poll(accepts);
+  }
+  expect(answered).toBe(2);
+  await expect(page.getByRole("cell", { name: "corp.example.test" })).toBeVisible();
+  await expect(page.getByText("AD-integrated (domain)")).toBeVisible();
+
+  // Whatever the page offers, the server refuses a record domain controllers are found by (the Go tests show no job is made).
+  const { csrfToken } = (await (await page.request.get("/api/v1/auth/session")).json()) as { csrfToken: string };
+  const refused = await page.request.post(`/api/v1/devices/${agent.deviceId}/winmod/dns.record_add`, {
+    headers: { "X-CSRF-Token": csrfToken },
+    data: { params: { zone: "corp.example.test", name: "_ldap._tcp", type: "SRV", data: "0 100 389 dc1.corp.example.test." } },
+  });
+  expect(refused.status()).toBe(409);
+  expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("protected_record");
+});
+
 test("Confirm it is you asks for a second factor again, refuses a wrong code, and lasts a while", async () => {
   const page = admin;
   await page.goto("/account");

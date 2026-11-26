@@ -995,6 +995,54 @@ these tests do not use.
   in the entry that raises an action's tier from the parameters or the last
   read).
 
+## Amendments from building DNS and DHCP (decided in review)
+
+*Amended 2026-11-26 (decided in review), by the builders of the DNS and DHCP
+modules. Each is the safe side of what the code showed; the owner can
+overturn any.*
+
+* **No dynamic tier.** ADR-0073's `Action` has two levels (a plain action, and
+  a destructive one with confirmation and step-up), and a tier that depends on
+  a parameter would make the confirmation depend on a value the server has not
+  yet read. The rules are instead **separate actions**, the dangerous one always
+  tier 3: `record_remove` (tier 2) and `record_remove_all` (tier 3);
+  `zone_set_update` (`None` or `Secure`, tier 2) and `zone_allow_nonsecure`
+  (tier 3); `option_set` (options 15, 42, 51, 66, 67, tier 2) and
+  `option_set_network` (options 3 and 6, tier 3 at **every** level, not only at
+  server level or on a busy scope). `option_set` refuses 3 and 6 with
+  `use_network_option`. The DHCP rule is stricter than section 5 wrote it.
+* **Tier 2 has no framework confirmation.** Only tier 3 sends `confirm` and
+  needs the step-up. A tier 2 change is confirmed by the console's dialog, and
+  its old and new values are the action's parameters, which the audit holds.
+* **A server-side guard on parameters.** `winmod.Action` gains `Guard`, which
+  runs after the schema on the canonical values and refuses before any job
+  exists. DNS uses it for the protected-record and protected-zone lists (409
+  `protected_record`, `protected_zone`); DHCP for addresses, masks, ranges,
+  hardware addresses and option values. The server's list is by name; the
+  script's is the same names plus what only the computer knows: the apex A,
+  AAAA, NS and SOA records of an Active Directory zone, the locator SRV names
+  only in an Active Directory zone, and the computer's own domain and forest
+  root zones. A non-Active Directory zone that holds `_ldap._tcp` is therefore
+  refused by the server (a rare case; a name is not a zone's storage).
+* **Page sizes.** A result is at most 64 KiB (ADR-0073), so `record_list` pages
+  of 80 and `lease_list` pages of 100, not 5,000. The zone count of records is
+  not shown (it costs a full read per zone).
+* **Service state in the snapshot.** `dns.status` and `dhcp.status` carry
+  `serviceState` (read with `Get-Service`), and `dns_service_stopped` and
+  `dhcp_service_stopped` read it from the hourly snapshot, as the other kinds
+  do, rather than from the Facts role state, which no evaluator reads.
+* **Leases are opened by `dhcp.manage`.** There is no `dhcp.view_sensitive`;
+  `lease_list` is a sensitive action served only with `dhcp.manage` (Site
+  Administrator and above), kept 15 minutes, never a snapshot. A Technician
+  sees scopes, reservations, exclusions and options.
+* **A scope in a failover relationship is not removed** (`in_failover`) rather
+  than removed with a dialog that shows the partner; creating and breaking
+  relationships was never offered.
+* **Not built here.** `dns_zone_deleted` and `dns_forwarders_changed` (they
+  need the audit-channel reader, D5), forwarders, scavenging, transfers,
+  replication scope, cache, reload and service restart (D4 and the rest of D3),
+  and DHCP failover read and replicate and `service_restart` (H4).
+
 ## References
 
 * ADR-0073 to 0075, 0077; `docs/architecture/feature-plan-msp.md`.
