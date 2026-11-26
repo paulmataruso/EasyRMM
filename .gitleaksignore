@@ -38,3 +38,4 @@ ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.t
 9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:11
 9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:12
 9d2af2c70f2a8ed52ced5595c383397c0f5216c2:server/internal/winmod/fileshares/pins.go:generic-api-key:13
+da28930d8d690f3a221c195ffedfa732376318b2:server/internal/tlscert/storage_integration_test.go:private-key:48

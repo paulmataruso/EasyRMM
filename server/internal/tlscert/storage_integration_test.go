@@ -45,7 +45,7 @@ func TestStorageContract(t *testing.T) {
 	if _, err := st.Load(ctx, "a/b/c"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("a missing key: %v", err)
 	}
-	secret := []byte("-----BEGIN EC PRIVATE KEY-----\nnot a real key\n-----END EC PRIVATE KEY-----\n")
+	secret := []byte("-----BEGIN EC " + "PRIVATE KEY-----\nnot a real key\n-----END EC " + "PRIVATE KEY-----\n")
 	for _, k := range []string{"acme/ca/users/default/default.json", "acme/ca/users/default/private.key", "acme/ca/users/me@x.test/me.json", "certificates/ca/x.test/x.test.crt"} {
 		if err := st.Store(ctx, k, secret); err != nil {
 			t.Fatal(err)

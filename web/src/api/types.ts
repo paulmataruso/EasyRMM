@@ -4578,6 +4578,7 @@ export interface TlsCheck {
   status: "ok" | "warn" | "fail";
   detail: string;
   fix?: string;
+}
 
 /** A dimension of a notification rule whose values are rows: organizations, sites or device groups (ADR-0053). */
 export interface RuleListFilter {
