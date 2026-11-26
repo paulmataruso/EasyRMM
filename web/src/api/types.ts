@@ -3426,3 +3426,66 @@ export interface StepUpStatus {
   /** The identity provider, when methods includes oidc. */
   provider?: string;
 }
+
+/** One role a device reported, and the module it offers (ADR-0073). */
+export interface DeviceRole {
+  name: string;
+  state: string;
+  version?: string;
+  module: string;
+  label: string;
+  /** The module is on for the device's site. */
+  enabled: boolean;
+}
+
+/** A device's detected roles; `known` is false until the agent has reported. */
+export interface DeviceRoles {
+  known: boolean;
+  reportedAt: string | null;
+  roles: DeviceRole[];
+}
+
+/** What starting a Windows module action answers: the run to follow. */
+export interface WinmodRun {
+  jobId: string;
+  runId: string;
+  action: string;
+  status: RunStatus;
+  expiresAt: string;
+}
+
+/** A module action's run and, once it reported, its typed result. */
+export interface WinmodResult {
+  runId: string;
+  deviceId: string;
+  action: string;
+  version: number;
+  status: RunStatus;
+  error?: string;
+  finishedAt: string | null;
+  ok?: boolean;
+  data?: unknown;
+  failure?: { code: string; message: string } | null;
+}
+
+/** `defender.status`'s data: switches are null where the computer does not say. */
+export interface DefenderStatus {
+  antivirusEnabled: boolean | null;
+  antispywareEnabled: boolean | null;
+  realTimeProtectionEnabled: boolean | null;
+  behaviorMonitorEnabled: boolean | null;
+  ioavProtectionEnabled: boolean | null;
+  onAccessProtectionEnabled: boolean | null;
+  nisEnabled: boolean | null;
+  tamperProtected: boolean | null;
+  runningMode: string;
+  computerState: number | null;
+  engineVersion: string;
+  productVersion: string;
+  serviceVersion: string;
+  signatureVersion: string;
+  signatureUpdatedAt: string | null;
+  signatureAgeDays: number | null;
+  quickScanAgeDays: number | null;
+  fullScanAgeDays: number | null;
+}

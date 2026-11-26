@@ -82,18 +82,18 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     component: PatchingTab,
   },
   {
-    id: "install",
-    label: "Install",
-    permission: "enrollment.manage",
-    levels: ["organization", "site"],
-    component: InstallTab,
-  },
-  {
     id: "windows-modules",
     label: "Windows modules",
     permission: "org.view",
     levels: ["organization", "site"],
     component: WindowsModulesTab,
+  },
+  {
+    id: "install",
+    label: "Install",
+    permission: "enrollment.manage",
+    levels: ["organization", "site"],
+    component: InstallTab,
   },
 ];
 

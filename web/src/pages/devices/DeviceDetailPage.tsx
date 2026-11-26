@@ -2,7 +2,7 @@ import { Link, useParams } from "react-router";
 import { AppWindow, ExternalLink, MoveRight, Play } from "lucide-react";
 import { useState } from "react";
 import { useApi, useList } from "../../api/hooks";
-import type { AuditEntry, Device, JobRun, PatchStatus, RemoteKind } from "../../api/types";
+import type { AuditEntry, Device, DeviceRoles, JobRun, PatchStatus, RemoteKind } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { MenuButton } from "../../components/Menu";
 import { DeviceStatusBadge, REMOTE_KIND_NAMES } from "../../components/StatusBadges";
@@ -28,6 +28,8 @@ import { AgentLine } from "./agentUpdate";
 import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
 import { EasyRmmRepairCard, PatchingRepairCard, RemoteRepairCard, RepairButton } from "./remoteRepair";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
+import { ModuleOff } from "./modules/ModuleTab";
+import { DEVICE_MODULE_TABS, moduleTabState } from "./modules/moduleTabs";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
 export function remoteAccessState(
@@ -64,13 +66,15 @@ function NotConnected({ device: d }: { device: Device }) {
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
-  const { can, session } = useAuth();
+  const { can, canAt, session } = useAuth();
   const url = useUrlState();
   const device = useApi<Device>(`/devices/${id}`, undefined, { refetchInterval: 30_000 });
   const hasAgent = device.data?.agent != null;
   const inventory = useDeviceInventory(id, hasAgent);
   // The Patches tab shows once EasyPatch is set up (ADR-0030).
   const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
+  // Windows management modules (ADR-0073): the detected roles decide which module tabs are offered.
+  const roles = useApi<DeviceRoles>(hasAgent && device.data?.platform === "windows" ? `/devices/${id}/roles` : null, undefined, { staleTime: 60_000 });
   const [running, setRunning] = useState(false);
   const [moving, setMoving] = useState(false);
   const showHistory = can("audit.view");
@@ -78,6 +82,7 @@ export function DeviceDetailPage() {
   if (device.isPending) return <Spinner />;
   if (device.isError) return <ErrorState error={device.error} onRetry={() => void device.refetch()} />;
   const d = device.data;
+  const atDevice = (p: Parameters<typeof can>[0]) => canAt(p, { organizationId: d.organizationId, siteId: d.siteId });
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "hardware", label: "Hardware", hidden: !hasAgent },
@@ -87,9 +92,12 @@ export function DeviceDetailPage() {
     { id: "hardening", label: "Hardening", hidden: !hasAgent || d.platform !== "linux" },
     // Agent logs (ADR-0069) need log.view: Technicians and above.
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
+    ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
   ];
   const requested = url.get("tab");
-  const tab = tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
+  // A module that is off is not in the strip, but its URL says so instead of falling back to Overview.
+  const offModule = DEVICE_MODULE_TABS.find((m) => m.id === requested && moduleTabState(m, roles.data, atDevice) === "off");
+  const tab = offModule ? offModule.id : tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
   const showTab = (t: string) => url.set({ tab: t === "overview" ? null : t });
   const kinds = allowedKinds(d);
   const reason = unavailableReason(d);
@@ -200,6 +208,20 @@ export function DeviceDetailPage() {
         <div role="tabpanel" aria-labelledby="tab-logs">
           <AgentLogsPanel device={d} />
         </div>
+      )}
+
+      {offModule && (
+        <div role="tabpanel" aria-label={offModule.label}>
+          <ModuleOff device={d} label={roles.data?.roles.find((r) => r.module === offModule.module)?.label ?? offModule.label} />
+        </div>
+      )}
+
+      {DEVICE_MODULE_TABS.map((m) =>
+        tab === m.id && !offModule ? (
+          <div key={m.id} role="tabpanel" aria-labelledby={`tab-${m.id}`}>
+            <m.component device={d} />
+          </div>
+        ) : null,
       )}
 
       {tab === "overview" && (

@@ -231,7 +231,7 @@ func (s *Service) winmodDeliver(ctx context.Context, tx pgx.Tx, jobID uuid.UUID,
 	for k, v := range values {
 		merged[k] = v
 	}
-	out, err := json.Marshal(merged)
+	out, err := winmod.MarshalParams(merged)
 	if err != nil {
 		return err
 	}
