@@ -39,8 +39,7 @@
    "class": "technical",
    "weight": 5,
    "flags": {
-    "family": "AC",
-    "no_check_yet": true
+    "family": "AC"
    }
   },
   {
@@ -128,8 +127,7 @@
    "class": "technical",
    "weight": 1,
    "flags": {
-    "family": "AC",
-    "no_check_yet": true
+    "family": "AC"
    }
   },
   {
@@ -140,8 +138,7 @@
    "class": "technical",
    "weight": 1,
    "flags": {
-    "family": "AC",
-    "no_check_yet": true
+    "family": "AC"
    }
   },
   {
@@ -396,8 +393,7 @@
    "class": "technical",
    "weight": 1,
    "flags": {
-    "family": "AU",
-    "no_check_yet": true
+    "family": "AU"
    }
   },
   {
@@ -485,8 +481,7 @@
    "class": "technical",
    "weight": 5,
    "flags": {
-    "family": "CM",
-    "no_check_yet": true
+    "family": "CM"
    }
   },
   {
@@ -622,8 +617,7 @@
    "class": "technical",
    "weight": 1,
    "flags": {
-    "family": "IA",
-    "no_check_yet": true
+    "family": "IA"
    }
   },
   {
@@ -1086,8 +1080,7 @@
    "class": "technical",
    "weight": 1,
    "flags": {
-    "family": "SC",
-    "no_check_yet": true
+    "family": "SC"
    }
   },
   {
@@ -1109,8 +1102,7 @@
    "class": "technical",
    "weight": 5,
    "flags": {
-    "family": "SC",
-    "no_check_yet": true
+    "family": "SC"
    }
   },
   {
@@ -1278,9 +1270,11 @@
   {
    "req_id": "3.1.8",
    "control_ids": [
-    "win.accounts.lockout-threshold",
+    "linux.lockout.deny-threshold",
+    "linux.lockout.faillock-active",
     "win.accounts.lockout-duration",
-    "win.accounts.lockout-reset"
+    "win.accounts.lockout-reset",
+    "win.accounts.lockout-threshold"
    ],
    "relation": "satisfies_objective",
    "note": "Shows the local lockout policy; it says nothing of domain accounts."
@@ -1429,10 +1423,12 @@
   {
    "req_id": "3.8.7",
    "control_ids": [
-    "win.autoplay.autorun",
+    "linux.usb-storage.kept-from-loading",
     "win.autoplay.all-drives",
+    "win.autoplay.autorun",
     "win.autoplay.non-volume",
-    "linux.usb-storage.kept-from-loading"
+    "win.removable.deny-execute",
+    "win.removable.deny-write"
    ],
    "relation": "satisfies_objective",
    "note": "Shows the computer does not run or mount removable media automatically."
@@ -1440,8 +1436,12 @@
   {
    "req_id": "3.1.5",
    "control_ids": [
-    "win.uac.on",
+    "win.rights.debug",
+    "win.rights.load-driver",
+    "win.rights.local-admins",
+    "win.rights.take-ownership",
     "win.uac.consent-admin",
+    "win.uac.on",
     "win.uac.secure-uia"
    ],
    "relation": "satisfies_objective",
@@ -1450,8 +1450,11 @@
   {
    "req_id": "3.3.7",
    "control_ids": [
+    "linux.time.service-enabled",
     "linux.time.service-running",
-    "linux.time.service-enabled"
+    "win.time.service-running",
+    "win.time.source-configured",
+    "win.time.synchronized"
    ],
    "relation": "satisfies_objective",
    "note": "Shows a time service runs on the computer."
@@ -2056,6 +2059,105 @@
    ],
    "relation": "related",
    "note": "Generated from the module's related requirements; the module's settings bear on this requirement without showing it is met."
+  },
+  {
+   "req_id": "3.1.2",
+   "control_ids": [
+    "win.rights.act-as-os",
+    "win.rights.remote-logon"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows who may sign in through Remote Desktop and that no account acts as part of the operating system; it does not cover which functions a person may run in an application."
+  },
+  {
+   "req_id": "3.1.9",
+   "control_ids": [
+    "win.session.legal-caption",
+    "win.session.legal-text"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows a notice is set to appear before sign-in; the wording is the organization's to write and EasyRMM does not judge it."
+  },
+  {
+   "req_id": "3.1.10",
+   "control_ids": [
+    "win.session.inactivity-lock"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the sign-in screen returns after a set period of inactivity."
+  },
+  {
+   "req_id": "3.1.11",
+   "control_ids": [
+    "linux.ssh.client-alive-count-max",
+    "linux.ssh.client-alive-interval",
+    "win.rdp.disconnected-limit",
+    "win.rdp.idle-limit"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows idle and disconnected sessions are ended after a limit."
+  },
+  {
+   "req_id": "3.1.21",
+   "control_ids": [
+    "win.removable.deny-execute",
+    "win.removable.deny-write"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows removable disks are refused writes and programs on them cannot start."
+  },
+  {
+   "req_id": "3.3.9",
+   "control_ids": [
+    "win.rights.audit-generate",
+    "win.rights.security-log"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows only Administrators manage the auditing and security log, and only system accounts generate audits."
+  },
+  {
+   "req_id": "3.4.8",
+   "control_ids": [
+    "win.app-control.enforced"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows an App Control or AppLocker policy is enforced; it does not judge the policy's rules."
+  },
+  {
+   "req_id": "3.5.11",
+   "control_ids": [
+    "win.session.credential-feedback"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows the sign-in password reveal button is off."
+  },
+  {
+   "req_id": "3.13.9",
+   "control_ids": [
+    "linux.ssh.client-alive-interval",
+    "linux.ssh.max-sessions",
+    "win.rdp.disconnected-limit",
+    "win.rdp.idle-limit"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows remote sessions end after a period of inactivity and Linux limits SSH sessions."
+  },
+  {
+   "req_id": "3.13.11",
+   "control_ids": [
+    "win.session.fips"
+   ],
+   "relation": "satisfies_objective",
+   "note": "Shows FIPS-compliant algorithms are required; it does not show that the cryptographic modules are validated."
+  },
+  {
+   "req_id": "3.13.13",
+   "control_ids": [
+    "win.mobile-code.script-host",
+    "win.office.internet-macros"
+   ],
+   "relation": "related",
+   "note": "Shows the Windows script host is off and Office blocks macros from the internet; the machine policy only."
   }
  ],
  "mapping_defaults": {

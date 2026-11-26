@@ -29,11 +29,14 @@ const (
 )
 
 // WindowsHardeningModules are Windows' modules, in the order the script
-// runs them and the console lists them. The last four only report.
+// runs them and the console lists them. Audit, device-guard, bitlocker, laps
+// and the last four only report (ErReportOnly in the script).
 var WindowsHardeningModules = []string{
 	"accounts", "firewall", "defender", "asr", "smb", "smb-signing", "ntlm", "wdigest", "lsa-protection",
 	"name-resolution", "powershell", "rdp", "uac", "autoplay", "anonymous", "winrm", "printing", "features", "tls",
 	"audit", "device-guard", "bitlocker", "laps",
+	// ADR-0078, C3.
+	"session", "removable", "mobile-code", "rights", "time", "app-control", "office",
 }
 
 // WindowsHardeningOptions are Windows' options besides the ports
@@ -280,11 +283,11 @@ func (h Hardening) windowsLabel() string {
 	case h.Mode == HardeningConfirm:
 		return l + " change"
 	case h.Settings != nil:
-		return l + ": " + strconv.Itoa(len(h.Settings)) + pick(len(h.Settings), " setting", " settings") + " of " + strings.Join(h.Modules, ", ")
+		return l + ": " + strconv.Itoa(len(h.Settings)) + pick(len(h.Settings), " setting", " settings") + " of " + moduleList(h.Modules)
 	case len(h.Modules) == len(WindowsHardeningModules):
 		return l + " (every module)"
 	}
-	return l + ": " + strings.Join(h.Modules, ", ")
+	return l + ": " + moduleList(h.Modules)
 }
 
 //go:embed hardening/windows.ps1

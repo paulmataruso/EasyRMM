@@ -135,6 +135,13 @@ var machineCases = map[string]map[string]map[string]machineCase{
 		HardeningApply: same(machineCase{Want: []string{HardeningApplied}, After: []string{HardeningPartly, HardeningInPlace}}),
 		HardeningUndo:  same(machineCase{Want: []string{HardeningUndone}}),
 	},
+	// Reports only (ADR-0078, C3): the images' sign-in stacks have no
+	// pam_faillock until someone turns it on.
+	"lockout": {
+		HardeningCheck: same(machineCase{Want: []string{HardeningNotInPlace, HardeningPartly, HardeningInPlace}}),
+		HardeningApply: same(machineCase{Want: []string{HardeningUnchanged}, After: []string{HardeningNotInPlace, HardeningPartly, HardeningInPlace}}),
+		HardeningUndo:  same(machineCase{Want: []string{HardeningNothingToUndo}}),
+	},
 }
 
 // machineReleaseCases: where one release differs from its family (image,

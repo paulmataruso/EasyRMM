@@ -79,7 +79,7 @@ var hardeningScript string
 // the console lists them.
 var HardeningModules = []string{
 	"ssh", "firewall", "fail2ban", "kernel", "audit", "permissions", "services", "kernel-modules", "sudo", "time",
-	"shared-memory", "usb-storage", "mac", "integrity",
+	"shared-memory", "usb-storage", "mac", "integrity", "lockout",
 }
 
 // Hardening is what a hardening job does.
@@ -264,7 +264,16 @@ func (h Hardening) label() string {
 	if len(h.Modules) == len(HardeningModules) {
 		return l + " (every module)"
 	}
-	return l + ": " + strings.Join(h.Modules, ", ")
+	return l + ": " + moduleList(h.Modules)
+}
+
+// moduleList names modules for a job's name, which holds 200 characters: the
+// names where they fit, their number where a scan asks for many.
+func moduleList(modules []string) string {
+	if l := strings.Join(modules, ", "); len(l) <= 100 {
+		return l
+	}
+	return strconv.Itoa(len(modules)) + " modules"
 }
 
 // CreateHardeningJob runs EasyRMM's hardening script on Linux devices

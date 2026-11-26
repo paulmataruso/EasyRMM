@@ -718,6 +718,31 @@ undo, restart-pending, managed-elsewhere); Linux tests in the existing SSH
 integration harness; a static test that every new setting has a control, a
 tier and a warning; STIG-id-in-release check as ADR-0054.
 
+*Amended 2026-11-26 (decided in review, C3 built):*
+
+* The checks are seven new Windows modules (`session`, `removable`,
+  `mobile-code`, `rights`, `time`, `app-control`, `office`), two settings in
+  `rdp` and, on Linux, `ssh-max-sessions` and a new report-only module
+  `lockout`. The `session`, `removable`, `mobile-code` and `rdp` registry
+  settings have apply and undo through W2's existing registry store; FIPS
+  mode is T3. The user rights, local administrators, time, application
+  control and Office checks only report (T0), as does the legal notice,
+  whose text only a person can write.
+* Account lockout and application control have no fix: a wrong change to the
+  sign-in stack or to an enforced policy can lock everyone out. Audit-mode
+  policy generation is not built.
+* **Installed software against an allow-list (3.4.9) is not in C3.** It
+  reads the inventory on the server, so it needs the `server` executor, which
+  the scan does not have yet (C1 evaluates `hardening` controls only). It
+  waits for that executor.
+* Linux time (3.3.7) is already covered by `linux.time.*`, and SSH idle
+  limits by `ssh-client-alive-*`, which C3 maps to 3.1.11 and 3.13.9.
+* The new settings carry no STIG citation: the rules were not checked against
+  the STIG data files, so none is claimed. Each mapping is EasyRMM's own and
+  names only 800-171 and CMMC requirement numbers already in the packs.
+* A scan that asks for many modules names the job by their number: a job's
+  name holds 200 characters.
+
 #### C4: domain controller checks
 
 *Goal:* checks that read the directory, not the member computer. Depends on

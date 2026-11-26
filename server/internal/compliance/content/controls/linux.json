@@ -399,6 +399,71 @@
       "review_state": "none"
     },
     {
+      "id": "linux.ssh.max-sessions",
+      "version": 1,
+      "title": "At most 10 sessions for one connection",
+      "description": "At most 10 sessions for one connection.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "ssh",
+        "setting": "ssh-max-sessions"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module ssh, setting ssh-max-sessions."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: At most 10 sessions for one connection. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "ssh"
+        ],
+        "platform": "linux"
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "ssh"
+        ],
+        "platform": "linux"
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting ssh-max-sessions"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
       "id": "linux.ssh.crypto-policy",
       "version": 1,
       "title": "A system crypto policy without weak algorithms",
@@ -5947,7 +6012,7 @@
       "expected": {
         "state": "in_place"
       },
-      "remediation_text": "Make this true: A time synchronisation service running. The hardening page applies it for you and can put the old value back.",
+      "remediation_text": "Start the Windows Time service and set it to start on its own, or run another time service on purpose and record it. EasyRMM only reports it.",
       "apply_ref": {
         "kind": "hardening",
         "mode": "apply",
@@ -6889,6 +6954,106 @@
           {
             "source_id": "easyrmm-hardening",
             "locator": "linux hardening setting integrity-aide-daily"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.lockout.faillock-active",
+      "version": 1,
+      "title": "Failed sign-ins counted by pam_faillock",
+      "description": "Failed sign-ins counted by pam_faillock.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "lockout",
+        "setting": "lockout-faillock-active"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module lockout, setting lockout-faillock-active."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Turn pam_faillock on with authselect (RHEL, Fedora) or pam-auth-update (Debian, Ubuntu). A wrong change to the sign-in stack can lock everyone out, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting lockout-faillock-active"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.lockout.deny-threshold",
+      "version": 1,
+      "title": "Lockout after 10 failed sign-ins or fewer",
+      "description": "Lockout after 10 failed sign-ins or fewer.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "lockout",
+        "setting": "lockout-deny-threshold"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module lockout, setting lockout-deny-threshold."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set deny to a number from 1 to 10 in /etc/security/faillock.conf. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting lockout-deny-threshold"
           }
         ],
         "derived_from_content": false,

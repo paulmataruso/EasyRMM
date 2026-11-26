@@ -49,6 +49,10 @@ var windowsModuleTiers = map[string]int{
 	"rdp": tierWorkflow, "smb": tierWorkflow, "smb-signing": tierWorkflow, "tls": tierWorkflow, "uac": tierWorkflow,
 	"winrm": tierWorkflow, "firewall": tierDangerous,
 	"audit": tierReport, "bitlocker": tierReport, "device-guard": tierReport, "laps": tierReport,
+	// ADR-0078, C3: the session's limits and the removable disks' policy can
+	// stop a person's work; the rest report.
+	"session": tierWorkflow, "removable": tierWorkflow, "mobile-code": tierWorkflow,
+	"rights": tierReport, "time": tierReport, "app-control": tierReport, "office": tierReport,
 }
 
 // windowsSettingTiers are the settings that are riskier than their module:
@@ -57,10 +61,17 @@ var windowsModuleTiers = map[string]int{
 var windowsSettingTiers = map[string]int{
 	"rdp-nla": tierDangerous, "accounts-guest": tierDangerous, "accounts-lockout-threshold": tierDangerous,
 	"accounts-lockout-duration": tierDangerous, "accounts-lockout-reset": tierDangerous,
+	// FIPS mode stops programs that use other algorithms, and takes a restart
+	// to undo.
+	"session-fips": tierDangerous,
 }
 
 // windowsSettingTier is a setting's tier.
 func windowsSettingTier(s windowsSetting) int {
+	// A text only the person can write (a legal notice) is never applied.
+	if s.Want == "nonempty" {
+		return tierReport
+	}
 	if t, ok := windowsSettingTiers[s.ID]; ok {
 		return t
 	}

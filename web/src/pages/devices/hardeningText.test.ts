@@ -4,7 +4,7 @@ import { containerName, distributionName, MODULES, moduleInfo, RECOMMENDED, stat
 const at = "2026-11-01T10:00:00Z";
 
 describe("hardening words", () => {
-  it("lists the server's 14 modules in its order, the recommended ones first, each optional one with its risk", () => {
+  it("lists the server's 15 modules in its order, the recommended ones first, each optional one with its risk", () => {
     expect(MODULES.map((m) => m.id)).toEqual([
       "ssh",
       "firewall",
@@ -20,6 +20,7 @@ describe("hardening words", () => {
       "usb-storage",
       "mac",
       "integrity",
+      "lockout",
     ]);
     expect(RECOMMENDED).toEqual(MODULES.slice(0, 10).map((m) => m.id));
     for (const m of MODULES) {

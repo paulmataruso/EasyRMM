@@ -20,7 +20,7 @@ import (
 var windowsModules = []string{
 	"accounts", "firewall", "defender", "asr", "smb", "smb-signing", "ntlm", "wdigest", "lsa-protection",
 	"name-resolution", "powershell", "rdp", "uac", "autoplay", "anonymous", "winrm", "printing", "features", "tls",
-	"audit", "device-guard", "bitlocker", "laps",
+	"audit", "device-guard", "bitlocker", "laps", "session", "removable", "mobile-code", "rights", "time", "app-control", "office",
 }
 
 // TestWindowsHardeningAPI checks an enrolled Windows device's hardening
@@ -30,7 +30,9 @@ var windowsModules = []string{
 // (ADR-0054, W1).
 func TestWindowsHardeningAPI(t *testing.T) {
 	// The script's own output, as LocalSystem, on a Windows Server 2025
-	// guest (see server/internal/jobs/testdata).
+	// guest (see server/internal/jobs/testdata), with the seven modules of
+	// ADR-0078's C3 added by hand in the script's form: no real run of them
+	// is recorded yet.
 	out, err := os.ReadFile("../jobs/testdata/windows-hardening-check.txt")
 	if err != nil {
 		t.Fatal(err)

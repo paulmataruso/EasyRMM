@@ -7,6 +7,7 @@
     {"id": "ssh-x11-forwarding", "module": "ssh", "what": "X11 forwarding off"},
     {"id": "ssh-client-alive-interval", "module": "ssh", "what": "Dead connections closed after at most 300 seconds"},
     {"id": "ssh-client-alive-count-max", "module": "ssh", "what": "At most 3 missed keep-alives"},
+    {"id": "ssh-max-sessions", "module": "ssh", "what": "At most 10 sessions for one connection"},
     {"id": "ssh-crypto-policy", "module": "ssh", "what": "A system crypto policy without weak algorithms"},
     {"id": "ssh-ciphers", "module": "ssh", "what": "No weak ciphers"},
     {"id": "ssh-kex", "module": "ssh", "what": "No weak key exchanges"},
@@ -106,6 +107,8 @@
     {"id": "integrity-aide-installed", "module": "integrity", "what": "AIDE installed"},
     {"id": "integrity-aide-excludes", "module": "integrity", "what": "Container storage left out of AIDE's checks"},
     {"id": "integrity-aide-baseline", "module": "integrity", "what": "An AIDE baseline"},
-    {"id": "integrity-aide-daily", "module": "integrity", "what": "A daily AIDE check"}
+    {"id": "integrity-aide-daily", "module": "integrity", "what": "A daily AIDE check"},
+    {"id": "lockout-faillock-active", "module": "lockout", "what": "Failed sign-ins counted by pam_faillock"},
+    {"id": "lockout-deny-threshold", "module": "lockout", "what": "Lockout after 10 failed sign-ins or fewer"}
   ]
 }

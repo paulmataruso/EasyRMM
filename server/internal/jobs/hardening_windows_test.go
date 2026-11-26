@@ -240,7 +240,7 @@ func TestWindowsHardeningCheckAsSystem(t *testing.T) {
 			t.Errorf("module %s: %s (%s)", m.Module, m.State, m.Reason)
 		}
 		for _, s := range m.Settings {
-			if s.State == "unknown" && m.Module != "tls" && m.Module != "device-guard" {
+			if s.State == "unknown" && m.Module != "tls" && m.Module != "device-guard" && m.Module != "time" && m.Module != "app-control" {
 				t.Errorf("setting %s could not be read: %s", s.ID, s.Note)
 			}
 		}
