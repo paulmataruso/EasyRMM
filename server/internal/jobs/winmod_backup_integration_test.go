@@ -80,6 +80,12 @@ func TestBackupTiersPermissionsConfirmationAndStepUp(t *testing.T) {
 	}
 	fieldErr(t, run(tech, "target_volume_set", `{"device":"HQ-SRV","volume":"E:\\x"}`, ""), "params.volume", "")
 
+	// The subject must be the computer's real name (case and spaces aside).
+	fieldErr(t, run(tech, "target_volume_set", `{"device":"OTHER","volume":"E:"}`, "windows_backup.target_volume_set:OTHER"), "confirm", "not the computer's name")
+	if err := run(tech, "target_volume_set", `{"device":"hq-srv","volume":"E:"}`, "windows_backup.target_volume_set:hq-srv"); err != nil {
+		t.Errorf("the name in another case: %v", err)
+	}
+
 	// Tier 3 needs backup.destroy: a technician is refused, a site
 	// administrator needs the confirmation and a fresh step-up.
 	destroy := `{"device":"HQ-SRV"}`

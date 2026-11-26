@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -161,6 +162,9 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 			// development scope, is not found (ADR-0073's 404 rule).
 			if !s.gate.Allowed(ctx, t.org, t.site, a.Module) {
 				return nil, apperr.NotFound()
+			}
+			if a.SubjectIsDeviceName && !strings.EqualFold(strings.TrimSpace(chk.Subject), strings.TrimSpace(t.name)) {
+				return nil, apperr.Invalid("confirm", "The name typed is not the computer's name.")
 			}
 		}
 		if a.NeedsStepUp() {

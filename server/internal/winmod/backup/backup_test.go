@@ -32,6 +32,9 @@ func TestCatalogLint(t *testing.T) {
 			t.Errorf("%s: script hashes to %s, pinned %s", a.Name, got, a.ScriptSHA256)
 		}
 		// A tier 3 action needs backup.destroy, a confirmation and a step-up.
+		if (a.Destructive || a.Confirm) && !a.SubjectIsDeviceName {
+			t.Errorf("%s: confirmed on a name the server does not compare", a.Name)
+		}
 		if a.Destructive {
 			if a.Permission != rbac.PermBackupDestroy || a.Subject != "device" || !a.NeedsStepUp() {
 				t.Errorf("%s: destructive without backup.destroy, a subject or a step-up", a.Name)

@@ -279,12 +279,12 @@ func entry(tier int, file, label string, timeout int, decode func(json.RawMessag
 		a.Permission, a.Keep, a.Changes = rbac.PermBackupManage, 7*24*time.Hour, true
 	case tier2:
 		a.Permission, a.Keep, a.Changes = rbac.PermBackupManage, 7*24*time.Hour, true
-		a.Confirm, a.Subject = true, "device"
+		a.Confirm, a.Subject, a.SubjectIsDeviceName = true, "device", true
 	case tier3:
 		// backup.destroy is held by Site Administrators and above, who hold
 		// backup.manage too, so one permission expresses "manage and destroy".
 		a.Permission, a.Keep, a.Changes = rbac.PermBackupDestroy, 7*24*time.Hour, true
-		a.Destructive, a.Subject = true, "device"
+		a.Destructive, a.Subject, a.SubjectIsDeviceName = true, "device", true
 	}
 	return a
 }

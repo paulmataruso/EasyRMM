@@ -105,6 +105,10 @@ type Action struct {
 	// step-up (ADR-0077's tier 2: a change that is not a loss). A
 	// destructive action always needs it.
 	Confirm bool
+	// SubjectIsDeviceName says the subject parameter is the computer's name:
+	// the server compares it, trimmed and ignoring case, with the target
+	// device's real name when the job is created.
+	SubjectIsDeviceName bool
 	// Timeout is the script's time limit in seconds.
 	Timeout int
 	// Keep is how long the job, its params and its result are kept: an hour

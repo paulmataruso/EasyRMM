@@ -729,8 +729,9 @@ steps R1 to R12 are still to do.
   `backup.manage`), `Destructive` (confirmation and step-up). Tier 2 uses a new
   `Confirm` flag on the framework's action: the typed confirmation without a
   step-up. The confirmation subject of tier 2 and 3 is a required `device`
-  parameter, the computer's name, which the console fills in; the server
-  does not compare it with the device's real name.
+  parameter, the computer's name, which the server compares with the device's
+  real name (`SubjectIsDeviceName`; trimmed, ignoring case) and refuses on a
+  mismatch.
 * **First policy.** `policy_set` on a computer with no policy needs
   `targetVolume`, a local volume; `target_volume_set`, `target_network_set`
   and `target_disk_set` need a policy to change (`no_policy`). A server that

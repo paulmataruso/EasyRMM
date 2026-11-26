@@ -24,3 +24,5 @@
 - No migration was needed (the ADR's `backup_events` waits for the event reader); migrations 90251 to 90259 are unused.
 - Hotspot edits: `app.go` (catalogue, alert registration, `backupapi` route), `rbac.go` (two permissions), `agentproto/roles.go` and `agent/roles/detect.go` (role state `not_installed`), `winmod.go` / `validate.go` / `jobs/winmod.go` (an `Action.Confirm` flag and a `Param.Pattern`/`Check`), `moduleTabs.tsx`, the two overview pages (one card line each), `types.ts`, `winmod-helper-pins.json`, `check-powershell.ps1`.
 - Web e2e: not added; Vitest covers the tab and the card.
+- The event reader (agent/winevents) comes later, with log collection (ADR-0060, wave 5); until then alerts come from the hourly status read, as the ADR's amendment says.
+- `Action.SubjectIsDeviceName`: the server compares the confirmation subject with the device's real name (trimmed, case-insensitive) and refuses a mismatch.
