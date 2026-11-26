@@ -109,6 +109,7 @@ export const WINDOWS_MODULES: WindowsModuleInfo[] = [
   { id: "time", name: "Time", does: "Reports the Windows Time service, its source and the last synchronization. Changes nothing." },
   { id: "app-control", name: "Application control", does: "Reports whether App Control for Business or AppLocker enforces a policy, or only audits. Changes nothing." },
   { id: "office", name: "Office macros", does: "Reports whether Office blocks macros in files from the internet (the machine policy). Changes nothing." },
+  { id: "dc", name: "Domain controller", does: "On a domain controller only: reports LDAP signing, Kerberos encryption types, the krbtgt password age, the domain password and lockout policy, who is in the privileged groups, stale accounts, time, replication, SYSVOL and the directory backup. Counts, never names. Changes nothing." },
 ];
 
 const BY_ID = new Map(WINDOWS_MODULES.map((m) => [m.id, m]));

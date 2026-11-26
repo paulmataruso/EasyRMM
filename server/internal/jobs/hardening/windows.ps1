@@ -27,7 +27,7 @@
 #                          powershell, rdp, uac, autoplay, anonymous, winrm,
 #                          printing, features, tls, audit, device-guard,
 #                          bitlocker, laps, session, removable, mobile-code,
-#                          rights, time, app-control and office
+#                          rights, time, app-control, office and dc
 #   allow-tcp=LIST         ports or ranges (8080,9000-9100) the firewall would
 #   allow-udp=LIST         allow besides those in use
 #   asr-block=LIST         attack surface reduction rules (GUIDs) to block
@@ -94,7 +94,7 @@ $ErScriptArgs = @($args)
 $ErResultTag = 'EASYRMM-HARDENING-RESULT-V1'
 $ErAllModules = @('accounts', 'firewall', 'defender', 'asr', 'smb', 'smb-signing', 'ntlm', 'wdigest', 'lsa-protection',
     'name-resolution', 'powershell', 'rdp', 'uac', 'autoplay', 'anonymous', 'winrm', 'printing', 'features', 'tls',
-    'audit', 'device-guard', 'bitlocker', 'laps', 'session', 'removable', 'mobile-code', 'rights', 'time', 'app-control', 'office')
+    'audit', 'device-guard', 'bitlocker', 'laps', 'session', 'removable', 'mobile-code', 'rights', 'time', 'app-control', 'office', 'dc')
 # Each option and the module it belongs to; domain-controller belongs to
 # every module.
 $ErOptionModule = @{
@@ -743,6 +743,10 @@ function Get-ErApplies {
         if ($ErPlatform.Role -eq 'unknown') { return 'unknown' }
         if (@($o.notRoles) -contains $ErPlatform.Role) { return 'not_applicable' }
     }
+    if ($o.roles) {
+        if ($ErPlatform.Role -eq 'unknown') { return 'unknown' }
+        if (@($o.roles) -notcontains $ErPlatform.Role) { return 'not_applicable' }
+    }
     return ''
 }
 
@@ -1025,6 +1029,24 @@ function Test-ErCustomSetting {
         'time-synchronized' { return Test-ErTimeSync $Def }
         'app-control-enforced' { return Test-ErAppControl $Def }
         'office-internet-macros' { return Test-ErOfficeMacros $Def }
+        'dc-password-length' { return Test-ErDomainPolicy $Def }
+        'dc-password-complexity' { return Test-ErDomainPolicy $Def }
+        'dc-password-history' { return Test-ErDomainPolicy $Def }
+        'dc-lockout-threshold' { return Test-ErDomainPolicy $Def }
+        'dc-lockout-duration' { return Test-ErDomainPolicy $Def }
+        'dc-krbtgt-age' { return Test-ErKrbtgtAge $Def }
+        'dc-domain-admins' { return Test-ErPrivilegedGroup $Def }
+        'dc-enterprise-admins' { return Test-ErPrivilegedGroup $Def }
+        'dc-schema-admins' { return Test-ErPrivilegedGroup $Def }
+        'dc-administrators' { return Test-ErPrivilegedGroup $Def }
+        'dc-stale-accounts' { return Test-ErAccountHygiene $Def 'stale' }
+        'dc-password-never-expires' { return Test-ErAccountHygiene $Def 'never-expires' }
+        'dc-replication' { return Test-ErReplication $Def }
+        'dc-sysvol' { return Test-ErSysvol $Def }
+        'dc-backup' { return Test-ErAdBackup $Def }
+        'dc-time-hierarchy' { return Test-ErTimeHierarchy $Def }
+        'dc-kerberos-types' { return Test-ErKerberosTypes $Def $Module }
+        'dc-kdc-default-types' { return Test-ErKerberosTypes $Def $Module }
         'audit-subcategories' { return Test-ErAuditSubcategories $Def $Module }
         'audit-legacy-overridden' { return Test-ErAuditValue $Def $Module 'legacy-categories-overridden' }
         'audit-command-lines' { return Test-ErAuditValue $Def $Module 'process-command-lines' }
@@ -1183,6 +1205,358 @@ function Test-ErOfficeMacros {
 # Remote Desktop's setting in effect, from its WMI provider; from the
 # listener's registry value where Windows has no such provider or listener.
 # A read that fails otherwise is unknown.
+# ---------------------------------------------------------------------------
+# ADR-0078, C4: domain controller checks. Each one reads, on a domain
+# controller only (its settings carry only.roles), from the controller's own
+# directory through ADSI, which every Windows has: nothing needs the Active
+# Directory module. They report counts, ages and settings, never the name of
+# an account or a group member. None of them changes anything.
+
+# One LDAP search of the controller's own directory. Properties come back in
+# lower case; a SID as its text; a multivalued 'member' as its count
+# (memberMore: the directory paged the list, so there are 1500 or more).
+# Truncated: the search stopped at Limit rows.
+function Invoke-ErSearch {
+    param([string]$BaseDn, [string]$Scope, [string]$Filter, [string[]]$Properties, [int]$Limit = 0)
+    $r = @{ Read = $false; Error = ''; Rows = @(); Truncated = $false }
+    $found = $null
+    try {
+        $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$BaseDn")
+        $s = New-Object System.DirectoryServices.DirectorySearcher($entry, $Filter, $Properties)
+        $s.SearchScope = $Scope
+        $s.PageSize = 500
+        $s.ServerTimeLimit = [TimeSpan]::FromSeconds(60)
+        $found = $s.FindAll()
+        $rows = @()
+        foreach ($hit in $found) {
+            if ($Limit -gt 0 -and $rows.Count -ge $Limit) { $r.Truncated = $true; break }
+            $row = @{}
+            foreach ($p in $Properties) {
+                $v = $hit.Properties[$p]
+                if ($p -eq 'member') {
+                    $row.member = $v.Count
+                    foreach ($n in $hit.Properties.PropertyNames) { if ([string]$n -like 'member;range=*') { $row.member = 1500; $row.memberMore = $true } }
+                } elseif ($v.Count -gt 0) {
+                    $x = $v[0]
+                    if ($x -is [byte[]]) { $x = (New-Object System.Security.Principal.SecurityIdentifier($x, 0)).Value }
+                    $row[$p] = $x
+                }
+            }
+            $rows += $row
+        }
+        $r.Rows = $rows
+        $r.Read = $true
+    } catch {
+        $r.Error = Limit-ErText "The directory could not be searched: $($_.Exception.Message)" 250
+    } finally {
+        if ($null -ne $found) { $found.Dispose() }
+    }
+    return $r
+}
+
+# The naming contexts the controller serves: its domain and the forest root.
+function Get-ErRootDse {
+    $root = New-Object System.DirectoryServices.DirectoryEntry('LDAP://RootDSE')
+    return @{ DomainDn = [string]$root.Properties['defaultNamingContext'].Value; ForestDn = [string]$root.Properties['rootDomainNamingContext'].Value }
+}
+
+# The domain and the forest root as the controller names them, with their
+# SIDs.
+function Get-ErDirectoryContext {
+    if ($ErCache.ContainsKey('directory')) { return $ErCache.directory }
+    $r = @{ Read = $false; Error = ''; DomainDn = ''; ForestDn = ''; DomainSid = ''; ForestSid = '' }
+    try {
+        $root = Get-ErRootDse
+        $r.DomainDn = $root.DomainDn
+        $r.ForestDn = $root.ForestDn
+        if (-not $r.DomainDn -or -not $r.ForestDn) { throw 'the directory did not name its domain' }
+        $d = Invoke-ErSearch $r.DomainDn 'Base' '(objectClass=*)' @('objectsid')
+        $f = Invoke-ErSearch $r.ForestDn 'Base' '(objectClass=*)' @('objectsid')
+        if (-not $d.Read) { throw $d.Error }
+        if (-not $f.Read) { throw $f.Error }
+        $r.DomainSid = [string]$d.Rows[0].objectsid
+        $r.ForestSid = [string]$f.Rows[0].objectsid
+        $r.Read = $true
+    } catch {
+        $r.Error = Limit-ErText "The directory could not be read: $($_.Exception.Message)" 250
+    }
+    $ErCache.directory = $r
+    return $r
+}
+
+# The domain's password and lockout policy, which is what the Default Domain
+# Policy sets; a fine-grained policy for some accounts is not read.
+function Get-ErDomainPolicy {
+    if ($ErCache.ContainsKey('domainPolicy')) { return $ErCache.domainPolicy }
+    $c = Get-ErDirectoryContext
+    if ($c.Read) {
+        $q = Invoke-ErSearch $c.DomainDn 'Base' '(objectClass=*)' @('minpwdlength', 'pwdproperties', 'pwdhistorylength', 'lockoutthreshold', 'lockoutduration')
+    } else {
+        $q = @{ Read = $false; Error = $c.Error; Rows = @() }
+    }
+    $ErCache.domainPolicy = $q
+    return $q
+}
+
+# Windows' domain password and lockout policy against EasyRMM's baseline.
+function Test-ErDomainPolicy {
+    param($Def)
+    $q = Get-ErDomainPolicy
+    if (-not $q.Read -or $q.Rows.Count -eq 0) { return New-ErSetting $Def 'unknown' $null '' $(if ($q.Error) { $q.Error } else { 'The domain policy was not returned.' }) }
+    $p = $q.Rows[0]
+    $note = 'The Default Domain Policy; a fine-grained password policy for some accounts is not read.'
+    switch ([string]$Def.id) {
+        'dc-password-length' {
+            $v = [int64]$p.minpwdlength
+            return New-ErSetting $Def $(if ($v -ge [int64]$Def.data) { 'in_place' } else { 'not_in_place' }) "$v characters" ">= $($Def.data) characters" $note
+        }
+        'dc-password-complexity' {
+            $on = ([int64]$p.pwdproperties -band 1) -eq 1
+            return New-ErSetting $Def $(if ($on) { 'in_place' } else { 'not_in_place' }) $(if ($on) { 'on' } else { 'off' }) 'on' $note
+        }
+        'dc-password-history' {
+            $v = [int64]$p.pwdhistorylength
+            return New-ErSetting $Def $(if ($v -ge [int64]$Def.data) { 'in_place' } else { 'not_in_place' }) "$v passwords" ">= $($Def.data) passwords" $note
+        }
+        'dc-lockout-threshold' {
+            $v = [int64]$p.lockoutthreshold
+            $ok = $v -ge 1 -and $v -le [int64]$Def.data
+            return New-ErSetting $Def $(if ($ok) { 'in_place' } else { 'not_in_place' }) $(if ($v -eq 0) { 'never locks out' } else { "$v failed attempts" }) "1 to $($Def.data) failed attempts" $note
+        }
+        'dc-lockout-duration' {
+            # Stored as a negative count of 100-nanosecond intervals; 0 is
+            # until an administrator unlocks the account.
+            $raw = [int64]$p.lockoutduration
+            if ($raw -eq 0) { return New-ErSetting $Def 'in_place' 'until an administrator unlocks' "at least $($Def.data) minutes" $note }
+            $minutes = [int64][math]::Round([math]::Abs($raw) / 600000000)
+            return New-ErSetting $Def $(if ($minutes -ge [int64]$Def.data) { 'in_place' } else { 'not_in_place' }) "$minutes minutes" "at least $($Def.data) minutes" $note
+        }
+    }
+    throw "no domain policy check for $($Def.id)"
+}
+
+# The age of the krbtgt password, which signs every Kerberos ticket of the
+# domain: from pwdLastSet, in days.
+function Test-ErKrbtgtAge {
+    param($Def)
+    $c = Get-ErDirectoryContext
+    $want = "at most $($Def.data) days"
+    if (-not $c.Read) { return New-ErSetting $Def 'unknown' $null '' $c.Error }
+    $q = Invoke-ErSearch $c.DomainDn 'Subtree' '(&(objectCategory=person)(objectClass=user)(sAMAccountName=krbtgt))' @('pwdlastset')
+    if (-not $q.Read) { return New-ErSetting $Def 'unknown' $null '' $q.Error }
+    if ($q.Rows.Count -eq 0 -or -not $q.Rows[0].pwdlastset -or [int64]$q.Rows[0].pwdlastset -le 0) {
+        return New-ErSetting $Def 'unknown' $null '' 'The directory did not report when the krbtgt password was set.'
+    }
+    $set = [datetime]::FromFileTimeUtc([int64]$q.Rows[0].pwdlastset)
+    $days = [int][math]::Floor(([datetime]::UtcNow - $set).TotalDays)
+    return New-ErSetting $Def $(if ($days -le [int]$Def.data) { 'in_place' } else { 'not_in_place' }) "$([math]::Max($days, 0)) days" $want
+}
+
+# The members of one privileged group, counted: key is domain-admins,
+# enterprise-admins, schema-admins or administrators; data is the most
+# members it should have. Direct members only: a nested group counts as one.
+function Test-ErPrivilegedGroup {
+    param($Def)
+    $c = Get-ErDirectoryContext
+    if (-not $c.Read) { return New-ErSetting $Def 'unknown' $null '' $c.Error }
+    switch ([string]$Def.key) {
+        'domain-admins' { $base = $c.DomainDn; $sid = "$($c.DomainSid)-512" }
+        'enterprise-admins' { $base = $c.ForestDn; $sid = "$($c.ForestSid)-519" }
+        'schema-admins' { $base = $c.ForestDn; $sid = "$($c.ForestSid)-518" }
+        'administrators' { $base = $c.DomainDn; $sid = 'S-1-5-32-544' }
+        default { throw "no privileged group $($Def.key)" }
+    }
+    $max = [int]$Def.data
+    $want = $(if ($max -eq 0) { 'no members' } else { "at most $max members" })
+    $q = Invoke-ErSearch $base 'Subtree' "(objectSid=$sid)" @('member')
+    if (-not $q.Read) { return New-ErSetting $Def 'unknown' $null $want $q.Error }
+    if ($q.Rows.Count -eq 0) { return New-ErSetting $Def 'unknown' $null $want 'The directory did not return the group.' }
+    $n = [int]$q.Rows[0].member
+    $shown = $(if ($q.Rows[0].memberMore) { '1500 or more members' } else { "$n member(s)" })
+    return New-ErSetting $Def $(if ($n -le $max) { 'in_place' } else { 'not_in_place' }) $shown $want 'Direct members only; a nested group counts as one.'
+}
+
+# Enabled user accounts that have not signed in for data days (kind stale),
+# or whose password never expires (kind never-expires): counted, none named.
+# lastLogonTimestamp is replicated every 9 to 14 days, so a limit under 14
+# days would count accounts that did sign in.
+function Test-ErAccountHygiene {
+    param($Def, [string]$Kind)
+    $c = Get-ErDirectoryContext
+    if (-not $c.Read) { return New-ErSetting $Def 'unknown' $null '' $c.Error }
+    $enabled = '(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))'
+    if ($Kind -eq 'stale') {
+        $cut = [datetime]::UtcNow.AddDays(-[int]$Def.data)
+        $filter = $enabled + '(|(lastLogonTimestamp<=' + $cut.ToFileTimeUtc() + ')(&(!(lastLogonTimestamp=*))(whenCreated<=' + $cut.ToString('yyyyMMddHHmmss') + '.0Z))))'
+        $want = "none for $($Def.data) days"
+        $word = 'enabled account(s) with no sign-in'
+    } else {
+        $filter = $enabled + '(userAccountControl:1.2.840.113556.1.4.803:=65536))'
+        $want = 'none'
+        $word = 'enabled account(s) whose password never expires'
+    }
+    $q = Invoke-ErSearch $c.DomainDn 'Subtree' $filter @('distinguishedname') 20000
+    if (-not $q.Read) { return New-ErSetting $Def 'unknown' $null $want $q.Error }
+    $n = $q.Rows.Count
+    $shown = $(if ($q.Truncated) { "20000 or more $word" } else { "$n $word" })
+    return New-ErSetting $Def $(if ($n -eq 0) { 'in_place' } else { 'not_in_place' }) $shown $want
+}
+
+# The controller's replication partners, from the directory's own view.
+function Get-ErReplicationNeighbors {
+    $r = @{ Read = $false; Error = ''; Neighbors = @() }
+    try {
+        $name = [System.Net.Dns]::GetHostEntry([string]$env:COMPUTERNAME).HostName
+        $ctx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext('DirectoryServer', $name)
+        $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::GetDomainController($ctx)
+        $list = @()
+        foreach ($n in $dc.GetAllReplicationNeighbors()) {
+            $list += @{ Failures = [int]$n.ConsecutiveFailureCount; LastSuccess = $n.LastSuccessfulSync; Result = [int]$n.LastSyncResult }
+        }
+        $r.Neighbors = $list
+        $r.Read = $true
+    } catch {
+        $r.Error = Limit-ErText "Replication could not be read: $($_.Exception.Message)" 250
+    }
+    return $r
+}
+
+function Test-ErReplication {
+    param($Def)
+    $max = [int]$Def.data
+    $want = "no failures, each partner within $max hours"
+    $n = Get-ErReplicationNeighbors
+    if (-not $n.Read) { return New-ErSetting $Def 'unknown' $null $want $n.Error }
+    if ($n.Neighbors.Count -eq 0) { return New-ErSetting $Def 'not_applicable' 'no replication partners' '' }
+    $failing = @($n.Neighbors | Where-Object { $_.Failures -gt 0 -or $_.Result -ne 0 }).Count
+    $late = @($n.Neighbors | Where-Object { $null -eq $_.LastSuccess -or ([datetime]::UtcNow - ([datetime]$_.LastSuccess).ToUniversalTime()).TotalHours -gt $max }).Count
+    $total = $n.Neighbors.Count
+    if ($failing -gt 0) { return New-ErSetting $Def 'not_in_place' "$failing of $total partner link(s) failing" $want }
+    if ($late -gt 0) { return New-ErSetting $Def 'not_in_place' "$late of $total partner link(s) not synchronized within $max hours" $want }
+    return New-ErSetting $Def 'in_place' "$total partner link(s) succeeding" $want
+}
+
+# SYSVOL and NETLOGON shared, and the service that replicates SYSVOL (DFS
+# Replication, or File Replication on a domain that never moved) running.
+function Get-ErShareNames {
+    $r = @{ Read = $false; Error = ''; Names = @() }
+    try {
+        $r.Names = @(Get-CimInstance -ClassName Win32_Share -ErrorAction Stop -OperationTimeoutSec 30 | ForEach-Object { [string]$_.Name })
+        $r.Read = $true
+    } catch {
+        $r.Error = Limit-ErText "The shares could not be read: $($_.Exception.Message)" 250
+    }
+    return $r
+}
+
+function Test-ErSysvol {
+    param($Def)
+    $want = 'SYSVOL and NETLOGON shared, replication running'
+    $sh = Get-ErShareNames
+    if (-not $sh.Read) { return New-ErSetting $Def 'unknown' $null $want $sh.Error }
+    $missing = @(@('SYSVOL', 'NETLOGON') | Where-Object { $sh.Names -notcontains $_ })
+    if ($missing.Count -gt 0) { return New-ErSetting $Def 'not_in_place' "not shared: $($missing -join ', ')" $want }
+    $dfsr = Get-ErServiceState 'DFSR'
+    $frs = Get-ErServiceState 'NtFrs'
+    if (-not $dfsr.Read -or -not $frs.Read) { return New-ErSetting $Def 'unknown' $null $want 'A replication service could not be read.' }
+    if (($dfsr.Installed -and $dfsr.Status -eq 'Running') -or ($frs.Installed -and $frs.Status -eq 'Running')) {
+        return New-ErSetting $Def 'in_place' 'shared, replication running' $want
+    }
+    return New-ErSetting $Def 'not_in_place' 'shared, but neither DFS Replication nor File Replication runs' $want
+}
+
+# When the directory was last backed up, from repadmin's /showbackup: the
+# latest date in its answer, read in ISO form or in this computer's own
+# format. A date before 2000 is the directory saying it was never backed up.
+function Get-ErAdBackupTime {
+    $r = @{ Read = $false; Error = ''; When = $null; Never = $false }
+    $run = Invoke-ErProgram (Join-Path $env:SystemRoot 'System32\repadmin.exe') @('/showbackup', 'localhost') 60
+    if ($run.ExitCode -ne 0) {
+        $r.Error = Limit-ErText "repadmin did not report the backup (exit $($run.ExitCode)): $($run.Error) $($run.Output)" 250
+        return $r
+    }
+    $latest = $null
+    foreach ($m in [regex]::Matches([string]$run.Output, '\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|\d{1,2}/\d{1,2}/\d{4}[ ,]+\d{1,2}:\d{2}(:\d{2})?( [AaPp][Mm])?')) {
+        $t = [datetime]::MinValue
+        $ok = [datetime]::TryParseExact($m.Value, @('yyyy-MM-dd HH:mm:ss', 'yyyy-MM-ddTHH:mm:ss'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$t)
+        if (-not $ok) { $ok = [datetime]::TryParse($m.Value, [ref]$t) }
+        if ($ok -and ($null -eq $latest -or $t -gt $latest)) { $latest = $t }
+    }
+    if ($null -eq $latest) {
+        $r.Error = 'repadmin gave no backup date to read.'
+        return $r
+    }
+    $r.Read = $true
+    if ($latest.Year -lt 2000) { $r.Never = $true } else { $r.When = $latest }
+    return $r
+}
+
+function Test-ErAdBackup {
+    param($Def)
+    $want = "within $($Def.data) days"
+    $b = Get-ErAdBackupTime
+    if (-not $b.Read) { return New-ErSetting $Def 'unknown' $null $want $b.Error }
+    if ($b.Never) { return New-ErSetting $Def 'not_in_place' 'never backed up' $want }
+    $days = [int][math]::Floor(([datetime]::Now - $b.When).TotalDays)
+    return New-ErSetting $Def $(if ($days -le [int]$Def.data) { 'in_place' } else { 'not_in_place' }) "$([math]::Max($days, 0)) days ago" $want
+}
+
+# Whether this controller holds the PDC emulator role.
+function Get-ErPdcRole {
+    $r = @{ Read = $false; Error = ''; IsPdc = $false }
+    try {
+        $own = [System.Net.Dns]::GetHostEntry([string]$env:COMPUTERNAME).HostName
+        $pdc = [string][System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().PdcRoleOwner.Name
+        $r.IsPdc = $pdc -ieq $own
+        $r.Read = $true
+    } catch {
+        $r.Error = Limit-ErText "The PDC emulator could not be found: $($_.Exception.Message)" 250
+    }
+    return $r
+}
+
+# The time hierarchy: the PDC emulator takes its time from a source outside
+# the domain (NTP, with a server named); every other controller follows the
+# domain (NT5DS).
+function Test-ErTimeHierarchy {
+    param($Def)
+    $pdc = Get-ErPdcRole
+    if (-not $pdc.Read) { return New-ErSetting $Def 'unknown' $null '' $pdc.Error }
+    $path = 'HKLM\SYSTEM\CurrentControlSet\Services\W32Time\Parameters'
+    $type = Get-ErRegistryValue $path 'Type'
+    $ntp = Get-ErRegistryValue $path 'NtpServer'
+    $unread = Get-ErUnread $Def @($type, $ntp)
+    if ($unread) { return $unread }
+    $kind = $(if ($type.Exists) { [string]$type.Data } else { 'NT5DS' })
+    if ($pdc.IsPdc) {
+        $ok = @('NTP', 'AllSync') -contains $kind -and $ntp.Exists -and "$($ntp.Data)".Trim() -ne ''
+        return New-ErSetting $Def $(if ($ok) { 'in_place' } else { 'not_in_place' }) "PDC emulator, source type $kind" 'PDC emulator on an outside source (NTP, a server named)'
+    }
+    return New-ErSetting $Def $(if ($kind -eq 'NT5DS') { 'in_place' } else { 'not_in_place' }) "not the PDC emulator, source type $kind" 'follows the domain hierarchy (NT5DS)'
+}
+
+# Kerberos encryption types as a policy value: AES present, DES and RC4 off.
+# Bits: DES-CRC 1, DES-MD5 2, RC4 4, AES128 8, AES256 16.
+function Test-ErKerberosTypes {
+    param($Def, $Module)
+    $v = Get-ErRegistryValue $Def.path $Def.name
+    $unread = Get-ErUnread $Def @($v)
+    $want = 'AES only (no RC4, no DES)'
+    if ($unread) { return $unread }
+    if (-not $v.Exists) {
+        return New-ErSetting $Def 'not_in_place' 'not set' $want 'Not set: the build''s default applies, which does not show that RC4 is off.'
+    }
+    $bits = [int64]$v.Data
+    $names = @()
+    if ($bits -band 1) { $names += 'DES-CRC' }
+    if ($bits -band 2) { $names += 'DES-MD5' }
+    if ($bits -band 4) { $names += 'RC4' }
+    if ($bits -band 8) { $names += 'AES128' }
+    if ($bits -band 16) { $names += 'AES256' }
+    $ok = ($bits -band 7) -eq 0 -and ($bits -band 24) -ne 0
+    return Test-ErValue $Def $Module "$($v.Data): $($names -join ', ')" $ok $want
+}
+
 function Test-ErRdpSetting {
     param($Def, $Module, [string]$WmiName, [string]$RegName, [string]$Want)
     $v = $null
@@ -1667,7 +2041,7 @@ function Invoke-ErModule {
 #     before = {exists, kind, data}, target, after = {exists, kind, data}, at } }
 # Only registry settings are written in this release.
 
-$ErReportOnly = @('audit', 'device-guard', 'bitlocker', 'laps', 'rights', 'time', 'app-control', 'office')
+$ErReportOnly = @('audit', 'device-guard', 'bitlocker', 'laps', 'rights', 'time', 'app-control', 'office', 'dc')
 $ErTaskName = 'EasyRMM Hardening Rollback'
 $ErTaskPath = '\EasyRMM\'
 

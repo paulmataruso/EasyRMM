@@ -20,7 +20,7 @@ import (
 var windowsModules = []string{
 	"accounts", "firewall", "defender", "asr", "smb", "smb-signing", "ntlm", "wdigest", "lsa-protection",
 	"name-resolution", "powershell", "rdp", "uac", "autoplay", "anonymous", "winrm", "printing", "features", "tls",
-	"audit", "device-guard", "bitlocker", "laps", "session", "removable", "mobile-code", "rights", "time", "app-control", "office",
+	"audit", "device-guard", "bitlocker", "laps", "session", "removable", "mobile-code", "rights", "time", "app-control", "office", "dc",
 }
 
 // TestWindowsHardeningAPI checks an enrolled Windows device's hardening
