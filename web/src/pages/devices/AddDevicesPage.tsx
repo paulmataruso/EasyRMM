@@ -143,19 +143,15 @@ const MODES: { value: Mode; label: string }[] = [
 
 type Created = { kind: "site"; value: NewEnrollmentToken } | { kind: "approval"; value: NewApprovalToken };
 
+/** Where the install is fixed to, on an organization's or site's Install tab (ADR-0072); none on /devices/add. */
+export interface InstallScope {
+  organizationId: string;
+  siteId?: string;
+}
+
 export function AddDevicesPage() {
   const { can, canGlobal } = useAuth();
-  const url = useUrlState();
   const approver = canGlobal("enrollment.manage");
-  const mode: Mode = approver && url.get("mode") === "approval" ? "approval" : "site";
-  const [created, setCreated] = useState<Created | null>(null);
-  const top = useRef<HTMLDivElement>(null);
-  // A token shown again from a list below fills the card at the top.
-  const show = (c: Created) => {
-    setCreated(c);
-    top.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-  };
-
   const header = (
     <PageHeader
       breadcrumb={
@@ -186,6 +182,32 @@ export function AddDevicesPage() {
   return (
     <>
       {header}
+      <AddDevices />
+    </>
+  );
+}
+
+/**
+ * Tokens, install steps and downloads. With a scope the token's site is the scope's (the chosen site, or one of the
+ * organization's), the list shows only that scope's tokens, and approval tokens, which belong to no organization, are
+ * left to /devices/add.
+ */
+export function AddDevices({ scope }: { scope?: InstallScope }) {
+  const { canGlobal } = useAuth();
+  const url = useUrlState();
+  const approver = !scope && canGlobal("enrollment.manage");
+  const mode: Mode = approver && url.get("mode") === "approval" ? "approval" : "site";
+  const [created, setCreated] = useState<Created | null>(null);
+  const top = useRef<HTMLDivElement>(null);
+  // A token shown again from a list below fills the card at the top.
+  const show = (c: Created) => {
+    setCreated(c);
+    top.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
+  const inScope = (t: EnrollmentToken) => !scope || (t.organizationId === scope.organizationId && (!scope.siteId || t.siteId === scope.siteId));
+
+  return (
+    <>
       <div ref={top} className="grid scroll-mt-4 grid-cols-1 items-start gap-5 xl:grid-cols-5">
         <Card title={created ? "Install the agent" : "New deployment token"} className="xl:col-span-3">
           {created?.kind === "site" ? (
@@ -206,7 +228,7 @@ export function AddDevicesPage() {
               {mode === "approval" ? (
                 <ApprovalTokenForm onCreated={(t) => setCreated({ kind: "approval", value: t })} />
               ) : (
-                <TokenForm initialSiteId={url.get("siteId")} onCreated={(t) => setCreated({ kind: "site", value: t })} />
+                <TokenForm scope={scope} initialSiteId={scope?.siteId ?? url.get("siteId")} onCreated={(t) => setCreated({ kind: "site", value: t })} />
               )}
             </div>
           )}
@@ -219,6 +241,7 @@ export function AddDevicesPage() {
       <TokensCard<EnrollmentToken, NewEnrollmentToken>
         title="Deployment tokens"
         path="/enrollment-tokens"
+        keep={inScope}
         onShown={(value) => show({ kind: "site", value })}
         place={{
           header: "Site",
@@ -327,8 +350,9 @@ function ApprovalTokenForm({ onCreated }: { onCreated: (t: NewApprovalToken) => 
   );
 }
 
-function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCreated: (t: NewEnrollmentToken) => void }) {
-  const sites = useSites(null);
+function TokenForm({ scope, initialSiteId, onCreated }: { scope?: InstallScope; initialSiteId: string; onCreated: (t: NewEnrollmentToken) => void }) {
+  const sites = useSites(scope?.organizationId);
+  const siteFixed = Boolean(scope?.siteId);
   const [siteId, setSiteId] = useState(initialSiteId);
   const [groupId, setGroupId] = useState("");
   const [name, setName] = useState("");
@@ -346,9 +370,9 @@ function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCrea
     return [...m.entries()];
   }, [sites.items]);
 
-  if (sites.isPending) return <Spinner />;
-  if (sites.isError) return <ErrorState error={sites.error} onRetry={() => void sites.refetch()} compact />;
-  if (sites.items.length === 0) {
+  if (!siteFixed && sites.isPending) return <Spinner />;
+  if (!siteFixed && sites.isError) return <ErrorState error={sites.error} onRetry={() => void sites.refetch()} compact />;
+  if (!siteFixed && sites.items.length === 0) {
     return (
       <EmptyState title="No sites yet" compact>
         A device joins a site.{" "}
@@ -367,6 +391,7 @@ function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCrea
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3.5">
+      {!siteFixed && (
       <SelectField
         label="Site"
         value={siteId}
@@ -387,6 +412,7 @@ function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCrea
           </optgroup>
         ))}
       </SelectField>
+      )}
       <SelectField
         label="Device group"
         value={groupId}
@@ -725,7 +751,7 @@ interface TokenRow {
   kept: boolean;
 }
 
-function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onShown }: {
+function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onShown, keep }: {
   title: string;
   path: string;
   /** The column that differs: a deployment token's site, an approval token's waiting devices. */
@@ -733,10 +759,13 @@ function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onS
   revokeNote: (t: T) => ReactNode;
   /** Receives an active token with its secret, shown again (ADR-0047). */
   onShown: (r: R) => void;
+  /** Which tokens to list; all of them when absent. */
+  keep?: (t: T) => boolean;
 }) {
   const toast = useToast();
   const [all, setAll] = useState(false);
-  const tokens = useList<T>(path, all ? undefined : { status: "active" }, { refetchInterval: 30_000, keepPrevious: true });
+  const listed = useList<T>(path, all ? undefined : { status: "active" }, { refetchInterval: 30_000, keepPrevious: true });
+  const tokens = { ...listed, items: keep ? listed.items.filter(keep) : listed.items };
   const [revoking, setRevoking] = useState<T | null>(null);
   const revoke = useApiMutation((t: T) => api.post<T>(`${path}/${t.id}/revoke`), {
     invalidate: [path, "/audit"],

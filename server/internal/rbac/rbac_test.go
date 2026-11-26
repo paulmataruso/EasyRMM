@@ -383,3 +383,24 @@ func TestPlacement(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedPermissions(t *testing.T) {
+	p := mustPrincipal(t,
+		Assignment{Role: RoleTechnician, OrganizationID: orgA},
+		Assignment{Role: RoleReadOnly, OrganizationID: orgB, SiteID: siteB1})
+	got := p.ScopedPermissions()
+	dev := got[PermDeviceView]
+	if !slices.Contains(dev.Orgs, orgA) || !slices.Contains(dev.Sites, siteB1) || dev.All {
+		t.Errorf("device.view scope = %+v", dev)
+	}
+	if _, ok := got[PermTerminal]; !ok {
+		t.Error("terminal scope missing")
+	}
+	if s := got[PermTerminal]; slices.Contains(s.Sites, siteB1) {
+		t.Errorf("read-only site grants terminal: %+v", s)
+	}
+	super := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
+	if g := super.ScopedPermissions(); len(g) != 0 {
+		t.Errorf("platform-wide permissions listed as scoped: %v", g)
+	}
+}

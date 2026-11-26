@@ -289,6 +289,16 @@ describe("users and invitations", () => {
     expect(within(form).getByRole("button", { name: "Send invitation" })).toBeInTheDocument();
   });
 
+  it("sends the old filtered link to the organization's People tab, which lists that organization's people", async () => {
+    const server = installFakeApi({ ...routes, "GET /organizations/:id": ok(org("o1", "Northwind Traders")) });
+    renderApp("/settings?tab=users&organizationId=o1");
+    expect(await screen.findByRole("tab", { name: "People" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("link", { name: "Sam Okafor" })).toBeInTheDocument();
+    expect(server.callsTo("GET /users").every((c) => c.query.get("organizationId") === "o1")).toBe(true);
+    // The scope is fixed: no organization filter.
+    expect(screen.queryByLabelText("Organization")).not.toBeInTheDocument();
+  });
+
   it("puts a server's assignment error on the row it belongs to", async () => {
     const user = userEvent.setup();
     installFakeApi({

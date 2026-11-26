@@ -271,7 +271,7 @@ export function OrganizationDetailPage() {
                 />
                 {can("user.view") && (
                   <Link
-                    to={`/settings?tab=users&organizationId=${o.id}`}
+                    to="?tab=people"
                     className="mt-4 inline-block text-xs text-accent hover:underline"
                   >
                     People with access to this organization

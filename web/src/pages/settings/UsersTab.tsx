@@ -17,18 +17,21 @@ import { useUrlState } from "../../lib/urlState";
 import { AssignmentEditor, blankDraft, draftComplete, fromDraft, type DraftAssignment } from "./AssignmentEditor";
 import { whyNotEmailed } from "./mailProblem";
 
-export function UsersTab() {
-  const { can } = useAuth();
+/** The list of people. With `organizationId` it is that organization's People tab (ADR-0072): the same list, scope fixed. */
+export function UsersTab({ organizationId: fixedOrganizationId }: { organizationId?: string } = {}) {
+  const auth = useAuth();
+  // On an organization's page, inviting is checked at that organization.
+  const can = (p: "user.manage") => (fixedOrganizationId ? auth.canAt(p, { organizationId: fixedOrganizationId }) : auth.can(p));
   const url = useUrlState();
   const navigate = useNavigate();
   const prefetch = usePrefetch();
   const tableRef = useRef<HTMLDivElement>(null);
   const q = url.get("q");
-  const organizationId = url.get("organizationId");
+  const organizationId = fixedOrganizationId ?? url.get("organizationId");
   const after = url.get("after");
   const list = useList<User>("/users", { q, organizationId, after, limit: 50 }, { keepPrevious: true });
   const inviting = url.get("invite") === "1";
-  const filtered = Boolean(q || organizationId);
+  const filtered = Boolean(q || (organizationId && !fixedOrganizationId));
 
   const warm = (id: string) => prefetch(`/users/${id}`);
   useRowKeys(tableRef, (link) => link.dataset.id && warm(link.dataset.id));
@@ -37,7 +40,7 @@ export function UsersTab() {
     <>
       <Toolbar>
         <SearchInput value={q} onChange={(v) => url.set({ q: v, after: null })} placeholder="Search by name or email" className="max-w-sm" />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, after: null })} />
+        {!fixedOrganizationId && <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, after: null })} />}
         <div className="flex-1" />
         {can("user.manage") && (
           <Button variant="primary" icon={<UserPlus className="size-4" aria-hidden />} onClick={() => url.set({ invite: "1" })}>
