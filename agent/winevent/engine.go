@@ -587,6 +587,9 @@ func (r *run) event(s *source, raw Raw, p *eventrules.Parsed) (eventrules.Event,
 		meta = raw.Meta(p.Provider, true)
 	}
 	ev.LevelName, ev.TaskName, ev.OpcodeName, ev.KeywordNames = meta.LevelName, meta.TaskName, meta.OpcodeName, meta.KeywordNames
+	if ev.LevelName == "" { // a provider Windows has no metadata for: the standard names
+		ev.LevelName = standardLevel[ev.Level]
+	}
 	ev.Message, ev.MessageNote = meta.Message, meta.MessageNote
 	if ev.Message == "" && p.HasMessage {
 		ev.Message = p.Message
@@ -698,3 +701,6 @@ func matches(text string, ev eventrules.Event) bool {
 	}
 	return false
 }
+
+// standardLevel names the levels Windows defines itself.
+var standardLevel = map[int]string{0: "Information", 1: "Critical", 2: "Error", 3: "Warning", 4: "Information", 5: "Verbose"}

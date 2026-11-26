@@ -41,7 +41,7 @@ func TestRegistryBuiltinAsSystem(t *testing.T) {
 	}
 	raw, _ := base64.StdEncoding.DecodeString(res.Result)
 	r, err := agentproto.ParseRegistryLines(agentproto.SplitResultLines(raw))
-	if err != nil || r.End == nil || !r.End.Complete || r.Begin.AgentVersion != "test" {
+	if err != nil || r.End == nil || !r.End.Complete || r.Begin.AgentVersion == "" { // the child reports the version it was built with
 		t.Fatalf("%v %+v", err, r)
 	}
 	found := false

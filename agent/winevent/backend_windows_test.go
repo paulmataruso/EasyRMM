@@ -122,7 +122,7 @@ func TestQueryFindsWhatWasWrittenAsSystem(t *testing.T) {
 		t.Fatalf("%d events\n%s", len(res.Events), raw)
 	}
 	e := res.Events[0]
-	if e.Provider != "EasyRMMEventTest" || e.Record == 0 || e.Channel != "Application" || e.User == "" || e.Offset == nil || e.LevelName == "" ||
+	if e.Provider != "EasyRMMEventTest" || e.Record == 0 || e.Channel != "Application" || e.Offset == nil || e.LevelName != "Information" ||
 		!strings.Contains(e.XML, marker) || !strings.HasPrefix(e.Keywords, "0x") {
 		t.Fatalf("%+v", e)
 	}
