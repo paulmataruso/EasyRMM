@@ -20,6 +20,7 @@ import (
 type QuickAssist interface {
 	Enroll(ctx context.Context, ip netip.Addr, req quickassist.EnrollRequest) (*quickassist.EnrollResult, error)
 	Status(ctx context.Context, device uuid.UUID) (*quickassist.RunnerState, error)
+	SetMeshNode(ctx context.Context, device uuid.UUID, nodeID string) error
 	InstallConsent(ctx context.Context, device uuid.UUID, ip netip.Addr, accept bool) (*quickassist.Conversion, error)
 	Converted(ctx context.Context, device uuid.UUID, ip netip.Addr) error
 	RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr, reason string, rep *quickassist.Cleanup) error
@@ -38,6 +39,7 @@ func (a *API) registerQuickAssist(mux *http.ServeMux) {
 	mux.Handle("POST "+qaticket.PathEnroll, httpapi.Handle(a.qaEnroll))
 	mux.Handle("POST "+qaticket.PathStatus, httpapi.Handle(a.signed(a.qaStatus)))
 	mux.Handle("POST "+qaticket.PathEnd, httpapi.Handle(a.signed(a.qaEnd)))
+	mux.Handle("POST "+qaticket.PathMesh, httpapi.Handle(a.signed(a.qaMesh)))
 	mux.Handle("POST "+qaticket.PathInstall, httpapi.Handle(a.signed(a.qaInstall)))
 	mux.Handle("POST "+qaticket.PathConverted, httpapi.Handle(a.signed(a.qaConverted)))
 }
@@ -117,6 +119,20 @@ func (a *API) qaInstall(w http.ResponseWriter, r *http.Request, d *agents.Device
 
 func (a *API) qaConverted(w http.ResponseWriter, r *http.Request, d *agents.Device, _ []byte) error {
 	if err := a.qa.Converted(r.Context(), d.ID, httpapi.ClientIP(r)); err != nil {
+		return mapQA(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) qaMesh(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in struct {
+		NodeID string `json:"nodeId"`
+	}
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	if err := a.qa.SetMeshNode(r.Context(), d.ID, in.NodeID); err != nil {
 		return mapQA(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

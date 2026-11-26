@@ -30,6 +30,7 @@ type QAFacts struct {
 
 // QAEnrollResult is the server's answer to a runner.
 type QAEnrollResult struct {
+	JobKey           string `json:"jobKey"`
 	DeviceID         string `json:"deviceId"`
 	SessionID        string `json:"sessionId"`
 	HeartbeatSeconds int    `json:"heartbeatSeconds"`
@@ -86,6 +87,19 @@ func (c *Client) QAStatus(ctx context.Context) (*QAState, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// QAMesh tells the server which MeshAgent node this session started.
+func (c *Client) QAMesh(ctx context.Context, nodeID string) error {
+	body, err := json.Marshal(map[string]string{"nodeId": nodeID})
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, "POST", qaticket.PathMesh, body, true)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
 // QAInstall tells the server the user's answer to "keep the agent". On yes

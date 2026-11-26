@@ -26,6 +26,7 @@ const (
 	PathEnd    = "/api/agent/v1/qa/end"
 	// PathInstall carries the user's answer to "keep the agent", and
 	// PathConverted the report that the permanent agent is in place.
+	PathMesh      = "/api/agent/v1/qa/mesh"
 	PathInstall   = "/api/agent/v1/qa/install"
 	PathConverted = "/api/agent/v1/qa/converted"
 )

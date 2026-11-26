@@ -266,6 +266,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.OnDeviceGone(func(id uuid.UUID) { d.AgentChannel.Close(id, agentproto.ClosingRemoved) })
 	d.QuickAssist = quickassist.New(db, auditLog, jobKey, strings.TrimSuffix(cfg.PublicURL.String(), "/"))
 	d.QuickAssist.OnThrottled(quickAssistFlood(db, mailSvc, log))
+	if d.Mesh != nil {
+		d.QuickAssist.SetNodeRemover(d.Mesh.RemoveDevice)
+	}
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
 	d.AgentLogs = agentlogs.New(db, auditLog, cfg.AgentLogRetentionDays, log)

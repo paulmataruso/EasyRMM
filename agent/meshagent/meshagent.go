@@ -46,6 +46,10 @@ const (
 	// recorded it.
 	ModeSystemd Mode = "systemd"
 	ModeChild   Mode = "child"
+	// ModeAdHoc runs MeshAgent as "meshagent connect", a child of a Quick
+	// Assist runner that installs nothing (ADR-0080). It works on Windows,
+	// where ModeChild does not.
+	ModeAdHoc Mode = "adhoc"
 )
 
 // Manager installs and runs MeshAgent in one directory.
@@ -63,6 +67,11 @@ type Manager struct {
 	// OnExit, when set, hears of each exit of a child MeshAgent the
 	// supervisor restarts.
 	OnExit func(err error)
+	// Confine, when set, is called on each child before it starts, and
+	// Started after, with the started process: a Quick Assist runner puts
+	// the child in its job object or process group.
+	Confine func(cmd *exec.Cmd)
+	Started func(p *os.Process)
 
 	mu    sync.Mutex
 	child *exec.Cmd
@@ -406,6 +415,14 @@ func (m *Manager) killChild() {
 	}
 }
 
+// Stop ends a child MeshAgent by its process handle, never by name, and
+// waits for its supervisor; the context given to Start must be canceled
+// first or the supervisor restarts it.
+func (m *Manager) Stop() {
+	m.killChild()
+	m.supervised.Wait()
+}
+
 // State reports what the heartbeat tells the server about MeshAgent
 // (ADR-0069).
 func (m *Manager) State(ctx context.Context) agentproto.MeshAgentState {
@@ -459,6 +476,9 @@ func (m *Manager) start(ctx context.Context) error {
 	if m.asService() {
 		return m.Services.Install(ctx, m.service())
 	}
+	if m.Mode == ModeAdHoc {
+		return m.startChild(ctx)
+	}
 	if m.Windows {
 		// Started outside the service manager, Windows MeshAgent shows its
 		// installation window instead of connecting.
@@ -490,12 +510,22 @@ func (m *Manager) startChild(ctx context.Context) error {
 func (m *Manager) Wait() { m.supervised.Wait() }
 
 func (m *Manager) spawn(ctx context.Context) (*exec.Cmd, error) {
-	cmd := exec.CommandContext(ctx, m.binary()) //nolint:gosec // our own installed MeshAgent
+	var args []string
+	if m.Mode == ModeAdHoc {
+		args = []string{"connect"}
+	}
+	cmd := exec.CommandContext(ctx, m.binary(), args...) //nolint:gosec // our own installed MeshAgent
 	cmd.Dir = m.Dir
+	if m.Confine != nil {
+		m.Confine(cmd)
+	}
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 10 * time.Second
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting MeshAgent: %w", err)
+	}
+	if m.Started != nil {
+		m.Started(cmd.Process)
 	}
 	return cmd, nil
 }

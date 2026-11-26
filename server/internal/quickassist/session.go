@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/internal/qaticket"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
@@ -80,8 +81,11 @@ type EnrollRequest struct {
 
 // EnrollResult is the answer to a runner.
 type EnrollResult struct {
-	DeviceID         string `json:"deviceId"`
-	SessionID        string `json:"sessionId"`
+	DeviceID  string `json:"deviceId"`
+	SessionID string `json:"sessionId"`
+	// JobKey is the key that signs what the server serves the runner, such
+	// as MeshAgent, so the runner can check it.
+	JobKey           string `json:"jobKey"`
 	HeartbeatSeconds int    `json:"heartbeatSeconds"`
 	Organization     string `json:"organization"`
 }
@@ -199,7 +203,7 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req EnrollRequest) 
 			sid, l.ID, l.OrganizationID, did, codeHash(sid, req.Code), f.Elevated, now, ip.String(), now.Add(MaxSessionLife)); err != nil {
 			return err
 		}
-		res = &EnrollResult{DeviceID: did.String(), SessionID: sid.String(), HeartbeatSeconds: HeartbeatSeconds, Organization: l.orgName}
+		res = &EnrollResult{JobKey: agentproto.EncodeKey(s.PublicKey()), DeviceID: did.String(), SessionID: sid.String(), HeartbeatSeconds: HeartbeatSeconds, Organization: l.orgName}
 		return s.audit.Write(ctx, tx, audit.Event{
 			Actor:  audit.Actor{Type: audit.ActorAgent, ID: did, Label: f.Hostname, SourceIP: ip},
 			Action: ActionRequest, OrganizationID: l.OrganizationID, SiteID: siteID, DeviceID: did,
@@ -611,6 +615,7 @@ func (s *Service) RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr
 			if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET device_id = $2, cleanup = $3, cleanup_report = $4, ended_at = coalesce(ended_at, now()) WHERE id = $1`, id, newDev, result, raw); err != nil {
 				return err
 			}
+			s.removeSessionNode(ctx, tx, device)
 			if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1 AND quick_assist`, device); err != nil {
 				return err
 			}
@@ -633,6 +638,7 @@ func (s *Service) RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr
 		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET cleanup = $2, cleanup_report = $3 WHERE id = $1`, id, result, raw); err != nil {
 			return err
 		}
+		s.removeSessionNode(ctx, tx, device)
 		// The key stops working: nothing signed by it is accepted again.
 		if _, err := tx.Exec(ctx, `UPDATE devices SET agent_public_key = NULL, enrolled_at = NULL WHERE id = $1`, device); err != nil {
 			return err
@@ -647,6 +653,55 @@ func (s *Service) RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr
 			Outcome: audit.Success, Details: map[string]any{"result": result, "reason": reason},
 		})
 	})
+}
+
+// NodeRemover removes a MeshCentral node by its id (the mesh client's
+// RemoveDevice); the app sets it when remote access is on.
+type NodeRemover func(ctx context.Context, nodeID string) error
+
+// SetNodeRemover sets what removes a session's node when the session ends.
+func (s *Service) SetNodeRemover(f NodeRemover) { s.removeNode = f }
+
+// SetMeshNode records the MeshAgent node the runner started for its session,
+// so the console's remote tools reach the computer. The key is what the
+// runner's MeshAgent printed for its own database.
+func (s *Service) SetMeshNode(ctx context.Context, device uuid.UUID, nodeID string) error {
+	key, err := agentproto.MeshNodeKey(nodeID)
+	if err != nil {
+		return apperr.Invalid("nodeId", "That is not a MeshAgent node id.")
+	}
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE devices SET mesh_node_id = $2 WHERE id = $1 AND quick_assist
+			AND EXISTS (SELECT 1 FROM quick_assist_sessions s WHERE s.device_id = $1 AND s.state IN ('requested', 'active'))`, device, key)
+		if database.IsUniqueViolation(err) {
+			return apperr.Conflict("node_in_use", "That node belongs to another device.")
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return apperr.NotFound()
+		}
+		return nil
+	})
+}
+
+// removeSessionNode deletes the node a session made, best effort: a node
+// left by a crash is removed when the session sweep marks the session lost.
+func (s *Service) removeSessionNode(ctx context.Context, tx pgx.Tx, device uuid.UUID) {
+	if s.removeNode == nil {
+		return
+	}
+	var node *string
+	if err := tx.QueryRow(ctx, `SELECT mesh_node_id FROM devices WHERE id = $1 AND quick_assist`, device).Scan(&node); err != nil || node == nil {
+		return
+	}
+	n := *node
+	go func() {
+		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_ = s.removeNode(c, n)
+	}()
 }
 
 // Sweep does the server's periodic work: it declines requests nobody
