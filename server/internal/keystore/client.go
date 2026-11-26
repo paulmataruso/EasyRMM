@@ -173,9 +173,9 @@ func (c *Client) RewrapOrgKey(ctx context.Context, org, keyID, purpose, wrappedP
 // ResealEscrow has the keystore open a record under the organization's old key
 // and seal it to the new one. Old and next differ only in the key's ID. Only
 // ciphertext comes back.
-func (c *Client) ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newPublic, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error) {
+func (c *Client) ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newWrapped string, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error) {
 	r, err := c.Do(ctx, Request{Op: OpResealEscrow, ID: requestID, Record: record, WrappedPrivate: oldWrapped, Context: &old, NewContext: &next,
-		NewPublic: newPublic, Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: old.kindOrDefault()})
+		NewWrapped: newWrapped, Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: old.kindOrDefault()})
 	if err != nil {
 		return nil, nil, err
 	}

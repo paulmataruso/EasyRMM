@@ -128,7 +128,7 @@ func (s *Server) serveConn(c net.Conn, admin bool) {
 // the host's journal's, through the process log.
 func (s *Server) journal(req *keystore.Request, resp *keystore.Response) {
 	switch req.Op {
-	case keystore.OpStatus, keystore.OpLog, keystore.OpReadEscrow:
+	case keystore.OpStatus, keystore.OpLog, keystore.OpReadEscrow, keystore.OpRewrapOrgKey, keystore.OpResealEscrow:
 		return
 	}
 	res := "ok"
@@ -210,7 +210,7 @@ func (s *Server) handle(req *keystore.Request, admin bool) keystore.Response {
 		}
 		o, n := req.Context, req.NewContext
 		enc, ct, err := s.KS.ResealEscrow(ResealRequest{
-			RequestID: req.ID, Record: req.Record, Kind: req.Kind, OldWrapped: req.WrappedPrivate, NewPublic: req.NewPublic,
+			RequestID: req.ID, Record: req.Record, Kind: req.Kind, OldWrapped: req.WrappedPrivate, NewWrapped: req.NewWrapped,
 			Old: escrowcrypto.Context{Org: o.Org, Device: o.Device, Volume: o.Volume, Protector: o.Protector, OrgKey: o.OrgKey},
 			New: escrowcrypto.Context{Org: n.Org, Device: n.Device, Volume: n.Volume, Protector: n.Protector, OrgKey: n.OrgKey},
 			Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: req.Fingerprint,

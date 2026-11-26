@@ -2,6 +2,7 @@ package keystored
 
 import (
 	"crypto/subtle"
+	"strconv"
 
 	"github.com/paulmataruso/easyrmm/internal/escrowcrypto"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
@@ -55,6 +56,9 @@ func (k *Keystore) RewrapOrgKey(org, keyID, purpose, wrapped string) (newWrapped
 	if !same {
 		return "", 0, fail(keystore.CodeInternal, "the re-wrapped key does not open")
 	}
+	if _, err := k.log.append(keystore.LogEntry{Op: keystore.OpRewrapOrgKey, Org: org, Record: keyID + " v" + strconv.Itoa(oldVer) + " > v" + strconv.Itoa(newVer), Result: "ok"}); err != nil {
+		return "", 0, fail(keystore.CodeLogBroken, "the keystore cannot write its log, so it re-wraps nothing")
+	}
 	return out, newVer, nil
 }
 
@@ -68,7 +72,7 @@ type ResealRequest struct {
 	// key's ID.
 	OldWrapped      string
 	Old, New        escrowcrypto.Context
-	NewPublic       []byte
+	NewWrapped      string
 	Enc, Ciphertext []byte
 	Fingerprint     []byte
 }
@@ -86,7 +90,7 @@ func (k *Keystore) ResealEscrow(r ResealRequest) (enc, ct []byte, err error) {
 	if kind == "" {
 		kind = escrowcrypto.KindBitLocker
 	}
-	if !o.Valid() || !n.Valid() || len(r.Fingerprint) != escrowcrypto.FingerprintSize || len(r.NewPublic) != 32 ||
+	if !o.Valid() || !n.Valid() || len(r.Fingerprint) != escrowcrypto.FingerprintSize || r.NewWrapped == "" ||
 		o.Org != n.Org || o.Device != n.Device || o.Volume != n.Volume || o.Protector != n.Protector || o.OrgKey == n.OrgKey ||
 		len(r.RequestID) > 128 || len(r.Record) > 128 {
 		return nil, nil, fail(keystore.CodeBadRequest, "the re-seal request is not valid")
@@ -119,9 +123,33 @@ func (k *Keystore) ResealEscrow(r ResealRequest) (enc, ct []byte, err error) {
 	if subtle.ConstantTimeCompare(fp[:], r.Fingerprint) != 1 {
 		return nil, nil, fail(keystore.CodeRefused, "the record is not the verified one")
 	}
-	enc, ct, err = escrowcrypto.Seal(r.NewPublic, n, norm)
+	// The recipient is derived here from the new key's wrapped private half,
+	// which only this keystore can make for this organization, key and
+	// purpose: the caller cannot choose who the record is sealed to.
+	nver, nsealed, err := parseWrapped(r.NewWrapped)
+	if err != nil {
+		return nil, nil, fail(keystore.CodeBadRequest, "the new wrapped key is not in a known format")
+	}
+	nkek, err := k.kekFor(nver)
 	if err != nil {
 		return nil, nil, err
+	}
+	npriv, err := unwrap(nkek, nsealed, wrapAAD(n.Org, n.OrgKey, "escrow"))
+	if err != nil {
+		return nil, nil, fail(keystore.CodeRefused, "the new key does not open for this organization")
+	}
+	defer zero(npriv)
+	npub, err := escrowcrypto.PublicFrom(npriv)
+	if err != nil {
+		return nil, nil, fail(keystore.CodeRefused, "the new key is not an escrow key")
+	}
+	enc, ct, err = escrowcrypto.Seal(npub, n, norm)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := k.log.append(keystore.LogEntry{Op: keystore.OpResealEscrow, Org: o.Org, Record: r.Record + " key " + o.OrgKey + " v" + strconv.Itoa(ver) + " > " + n.OrgKey + " v" + strconv.Itoa(nver), RequestID: r.RequestID, Result: "ok"}); err != nil {
+		zero(enc)
+		return nil, nil, fail(keystore.CodeLogBroken, "the keystore cannot write its log, so it re-seals nothing")
 	}
 	return enc, ct, nil
 }

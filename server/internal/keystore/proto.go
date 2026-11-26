@@ -123,10 +123,11 @@ type Request struct {
 	// read_escrow: the escrow record's ID, for the keystore's log.
 	Record string `json:"record,omitempty"`
 
-	// reseal_escrow: the organization's new escrow key. Context names the
+	// reseal_escrow: the organization's new escrow key, as its wrapped private
+	// half (the keystore derives the recipient from it; a caller cannot name one). Context names the
 	// old key (the one WrappedPrivate is); NewContext differs from it in
 	// the key's ID only.
-	NewPublic  []byte         `json:"newPublic,omitempty"`
+	NewWrapped string         `json:"newWrapped,omitempty"`
 	NewContext *EscrowContext `json:"newContext,omitempty"`
 
 	// log

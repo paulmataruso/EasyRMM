@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
@@ -41,6 +42,14 @@ func TestRewrapMovesAKeyToThePrimaryVersionAndKeepsTheOldOne(t *testing.T) {
 	if pt, err := k.ReadEscrow(req); err != nil || string(pt) != blPassword {
 		t.Fatalf("read under the old version: %q %v", pt, err)
 	}
+	_, entries, _ := k.LogSince(0, 100)
+	var rl bool
+	for _, e := range entries {
+		rl = rl || (e.Op == keystore.OpRewrapOrgKey && strings.Contains(e.Record, "key1 v1 > v2"))
+	}
+	if !rl {
+		t.Fatal("the re-wrap wrote no log line")
+	}
 	// Again is a no-op, and another owner's key is refused.
 	if again, _, err := k.RewrapOrgKey("org1", "key1", "escrow", moved); err != nil || again != moved {
 		t.Fatalf("second rewrap: %v", err)
@@ -76,13 +85,15 @@ func readyKeystoreWithCode(t *testing.T) (*Keystore, []byte) {
 func TestResealMovesARecordToTheNewKeyWithoutPlaintext(t *testing.T) {
 	k := readyKeystore(t, Options{})
 	req, fp := readReq(t, k, "rid-1")
-	pub2, wrapped2, _, err := k.CreateOrgKey("org1", "key2", "escrow")
+	_, wrapped2, _, err := k.CreateOrgKey("org1", "key2", "escrow")
 	if err != nil {
 		t.Fatal(err)
 	}
 	newCtx := ctxOf("org1", "dev1", "vol1", "prot1", "key2")
+	_, other, _, _ := k.CreateOrgKey("org2", "key2", "escrow")
+	_, service, _, _ := k.CreateOrgKey("org1", "key2", "service")
 	rr := ResealRequest{RequestID: "rs-1", Record: "rec1", OldWrapped: req.Wrapped, Old: req.Context, New: newCtx,
-		NewPublic: pub2, Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: fp}
+		NewWrapped: wrapped2, Enc: req.Enc, Ciphertext: req.Ciphertext, Fingerprint: fp}
 	enc, ct, err := k.ResealEscrow(rr)
 	if err != nil {
 		t.Fatal(err)
@@ -100,14 +111,18 @@ func TestResealMovesARecordToTheNewKeyWithoutPlaintext(t *testing.T) {
 	}
 
 	for name, mut := range map[string]func(*ResealRequest){
-		"another device":       func(r *ResealRequest) { r.New.Device = "dev2" },
-		"another volume":       func(r *ResealRequest) { r.New.Volume = "vol2" },
-		"another protector":    func(r *ResealRequest) { r.New.Protector = "prot2" },
-		"another organization": func(r *ResealRequest) { r.New.Org = "org2" },
-		"the same key":         func(r *ResealRequest) { r.New.OrgKey = r.Old.OrgKey },
-		"a wrong fingerprint":  func(r *ResealRequest) { r.Fingerprint = bytes.Repeat([]byte{1}, 16) },
-		"a short public key":   func(r *ResealRequest) { r.NewPublic = r.NewPublic[:5] },
-		"a tampered record":    func(r *ResealRequest) { r.Ciphertext = append([]byte{}, r.Ciphertext...); r.Ciphertext[0] ^= 1 },
+		"another device":              func(r *ResealRequest) { r.New.Device = "dev2" },
+		"another volume":              func(r *ResealRequest) { r.New.Volume = "vol2" },
+		"another protector":           func(r *ResealRequest) { r.New.Protector = "prot2" },
+		"another organization":        func(r *ResealRequest) { r.New.Org = "org2" },
+		"the same key":                func(r *ResealRequest) { r.New.OrgKey = r.Old.OrgKey },
+		"a wrong fingerprint":         func(r *ResealRequest) { r.Fingerprint = bytes.Repeat([]byte{1}, 16) },
+		"no new key":                  func(r *ResealRequest) { r.NewWrapped = "" },
+		"a new key of another key ID": func(r *ResealRequest) { r.New.OrgKey = "key3" },
+		"a new key of another org":    func(r *ResealRequest) { r.NewWrapped = other },
+		"a service-purpose new key":   func(r *ResealRequest) { r.NewWrapped = service },
+		"the old key as the new one":  func(r *ResealRequest) { r.NewWrapped = r.OldWrapped },
+		"a tampered record":           func(r *ResealRequest) { r.Ciphertext = append([]byte{}, r.Ciphertext...); r.Ciphertext[0] ^= 1 },
 	} {
 		bad := rr
 		mut(&bad)
@@ -120,9 +135,16 @@ func TestResealMovesARecordToTheNewKeyWithoutPlaintext(t *testing.T) {
 		t.Fatal("the log holds a key")
 	}
 	_, entries, _ := k.LogSince(0, 100)
+	logged := false
 	for _, e := range entries {
 		if e.Op == keystore.OpResealEscrow && e.Plaintext {
 			t.Fatal("a re-seal is logged as returning a key")
 		}
+		if e.Op == keystore.OpResealEscrow && e.RequestID == "rs-1" && strings.Contains(e.Record, "key1 v1 > key2 v1") {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Fatal("the re-seal wrote no log line")
 	}
 }

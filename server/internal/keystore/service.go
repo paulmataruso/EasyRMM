@@ -61,7 +61,7 @@ type Verifier interface {
 	ReadEscrow(ctx context.Context, requestID, record, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) ([]byte, error)
 	Log(ctx context.Context, seq int64, limit int) (LogPage, error)
 	RewrapOrgKey(ctx context.Context, org, keyID, purpose, wrappedPrivate string) (MadeKey, error)
-	ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newPublic, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error)
+	ResealEscrow(ctx context.Context, requestID, record, oldWrapped string, old, next EscrowContext, newWrapped string, enc, ct, fingerprint []byte) (newEnc, newCT []byte, err error)
 }
 
 var _ Verifier = (*Client)(nil)

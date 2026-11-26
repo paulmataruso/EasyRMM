@@ -332,7 +332,7 @@ func (s *Service) ResealRecords(ctx context.Context) (int, error) {
 		newCtx := oldCtx
 		newCtx.OrgKey = m.newKey.ID.String()
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		enc, ct, err := s.ks.ResealEscrow(cctx, uuid.NewString(), m.id.String(), m.oldKey.Wrapped, oldCtx, newCtx, m.newKey.Public, m.enc, m.ct, m.fp)
+		enc, ct, err := s.ks.ResealEscrow(cctx, uuid.NewString(), m.id.String(), m.oldKey.Wrapped, oldCtx, newCtx, m.newKey.Wrapped, m.enc, m.ct, m.fp)
 		if err == nil {
 			var res string
 			res, err = s.ks.VerifyEscrow(cctx, m.id.String(), m.newKey.Wrapped, newCtx, enc, ct, m.fp)
