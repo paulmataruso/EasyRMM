@@ -67,6 +67,9 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if out == nil {
+		out = []notify.Channel{} // an empty list is [], never null: the console reads its length
+	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"channels": out})
 	return nil
 }
