@@ -179,9 +179,11 @@ func TestAFolderUsersMayWriteIsNeverExcludedAsSystem(t *testing.T) {
 	if !listed(prefs(t).Lists["path"], c.pfMesh) {
 		t.Fatal("the mesh folder was not excluded first")
 	}
-	// Step 4: its parent becomes writable by Users, so it cannot verify.
+	// Step 4: its parent becomes writable by Users, so it cannot verify. Plain (W) lets Users add files and
+	// folders beside the folder, not replace it, and what the image's default ACLs add to that differs
+	// (the ARM image reported it as effective); DC, delete child, is the right the check refuses, so ask for it.
 	parent := filepath.Dir(c.pfMesh)
-	if out, err := exec.Command("icacls", parent, "/grant", "*S-1-5-32-545:(OI)(CI)(W)").CombinedOutput(); err != nil {
+	if out, err := exec.Command("icacls", parent, "/grant", "*S-1-5-32-545:(OI)(CI)(W,DC)").CombinedOutput(); err != nil {
 		t.Fatalf("icacls: %v: %s", err, out)
 	}
 	r = c.m.Reconcile(context.Background())
