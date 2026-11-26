@@ -38,15 +38,15 @@ test("a rule is created with its filters, timing and channel, turned off and del
   await dialog.getByLabel(/^Name/).fill("Rules desk");
   await dialog.getByLabel(/^Recipients/).fill("rules@example.com");
   await dialog.getByRole("button", { name: "Add channel" }).click();
-  await expect(page.getByRole("cell", { name: /Rules desk/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /Rules desk/ }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Add rule" }).click();
   dialog = page.getByRole("dialog");
   await dialog.getByLabel(/^Name/).fill("E2E offline servers");
   await dialog.getByRole("radiogroup", { name: "Kind of device: any or a list" }).getByRole("radio", { name: "List" }).click();
-  await dialog.getByRole("checkbox", { name: "Servers" }).check();
+  await dialog.getByRole("checkbox", { name: "Servers", exact: true }).check();
   await dialog.getByRole("radiogroup", { name: "Condition: any or a list" }).getByRole("radio", { name: "List" }).click();
-  await dialog.getByRole("checkbox", { name: "Offline" }).check();
+  await dialog.getByRole("checkbox", { name: "Offline", exact: true }).check();
   await dialog.getByLabel(/Wait before telling/).fill("10");
   await dialog.getByLabel(/Remind every/).fill("4");
   await dialog.getByRole("checkbox", { name: /Rules desk/ }).check();
