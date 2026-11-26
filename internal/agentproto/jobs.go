@@ -3,7 +3,10 @@ package agentproto
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,6 +91,11 @@ const (
 	// CapJobPwsh is the pwsh shell, JobPayload.PwshFallback and
 	// ResultRequest.Interpreter.
 	CapJobPwsh = "job.pwsh"
+	// CapJobParams is JobPayload.Params, delivered on the script's standard
+	// input (ADR-0073), and JobPayloadVersionParams. A build without it
+	// refuses such a job, and the server sends one only to an agent that
+	// lists it.
+	CapJobParams = "job.params"
 )
 
 // MaxAccepts bounds the capabilities a poll lists, and MaxAcceptLen each
@@ -130,8 +138,17 @@ type SignedJob struct {
 	Signature string `json:"signature"`
 }
 
-// JobPayloadVersion is the payload version this code writes and reads.
+// JobPayloadVersion is the payload version of a job without params.
 const JobPayloadVersion = 1
+
+// JobPayloadVersionParams is the payload version of a job with params
+// (ADR-0073): its signature covers the script hash and the params hash. A
+// build that does not know it refuses the job instead of running it without
+// its parameters.
+const JobPayloadVersionParams = 2
+
+// MaxParamsBytes bounds a job's params, in their canonical form.
+const MaxParamsBytes = 16 << 10
 
 // JobPayload is what the server asks a device to run.
 type JobPayload struct {
@@ -150,6 +167,49 @@ type JobPayload struct {
 	// for ShellPwsh, so only to an agent that accepts CapJobPwsh: a build
 	// before it refuses the field (ADR-0009).
 	PwshFallback bool `json:"pwshFallback,omitempty"`
+	// Params is a JSON object the agent writes to the script's standard
+	// input and closes (ADR-0073), in the canonical form CanonicalParams
+	// gives; it may hold a secret, so nothing logs it. Only in a payload of
+	// version JobPayloadVersionParams.
+	Params json.RawMessage `json:"params,omitempty"`
+	// ScriptSHA256 and ParamsSHA256 are the hex SHA-256 of Script and of
+	// Params, which the signature covers and the agent checks. Only in a
+	// payload of version JobPayloadVersionParams.
+	ScriptSHA256 string `json:"scriptSha256,omitempty"`
+	ParamsSHA256 string `json:"paramsSha256,omitempty"`
+}
+
+// CanonicalParams is params as the job carries and hashes them: a JSON
+// object with its keys sorted and no white space. It refuses anything but an
+// object, and one over MaxParamsBytes.
+func CanonicalParams(params []byte) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(params))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil || m == nil || dec.More() {
+		return nil, ErrJobParams
+	}
+	out, err := json.Marshal(m)
+	if err != nil || len(out) > MaxParamsBytes {
+		return nil, ErrJobParams
+	}
+	return out, nil
+}
+
+// HashParams is the hex SHA-256 of params in their canonical form.
+func HashParams(params []byte) (string, error) {
+	c, err := CanonicalParams(params)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(c)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// HashScript is the hex SHA-256 of a script body.
+func HashScript(script string) string {
+	sum := sha256.Sum256([]byte(script))
+	return hex.EncodeToString(sum[:])
 }
 
 // StartResponse says whether the agent may run the job.
@@ -215,7 +275,18 @@ const (
 	MaxInterpreterPath    = 520
 )
 
-const jobSigContext = "EASYRMM-JOB-SIG-V1\n"
+const (
+	jobSigContext       = "EASYRMM-JOB-SIG-V1\n"
+	jobSigContextParams = "EASYRMM-JOB-SIG-V2\n"
+)
+
+// jobSigContextFor is the signature context of a payload version.
+func jobSigContextFor(v int) string {
+	if v == JobPayloadVersionParams {
+		return jobSigContextParams
+	}
+	return jobSigContext
+}
 
 // Errors from VerifyJob.
 var (
@@ -223,15 +294,29 @@ var (
 	ErrJobMalformed = errors.New("agentproto: the job is malformed")
 	ErrJobDevice    = errors.New("agentproto: the job is for another device")
 	ErrJobExpired   = errors.New("agentproto: the job has expired")
+	ErrJobParams    = errors.New("agentproto: the job's params are not a JSON object of at most 16 KiB")
+	ErrJobHash      = errors.New("agentproto: the job's script or params do not match the hashes its signature covers")
 )
 
-// SignJob signs a payload with the server's job key.
+// SignJob signs a payload with the server's job key. A payload with Params
+// becomes a JobPayloadVersionParams one: its params are put in canonical
+// form and both hashes are set, so the signature covers them.
 func SignJob(key ed25519.PrivateKey, p JobPayload) (SignedJob, error) {
+	if len(p.Params) > 0 {
+		c, err := CanonicalParams(p.Params)
+		if err != nil {
+			return SignedJob{}, err
+		}
+		p.V, p.Params, p.ScriptSHA256 = JobPayloadVersionParams, c, HashScript(p.Script)
+		if p.ParamsSHA256, err = HashParams(c); err != nil {
+			return SignedJob{}, err
+		}
+	}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return SignedJob{}, err
 	}
-	sig := ed25519.Sign(key, append([]byte(jobSigContext), b...))
+	sig := ed25519.Sign(key, append([]byte(jobSigContextFor(p.V)), b...))
 	return SignedJob{Payload: base64.StdEncoding.EncodeToString(b), Signature: base64.StdEncoding.EncodeToString(sig)}, nil
 }
 
@@ -259,11 +344,14 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 		return JobPayload{}, err
 	}
 	sig, err := base64.StdEncoding.DecodeString(j.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(jobSigContext), b...), sig) {
+	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(jobSigContextFor(p.V)), b...), sig) {
 		return p, ErrJobSignature
 	}
+	if err := checkParams(p); err != nil {
+		return p, err
+	}
 	switch {
-	case p.V != JobPayloadVersion || p.RunID == "" || p.JobID == "" || !ValidShell(p.Shell) || p.Script == "" ||
+	case (p.V != JobPayloadVersion && p.V != JobPayloadVersionParams) || p.RunID == "" || p.JobID == "" || !ValidShell(p.Shell) || p.Script == "" ||
 		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh:
 		return p, ErrJobMalformed
 	case p.DeviceID != deviceID:
@@ -272,6 +360,31 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 		return p, ErrJobExpired
 	}
 	return p, nil
+}
+
+// checkParams checks what a version's payload may carry, and for a params
+// one, that the script and params match the hashes the signature covers.
+func checkParams(p JobPayload) error {
+	switch p.V {
+	case JobPayloadVersionParams:
+		if len(p.Params) == 0 {
+			return ErrJobMalformed
+		}
+		c, err := CanonicalParams(p.Params)
+		if err != nil || !bytes.Equal(c, p.Params) {
+			return ErrJobParams
+		}
+		ph, _ := HashParams(c)
+		if subtle.ConstantTimeCompare([]byte(p.ParamsSHA256), []byte(ph)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p.ScriptSHA256), []byte(HashScript(p.Script))) != 1 {
+			return ErrJobHash
+		}
+	case JobPayloadVersion:
+		if len(p.Params) > 0 || p.ScriptSHA256 != "" || p.ParamsSHA256 != "" {
+			return ErrJobMalformed
+		}
+	}
+	return nil
 }
 
 // EncodeKey is the text form of a job-signing public key.

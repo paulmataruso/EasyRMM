@@ -170,7 +170,10 @@ const (
 // refuses them with 400, so an agent sends a request field added after
 // level 2 only while its last heartbeat answer came from a server of level 2
 // or higher.
-const Protocol = 2
+//
+// Level 3 adds job params (ADR-0073): JobPayload.Params, signed with the
+// script's hash, for an agent whose poll lists CapJobParams.
+const Protocol = 3
 
 // HeartbeatResponse carries the server's current instructions.
 type HeartbeatResponse struct {
