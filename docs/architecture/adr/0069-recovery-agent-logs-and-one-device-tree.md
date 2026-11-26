@@ -690,6 +690,18 @@ need no new row: the first holds no device, organization or site id, and the
 second is already listed as owned. `device_roles` (columns on `devices`) and `step_up` (columns on `sessions`) add no
 table.
 
+### Amended 2026-11-26 (decided in review), compliance tables
+
+The compliance library's organization tables (ADR-0078 C1, migrations
+`00061` and `00062`): `compliance_packs` (an organization's own packs),
+`compliance_org_packs` and `compliance_org_settings` belong to the
+organization, so a device move leaves them alone; the disposition test lists
+them as owned. A scan is a record of the organization that ran it:
+`compliance_scans`, `compliance_scan_jobs` and `compliance_results_history`
+stay with that organization after a move (listed as stays, like `job_runs`),
+so evidence already shown for it is not rewritten; the device's next scan is
+the new organization's.
+
 ## References
 
 * `agent/meshagent/meshagent.go`, `agent/runner/runner.go`,
