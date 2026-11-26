@@ -1,6 +1,6 @@
 # ADR-0074: Managing Microsoft Defender from the console
 
-* Status: Proposed (2026-11-26). Design only; no code is changed by this ADR.
+* Status: Accepted (2026-11-26, after an independent review). Design only; no code is changed by this ADR.
 * Asked for by the owner (2026-11-26): "I want a module to manage Windows
   Defender from our GUI. Full Management, or as much as we can from the UI.
   I also want alerts from defender to be able to be used as alert rules in
@@ -100,7 +100,7 @@ What exists today:
    Protection is shown as "managed by policy" and the module does not write
    it.
 6. Defender events are read by a small agent-side reader with a bookmark,
-   deduplicated on the server, and become ten alert kinds with twelve
+   deduplicated on the server, and become twelve alert kinds with thirteen
    default policies per organization.
 
 ### 1. Identity, permissions and where it is offered
@@ -144,7 +144,9 @@ servers), `realtime`, `behaviorMonitor`, `ioav`, `engineVersion`,
 `signatureVersion`, `signatureUpdated` (UTC), `signatureAgeDays`,
 `platformVersion`, `quickScanAgeDays`, `fullScanAgeDays` (null when never run:
 Defender reports 4294967295), `tamperProtected`, `tamperSource` (shown
-verbatim), `nisEnabled`. Roles scan every 6 hours (ADR-0073); the Defender
+verbatim; the property names `IsTamperProtected` and `TamperProtectionSource`
+are named in Microsoft's tamper protection configuration article but not in
+the `Get-MpComputerStatus` example, so they are **to confirm on R1**), `nisEnabled`. Roles scan every 6 hours (ADR-0073); the Defender
 detail refreshes **every hour** from its own agent timer, only while the
 server's heartbeat answer says `defender.enabled` and the module is on
 (`DefenderPolicy` gains a `module` bool, additive), one child process at a
@@ -193,7 +195,7 @@ never an empty list (the rule `agent/defender` already follows).
 | 0 Read | no change | `defender.view` (`view_sensitive` for sensitive results) | none | none | compact, one row per query (ADR-0073) |
 | 1 Routine | reversible, does not lower protection | `defender.manage` | none | none | `winmod.defender.<action>` with parameters |
 | 2 Change | changes configuration without lowering protection, or removes something that only restores scanning (an admin's exclusion, active threats) | `defender.manage` | `confirm: "<action>:<device name>"` | none | as tier 1 plus old and new value |
-| 3 Weaken | lowers protection, widens what is not scanned, or puts a threat back | `defender.manage` **and** `defender.weaken` | confirm, naming the effect in the dialog | **required** (ADR-0073 step-up, 10 minutes) | as tier 2, and the alert `defender_config_changed` is suppressed as ours (section 7) |
+| 3 Weaken | lowers protection, widens what is not scanned, or puts a threat back | `defender.manage` **and** `defender.weaken` | confirm, naming the effect in the dialog | **required** (step-up as [ADR-0055](0055-lets-encrypt-in-one-step.md) defines it, section *Step-up authentication*, the one definition) | as tier 2, and the alert `defender_config_changed` is suppressed as ours (section 7) |
 
 Which tier a preference write takes is decided per field **and per value** in
 the catalogue (`Direction`: strengthen, neutral, weaken). `DisableRealtimeMonitoring = $true`
@@ -324,7 +326,14 @@ fails a `Set-MpPreference` that names any list parameter.
   Policy, nothing more (no GPO name: the reader has none for Defender keys).
   *Decided in review.* Where the owner cannot be told (an unreadable key),
   the field reads `unknown_owner` and is **writable with a warning**, never
-  silently locked.
+  silently locked. **Tamper Protection is one rule, not two:** when Facts
+  say it is on, every field it protects (the protection switches, cloud
+  protection, threat actions, signature updates, and exclusions, which
+  Microsoft lists) has the owner `tamper_protection`, so a write to it is
+  refused with `409 managed_by_policy` and the message "Tamper Protection is
+  on and blocks this change; change it in the Windows Security app, Intune or
+  the Defender portal". Nothing is attempted. A field Tamper Protection does
+  not protect (the schedule, the performance fields) is not locked by it.
 * **The console shows it.** A field with an owner is drawn with a lock and
   the text "Managed by Group Policy" (or Intune, Defender for Endpoint,
   Tamper Protection), its controls disabled, and a link "Change it where it
@@ -342,10 +351,21 @@ fails a `Set-MpPreference` that names any list parameter.
   owner appeared since the read, or Tamper Protection blocked it (event 5013
   after the job's start). The audit row records `not_applied`, not success.
   Nothing is reported as changed that is not.
-* **Tamper Protection on** (read from Facts): the panels say "Tamper
-  Protection is on: changes to protected settings and exclusions are likely
-  to be blocked", and the request is still allowed to try, because Facts can
-  be an hour old and Microsoft protects only some settings.
+* **Tamper Protection on** (read from Facts): the panels show the lock above
+  and the sentence "Tamper Protection is on: it blocks changes to protected
+  settings and exclusions". Facts can be an hour old, so when the server's
+  snapshot is older than 5 minutes the request first runs
+  `defender.status` and decides on that. If Tamper Protection was turned on
+  after the check, the script's read-back reports `not_applied` with the
+  reason (event 5013 after the job's start) and the audit row says so.
+* **Exclusions are decided per entry, not per list.** Local exclusions merge
+  with policy's unless `DisableLocalAdminMerge` is set; with merge on, a
+  local add or remove works, and only the entries that **policy owns** (those
+  under the Group Policy or Policy Manager exclusion keys) are read-only,
+  each shown with its owner. If policy sets `DisableLocalAdminMerge`, local
+  exclusions are ignored by Defender, so adds are refused with
+  `managed_by_policy` for the whole kind and the panel says why. Tamper
+  Protection on locks every exclusion change, as above.
 * **Passive mode or another antivirus:** every action that needs an active
   Defender (preference writes for real-time protection, cloud, network
   protection, ASR, CFA) is disabled with the reason; scans, signature
@@ -372,8 +392,13 @@ review*):
   `exclusion_remove`, `cfa_app_remove` and the ASR-only removal refuse an
   `ours` value on the server (`protected_exclusion`, 409). (2) The script
   refuses it on the computer before calling `Remove-MpPreference`, even if
-  the request names a path differently (it normalises with
-  `[System.IO.Path]::GetFullPath` and compares ordinally ignoring case). (3)
+  the request names a path differently (it **expands environment variables**, converts 8.3 short names with
+  `GetLongPathName`, and normalises with `[System.IO.Path]::GetFullPath`,
+  then compares ordinally ignoring case; the same expansion applies to
+  the values read from the lists and from both record files, so
+  `C:\PROGRA~1\EasyRMM\Agent` and `%ProgramFiles%\EasyRMM\Agent` both
+  match ours; unit fixtures cover each of the two and a short name of a
+  folder that no longer exists, which compares as written). (3)
   The AST check fails any script with a `Remove-MpPreference` that is not
   driven by one `$p.value` and the guard function. There is no "remove all"
   and no `Set-MpPreference` on a list (section 3). Removing a *parent* of one
@@ -384,6 +409,17 @@ review*):
   different list. If an owner (policy) sets `DisableLocalAdminMerge` on a
   computer, ADR-0070's existing `not_effective` reporting applies and the
   panel shows it under ours.
+* **Turning ASR or CFA on can block our own agents.** ASR rules and
+  Controlled Folder Access can block `easyrmm-agent.exe`, `meshagent.exe` or
+  `EasyPatch.Agent.exe` and their writes. ADR-0070 section 3 already adds
+  ASR-only exclusions for the five working folders and CFA allowed
+  applications for the three executables. The module therefore **checks
+  before enabling**: `asr_set` (mode Enabled or Warn) and `cfa_set` (Enabled)
+  read the lists in the same job and proceed only if every one of ours is
+  present and, per ADR-0070's report, `effective` for that kind; otherwise
+  the result is `ours_not_covered` and nothing is changed. A forced override
+  is not offered. The check is a tier 1 action's precondition, so no tier
+  is raised; R6 proves it with an ASR rule on.
 * **Reconcile still wins.** The agents add what is missing at each start
   (ADR-0070); the module neither blocks nor races that.
 * **Audit.** A refused attempt on ours writes `winmod.defender.exclusion_remove`
@@ -430,7 +466,7 @@ From the channel `Microsoft-Windows-Windows Defender/Operational` only.
 | 3002 | real-time protection encountered an error and failed | `defender_unhealthy` |
 | 3007 | real-time protection recovered from a failure | resolves `defender_unhealthy` |
 | 5008 | the antimalware engine encountered an error and failed | `defender_unhealthy` |
-| 5100, 5101 | the antimalware platform expires soon, is expired | `defender_unhealthy` |
+| 5100, 5101 | the antimalware platform expires soon, is expired | `defender_out_of_support` |
 | 5004 | the real-time protection configuration changed | `defender_config_changed` |
 | 5007 | the platform configuration changed (old and new value) | `defender_config_changed` or `defender_exclusion_changed` |
 | 5013 | tamper protection blocked a change | `defender_tamper_blocked` |
@@ -481,9 +517,17 @@ creates it).
   and engine version, old and new value, error code; path and user in a
   separate `sensitive` object), 1 KiB at most, long text cut and marked.
   At most 25 events per query and 24 KiB per heartbeat. A storm (more than
-  20 events with the same ID in one query) is sent as the first 5 and a
-  `suppressed` count with the first and last time. The bookmark does not
-  move past what was not sent, so a backlog drains at 25 per minute.
+  20 events with the same ID in one query) is **aggregated, never
+  dropped**: the reader sends the first 5 and one counted summary record
+  per event ID and device (`count`, first and last time, first and last
+  record ID, and for detections the distinct threat IDs, at most 20), in
+  the same batch and before the bookmark moves past those events. Every
+  record the bookmark passes is therefore either sent whole or counted in
+  a summary that was sent, so "the bookmark never passes what was not
+  sent" holds. The server stores a summary as one row with `count`, and
+  evaluates the alert kinds from it as from the events it stands for.
+  Beyond the 25-event and 24 KiB caps the bookmark stops at the last event
+  sent, so a backlog drains at 25 per minute.
 * **Dedup and acknowledgement.** The server's table has a unique key
   `(device_id, record_id, log_created)`, inserts with `ON CONFLICT DO
   NOTHING`, and the heartbeat answer acknowledges the highest record ID it
@@ -502,8 +546,15 @@ goose up and down, down working): `defender_events(id, organization_id,
 device_id, record_id, log_created, event_id, occurred_at, received_at,
 severity, threat_id, threat_name, category, action, summary jsonb,
 sensitive jsonb, ours boolean, backfill boolean)` with row-level security by
-organization as the other tables; `sensitive` is returned only to holders of
-`defender.view_sensitive`. Retention: `sensitive` cleared after 30 days, the
+organization as the other tables; `summary` holds only what `defender.view` may see (event ID,
+severity, threat name and category, the action's name, counts, versions,
+error code). **Exclusion paths, process names, the old and new values of
+event 5007 and 5004 (which carry the exclusion or setting itself), and
+every file path and user name go in `sensitive`, never in `summary`**; a
+unit test feeds each fixture event through the normaliser and fails if a
+path, a user or a 5007 value appears in `summary`. `sensitive` is returned
+only to holders of `defender.view_sensitive`; a `defender.view` caller sees
+for a 5007 only "a protection setting changed" or "an exclusion changed". Retention: `sensitive` cleared after 30 days, the
 row deleted after 90, through the module-data retention job. Detections of
 a device removed from the console go with it.
 
@@ -511,7 +562,7 @@ a device removed from the console go with it.
 
 Registered with the monitoring package as ADR-0073 section 6 describes
 (name, label, module `defender`, policy parameters, value source). The
-three of ADR-0073 are kept; seven are added. `validKind` gains them through
+three of ADR-0073 are kept; nine are added (twelve kinds in all). `validKind` gains them through
 the framework's registry.
 
 | Kind | Source | `threshold` means | `minutes` means | Opens on | Resolves on |
@@ -524,7 +575,9 @@ the framework's registry.
 | `defender_config_changed` | events 5004, 5007 | unused | unused | a change to a security-relevant key (below) not made by EasyRMM | manually, or after 7 days |
 | `defender_exclusion_changed` | event 5007 on an exclusion key | unused | unused | an exclusion added or removed not by EasyRMM | manually, or after 7 days |
 | `defender_tamper_blocked` | event 5013 | unused | unused | a blocked change not made by EasyRMM | manually, or after 7 days |
-| `defender_unhealthy` | events 3002, 5008, 5100, 5101 | unused | unused | the event | 3007, or Facts `runningMode` normal and no 5008 since |
+| `defender_unhealthy` | events 3002, 5008 | unused | unused | the event | 3007, or Facts `runningMode` normal and no 5008 since |
+| `defender_out_of_support` | events 5100, 5101; Facts `platformVersion` | unused | unused | the platform expires soon (5100) or is expired (5101) | a platform update (Facts platform version changes) or 2006's absence for a day after a 2002 |
+| `defender_tamper_off` | Facts `tamperProtected` | unused | unused | Tamper Protection reads off on an active Defender | it reads on, or Defender is not active |
 | `defender_scan_overdue` | Facts `quickScanAgeDays` | age in days | unused | age at or above the threshold (never run counts as overdue) | age below it |
 
 * **Subject and dedup.** An alert is per policy, device and subject, as
@@ -550,14 +603,23 @@ the framework's registry.
   blocked is likewise `ours`. Changes outside those windows alert, including
   an administrator's change at the computer.
 * **Not applicable.** Kinds that depend on an active Defender
-  (`protection_off`, `unhealthy`, `scan_overdue`, `signatures_old`,
-  `config_changed`, `exclusion_changed`) do not evaluate where `runningMode`
+  (`protection_off`, `tamper_off`, `unhealthy`, `scan_overdue`,
+  `signatures_old`, `config_changed`, `exclusion_changed`) do not evaluate where `runningMode`
   is `Passive` or Defender is not the active antivirus, and resolve with
   the reason `not applicable`. A module that is off evaluates nothing and
   resolves with `module off` (ADR-0073).
-* **Evaluation.** Event kinds are evaluated when the batch is stored, not
-  on a timer. Facts kinds are evaluated when Facts arrive. Both go through
-  `modules.Allowed(ctx, org)`.
+* **Evaluation.** The monitoring engine already has the loop: `Service.Run`
+  (`server/internal/monitoring/service.go`) calls `Evaluate` every
+  `EvaluateInterval` (one minute) under an advisory lock. Defender's kinds
+  are evaluated **in that loop**, as one more pass in `Evaluate` over
+  `defender_events` and the Facts detail, so there is no second timer. The
+  grace of `defender_protection_off` and the minutes of
+  `defender_update_failed` are conditions that pass on a tick: an open
+  "protection off" event with no later 5000, 5009 or 5011 and, for the
+  grace, an event time older than `minutes`; a 2001, 2003 or 2006 with no
+  later 2000 or 2002 older than `minutes`. Detection kinds could also open
+  on arrival, but waiting at most one minute keeps one code path, so they
+  do not. Every pass goes through `modules.Allowed(ctx, org)`.
 * **Notifications** use the existing policy and notification paths; the
   module adds none.
 
@@ -569,26 +631,35 @@ module is first enabled there, owned by the module and marked `default`
 turned off, refreshed on upgrade where the user has not changed them). All
 are organization-level rows, enabled, except where stated.
 
-| Name | Kind | Threshold | Minutes | Severity |
-|---|---|---|---|---|
-| Defender: high or severe threat | `defender_threat` | 4 | - | critical |
-| Defender: low or moderate threat | `defender_threat` | 1 | - | warning |
-| Defender: threat not removed | `defender_remediation_failed` | - | - | critical |
-| Defender: real-time protection off | `defender_protection_off` | - | 5 | critical |
-| Defender: signatures out of date (7 days) | `defender_signatures_old` | 7 | - | critical |
-| Defender: signatures out of date (3 days) | `defender_signatures_old` | 3 | - | warning |
-| Defender: signature update failing | `defender_update_failed` | - | 240 | warning |
-| Defender: protection settings changed | `defender_config_changed` | - | - | warning |
-| Defender: exclusions changed | `defender_exclusion_changed` | - | - | warning |
-| Defender: Tamper Protection blocked a change | `defender_tamper_blocked` | - | - | warning |
-| Defender: not healthy | `defender_unhealthy` | - | - | critical |
-| Defender: no recent scan | `defender_scan_overdue` | 7 | - | warning |
+| Name | Kind | Threshold | Minutes | Severity | Default |
+|---|---|---|---|---|---|
+| Defender: high or severe threat | `defender_threat` | 4 | - | critical | on |
+| Defender: low or moderate threat | `defender_threat` | 1 | - | warning | on |
+| Defender: threat not removed | `defender_remediation_failed` | - | - | critical | on |
+| Defender: real-time protection off | `defender_protection_off` | - | 5 | critical | on |
+| Defender: Tamper Protection off | `defender_tamper_off` | - | - | warning | on |
+| Defender: signature update failing | `defender_update_failed` | - | 240 | warning | on |
+| Defender: engine or platform out of support | `defender_out_of_support` | - | - | critical | on |
+| Defender: not healthy | `defender_unhealthy` | - | - | critical | on |
+| Defender: exclusions changed | `defender_exclusion_changed` | - | - | warning | on |
+| Defender: Tamper Protection blocked a change | `defender_tamper_blocked` | - | - | warning | on |
+| Defender: protection settings changed | `defender_config_changed` | - | - | warning | **off** |
+| Defender: signatures out of date (7 days) | `defender_signatures_old` | 7 | - | warning | **off** |
+| Defender: no recent scan | `defender_scan_overdue` | 7 | - | warning | **off** |
 
-(Twelve rows, ten kinds.) *Decided in review:* all on, because the owner
-asked for default rules; thresholds follow Microsoft's own cadence
-(signatures update at least daily). An organization that does not want one
-turns it off. Creation, like every automatic behaviour, calls
-`modules.Allowed` and so `devscope.Allowed(org)`.
+(Thirteen rows, twelve kinds.) *Decided in review.* The owner asked for
+default rules, so the ones that mean something is wrong now are on:
+detections at every severity, real-time protection off past its grace,
+Tamper Protection off, a failing signature update, and an engine or platform
+out of support. Three are created **off**: "protection settings changed"
+(Defender writes many changes on its own and administrators change settings
+on purpose), and the two that measure **age** (signatures, last scan). Age
+rules fire on every laptop that is switched off for a week or on holiday and
+on the servers of a closed office, which teaches people to ignore alerts; an
+organization whose computers are always on turns them on, and the age
+default is 7 days, not 3. An organization turns any default off or on.
+Creation, like every automatic behaviour, calls `modules.Allowed` and so
+`devscope.Allowed(org)`.
 
 ### 8. Desktops, servers and Server Core
 
@@ -723,20 +794,26 @@ has, the function calls `devscope.Allowed` and the toggle only.
 
 ## Slices
 
-Each lists its files at slice time; builders add small additive edits to the
-hotspots (`rbac.go`, `agentproto`, agent `runner.go`, `DeviceDetailPage.tsx`,
-the tab registry, `app.go`), never reorder around them. A slice is merged
+Files named are ones that exist in the repository today (checked on
+2026-11-26); a path marked *new* is proposed. Builders make small additive
+edits to the hotspots, never reordering around them: `server/internal/rbac/rbac.go`,
+`internal/agentproto/agentproto.go` and `defender.go`, `agent/runner/runner.go`
+and `defender.go`, `web/src/pages/devices/DeviceDetailPage.tsx`,
+`web/src/pages/organizations/levelTabs.tsx` (the tab registry),
+`server/internal/agents/heartbeat.go` and `defender.go`, and the server's `app.go`. A slice is merged
 only when the catalogue lint and its Windows-runner tests pass.
 
 1. **D1 Facts detail, `defender.status`, and the owner reader.** The `detail`
    object on the `defender` role, the hourly refresh, `DefenderPolicy.module`,
    the registry owner reader (reusing `internal/winpolicy`), `defender.status`
-   as ADR-0073's proof action, `preferences_read`. Needs ADR-0073 slices 1,
+   as ADR-0073's proof action, `preferences_read`. Files: `internal/agentproto/defender.go`,
+   `agent/runner/defender.go`, `internal/winpolicy` (reused), `server/internal/agents/heartbeat.go`
+   and `defender.go`; new `server/internal/winmod/defender/` (catalogue, scripts). Needs ADR-0073 slices 1,
    2, 5.
 2. **D2 Permissions and catalogue skeleton.** `defender.view_sensitive`,
    `defender.weaken`, role unions, the tier field and its lint, the field
    table with its pinned-list test, the `ours` function, the validators.
-   Independent of D1; needs ADR-0073 slice 2.
+   Files: `server/internal/rbac/rbac.go`, new `server/internal/winmod/defender/`. Independent of D1; needs ADR-0073 slice 2.
 3. **D3 Scans, updates, threats.** `scan_start`, `scan_custom`, `scan_cancel`,
    `signatures_update`, `threats_remove`, `threats_read`; the scan design from
    R2 (until R2, design B with its caps). Needs D1, D2.
@@ -748,18 +825,27 @@ only when the catalogue lint and its Windows-runner tests pass.
    Needs D1, D2; ADR-0073 slice 4.
 6. **D6 Quarantine.** `quarantine_read`, `quarantine_restore`, sensitive
    handling. Needs D1, D2; ADR-0073 slice 4.
-7. **D7 Event reader and store.** `agent/winevents`, the bookmark, the
-   heartbeat field and acknowledgement, the migration, retention, the Events
-   read. Needs D2 only for the permission; independent of D3 to D6.
-8. **D8 Alerts and default policies.** Ten kinds, best-match rule, `ours`
-   windows, 5007 classifier, twelve default policies, skip rules. Needs D7,
-   D1, and ADR-0073 slice 7.
+7. **D7 Event reader and store.** New `agent/winevents`, the bookmark, the
+   heartbeat field and acknowledgement (`internal/agentproto/agentproto.go`,
+   `server/internal/agents/heartbeat.go`), `DefenderPolicy.events`, the
+   migration `server/migrations/9xxxx_defender.sql`, retention, the Events
+   read. **Needs ADR-0073 slice 1** (`modules.Allowed`, the role and the
+   gate) **and `DefenderPolicy.events`** (built here, additive); D2 for the
+   permission; independent of D3 to D6.
+8. **D8 Alerts and default policies.** Twelve kinds, best-match rule, `ours`
+   windows, 5007 classifier, thirteen default policies, skip rules, the pass
+   in `Evaluate`. Files: `server/internal/monitoring/policies.go`,
+   `evaluate.go`, `service.go`. Needs D7, D1, and ADR-0073 slice 7.
 9. **D9 UI.** The Security tab's panels (Status, Protection, ASR, CFA,
    Exclusions, Threats and quarantine, Scans, Events), the group column, the
    site and organization cards, the org tab, the "managed by policy" lock
-   component. Needs ADR-0073 slice 8; each panel needs its action's slice
+   component. Files: `web/src/pages/devices/DeviceDetailPage.tsx`,
+   `web/src/pages/organizations/levelTabs.tsx`, new
+   `web/src/pages/devices/security/` (one file per panel). Needs ADR-0073 slice 8; each panel needs its action's slice
    (Status needs D1; Events needs D7); panels are independent of each other.
-10. **D10 CI and the real-device run.** The Windows job, the Defender AST
+10. **D10 CI and the real-device run.** The Windows job (new, in
+    `.github/workflows/`; **depends on ADR-0073 slice 9**, which builds the
+    shared Windows-runner job and the AST check), the Defender AST
     rules (grows with each slice, started with D2), and the R1 to R12 runbook
     with its results written back here.
 
@@ -777,7 +863,7 @@ D7; D9 panels as their slices land.
   whole drive) must use the script runner, audited as a script.
 * The agent gains a periodic event reader and one more field in the
   heartbeat; both stop when the module is off.
-* The default policies create twelve policy rows per organization on first
+* The default policies create thirteen policy rows per organization on first
   enable; an organization sees them in Alert policies with a "default" badge.
 * Scan behaviour (design A or B) is not known until R2; until then full
   scans hold a slot.
@@ -796,14 +882,33 @@ chosen in review:
    (`defender.weaken` is Site Administrator and above).
 2. Quarantine "remove" is offered as removing active threats and setting
    quarantine retention, because Windows documents no per-item delete.
-3. The twelve default policies are all on.
+3. Ten of the thirteen default policies are on; the three that measure age or settings changed are off.
 
 ## Amendments to ADR-0073 (decided in review)
+
+All are additive. Where one touches the protocol, an older agent or server
+keeps working: a field an older agent does not know is ignored, a server
+that does not answer the field reads as "module off", and the server sends
+no Defender work to an agent below the protocol level that reports it
+(ADR-0009, *Evolving the protocol*).
 
 * **Section 3:** the Defender row gains `defender.view_sensitive` and
   `defender.weaken` (above).
 * **Section 1:** the `defender` role entry gains the optional `detail`
   object, refreshed hourly, not at the 6-hour role scan.
+* **Section 6, the monitoring engine:** the **best-match rule** (for kinds
+  with a threshold, of several enabled policies that match one event or
+  reading, only the one with the highest threshold opens an alert) is a change
+  to `monitoring.Evaluate`, not Defender-only; it applies to any registered
+  kind that declares a threshold, so a later module gets it. Event-driven kinds
+  are evaluated in the existing one-minute loop, not a new timer.
+* **Heartbeat and storage:** the `DefenderPolicy` answer gains `module` and
+  `events`, the heartbeat gains the events batch and the answer gains its
+  acknowledgement, and the `defender_events` table is added. All are
+  additive protocol-level features (an agent that does not report the level
+  sends no events; the server shows "update the agent").
+* **Step-up:** nothing is restated here; ADR-0073's step-up duration is
+  whatever ADR-0055 defines.
 * **Section 6:** the Defender event log is read by an agent-side reader with a
   bookmark, not by ADR-0068's job-based builtin, to avoid a job per minute.
 
