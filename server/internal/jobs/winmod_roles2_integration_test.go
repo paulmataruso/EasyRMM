@@ -63,11 +63,11 @@ func TestWinmodCAFilesPrint(t *testing.T) {
 		if got := code(run(siteAdmin, "file_shares.share_remove", `{"device":"HQ-FS","name":"`+n+`"}`, "file_shares.share_remove:HQ-FS")); got != "protected_share" {
 			t.Errorf("remove %s: %q", n, got)
 		}
-		if got := code(run(siteAdmin, "file_shares.share_access_grant", `{"device":"HQ-FS","name":"`+n+`","account":"Alice","right":"Read"}`, "file_shares.share_access_grant:HQ-FS")); got != "protected_share" {
+		if got := code(run(siteAdmin, "file_shares.share_grant", `{"device":"HQ-FS","name":"`+n+`","account":"Alice","right":"Read"}`, "file_shares.share_grant:HQ-FS")); got != "protected_share" {
 			t.Errorf("grant on %s: %q", n, got)
 		}
 	}
-	if got := code(run(siteAdmin, "file_shares.share_access_grant", `{"device":"HQ-FS","name":"Data","account":"Everyone","right":"Full"}`, "file_shares.share_access_grant:HQ-FS")); got != "weakens_access" {
+	if got := code(run(siteAdmin, "file_shares.share_grant", `{"device":"HQ-FS","name":"Data","account":"Everyone","right":"Full"}`, "file_shares.share_grant:HQ-FS")); got != "weakens_access" {
 		t.Errorf("Everyone full: %q", got)
 	}
 	if got := code(run(siteAdmin, "file_shares.share_create", `{"device":"HQ-FS","name":"Root","path":"C:\\"}`, "file_shares.share_create:HQ-FS")); got != "protected_path" {

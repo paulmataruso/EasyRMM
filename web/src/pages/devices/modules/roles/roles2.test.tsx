@@ -55,7 +55,7 @@ const FILES: OpenFileList = { total: 1, files: [{ id: "9", sessionId: "123", pat
 
 describe("the file shares view", () => {
   const results: Results = {
-    "file_shares.status": SHARES_STATUS, "file_shares.share_list": SHARES, "file_shares.share_access_get": ACCESS,
+    "file_shares.status": SHARES_STATUS, "file_shares.share_list": SHARES, "file_shares.share_perms_get": ACCESS,
     "file_shares.session_list": SESSIONS, "file_shares.openfile_list": FILES,
   };
   const admin = sessionView({ isSuperAdmin: false, permissions: [...base, "shares.view", "shares.manage"] });

@@ -26,8 +26,8 @@ func TestCatalogLint(t *testing.T) {
 		t.Errorf("%d actions for %d scripts", got, want)
 	}
 	tier3 := map[string]bool{"share_remove": true}
-	tier2 := []string{"share_create", "share_set", "share_access_grant", "share_access_revoke", "share_access_block",
-		"share_access_unblock", "session_close", "openfile_close"}
+	tier2 := []string{"share_create", "share_set", "share_grant", "share_revoke", "share_block",
+		"share_unblock", "session_close", "openfile_close"}
 	for _, a := range c.Actions() {
 		if agentproto.HashScript(a.Script) != a.ScriptSHA256 {
 			t.Errorf("%s: pin does not match", a.Name)
@@ -116,13 +116,13 @@ func TestProtectedSharesRefusedBeforeAnyJob(t *testing.T) {
 	c := catalog(t)
 	for _, n := range []string{"SYSVOL", "sysvol", "NETLOGON", "print$", "IPC$", "ADMIN$", "C$", "Hidden$"} {
 		for action, extra := range map[string]string{
-			"share_remove":         ``,
-			"share_set":            `,"description":"x"`,
-			"share_access_grant":   `,"account":"Alice","right":"Read"`,
-			"share_access_revoke":  `,"account":"Alice"`,
-			"share_access_block":   `,"account":"Alice"`,
-			"share_access_unblock": `,"account":"Alice"`,
-			"share_create":         `,"path":"C:\\Data"`,
+			"share_remove":  ``,
+			"share_set":     `,"description":"x"`,
+			"share_grant":   `,"account":"Alice","right":"Read"`,
+			"share_revoke":  `,"account":"Alice"`,
+			"share_block":   `,"account":"Alice"`,
+			"share_unblock": `,"account":"Alice"`,
+			"share_create":  `,"path":"C:\\Data"`,
 		} {
 			got := refused(t, c, action, `{"device":"SRV","name":"`+n+`"`+extra+`}`)
 			if got != "protected_share" {
@@ -170,16 +170,16 @@ func TestWeakeningRefused(t *testing.T) {
 		}
 	}
 	c := catalog(t)
-	if got := refused(t, c, "share_access_grant", `{"device":"SRV","name":"Data","account":"Everyone","right":"Full"}`); got != "weakens_access" {
+	if got := refused(t, c, "share_grant", `{"device":"SRV","name":"Data","account":"Everyone","right":"Full"}`); got != "weakens_access" {
 		t.Errorf("a grant to Everyone: %q", got)
 	}
-	if got := refused(t, c, "share_access_grant", `{"device":"SRV","name":"Data","account":"Everyone","right":"Read"}`); got != "" {
+	if got := refused(t, c, "share_grant", `{"device":"SRV","name":"Data","account":"Everyone","right":"Read"}`); got != "" {
 		t.Errorf("a read grant to Everyone: %q", got)
 	}
-	if got := refused(t, c, "share_access_block", `{"device":"SRV","name":"Data","account":"BUILTIN\\Administrators"}`); got != "would_lock_out" {
+	if got := refused(t, c, "share_block", `{"device":"SRV","name":"Data","account":"BUILTIN\\Administrators"}`); got != "would_lock_out" {
 		t.Errorf("blocking Administrators: %q", got)
 	}
-	if got := refused(t, c, "share_access_block", `{"device":"SRV","name":"Data","account":"CORP\\mallory"}`); got != "" {
+	if got := refused(t, c, "share_block", `{"device":"SRV","name":"Data","account":"CORP\\mallory"}`); got != "" {
 		t.Errorf("blocking one user: %q", got)
 	}
 }
@@ -200,7 +200,7 @@ func TestHostileValuesAreRefusedOrCarried(t *testing.T) {
 	}
 	for _, v := range []string{"Alice; Remove-Item", "a$(b)", "x\ny", "a`b", `a"b`, "*"} {
 		b, _ := json.Marshal(map[string]string{"device": "SRV", "name": "Data", "account": v, "right": "Read"})
-		a, _ := c.Lookup("file_shares.share_access_grant")
+		a, _ := c.Lookup("file_shares.share_grant")
 		if _, err := a.Validate(b); err == nil {
 			t.Errorf("%q passed as an account", v)
 		}

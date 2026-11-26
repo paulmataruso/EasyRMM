@@ -32,7 +32,7 @@ export function SharesView({ device }: { device: Device }) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const status = useWinmodRead<SharesStatus>(device.id, `${M}.status`, {}, started);
   const shares = useWinmodRead<ShareList>(device.id, `${M}.share_list`, {}, started);
-  const access = useWinmodRead<ShareAccess>(device.id, `${M}.share_access_get`, { name: selected ?? "" }, started && selected !== null);
+  const access = useWinmodRead<ShareAccess>(device.id, `${M}.share_perms_get`, { name: selected ?? "" }, started && selected !== null);
   const sessions = useWinmodRead<SessionList>(device.id, `${M}.session_list`, {}, started && panel === "open");
   const files = useWinmodRead<OpenFileList>(device.id, `${M}.openfile_list`, {}, started && panel === "open");
   const change = useWinmodChange(device.id, M);
@@ -268,7 +268,7 @@ function SharesDialogs({ dialog, device, change, close }: { dialog: Dialog | nul
       );
     case "revoke":
       return (
-        <ActionDialog {...common} title="Revoke access" label="Revoke" op={{ action: `${M}.share_access_revoke`, params: { name: dialog.share.name, account: dialog.account }, confirmed: true }}>
+        <ActionDialog {...common} title="Revoke access" label="Revoke" op={{ action: `${M}.share_revoke`, params: { name: dialog.share.name, account: dialog.account }, confirmed: true }}>
           Remove {dialog.account}&apos;s own entry from <strong>{dialog.share.name}</strong>?
         </ActionDialog>
       );
@@ -278,7 +278,7 @@ function SharesDialogs({ dialog, device, change, close }: { dialog: Dialog | nul
           {...common}
           title={dialog.blocked ? "Unblock account" : "Block account"}
           label={dialog.blocked ? "Unblock" : "Block"}
-          op={{ action: `${M}.${dialog.blocked ? "share_access_unblock" : "share_access_block"}`, params: { name: dialog.share.name, account: dialog.account }, confirmed: true }}
+          op={{ action: `${M}.${dialog.blocked ? "share_unblock" : "share_block"}`, params: { name: dialog.share.name, account: dialog.account }, confirmed: true }}
         >
           {dialog.blocked ? "Lift the block on" : "Block"} {dialog.account} {dialog.blocked ? "for" : "from"} <strong>{dialog.share.name}</strong>?
         </ActionDialog>
@@ -355,7 +355,7 @@ function Grant({ share, ...p }: DialogProps & { share: Share }) {
       description={share.name}
       label="Grant"
       valid={account.trim() !== ""}
-      build={() => ({ action: `${M}.share_access_grant`, confirmed: true, params: { name: share.name, account: account.trim(), right } })}
+      build={() => ({ action: `${M}.share_grant`, confirmed: true, params: { name: share.name, account: account.trim(), right } })}
     >
       <TextField label="User or group" value={account} onChange={(e) => setAccount(e.target.value)} hint="DOMAIN\name, or a name on this computer." required />
       <SelectField label="Access" value={right} onChange={(e) => setRight(e.target.value)}>

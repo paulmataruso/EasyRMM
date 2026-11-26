@@ -557,7 +557,7 @@ refused with `weakens_access` (reading is allowed). Blocking and unblocking
 |---|---|---|---|---|
 | `status` | shares count, SMB settings, sessions and open-file counts | none | 0 | 60 s |
 | `share_list` | shares and special flag | none | 0 | 60 s |
-| `share_access_get` | `Get-SmbShareAccess` | share name | 0 | 30 s |
+| `share_perms_get` | `Get-SmbShareAccess` | share name | 0 | 30 s |
 | `ntfs_acl_get` | the path's entries, owner, inheritance | path inside a share | 0, Sensitive | 60 s |
 | `ntfs_preview` | bounded item count (above) | path | 0 | 60 s |
 | `session_list` | `Get-SmbSession`, paged | cursor | 0, Sensitive | 60 s |
@@ -565,7 +565,7 @@ refused with `weakens_access` (reading is allowed). Blocking and unblocking
 | `quota_list` | FSRM quotas and templates | none | 0 | 60 s |
 | `share_create` | `New-SmbShare`: path must exist on a local fixed volume; **refused (`protected_path`) when the path is a drive root, `%SystemRoot%` or below, or SYSVOL**; name not special; defaults: encryption off, access `Read` for Administrators and the creator account only | name, path, description, enumeration, caching enum | 2 | 60 s |
 | `share_set` | description, caching, enumeration mode, concurrent limit, encrypt data (cannot set `-Special`) | name, fields | 2 | 30 s |
-| `share_access_grant` / `share_access_revoke` | `Grant-/Revoke-SmbShareAccess`, `Block-/Unblock-` | share, account, right enum (`Read`, `Change`, `Full`), guards above | 2 | 30 s |
+| `share_grant` / `share_revoke` | `Grant-/Revoke-SmbShareAccess`, `Block-/Unblock-` | share, account, right enum (`Read`, `Change`, `Full`), guards above | 2 | 30 s |
 | `share_remove` | (**refused for protected shares**) `Remove-SmbShare` **removes the share, not the files**; users lose access at once and open files are dropped | name | **3** | 60 s |
 | `ntfs_ace_set` / `ntfs_ace_remove` | the typed entry edits above | path, account, right, type, flags | **3** | 2 h |
 | `session_close` | `Close-SmbSession`: the user reconnects at once; open files can lose unsaved changes | session id | 2 | 30 s |
@@ -918,7 +918,7 @@ R0): file sharing and print (testable on the runner and on any test server),
 then DNS and DHCP (a domain for the AD-integrated and authorization steps),
 then the certificate authority (most sensitive, needs the Enterprise CA).
 
-* **File sharing.** **F1** reads and **the protected-share list and refusals (SYSVOL, NETLOGON, `print$`, `IPC$`, `ADMIN$`, every `X$`, protected create paths)** (`status`, `share_list`, `share_access_get`,
+* **File sharing.** **F1** reads and **the protected-share list and refusals (SYSVOL, NETLOGON, `print$`, `IPC$`, `ADMIN$`, every `X$`, protected create paths)** (`status`, `share_list`, `share_perms_get`,
   sessions, open files) and the view, runner tests. **F2** share create, set,
   remove, share access grant and revoke with the weakening guards. **F3**
   open-file and session close. **F4** NTFS: `ntfs_acl_get`, `ntfs_preview`,
@@ -1045,7 +1045,7 @@ overturn any.*
 
 ## Amendments from building the certificate authority, file sharing and print (decided in review, 2026-11-26)
 
-* **Built.** Certificate authority: `status`, `ca_certificate`, `crl_status`, `template_list`, `template_available`, `ca_findings`, `template_publish`, `template_publish_risky`, `template_unpublish`, `requests_pending`, `requests_list`, `request_get`, `request_approve`, `request_deny`, `certificate_revoke`, `certificate_unrevoke`, `crl_publish`, `activity`. File sharing: `status`, `share_list`, `share_access_get`, `session_list`, `openfile_list`, `share_create`, `share_set`, `share_access_grant`, `share_access_revoke`, `share_access_block`, `share_access_unblock`, `share_remove`, `session_close`, `openfile_close`. Print: every action of section 7 except `Set-PrintConfiguration` defaults (duplex, paper, colour) and rename. **Not built:** NTFS permission edits and the bound (F4), FSRM quotas (F5), the `share_changed`, `fsrm_quota_high` and `ca_certificate_revoked` alerts and the PrintService event alerts (they need the event readers), the CA's CDP fetch in `crl_status`, ESC5.
+* **Built.** Certificate authority: `status`, `ca_certificate`, `crl_status`, `template_list`, `template_available`, `ca_findings`, `template_publish`, `template_publish_risky`, `template_unpublish`, `requests_pending`, `requests_list`, `request_get`, `request_approve`, `request_deny`, `certificate_revoke`, `certificate_unrevoke`, `crl_publish`, `activity`. File sharing: `status`, `share_list`, `share_perms_get`, `session_list`, `openfile_list`, `share_create`, `share_set`, `share_grant`, `share_revoke`, `share_block`, `share_unblock`, `share_remove`, `session_close`, `openfile_close`. Print: every action of section 7 except `Set-PrintConfiguration` defaults (duplex, paper, colour) and rename. **Not built:** NTFS permission edits and the bound (F4), FSRM quotas (F5), the `share_changed`, `fsrm_quota_high` and `ca_certificate_revoked` alerts and the PrintService event alerts (they need the event readers), the CA's CDP fetch in `crl_status`, ESC5.
 * **Dynamic tier as two actions.** The server cannot read a template to know its tier, so `template_publish` (tier 2) refuses a template that lets the enrollee name the subject and can authenticate (`risky_template`), and `template_publish_risky` (tier 3, step-up) publishes it. The script decides, from the directory, not the caller.
 * **Confirmation is the computer's name** for every tier 2 and 3 action here (`SubjectIsDeviceName`), not the object's name; the dialog still names the object. Tier 1 print job and printer pause or resume carry no confirmation.
 * **ca_findings** reads ESC1 to ESC4 from the directory, ESC6 from the CA's `EditFlags` in the registry (not `certutil -getreg`), ESC7 from the CA's security descriptor in the registry, ESC8 by a bounded HTTP probe of `/certsrv/` on the CA itself. ESC5 is listed in the result's notes as not checked. "Low privilege" means Everyone, Authenticated Users, Users, Anonymous, Domain Users and Domain Computers; other groups are not judged. The ADR's `certutil` list shrinks to `-view`, `-resubmit`, `-deny`, `-revoke`, `-CRL` and `-dump`; a Go test fails any other verb.

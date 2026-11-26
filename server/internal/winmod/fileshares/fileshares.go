@@ -77,7 +77,7 @@ type AccessEntry struct {
 	Type    string `json:"type"`
 }
 
-// Access is share_access_get's result.
+// Access is share_perms_get's result.
 type Access struct {
 	Name    string        `json:"name"`
 	Entries []AccessEntry `json:"entries"`
@@ -330,21 +330,21 @@ func Actions() []winmod.Action {
 		winmod.Param{Name: "concurrentLimit", Type: winmod.Int, Min: 0, Max: 1000000},
 		winmod.Param{Name: "encrypt", Type: winmod.Bool})
 	set.Check = protectedGuard("name")
-	grant := entry(tier2, "share_access_grant", "Grant share access", 30, winmod.Typed[Done](), device(), shareName(true), acct(),
+	grant := entry(tier2, "share_grant", "Grant share access", 30, winmod.Typed[Done](), device(), shareName(true), acct(),
 		winmod.Param{Name: "right", Type: winmod.Enum, Required: true, Values: []string{"Read", "Change", "Full"}})
 	grant.Check = grantGuard
-	revoke := entry(tier2, "share_access_revoke", "Revoke share access", 30, winmod.Typed[Done](), device(), shareName(true), acct())
+	revoke := entry(tier2, "share_revoke", "Revoke share access", 30, winmod.Typed[Done](), device(), shareName(true), acct())
 	revoke.Check = protectedGuard("name")
-	block := entry(tier2, "share_access_block", "Block an account from a share", 30, winmod.Typed[Done](), device(), shareName(true), acct())
+	block := entry(tier2, "share_block", "Block an account from a share", 30, winmod.Typed[Done](), device(), shareName(true), acct())
 	block.Check = blockGuard
-	unblock := entry(tier2, "share_access_unblock", "Unblock an account", 30, winmod.Typed[Done](), device(), shareName(true), acct())
+	unblock := entry(tier2, "share_unblock", "Unblock an account", 30, winmod.Typed[Done](), device(), shareName(true), acct())
 	unblock.Check = protectedGuard("name")
 	remove := entry(tier3, "share_remove", "Remove a share (not its files)", 60, winmod.Typed[Done](), device(), shareName(true))
 	remove.Check = protectedGuard("name")
 
 	return []winmod.Action{
 		status, list,
-		entry(tier0, "share_access_get", "Read a share's permissions", 30, winmod.Typed[Access](), shareName(true)),
+		entry(tier0, "share_perms_get", "Read a share's permissions", 30, winmod.Typed[Access](), shareName(true)),
 		sessions, files,
 		create, set, grant, revoke, block, unblock, remove,
 		entry(tier2, "session_close", "Close a session", 30, winmod.Typed[Done](), device(),
