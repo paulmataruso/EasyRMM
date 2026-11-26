@@ -22,6 +22,7 @@ const luksVol = "6c4a9e2a-1111-4222-8333-444455556666"
 type stubLUKS struct {
 	mu       sync.Mutex
 	volumes  []escrow.LUKSVolume
+	volErr   error
 	addErr   error
 	slot     escrow.LUKSSlot
 	adds     int
@@ -34,7 +35,7 @@ type stubLUKS struct {
 func (s *stubLUKS) Volumes(context.Context) ([]escrow.LUKSVolume, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.volumes, nil
+	return s.volumes, s.volErr
 }
 
 func (s *stubLUKS) AddSlot(_ context.Context, _ string, pass []byte) (escrow.LUKSSlot, error) {
@@ -226,5 +227,64 @@ func TestLUKSAddFailureBacksOffForAnHour(t *testing.T) {
 	}
 	if len(f.server.records) != 0 {
 		t.Error("a record was sent for a slot that was never made")
+	}
+}
+
+func luksReports(f *fx) int {
+	n := 0
+	for _, r := range f.server.reports {
+		if r.Kind == agentproto.EscrowLUKS {
+			n++
+		}
+	}
+	return n
+}
+
+func TestLUKSReportingRules(t *testing.T) {
+	f, l := luksFx(t)
+	f.a.Answered(f.signed(1, "key-1", nil))
+	ctx := context.Background()
+
+	// A computer that cannot read LUKS, and one with no LUKS volume at all, report nothing.
+	l.volErr = errors.New("lsblk failed")
+	f.a.Sync(ctx)
+	l.volErr = escrow.ErrUnsupported
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	l.volErr, l.volumes = nil, nil
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	if luksReports(f) != 0 {
+		t.Fatalf("reports with nothing to report: %d", luksReports(f))
+	}
+
+	// A volume appears: reported; unchanged, it is not sent again until the hour is up.
+	l.volumes = []escrow.LUKSVolume{{UUID: luksVol, Mount: "/", Version: 2, State: agentproto.LUKSCannotEscrow, Reason: "passphrase only"}}
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	if luksReports(f) != 1 {
+		t.Fatalf("an unchanged report was sent again: %d", luksReports(f))
+	}
+	f.now = f.now.Add(time.Hour)
+	f.a.Answered(f.signed(1, "key-1", nil))
+	f.a.Sync(ctx)
+	if luksReports(f) != 2 {
+		t.Fatalf("no report after an hour: %d", luksReports(f))
+	}
+	// The volume goes away: an empty report tells the server to forget it.
+	l.volumes = nil
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	if luksReports(f) != 3 || len(f.lastLUKSReport().Volumes) != 0 {
+		t.Fatalf("the volume's disappearance was not reported: %d", luksReports(f))
+	}
+	// A report that is not valid is never sent.
+	l.volumes = []escrow.LUKSVolume{{UUID: luksVol, State: "maybe"}}
+	f.now = f.now.Add(11 * time.Minute)
+	f.a.Sync(ctx)
+	if luksReports(f) != 3 || !strings.Contains(f.logs.String(), "cannot be reported") {
+		t.Fatalf("an invalid report was sent: %d", luksReports(f))
 	}
 }
