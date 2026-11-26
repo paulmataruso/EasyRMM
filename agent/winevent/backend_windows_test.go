@@ -308,11 +308,11 @@ func TestAdminOverviewQueriesAsSystem(t *testing.T) {
 	}
 	problems := eventrules.Input{Op: eventrules.OpQuery, Channels: []string{"System", "Application"}, Levels: []int{1, 2, 3}, Time: &eventrules.TimeFilter{Last: "24h"}}
 	for name, in := range map[string]eventrules.Input{
-		"key events, System 1": chunk("System", 7, 11, 20, 36, 41, 47, 51, 55, 98, 129, 153, 1053),
-		"key events, System 2": chunk("System", 1055, 1074, 1129, 5719, 5722, 5805, 6008, 7000, 7009, 7023, 7031, 7034),
+		"key events, System 1":    chunk("System", 7, 11, 20, 36, 41, 47, 51, 55, 98, 129, 153, 1053),
+		"key events, System 2":    chunk("System", 1055, 1074, 1129, 5719, 5722, 5805, 6008, 7000, 7009, 7023, 7031, 7034),
 		"key events, Application": chunk("Application", 1000, 1001, 1002),
-		"key events, Security": chunk("Security", 4625, 4740),
-		"problems": problems,
+		"key events, Security":    chunk("Security", 4625, 4740),
+		"problems":                problems,
 	} {
 		res, raw, took := runReal(t, be, in)
 		t.Logf("%s: %d events in %s", name, len(res.Events), took)
