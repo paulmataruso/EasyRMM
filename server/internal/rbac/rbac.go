@@ -146,6 +146,15 @@ const (
 	PermComplianceAdmin      Permission = "compliance.admin"
 )
 
+// The registry editor's permissions (ADR-0067): PermRegistryView browses,
+// reads, searches and exports a Windows computer's registry, and reads
+// changes; PermRegistryEdit changes it. Reading a result needs
+// job.view_sensitive as well.
+const (
+	PermRegistryView Permission = "registry.view"
+	PermRegistryEdit Permission = "registry.edit"
+)
+
 // The disk-recovery-key permissions (ADR-0081, section 6). They are held only
 // through the add-on roles below and are implied by no other role: a super
 // administrator can already run anything on every computer, but reading a key
@@ -168,7 +177,7 @@ var AddOnPermissions = []Permission{PermRecoveryKeyRead, PermRecoveryKeyApprove}
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
 	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
-	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive,
+	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive, PermRegistryView, PermRegistryEdit,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
@@ -263,7 +272,7 @@ func union(sets ...[]Permission) []Permission {
 var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermRDPCredentialsSave, PermTerminal, PermFiles,
 	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
-	PermDocManage, PermLogView,
+	PermDocManage, PermLogView, PermRegistryView, PermRegistryEdit,
 	// The Windows modules (ADR-0073): every view except ad.view_sensitive,
 	// ca.view, dns.view and shares.view, which start at Site Administrator,
 	// plus the reversible manage permissions. No Active Directory writes.

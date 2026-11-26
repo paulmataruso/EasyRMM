@@ -702,6 +702,13 @@ stay with that organization after a move (listed as stays, like `job_runs`),
 so evidence already shown for it is not rewritten; the device's next scan is
 the new organization's.
 
+### Amended 2026-11-26 (decided in review), the registry editor's masked store
+
+`registry_masked_values` (ADR-0067, migration `00072`) holds a copy of the
+organization and site a value was read or typed at, as `job_runs` does, and
+stays with that organization after a move (listed as stays): data kept for a
+change's backup is evidence of what that organization's people did.
+
 ### Amended 2026-11-26 (decided in review), Quick Assist tables
 
 ADR-0080's tables (migrations `00063` to `00065`): `quick_assist_links` and
