@@ -24,7 +24,7 @@
 
 ## For the integrator
 
-- Migration `90221_defender_events.sql`; `defender_events` is "stays" in the move test (one added token).
+- Migration `00058_defender_events.sql`; `defender_events` is "stays" in the move test (one added token).
 - Hotspot edits: `rbac.go` (a const block and two role lines), `agentproto.go` (one field), `agentproto/defender.go` (two fields), `agents/heartbeat.go`, `agents/service.go`, `agents/defender.go`, `agent/runner/runner.go` and `defender.go`, `agent/cmd/easyrmm-agent/main.go` (one block), `app.go` (imports, five lines), `levelTabs.tsx` (one line), the org and site pages (one card each), `web/src/api/types.ts` (two permissions), `jobs/winmod.go` (`NeedsConfirm`), `winmod.go` and `validate.go` (`Confirm`, `Check`), `WinmodAst.ps1` (rule `defender-list`).
 - `TestDefaultPoliciesAreCreatedOnce` now expects 13 defaults (ten on, three off).
 - No `devscope` change: every automatic behavior here goes through `modules.Allowed`, which includes it.
