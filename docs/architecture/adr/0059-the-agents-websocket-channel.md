@@ -1309,3 +1309,39 @@ dropped. To confirm when the owner next looks: that the per-device
   `LogInstructions` as a `logs` push and, while someone follows, the
   agent's signed `logs.batch` frames; the HTTPS route stays the fallback
   and writes the same rows.
+
+### Amended 2026-11-26 (decided in review): as built in M1 to M5
+* **M1 to M5 were built together** (one builder): `agentchannel.Hub.Wake`
+  (the check-in queue, 100 a second, one wake per device queued twice),
+  the settings push (after a device moved), jobs (`jobs.Service.ClaimFor`
+  as the hub's claim, `OnWork` kicking the claim loop where a poll would be
+  woken, `Waiting` for `jobsWaiting` on live devices), repairs
+  (`recovery.Service.Pending`, which is `AgentHeartbeat` without a report,
+  pushed when a repair is asked for), `logs` pushes (verbose on or off, a
+  follow that starts) and `logs.batch` / `logs.ack` through
+  `agentlogs.Ingest`. The wiring is `app/channelpush.go`; with the channel
+  off it wires nothing.
+* **Agent side.** `channel.Handlers` take the same functions the heartbeat
+  answer and the poll use (`Worker.Deliver`, `Shipper.Apply`,
+  `Runner.ApplyRepair`, `Runner.ApplySettings`); a type with no handler is
+  unlisted. Handlers run on their own goroutines under the agent's context,
+  so a job accepted over a connection is not canceled when it ends. A live
+  worker holds no long poll: it polls once on a `jobs` wake or a
+  `jobsWaiting` answer, and goes back to long polls the moment the
+  connection ends.
+* **Log batches** go over the channel only while someone follows and at most
+  one frame per 1.1 s; a batch the server does not ack within 5 s is sent
+  over HTTPS and the channel is left alone for 2 minutes (a connection no
+  heartbeat has confirmed yet stores nothing). HTTPS stores the same rows
+  once.
+* **`replayed` is reported** as `transport.lastReplayed` (Unix seconds) for
+  15 minutes after an upgrade was answered 401 `replayed`; a report with no
+  `connId` confirms and contradicts nothing. The server logs it. The device
+  page does not show it yet.
+* **Settings push**: it carries the interval and MeshAgent's pending
+  settings hash; the agent applies the hash, then checks in at once, and the
+  interval is taken from that heartbeat's answer.
+* **Not pushed**: a repair started automatically (the heartbeat hands it
+  out), a group's verbose mode (its devices' next heartbeat finds it), the
+  stored-steps of a later step in a repair (the settling heartbeat carries
+  them).

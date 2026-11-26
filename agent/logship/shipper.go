@@ -164,6 +164,15 @@ func (s *Shipper) settle(now time.Time) {
 	}
 }
 
+// Following says whether the server has said that someone is watching.
+func (s *Shipper) Following() bool {
+	if s == nil {
+		return false
+	}
+	s.defaults()
+	return s.following(s.Now())
+}
+
 func (s *Shipper) following(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

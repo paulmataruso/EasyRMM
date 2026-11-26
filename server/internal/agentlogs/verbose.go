@@ -101,6 +101,7 @@ func (s *Service) SetDeviceVerbose(ctx context.Context, c access.Caller, deviceI
 	if err != nil {
 		return time.Time{}, fmt.Errorf("agentlogs: turning on verbose mode: %w", err)
 	}
+	s.notifyChange(d.ID)
 	return until, nil
 }
 
@@ -128,6 +129,7 @@ func (s *Service) ClearDeviceVerbose(ctx context.Context, c access.Caller, devic
 	if err != nil {
 		return fmt.Errorf("agentlogs: turning off verbose mode: %w", err)
 	}
+	s.notifyChange(d.ID)
 	return nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -157,6 +158,11 @@ type Runner struct {
 
 	// Channel is the WebSocket channel (ADR-0059); nil never uses one.
 	Channel Channel
+	// Nudge asks for a heartbeat soon, after a pushed repair or settings
+	// change; OnJobsWaiting has the job worker make one ordinary poll. Both
+	// are optional.
+	Nudge         func(reason string)
+	OnJobsWaiting func()
 	// Every, if set, replaces the heartbeat interval the server names (tests).
 	Every time.Duration
 	// MinWake is the least time between a wake's heartbeat and the one
@@ -196,6 +202,7 @@ type Runner struct {
 	invStale    atomic.Bool
 	// meshErr is the last failure of installing MeshAgent, for its state.
 	meshErr string
+	meshMu  sync.Mutex
 	repair  repairs
 	// settled: Settled has returned true.
 	settled bool
@@ -345,6 +352,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	r.failures = 0
 	if r.Channel != nil {
 		r.Channel.Answered(resp, len(req.Channel) > 0)
+	}
+	if resp.JobsWaiting && r.OnJobsWaiting != nil {
+		r.OnJobsWaiting()
 	}
 	r.defendAnswered(resp.Defender)
 	if resp.RescanRoles && r.Roles != nil {
@@ -520,6 +530,11 @@ func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte
 // the server signed them with the pinned job key and they are the settings
 // the heartbeat announced.
 func (r *Runner) applyMeshSettings(ctx context.Context, want string) error {
+	r.meshMu.Lock() // a pushed change and a heartbeat's may arrive together
+	defer r.meshMu.Unlock()
+	if want == r.Mesh.AppliedSettings() {
+		return nil
+	}
 	key := r.Key()
 	if key == nil {
 		return errors.New("no server key is pinned yet to check MeshAgent's settings with")

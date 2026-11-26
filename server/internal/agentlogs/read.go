@@ -185,13 +185,21 @@ func (s *Service) Read(ctx context.Context, c access.Caller, deviceID uuid.UUID,
 		limit = DefaultPage
 	}
 	if follow {
+		started := false
 		err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `INSERT INTO agent_log_follow (device_id, until) VALUES ($1, now() + $2::interval)
-				ON CONFLICT (device_id) DO UPDATE SET until = excluded.until`, deviceID, FollowFor)
-			return err
+			// A follow that was not running starts one, which the agent is
+			// told of at once (ADR-0059); one that is only extended is not.
+			return tx.QueryRow(ctx, `WITH old AS (SELECT until FROM agent_log_follow WHERE device_id = $1 FOR UPDATE),
+				up AS (INSERT INTO agent_log_follow (device_id, until) VALUES ($1, now() + $2::interval)
+					ON CONFLICT (device_id) DO UPDATE SET until = excluded.until RETURNING 1)
+				SELECT NOT EXISTS (SELECT 1 FROM old WHERE until > now() + $3::interval) FROM up`,
+				deviceID, FollowFor, FollowFor/2).Scan(&started)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("agentlogs: marking a follow: %w", err)
+		}
+		if started {
+			s.notifyChange(deviceID)
 		}
 	}
 	cond, args := q.where([]any{deviceID})

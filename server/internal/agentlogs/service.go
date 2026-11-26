@@ -50,6 +50,19 @@ type Service struct {
 	audit     *audit.Logger
 	retention time.Duration
 	log       *slog.Logger
+	changed   func(device uuid.UUID)
+}
+
+// OnChange has f called with a device when what its agent is to log changed:
+// verbose mode turned on or off, or someone started following. The agent
+// channel (ADR-0059) pushes the new instructions then; the heartbeat finds
+// them anyway.
+func (s *Service) OnChange(f func(device uuid.UUID)) { s.changed = f }
+
+func (s *Service) notifyChange(device uuid.UUID) {
+	if s.changed != nil {
+		s.changed(device)
+	}
 }
 
 // New builds the service. Records are kept retentionDays days, which New

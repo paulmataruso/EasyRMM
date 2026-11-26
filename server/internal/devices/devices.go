@@ -371,11 +371,12 @@ func scan(row pgx.Row) (*Device, error) {
 
 // Service reads the device inventory.
 type Service struct {
-	db     *database.DB
-	remote bool
-	builds BuildLookup
-	audit  *audit.Logger
-	moved  func()
+	db           *database.DB
+	remote       bool
+	builds       BuildLookup
+	audit        *audit.Logger
+	moved        func()
+	movedDevices func([]uuid.UUID)
 }
 
 // New returns a Service. remote says whether remote access is enabled on
