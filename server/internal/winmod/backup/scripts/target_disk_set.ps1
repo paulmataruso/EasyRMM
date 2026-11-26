@@ -15,7 +15,8 @@ try {
     if ($id -ne [string](Get-Prop $p 'diskId')) { Stop-Result 'disk_changed' 'The disk with that number is not the one that was chosen. Read the disks again.' }
     $target = New-WBBackupTarget -Disk $disk
     foreach ($t in @(Get-WBBackupTarget -Policy $pol -ErrorAction SilentlyContinue)) { Remove-WBBackupTarget -Policy $pol -Target $t | Out-Null }
-    Add-WBBackupTarget -Policy $pol -Target $target | Out-Null
+    # A disk target asks whether it may be formatted; with no console the answer is -Force (found on a real server).
+    Add-WBBackupTarget -Policy $pol -Target $target -Force | Out-Null
     Set-WBPolicy -Policy $pol -Force | Out-Null
     Write-Result $true ([ordered]@{ done = $true }) $null $null
 } catch {

@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-Flag($o, $name) {
@@ -109,12 +109,20 @@ foreach ($rf in @("$pdDir\EasyRMM\Agent\defender-exclusions.json", "$pdDir\EasyP
 function Test-Ours($kind, $value) { return $ours[$kind].ContainsKey((Get-Norm $value)) }
 function Get-OursPaths($kind) { return @($ours[$kind].Keys) }
 
+function Test-ListAvailable($pref, $name) {
+    if ($null -eq $pref -or $null -eq $pref.PSObject.Properties[$name]) { return $false }
+    $v = $pref.$name
+    if ($null -eq $v) { return $true }
+    return (@($v | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'N/A:*' }).Count -eq 0)
+}
 # Defender answers "N/A: Must be an administrator or have Tamper Protection..." for what it will not show: unavailable, not empty.
 function Get-List($pref, $name) {
+    # A list that is empty is $null on a real computer, though its property is there: only a missing property, or
+    # the "N/A" text, makes a list unavailable (Test-ListAvailable).
     $v = Get-Prop $pref $name
     if ($null -eq $v) { return $null }
     $items = @($v | ForEach-Object { [string]$_ })
-    if ($items.Count -gt 0 -and ($items | Where-Object { $_ -like 'N/A:*' }).Count -gt 0) { return $null }
+    if ($items.Count -gt 0 -and @($items | Where-Object { $_ -like 'N/A:*' }).Count -gt 0) { return $null }
     return $items
 }
 $listSpec = @{
@@ -136,7 +144,7 @@ try {
         exit 0
     }
     $pref = Get-MpPreference
-    if ($null -eq (Get-Prop $pref 'AttackSurfaceReductionRules_Ids')) {
+    if ($null -eq $pref.PSObject.Properties['AttackSurfaceReductionRules_Ids']) {
         Write-Result $false $null 'unsupported' 'This computer does not support Attack Surface Reduction rules.'
         exit 0
     }
@@ -149,6 +157,8 @@ try {
         # Turning a rule on must not block our own agents: every one of our ASR exclusions has to be listed already.
         $listed = @((Get-List $pref 'AttackSurfaceReductionOnlyExclusions') | ForEach-Object { Get-Norm $_ })
         foreach ($need in (Get-OursPaths 'asr_only')) {
+            # Only what is on this computer has to be covered: a fixed path of a product that is not installed has nothing to block.
+            if (-not (Test-Path -LiteralPath $need)) { continue }
             if ($listed -notcontains $need) {
                 Write-Result $false $null 'ours_not_covered' 'EasyRMM''s own folders are not all excluded from Attack Surface Reduction yet, so this rule could block the agents. Nothing was changed.'
                 exit 0

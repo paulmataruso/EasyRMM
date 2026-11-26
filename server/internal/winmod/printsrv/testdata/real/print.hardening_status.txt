@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"restrictDriverInstall":null,"noWarningNoElevation":null,"updatePromptSettings":null,"weakened":false,"spoolerRunning":true,"domainController":true},"error":null}

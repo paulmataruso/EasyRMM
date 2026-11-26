@@ -1018,3 +1018,11 @@ Read on 2026-11-26 unless marked *not re-read*:
   `docs/architecture/feature-plan-msp.md` (feature 12),
   `server/internal/rbac/rbac.go`, `server/internal/monitoring/policies.go`,
   `server/internal/devscope/devscope.go`.
+
+## Amended after the first run on a real domain controller (2026-11-26, decided in review)
+
+*Amended 2026-11-26 (decided in review):* every Active Directory action was run on a Windows Server 2025 domain controller (its own forest), in Windows PowerShell 5.1, as SYSTEM through a scheduled task, as the agent runs it.
+
+* **The SYSTEM write gate is open.** SYSTEM, with no stored credential, created a user (with a password) and a group, set attributes, moved a user to an OU, disabled, enabled, unlocked and reset the password of a user, added and removed a group member, disabled a computer and deleted the group and the user. In the directory's own audit (events 4724 and 4725 were read) the subject is the controller's computer account (`<controller>$`), not the technician, as section 3 expected. `Get-ADDomainController -Identity <this computer's name>` works. The per-request credential fallback was not needed; its path (`credUser` and `credPassword`) was not run. The refusals of the protected built-in Administrator and of a privileged group were seen.
+* **`Get-ADReplicationFailure` and `Get-ADReplicationPartnerMetadata` take no `-Server`.** They take `-EnumeratingServer` and `-EnumerationServer`; with `-Server` the replication check of `health_read` always said `could_not_run`. Fixed in `src/health_read.body` (and the generated script and pin). On a single-controller forest, both return nothing and the check says `not_applicable`.
+* Not run: more than one controller (replication partners and failures), the 20,000-object bound, a read-only controller, gMSA and managed service accounts.

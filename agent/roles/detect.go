@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -59,7 +60,12 @@ type Inputs struct {
 	// PrintShared: the Print$ share exists or a printer carries the shared
 	// flag.
 	PrintShared bool
-	Defender    Defender
+	// PrintQueue: a printer queue on a real port (not the PDF, XPS, fax or
+	// file ports every server has), shared or not: an installed Print
+	// Server role with a printer is the role in use, though nothing is
+	// shared yet.
+	PrintQueue bool
+	Defender   Defender
 }
 
 // Evaluate returns the roles the inputs show, in the order of
@@ -92,7 +98,7 @@ func Evaluate(in Inputs) []agentproto.Role {
 	if server && running("LanmanServer") && in.Shares > 0 {
 		add(agentproto.RoleFileServer, agentproto.RolePresent, "")
 	}
-	if server && running("Spooler") && in.PrintShared {
+	if server && running("Spooler") && (in.PrintShared || in.PrintQueue) {
 		add(agentproto.RolePrintServer, agentproto.RolePresent, "")
 	}
 	switch {
@@ -137,4 +143,23 @@ func ParseDefender(b []byte) (Defender, error) {
 		return Defender{}, errors.New("roles: Defender reported no running mode")
 	}
 	return Defender{Read: true, RunningMode: v.Mode, Version: v.Version}, nil
+}
+
+// virtualPrintPorts are the ports of printers that print to nothing a print
+// server serves: the print-to-PDF, XPS and fax queues and a null port.
+var virtualPrintPorts = []string{"portprompt:", "nul:", "xpsport:", "shrfax:", "file:", "microsoft.windows.printing.pdf"}
+
+// realPrintPort says whether a port is one a print server's printers use
+// rather than one of the virtual ports.
+func realPrintPort(port string) bool {
+	p := strings.ToLower(strings.TrimSpace(port))
+	if p == "" {
+		return false
+	}
+	for _, v := range virtualPrintPorts {
+		if strings.HasPrefix(p, v) {
+			return false
+		}
+	}
+	return true
 }

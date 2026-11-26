@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"ours_not_covered","message":"EasyRMM\u0027s own programs are not all allowed through Controlled Folder Access yet, so it could block the agents. Nothing was changed."}}

@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"printer":"WtPrinter","jobs":[{"id":2,"status":"Normal","sizeBytes":57686,"pages":1,"submitted":"2026-11-26T13:10:08Z","ageMinutes":0},{"id":3,"status":"Normal","sizeBytes":58342,"pages":1,"submitted":"2026-11-26T13:10:23Z","ageMinutes":0}],"total":2},"error":null}

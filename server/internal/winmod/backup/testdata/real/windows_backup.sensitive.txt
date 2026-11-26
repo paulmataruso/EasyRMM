@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"targets":[{"path":"\\\\?\\Volume{6ad2572f-f24f-47a1-9ac3-ea6efaf06667}","label":"WSBackup","kind":"local"}],"include":["C:\\Shares\\WtShare"],"exclude":[]},"error":null}

@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"protected_record","message":"This name is the zone apex or helps computers find domain controllers; this console does not remove it."}}

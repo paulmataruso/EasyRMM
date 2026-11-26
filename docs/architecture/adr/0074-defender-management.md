@@ -973,3 +973,13 @@ design relies on; confirm before building):
 * Repository: `agent/defender`, `internal/agentproto/defender.go`,
   `internal/winpolicy`, `server/internal/monitoring/policies.go`,
   `server/internal/rbac/rbac.go`.
+
+## Amended after the first run on a real server (2026-11-26, decided in review)
+
+*Amended 2026-11-26 (decided in review):* every Defender action was run on Windows Server 2025 as SYSTEM in Windows PowerShell 5.1. Defender's settings were changed and put back. What the real Defender showed:
+
+* **An empty list is `$null`, not an empty array, though its property is there** (`ExclusionExtension`, `ControlledFolderAccessProtectedFolders`, `AttackSurfaceReductionRules_Ids`). The scripts read that as "this computer does not support this list" (`unsupported`, or `unavailable` in `exclusions_read`, or `supported: false` in `asr_read`). A list is now unavailable only when its property is missing or holds the `N/A:` text (`Test-ListAvailable`), and support is a property test.
+* **`.Count` of an empty `Where-Object` result** threw under StrictMode in Windows PowerShell 5.1 (`exclusions_read`, `cfa_read`, and `exclusion_remove`, which answered `command_failed` where `not_in_list` is right). Taken of `@(...)` now.
+* **`cfa_set` and `asr_set` ask that our own programs and folders be covered before a protection is turned on.** The fixed set names the EasyPatch agent too, which most computers do not have; the check now asks only for what is on the computer (`Test-Path`). On the test server the EasyPatch agent is installed and not covered, so the refusal `ours_not_covered` is correct there, and the action ran after the coverage was added.
+* Run and found right: status, every read, preferences set and weaken (a value, a number and a boolean), the exclusions of all four kinds with the protected and `not_in_list` refusals, the Attack Surface Reduction rule on Warn and off, Controlled Folder Access folders and programs, a custom scan, cancel, a signature update, the threat list, removing threats and restoring an item (with the EICAR test string, quarantined and restored). `asr_weaken` leaves the rule in the list with the mode Disabled; no action removes a rule.
+* Not run: the quick and the full scan (the custom scan is the same code path; a full scan takes hours on a server), Tamper Protection on (this server has it off, so `managed_by_policy` through Tamper Protection is only unit-tested).

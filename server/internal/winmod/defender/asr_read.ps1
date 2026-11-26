@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-Flag($o, $name) {
@@ -66,12 +66,12 @@ try {
     $pref = Get-MpPreference
     $ids = Get-Prop $pref 'AttackSurfaceReductionRules_Ids'
     $acts = Get-Prop $pref 'AttackSurfaceReductionRules_Actions'
-    if ($null -eq $ids) {
+    if ($null -eq $pref.PSObject.Properties['AttackSurfaceReductionRules_Ids']) {
         Write-Result $true ([ordered]@{ supported = $false; rules = @() }) $null $null
         exit 0
     }
-    $ids = @($ids)
-    $acts = @($acts)
+    $ids = @(@($ids) | Where-Object { $null -ne $_ })
+    $acts = @(@($acts) | Where-Object { $null -ne $_ })
     $modes = @{ '0' = 'Disabled'; '1' = 'Enabled'; '2' = 'AuditMode'; '6' = 'Warn' }
     $rules = @()
     for ($i = 0; $i -lt $ids.Count; $i++) {

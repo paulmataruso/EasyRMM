@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"request":{"id":18,"requester":"CONTOSO\\Administrator","template":"Key Recovery Agent","submitted":"2026-11-26T13:27:00Z","serial":"","notAfter":"2028-11-25T13:17:00Z","commonName":"Users+Administrator","revokedWhen":null,"revokedReason":null,"disposition":"pending"}},"error":null}

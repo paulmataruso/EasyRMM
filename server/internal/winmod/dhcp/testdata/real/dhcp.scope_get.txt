@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"scopeId":"10.98.98.0","name":"WtScope","description":"","state":"Inactive","startRange":"10.98.98.10","endRange":"10.98.98.50","subnetMask":"255.255.255.0","leaseDurationSeconds":28800,"free":0,"inUse":0,"percentageInUse":0},"error":null}

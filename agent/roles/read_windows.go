@@ -4,6 +4,7 @@ package roles
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -58,20 +59,30 @@ func Read(ctx context.Context) (Inputs, error) {
 			in.Shares++
 		}
 	}
-	if !in.PrintShared {
-		in.PrintShared = sharedPrinter()
-	}
+	in.PrintShared, in.PrintQueue = printerState()
 	if in.Services["WinDefend"].Installed() {
 		in.Defender = queryDefender(ctx)
 	}
 	return in, nil
 }
 
+// serviceState opens the service for reading its status only: the default
+// access, all of it, is refused for a protected service such as WinDefend,
+// which then looked as if it were not installed.
 func serviceState(m *mgr.Mgr, name string) Service {
-	s, err := m.OpenService(name)
+	n, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return Missing
 	}
+	h, err := windows.OpenService(m.Handle, n, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return Missing
+		}
+		// The service is there; what it is doing cannot be read.
+		return Stopped
+	}
+	s := &mgr.Service{Name: name, Handle: h}
 	defer func() { _ = s.Close() }()
 	st, err := s.Query()
 	if err != nil {
@@ -126,11 +137,14 @@ func regValueNames(path string) []string {
 // Attributes value.
 const printerShared = 0x8
 
-func sharedPrinter() bool {
+// printerState reads the printer queues: whether one is shared, and whether
+// one is on a real port. It is only a guess at what an admin set up, so a
+// queue that cannot be read is skipped.
+func printerState() (shared, queue bool) {
 	const path = `SYSTEM\CurrentControlSet\Control\Print\Printers`
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.ENUMERATE_SUB_KEYS)
 	if err != nil {
-		return false
+		return false, false
 	}
 	defer func() { _ = k.Close() }()
 	names, _ := k.ReadSubKeyNames(-1)
@@ -139,13 +153,17 @@ func sharedPrinter() bool {
 		if err != nil {
 			continue
 		}
-		v, _, err := p.GetIntegerValue("Attributes")
+		v, _, aerr := p.GetIntegerValue("Attributes")
+		port, _, perr := p.GetStringValue("Port")
 		_ = p.Close()
-		if err == nil && v&printerShared != 0 {
-			return true
+		if aerr == nil && v&printerShared != 0 {
+			shared = true
+		}
+		if perr == nil && realPrintPort(port) {
+			queue = true
 		}
 	}
-	return false
+	return shared, queue
 }
 
 const defenderScript = `$ErrorActionPreference='Stop'; Get-CimInstance -Namespace root/Microsoft/Windows/Defender -ClassName MSFT_MpComputerStatus | Select-Object -First 1 AMRunningMode,AMProductVersion | ConvertTo-Json -Compress`

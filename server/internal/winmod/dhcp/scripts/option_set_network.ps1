@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-ServiceState([string]$name) {
@@ -80,5 +80,10 @@ try {
     Set-DhcpServerv4OptionValue @q
     Write-Result $true ([ordered]@{ count = 1 }) $null $null
 } catch {
+    # The server tests each DNS server it is given and refuses one that does not answer (found on a real server).
+    if ([string]$_.Exception.Message -match 'not a valid DNS server') {
+        Write-Result $false $null 'invalid_dns_server' 'The DHCP server could not reach that DNS server, so it did not set the option.'
+        exit 0
+    }
     Write-Result $false $null 'command_failed' ('Setting the gateway or DNS server option failed: ' + $_.Exception.GetType().Name)
 }

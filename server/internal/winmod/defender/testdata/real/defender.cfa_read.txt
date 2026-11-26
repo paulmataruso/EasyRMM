@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"supported":true,"mode":"Disabled","managedBy":null,"protectedFolders":[],"allowedApplications":[{"path":"C:\\Program Files\\EasyRMM\\Agent\\easyrmm-agent.exe","ours":true},{"path":"C:\\Program Files\\EasyRMM\\MeshAgent\\meshagent.exe","ours":true}]},"error":null}

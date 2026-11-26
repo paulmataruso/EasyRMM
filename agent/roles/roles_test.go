@@ -49,6 +49,9 @@ func TestEvaluate(t *testing.T) {
 		{"desktop with a share is not a file server", Inputs{ProductType: ProductClient, Services: svcs([]string{"LanmanServer"}), Shares: 1}, []string{"windows_backup:unconfigured"}},
 		{"print spooler without a shared printer", Inputs{ProductType: ProductServer, Services: svcs([]string{"Spooler"})}, []string{"windows_backup:not_installed"}},
 		{"print server", Inputs{ProductType: ProductServer, Services: svcs([]string{"Spooler"}), PrintShared: true}, []string{"print_server:present", "windows_backup:not_installed"}},
+		{"print queue on a real port, nothing shared yet", Inputs{ProductType: ProductServer, Services: svcs([]string{"Spooler"}), PrintQueue: true}, []string{"print_server:present", "windows_backup:not_installed"}},
+		{"print queue on a desktop", Inputs{ProductType: ProductClient, Services: svcs([]string{"Spooler"}), PrintQueue: true}, []string{"windows_backup:unconfigured"}},
+		{"print queue but the spooler is stopped", Inputs{ProductType: ProductServer, Services: svcs(nil, "Spooler"), PrintQueue: true}, []string{"windows_backup:not_installed"}},
 		{"print spooler on a desktop", Inputs{ProductType: ProductClient, Services: svcs([]string{"Spooler"}), PrintShared: true}, []string{"windows_backup:unconfigured"}},
 		{"backup on a server needs the product type, not only the service", Inputs{ProductType: ProductServer, Services: svcs(nil, "wbengine")}, []string{"windows_backup:present"}},
 		{"desktop backup with File History", Inputs{ProductType: ProductClient, Services: svcs([]string{"fhsvc"}, "wbengine")}, []string{"windows_backup:present"}},
@@ -141,5 +144,17 @@ func TestScannerNeverReadSendsNothing(t *testing.T) {
 	s := &Scanner{Read: func(context.Context) (Inputs, error) { return Inputs{}, errors.New("x") }}
 	if got := s.Roles(context.Background()); got != nil {
 		t.Fatalf("a first failure must report no roles, got %v", got)
+	}
+}
+
+func TestRealPrintPort(t *testing.T) {
+	for port, want := range map[string]bool{
+		"C:\\Windows\\Temp\\testprinter.prn": true, "IP_10.1.2.3": true, "LPT1:": true, "USB001": true, "WSD-1234": true,
+		"PORTPROMPT:": false, "nul:": false, "XPSPort:": false, "SHRFAX:": false, "FILE:": false, "": false, "  ": false,
+		"Microsoft.Windows.Printing.PDF.Port": false,
+	} {
+		if got := realPrintPort(port); got != want {
+			t.Errorf("realPrintPort(%q) = %v, want %v", port, got, want)
+		}
 	}
 }

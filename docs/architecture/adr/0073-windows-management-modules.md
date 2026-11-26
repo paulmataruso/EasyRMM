@@ -723,3 +723,12 @@ Amended 2026-11-26 (decided in review, while building slices 8 and 9):
   Overview. Cards on the organization and site pages come with slices 6 and 7
   (they draw from Facts and snapshots, which do not exist yet), so this slice
   builds the device-level frame and its Defender card only.
+
+## Amended after the first run on a real server (2026-11-26, decided in review)
+
+*Amended 2026-11-26 (decided in review):* every module's scripts were run in Windows PowerShell 5.1, as the agent runs them (`ParamsPrologue`, the parameters as ASCII JSON on standard input, as SYSTEM through a scheduled task), on a Windows Server 2025 domain controller of its own forest with every role installed. What it changed:
+
+* **Role detection of `print_server`.** The feature name was not the cause (`Print-Services` and `Print-Server` are both installed there). The rule asked for a *shared* printer, and a server with the role and a printer that nothing shares yet was not reported. It is now: `Spooler` running and either a shared printer (the `Print$` share or the shared flag) or a printer queue on a real port (not `PORTPROMPT:`, `nul:`, `XPSPort:`, `SHRFAX:`, `FILE:`, which every server has). A desktop is still never reported.
+* **Role detection of `defender`.** `WinDefend` was never reported: the service control manager refuses `OpenService` for all access on this protected service, even to SYSTEM, and the agent read a refusal as "not installed". The agent now opens every service for `SERVICE_QUERY_STATUS` only, and tells "does not exist" from "cannot be read".
+* **StrictMode in Windows PowerShell 5.1.** A script with no parameters reads `{}`, and `$o.PSObject.Properties.Name -contains $name` throws `PropertyNotFoundException` on an object with no properties; `(...).Count` on a pipeline that returned nothing throws too. The helper is now `$null -ne $o.PSObject.Properties[$name]` in every script (the Active Directory library already had it), and a count is taken of `@(...)`. This broke every no-parameter read of DHCP, DNS, file sharing, print and backup, and Defender's list reads.
+* Roles detected on that server, all eight: `ad_ds`, `ad_cs`, `dns`, `dhcp`, `file_server`, `print_server`, `windows_backup`, `defender`.

@@ -270,6 +270,7 @@ $r.reason = (Get-RevocationReasonCode 'certificate_hold')
 $r.enrollRight = (Get-RightsIsEnroll 0x100 '0e10c968-78fb-11d2-90d4-00c04f79dc55')
 $r.otherExtended = (Get-RightsIsEnroll 0x100 'a05b8cc2-17bc-4802-a710-e7c15ab866a2')
 $r.writeProp = (Get-RightsIsWrite 0x20); $r.readOnly = (Get-RightsIsWrite 0x1)
+$r.enrollAce = (Get-RightsIsWrite 0x130 '0e10c968-78fb-11d2-90d4-00c04f79dc55'); $r.autoenrollAce = (Get-RightsIsWrite 0x130 'a05b8cc2-17bc-4802-a710-e7c15ab866a2'); $r.otherPropWrite = (Get-RightsIsWrite 0x30 'bf967a68-0de6-11d0-a285-00aa006b3c6b')
 ConvertTo-Json -InputObject $r -Compress
 `
 
@@ -309,7 +310,7 @@ func TestFindingsLogicInPowerShell(t *testing.T) {
 		"esc1": "ESC1", "esc1Approval": "", "esc1Admins": "", "noSubject": "", "esc2": "ESC2", "esc3": "ESC3", "esc4": "ESC4",
 		"risky": true, "notRisky": false, "esc6": "ESC6", "esc6off": "", "esc7": "ESC7", "esc7enroll": "", "esc7deny": "",
 		"restrictId": "RequestID=42", "restrictDisp": "Disposition=9,RequestID>=7", "restrictSerial": "SerialNumber=61AB", "reason": "6",
-		"enrollRight": true, "otherExtended": false, "writeProp": true, "readOnly": false,
+		"enrollRight": true, "otherExtended": false, "writeProp": true, "readOnly": false, "enrollAce": false, "autoenrollAce": false, "otherPropWrite": true,
 	}
 	for k, w := range want {
 		if got[k] != w {

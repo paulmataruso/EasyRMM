@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"threats":[{"id":2147519003,"name":"Virus:DOS/EICAR_Test_File","severity":5,"category":42,"active":false,"executed":false,"detectedAt":null,"changedAt":null}]},"error":null}

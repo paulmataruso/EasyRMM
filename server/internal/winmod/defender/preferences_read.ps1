@@ -9,7 +9,7 @@ function Write-Result($ok, $data, $code, $message) {
     [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 8))
 }
 function Get-Prop($o, $name) {
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-Flag($o, $name) {

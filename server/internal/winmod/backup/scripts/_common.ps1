@@ -8,7 +8,7 @@ function Stop-Result($code, $message) {
     exit 0
 }
 function Get-Prop($o, $name) {
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-First($o, $names) {
@@ -17,6 +17,13 @@ function Get-First($o, $names) {
         if ($null -ne $v) { return $v }
     }
     return $null
+}
+# A job's HResult is a string of hexadecimal digits without 0x ("80780167"), where the summary's is a number: read as
+# an unsigned 32-bit number, so a failure is the same number in both (found on a real server).
+function Get-HexNumber($v) {
+    if ($null -eq $v) { return $null }
+    if ($v -is [string] -and $v -match '^[0-9A-Fa-f]{1,8}$') { return [int64][Convert]::ToUInt32($v, 16) }
+    return Get-Number $v
 }
 function Get-Utc($d) {
     if ($null -eq $d) { return $null }
@@ -72,8 +79,8 @@ function Convert-Job($j) {
         startTime   = Get-Utc (Get-Prop $j 'StartTime')
         endTime     = Get-Utc (Get-Prop $j 'EndTime')
         percent     = $pct
-        hresult     = Get-Number (Get-Prop $j 'HResult')
-        detailedHResult = Get-Number (Get-Prop $j 'DetailedHResult')
+        hresult     = Get-HexNumber (Get-Prop $j 'HResult')
+        detailedHResult = Get-HexNumber (Get-Prop $j 'DetailedHResult')
     }
 }
 function Test-PathUnder([string]$Child, [string]$Parent) {

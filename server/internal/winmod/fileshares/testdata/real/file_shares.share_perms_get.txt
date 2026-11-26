@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"name":"WtShare","entries":[{"account":"BUILTIN\\Administrators","right":"Read","type":"Allow"},{"account":"CONTOSO\\Domain Users","right":"Change","type":"Allow"}]},"error":null}

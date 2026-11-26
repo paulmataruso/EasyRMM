@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"serviceState":"running","printerCount":2,"sharedCount":1,"jobCount":0,"domainController":true},"error":null}

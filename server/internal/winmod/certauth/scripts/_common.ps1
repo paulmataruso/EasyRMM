@@ -12,7 +12,7 @@ function Get-Prop($o, $name) {
         if ($o.Contains($name)) { return $o[$name] }
         return $null
     }
-    if ($null -ne $o -and $o.PSObject.Properties.Name -contains $name) { return $o.$name }
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
     return $null
 }
 function Get-Number($v) {
@@ -102,6 +102,8 @@ function Get-CaCertificates($Ca) {
     $hashes = @(Get-Prop $Ca.Config 'CACertHash')
     foreach ($h in $hashes) {
         $thumb = ($h | ForEach-Object { if ($_ -is [byte]) { $_.ToString('X2') } else { [string]$_ } }) -join ''
+        # CACertHash is a string array of hex bytes with spaces ("94 ca 94 ..."), not a byte array (found on a real CA).
+        $thumb = $thumb -replace '\s', ''
         if (-not $thumb) { continue }
         $c = Get-ChildItem -LiteralPath 'Cert:\LocalMachine\My' | Where-Object { $_.Thumbprint -eq $thumb } | Select-Object -First 1
         if ($null -eq $c) { continue }
@@ -238,8 +240,12 @@ function Get-RightsIsEnroll([int]$Rights, [string]$ObjectType) {
     $isExtended = (($Rights -band 0x100) -ne 0)
     return ($isGeneric -or ($isExtended -and ($ObjectType -eq '0e10c968-78fb-11d2-90d4-00c04f79dc55' -or $ObjectType -eq '00000000-0000-0000-0000-000000000000')))
 }
-function Get-RightsIsWrite([int]$Rights) {
-    return ((($Rights -band 0x10000000) -ne 0) -or (($Rights -band 0x40000000) -ne 0) -or (($Rights -band 0x40000) -ne 0) -or (($Rights -band 0x80000) -ne 0) -or (($Rights -band 0x20) -ne 0))
+function Get-RightsIsWrite([int]$Rights, [string]$ObjectType = '') {
+    # The Enroll and AutoEnroll ACEs of every default template carry WriteProperty (mask 0x130) limited to their own
+    # right's GUID: that is permission to enroll, not to change the template (found on a real CA, where each default
+    # template was flagged ESC4 because of it).
+    $enrollOnly = ($ObjectType -eq '0e10c968-78fb-11d2-90d4-00c04f79dc55' -or $ObjectType -eq 'a05b8cc2-17bc-4802-a710-e7c15ab866a2')
+    return ((($Rights -band 0x10000000) -ne 0) -or (($Rights -band 0x40000000) -ne 0) -or (($Rights -band 0x40000) -ne 0) -or (($Rights -band 0x80000) -ne 0) -or ((($Rights -band 0x20) -ne 0) -and -not $enrollOnly))
 }
 function Get-ConfigPath {
     try {
@@ -269,7 +275,7 @@ function Read-Templates {
                 $sid = [string]$rule.IdentityReference.Value
                 $rights = [int]$rule.ActiveDirectoryRights
                 if (Get-RightsIsEnroll $rights ([string]$rule.ObjectType)) { $enrollSids += $sid }
-                if (Get-RightsIsWrite $rights) { $writeSids += $sid }
+                if (Get-RightsIsWrite $rights ([string]$rule.ObjectType)) { $writeSids += $sid }
             }
         } catch { $enrollSids = @(); $writeSids = @() }
         $out += [pscustomobject]@{
@@ -320,16 +326,23 @@ function Convert-RequestRow($Row) {
     $disp = $null
     if ([string](Get-Prop $Row 'Request.Disposition') -match '^\s*(\d+)') { $disp = [int]$Matches[1] }
     $reason = $null
-    if ([string](Get-Prop $Row 'Request.RevokedReason') -match '^\s*(\d+)') { $reason = [int]$Matches[1] }
+    $reinstated = $false
+    if ([string](Get-Prop $Row 'Request.RevokedReason') -match '^\s*(\d+)') {
+        # A certificate taken off hold shows the reason 4294967295 ("Unrevoke") and a revocation date (found on a real
+        # CA): it is not revoked, so it has neither.
+        if ([int64]$Matches[1] -gt 10) { $reinstated = $true } else { $reason = [int]$Matches[1] }
+    }
     return [ordered]@{
         id = [int64](Get-Number (Get-Prop $Row 'RequestID'))
         requester = [string](Get-Prop $Row 'Request.RequesterName')
-        template = [string](Get-Prop $Row 'CertificateTemplate')
+        # A version 2 or later template shows as "<OID> <display name>"; a version 1 one by its name. EMPTY is certutil's
+        # word for no value (found on a real CA).
+        template = ([string](Get-Prop $Row 'CertificateTemplate') -replace '^\d+(\.\d+)+\s+', '')
         submitted = Get-Utc2 ([string](Get-Prop $Row 'Request.SubmittedWhen'))
-        serial = [string](Get-Prop $Row 'SerialNumber')
+        serial = $(if ([string](Get-Prop $Row 'SerialNumber') -ceq 'EMPTY') { '' } else { [string](Get-Prop $Row 'SerialNumber') })
         notAfter = Get-Utc2 ([string](Get-Prop $Row 'NotAfter'))
         commonName = [string](Get-Prop $Row 'CommonName')
-        revokedWhen = Get-Utc2 ([string](Get-Prop $Row 'Request.RevokedWhen'))
+        revokedWhen = $(if ($reinstated) { $null } else { Get-Utc2 ([string](Get-Prop $Row 'Request.RevokedWhen')) })
         revokedReason = $reason
         disposition = $(if ($null -ne $disp) { Get-DispositionName $disp } else { 'other' })
     }

@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"protected_exclusion","message":"EasyRMM needs this exclusion so Defender does not block its own files; it cannot be removed here."}}

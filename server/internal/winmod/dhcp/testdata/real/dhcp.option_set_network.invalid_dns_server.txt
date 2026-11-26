@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":false,"version":1,"data":null,"error":{"code":"invalid_dns_server","message":"The DHCP server could not reach that DNS server, so it did not set the option."}}

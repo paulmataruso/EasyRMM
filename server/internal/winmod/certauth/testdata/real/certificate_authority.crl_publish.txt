@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"base":{"thisUpdate":"2026-11-26T13:00:00Z","nextUpdate":"2026-12-04T01:20:00Z","hoursToNextUpdate":180,"sizeBytes":1112},"delta":{"thisUpdate":"2026-11-26T13:00:00Z","nextUpdate":"2026-11-28T01:20:00Z","hoursToNextUpdate":36,"sizeBytes":903}},"error":null}

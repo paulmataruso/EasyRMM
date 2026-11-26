@@ -1,0 +1,1 @@
+EASYRMM-WINMOD-RESULT-V1 {"ok":true,"version":1,"data":{"serviceState":"running","shareCount":7,"userShareCount":1,"sessionCount":0,"openFileCount":0,"smb1Enabled":false,"signingRequired":true,"encryptionRequired":false},"error":null}
