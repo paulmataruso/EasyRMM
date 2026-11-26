@@ -373,6 +373,59 @@ jobs:
             -Environment 'EASYRMM_TEST_SYSTEM=1', "EASYRMM_TEST_AGENT_EXE=$env:RUNNER_TEMP\easyrmm-agent.exe"
           exit $LASTEXITCODE
 
+  # ADR-0068: the event viewer's builtin on a real Windows, as LocalSystem, on
+  # x64 and ARM64. The test binaries of agent/winevent and agent/jobs run
+  # through a scheduled task with EASYRMM_TEST_SYSTEM set; the tests write
+  # events into the Application log under a source of their own, read the
+  # channel list, the Security log (allowed and refused), a provider's metadata
+  # and cancel a search of a large log. The agent program is built here too, so
+  # that a job runs "easyrmm-agent.exe builtin eventlog" as it does on a
+  # computer, with a pipe on its input.
+  windows-eventlog:
+    name: Event viewer as LocalSystem (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: powershell
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build the tests and the agent
+        run: |
+          go test -c -o "$env:RUNNER_TEMP\winevent.test.exe" ./agent/winevent
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test -c -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-X main.Version=0.0.0-eventlog-test" -o "$env:RUNNER_TEMP\easyrmm-agent.exe" ./agent/cmd/easyrmm-agent
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: The builtin's reads, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\winevent.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.timeout=20m', '-test.run=AsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\winevent" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1' -TimeoutMinutes 22
+          exit $LASTEXITCODE
+      - name: A job runs the agent's builtin and cancels it through its input, as LocalSystem
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=EventlogBuiltinAsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
+            -Environment 'EASYRMM_TEST_SYSTEM=1', "EASYRMM_TEST_AGENT_EXE=$env:RUNNER_TEMP\easyrmm-agent.exe"
+          exit $LASTEXITCODE
+
   # ADR-0070: the agent's Microsoft Defender exclusions on a real Windows
   # with Defender running, not mocked. Step 0 runs the install script a
   # server hands out against a stand-in and proves its order and its

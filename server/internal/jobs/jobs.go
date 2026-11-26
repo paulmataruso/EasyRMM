@@ -443,6 +443,11 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 			for k, v := range sp.details {
 				details[k] = v
 			}
+			if sp.auditAction == "" {
+				// A next page of an event query is covered by its first page's
+				// record (ADR-0068, Audit).
+				continue
+			}
 			if err := s.audit.Write(ctx, tx, audit.Event{
 				Actor: c.Actor, Action: sp.auditAction, Outcome: audit.Success,
 				OrganizationID: t.org, SiteID: t.site, DeviceID: t.id, TargetType: "job_run", TargetID: runID.String(),
@@ -702,9 +707,9 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 		return nil, apperr.Invalid("status", "Use open or finished.")
 	}
 	switch q.Kind {
-	case "", KindScript, KindSoftware, KindHardening, KindWinmod, KindFilterRegistry, KindRegistryQuery, KindRegistryChange:
+	case "", KindScript, KindSoftware, KindHardening, KindWinmod, KindFilterRegistry, KindFilterEventlog, KindRegistryQuery, KindRegistryChange, KindEventlogQuery:
 	default:
-		return nil, apperr.Invalid("kind", "Use script, software, hardening or registry.")
+		return nil, apperr.Invalid("kind", "Use script, software, hardening, registry or eventlog.")
 	}
 	if !c.CanAnywhere(rbac.PermJobView) {
 		return []*Job{}, nil
@@ -724,13 +729,13 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			  AND ($3 = '' OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running')) = ($3 = 'open'))
 			  AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.organization_id = $5))
 			  AND ($6::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.site_id = $6))
-			  AND ($7 = '' OR j.kind = $7 OR ($7 = 'registry' AND j.kind IN ('registry_query', 'registry_change')))
+			  AND ($7 = '' OR j.kind = $7 OR ($7 = 'registry' AND j.kind IN ('registry_query', 'registry_change')) OR ($7 = 'eventlog' AND j.kind = 'eventlog_query'))
 			  AND ($8::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r JOIN devices rd ON rd.id = r.device_id
 			        WHERE r.job_id = j.id AND rd.device_group_id = $8))
 			  AND (NOT j.hidden OR $9)
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
 			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind,
-			nullUUID(q.GroupID), (q.Kind == KindWinmod || q.Kind == KindFilterRegistry || isStructured(q.Kind)) && c.CanAnywhere(rbac.PermJobViewSensitive))
+			nullUUID(q.GroupID), (q.Kind == KindWinmod || q.Kind == KindFilterRegistry || q.Kind == KindFilterEventlog || isStructured(q.Kind)) && c.CanAnywhere(rbac.PermJobViewSensitive))
 		if err != nil {
 			return err
 		}

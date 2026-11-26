@@ -117,6 +117,8 @@ const (
 	ExecutorBuiltin = "builtin"
 	// BuiltinRegistry is the registry editor's builtin.
 	BuiltinRegistry = "registry"
+	// BuiltinEventlog is the event viewer's builtin (ADR-0068).
+	BuiltinEventlog = "eventlog"
 	// LaneQuick marks a run of at most QuickSeconds, which the agent keeps
 	// slots for beside its others.
 	LaneQuick    = "quick"

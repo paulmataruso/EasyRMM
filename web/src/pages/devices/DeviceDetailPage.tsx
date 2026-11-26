@@ -24,6 +24,7 @@ import { PosturePanel } from "./PosturePanel";
 import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
 import { RegistryPanel } from "./registry/RegistryTab";
+import { EventLogPanel } from "./eventlog/EventLogTab";
 import { DefenderPanel } from "./DeviceDefender";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
@@ -99,6 +100,9 @@ export function DeviceDetailPage() {
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
     // The registry editor (ADR-0067): Windows devices with the agent, for holders of registry.view at the device's site.
     { id: "registry", label: "Registry", hidden: !hasAgent || d.platform !== "windows" || !atDevice("registry.view") },
+    // The event viewer (ADR-0068): Windows devices with the agent, for holders of eventlog.view at the device's site. The
+    // Logs tab above is the agent's own log (ADR-0069), so this one is its own tab.
+    { id: "eventlog", label: "Event logs", hidden: !hasAgent || d.platform !== "windows" || !atDevice("eventlog.view") },
     // Compliance (ADR-0078): hidden where the module is off or the viewer may not see its results.
     { id: "compliance", label: "Compliance", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") || !complianceOn },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
@@ -229,6 +233,12 @@ export function DeviceDetailPage() {
       {tab === "registry" && (
         <div role="tabpanel" aria-labelledby="tab-registry">
           <RegistryPanel device={d} />
+        </div>
+      )}
+
+      {tab === "eventlog" && (
+        <div role="tabpanel" aria-labelledby="tab-eventlog">
+          <EventLogPanel device={d} />
         </div>
       )}
 
