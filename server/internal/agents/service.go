@@ -70,6 +70,9 @@ type Service struct {
 	removed func()
 	// gone is called with a device's id once it was deleted.
 	gone func(uuid.UUID)
+	// wake is called when something a heartbeat answer carries became due
+	// for a device (OnWake).
+	wake func(id uuid.UUID, reason string)
 	// meshBins keeps the MeshAgent binaries fetched from MeshCentral.
 	meshBins meshCache
 	// scope decides where the agent may manage Defender exclusions and
@@ -83,6 +86,9 @@ type Service struct {
 	// roles stores what a heartbeat reports of the device's Windows roles
 	// (ADR-0073); nil ignores them.
 	roles RoleStore
+	// dlog stores the Defender events an agent sends (ADR-0074); nil
+	// ignores them.
+	dlog DefenderLog
 }
 
 // RoleStore keeps the roles an agent reported (modules.Service). It runs in
@@ -101,6 +107,11 @@ func (s *Service) OnRemoved(f func()) { s.removed = f }
 // OnDeviceGone has f called with a device's id once it was deleted, such as
 // to close its agent channel connection (ADR-0059).
 func (s *Service) OnDeviceGone(f func(uuid.UUID)) { s.gone = f }
+
+// OnWake has f called when something the heartbeat answer carries became due
+// for a device, such as its removal, so that its agent can check in at once
+// (ADR-0059). The heartbeat carries it anyway.
+func (s *Service) OnWake(f func(id uuid.UUID, reason string)) { s.wake = f }
 
 // SetSealer keeps new tokens' secrets, sealed with sl, so that their install
 // commands can be shown again (ADR-0047).

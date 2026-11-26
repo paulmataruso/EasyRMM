@@ -3359,6 +3359,22 @@ dpkg_audit_names() {
 		awk '!s[$0]++ && n < 50 && l + length($0) + 1 <= 2000 { printf "%s%s", (n ? " " : ""), $0; n++; l += length($0) + 1 }'
 }
 
+# pkg_apt_install PACKAGE...: apt-get install, retrying fetches (a mirror
+# that flakes); an installation that still fails with "Failed to fetch"
+# gets one fresh apt-get update (the mirror may have moved on) and one more
+# try. The status is the last try's.
+pkg_apt_install() {
+	pai_install() {
+		t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" -o Acquire::Retries=3 --no-install-recommends \
+			--no-remove -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
+	}
+	pai_install "$@" && return 0
+	pai_rc=$?
+	grep -q 'Failed to fetch' "$TX_DIR/pkg.log" || return "$pai_rc"
+	t 600 apt-get -q -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" -o Acquire::Retries=3 update || :
+	pai_install "$@"
+}
+
 # pkg_install PACKAGE...: installs them, refreshing the package lists first,
 # and records every package that installation added (a token each, see
 # PKG_TOKEN), and what else it changed (pkg_record_new). It never removes a
@@ -3379,7 +3395,7 @@ pkg_install() {
 	pi_min=10
 	if [ "$PKG_REFRESHED" = no ]; then
 		case $FAMILY in
-		debian) t 600 apt-get -q -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" update ;;
+		debian) t 600 apt-get -q -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" -o Acquire::Retries=3 update ;;
 		*) t 600 dnf -q -y makecache ;;
 		esac >"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?
 		PKG_REFRESHED=yes
@@ -3392,8 +3408,7 @@ pkg_install() {
 		pi_min=25
 		case $FAMILY in
 		debian)
-			t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" --no-install-recommends \
-				--no-remove -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
+			pkg_apt_install "$@"
 			;;
 		*) t 1500 dnf -q -y --setopt=install_weak_deps=False install "$@" ;;
 		esac >>"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?

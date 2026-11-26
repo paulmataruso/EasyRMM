@@ -77,6 +77,9 @@ func (s *Service) RequestRemoval(ctx context.Context, c access.Caller, deviceID 
 	if err != nil {
 		return "", err
 	}
+	if s.wake != nil {
+		s.wake(d.ID, "removal") // the agent's next heartbeat carries the uninstall
+	}
 	return RemovalAsked, nil
 }
 

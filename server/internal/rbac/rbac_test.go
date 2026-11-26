@@ -388,6 +388,7 @@ func TestPlacement(t *testing.T) {
 func TestWindowsModulePermissions(t *testing.T) {
 	all := []Permission{
 		PermDefenderView, PermDefenderManage, PermADView, PermADManage, PermADResetPassword, PermADViewSensitive, PermADHelpdesk,
+		PermDefenderViewSensitive, PermDefenderWeaken,
 		PermCAView, PermCAManage, PermDNSView, PermDNSManage, PermDHCPView, PermDHCPManage,
 		PermSharesView, PermSharesManage, PermPrintView, PermPrintManage, PermBackupView, PermBackupManage,
 	}
@@ -399,7 +400,8 @@ func TestWindowsModulePermissions(t *testing.T) {
 		},
 	}
 	want[RoleSiteAdmin] = append(slices.Clone(want[RoleTechnician]),
-		PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADViewSensitive)
+		PermDNSManage, PermDHCPManage, PermSharesManage, PermCAView, PermDNSView, PermSharesView, PermADViewSensitive,
+		PermDefenderViewSensitive, PermDefenderWeaken)
 	want[RoleOrgAdmin] = append(slices.Clone(want[RoleSiteAdmin]), PermCAManage, PermADManage, PermADResetPassword)
 	want[RoleSuperAdmin] = all
 	for role, held := range want {

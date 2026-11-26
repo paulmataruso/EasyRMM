@@ -45,6 +45,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/update"
+	"github.com/paulmataruso/easyrmm/agent/winevents"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -224,6 +225,7 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 			err = state.ErrNotEnrolled
 		}
 	}
+	fresh := false
 	switch {
 	case err == nil && waiting != nil:
 		if waiting.Server != mustServer(*server) {
@@ -249,6 +251,7 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		if cfg, waiting, err = e.register(ctx, *server, tok, *caFile, service); err != nil {
 			return err
 		}
+		fresh = true
 		if waiting != nil {
 			_, _ = fmt.Fprintf(e.stdout, "Waiting for approval in the EasyRMM console at %s. Device code: %s\n", waiting.Server, waiting.Code)
 			if !service {
@@ -267,6 +270,11 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	// (ADR-0070).
 	e.defenderInstall(ctx)
 	if err := e.putService(ctx); err != nil {
+		// A failed install leaves no service, process or file it made: on a
+		// machine this run enrolled, take back what putService may have put.
+		if fresh {
+			e.rollbackInstall(ctx)
+		}
 		return err
 	}
 	svc := e.paths.AgentService()
@@ -279,6 +287,18 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		_, _ = fmt.Fprintln(e.stdout, "It finishes enrolling on its own once the device is approved.")
 	}
 	return nil
+}
+
+// rollbackInstall undoes a failed install on a machine this run enrolled:
+// the service stopped and deleted, then the agent's files. Failures are
+// logged; the install's own error is the one reported.
+func (e *env) rollbackInstall(ctx context.Context) {
+	if err := e.sd.Remove(ctx, e.paths.AgentService().Name); err != nil {
+		e.log.Warn("could not remove the service of the failed install", "error", err)
+	}
+	if _, err := e.removeFiles(); err != nil {
+		e.log.Warn("could not remove the files of the failed install", "error", err)
+	}
 }
 
 // putService puts this executable in the program directory, registers the
@@ -363,6 +383,13 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 			return nil, nil, err
 		}
 	}
+	// A failed enrollment keeps nothing: not the copy of the CA either.
+	done := false
+	defer func() {
+		if !done && cfg.CAFile != "" {
+			_ = os.Remove(cfg.CAFile)
+		}
+	}()
 	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
 	if err != nil {
 		return nil, nil, err
@@ -383,6 +410,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 		if err := e.store.SavePending(p, key); err != nil {
 			return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 		}
+		done = true
 		return nil, p, nil
 	}
 	if resp.DeviceID == "" {
@@ -392,6 +420,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 	if err := e.store.Save(cfg, key); err != nil {
 		return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 	}
+	done = true
 	return cfg, nil, nil
 }
 
@@ -461,6 +490,9 @@ func (e *env) run(ctx context.Context) error {
 		}
 		if dm := e.defenderManager(); dm != nil {
 			r.Defender = e.withEasyPatch(dm)
+			// The Defender event log, read once a heartbeat where the
+			// server asked for it (ADR-0074).
+			r.DefenderLog = &winevents.Collector{Source: winevents.NewDefenderSource(), File: winevents.BookmarkPath(e.paths.State())}
 		}
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
@@ -516,9 +548,23 @@ func (e *env) run(ctx context.Context) error {
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var ch *channel.Channel
+	send := sendLogs(c)
+	if os.Getenv(channelEnv) != "off" {
+		// The WebSocket channel (ADR-0059): wakes, and the server's pushes of
+		// jobs, repairs, settings and log instructions, each applied by the
+		// code that applies it from a heartbeat or poll answer. While
+		// someone follows the logs, batches go over it too, and over HTTPS
+		// whenever it cannot take one. EASYRMM_AGENT_CHANNEL=off turns it off.
+		ch = channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log, Device: key,
+			Handlers: channel.Handlers{Jobs: w.Deliver, Logs: ship.Apply, Repair: r.ApplyRepair, Settings: r.ApplySettings, PollNow: w.PollNow}})
+		r.Channel, r.Nudge, r.OnJobsWaiting = ch, ch.Checkin, w.PollNow
+		w.Live, w.Changed = ch.Live, ch.LiveChanged()
+		send = ch.LogSender(ship.Following, send)
+	}
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
-	g.Go(func() { ship.Run(ctx, sendLogs(c)) })
+	g.Go(func() { ship.Run(ctx, send) })
 	if ship != nil && mesh != nil {
 		// MeshAgent's side of the device's log: what the agent observes of it.
 		emit := func(level, msg string, attrs map[string]string) {
@@ -530,11 +576,7 @@ func (e *env) run(ctx context.Context) error {
 		obs := &meshagent.Observer{M: mesh, Emit: emit}
 		g.Go(func() { obs.Run(ctx) })
 	}
-	if os.Getenv(channelEnv) != "off" {
-		// The WebSocket channel (ADR-0059), which only shortens the wait for
-		// the next check-in. EASYRMM_AGENT_CHANNEL=off turns it off here.
-		ch := channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log})
-		r.Channel = ch
+	if ch != nil {
 		g.Go(func() { ch.Run(ctx) })
 	}
 	err = r.Run(ctx)

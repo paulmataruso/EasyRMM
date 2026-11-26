@@ -14,6 +14,13 @@ type DefenderManager interface {
 	RestoreEvents([]agentproto.DefenderEvent)
 }
 
+// DefenderLogReader reads the Defender event log after its bookmark and moves
+// the bookmark when the server acknowledged a batch (ADR-0074).
+type DefenderLogReader interface {
+	Next(ctx context.Context) (*agentproto.DefenderLogBatch, error)
+	Acked(ack *agentproto.DefenderLogAck, sent *agentproto.DefenderLogBatch) error
+}
+
 // InstalledReporter returns the hashes of what is installed when a report
 // is due, nil otherwise.
 type InstalledReporter interface {
@@ -24,6 +31,9 @@ type InstalledReporter interface {
 // folders are also verified again each time, so a folder that became
 // writable loses its exclusion within the hour.
 const defenderEvery = time.Hour
+
+// defenderLogTimeout bounds one read of the event log.
+const defenderLogTimeout = 20 * time.Second
 
 // defenderTimeout bounds one reconcile: Defender can be slow.
 const defenderTimeout = 3 * time.Minute
@@ -38,6 +48,10 @@ type defenderState struct {
 	unsent bool
 	events []agentproto.DefenderEvent
 	files  *agentproto.InstalledFiles
+	// logOn is the server's last answer about the event log; logSent is the
+	// batch on its way, kept until the server acknowledges it.
+	logOn   bool
+	logSent *agentproto.DefenderLogBatch
 }
 
 // defendRequest adds the Defender report and the installed hashes to a
@@ -63,6 +77,15 @@ func (r *Runner) defendRequest(ctx context.Context, req *agentproto.HeartbeatReq
 			rep := *d.sent
 			req.Defender = &rep
 			d.events = rep.Events
+		}
+	}
+	if r.DefenderLog != nil && d.logOn {
+		lctx, cancel := context.WithTimeout(ctx, defenderLogTimeout)
+		batch, err := r.DefenderLog.Next(lctx)
+		cancel()
+		if err == nil && batch != nil && batch.Check() == nil {
+			d.logSent = batch
+			req.DefenderLog = batch
 		}
 	}
 	if r.Installed != nil {
@@ -102,6 +125,13 @@ func sameDefender(a, b *agentproto.DefenderReport) bool {
 func (r *Runner) defendAnswered(p *agentproto.DefenderPolicy) {
 	d := &r.defend
 	d.allowed = p != nil && p.Enabled
+	d.logOn = d.allowed && p.Events
+	if p != nil && p.EventsAck != nil && d.logSent != nil && r.DefenderLog != nil {
+		_ = r.DefenderLog.Acked(p.EventsAck, d.logSent)
+	}
+	if !d.logOn {
+		d.logSent = nil
+	}
 	if !d.allowed {
 		d.sent, d.unsent, d.events, d.files = nil, false, nil, nil
 		return

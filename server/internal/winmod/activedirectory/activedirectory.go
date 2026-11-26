@@ -9,6 +9,7 @@ package activedirectory
 import (
 	"embed"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
@@ -37,12 +38,12 @@ const (
 
 // sam is a sAMAccountName for a new user: letters, digits and . _ - only,
 // at most 20 characters (ADR-0075).
-const samPattern = `^[A-Za-z0-9._-]{1,20}$`
+var samPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,20}$`)
 
 // A service account is changed only with a second confirmation, typed as
 // "service-account:<sam>", which only someone who may manage the directory
 // can send (ADR-0075 section 4).
-const serviceConfirmPattern = `^service-account:[A-Za-z0-9._$-]{1,64}$`
+var serviceConfirmPattern = regexp.MustCompile(`^service-account:[A-Za-z0-9._$-]{1,64}$`)
 
 var (
 	pID     = winmod.Param{Name: "id", Type: winmod.SID, Required: true, RefuseWellKnown: true}

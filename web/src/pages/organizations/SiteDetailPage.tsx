@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { BackupCard } from "../devices/backup/BackupCard";
 import { Link, useNavigate, useParams } from "react-router";
 import { FolderTree, MonitorDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
@@ -43,6 +44,7 @@ import { DeleteGroupDialog, DeviceGroupDialog } from "./GroupDialogs";
 import { LevelTabs } from "./levelTabs";
 import { PlacesCard } from "./Places";
 import { SiteFormDialog } from "./SiteFormDialog";
+import { SecurityCard } from "./tabs/SecurityTab";
 
 export function SiteDetailPage() {
   const { id = "" } = useParams();
@@ -276,6 +278,7 @@ export function SiteDetailPage() {
             </div>
 
             <div className="flex flex-col gap-5">
+              <BackupCard level="site" id={s.id} organizationId={s.organizationId} />
               {documented && (
                 <Card
                   title={
@@ -301,6 +304,7 @@ export function SiteDetailPage() {
                   />
                 </Card>
               )}
+              <SecurityCard level="site" id={s.id} organizationId={s.organizationId} />
               <Card title="Details">
                 <KeyValueList
                   narrow

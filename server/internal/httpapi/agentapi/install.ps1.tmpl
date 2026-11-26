@@ -92,6 +92,9 @@ $writeMask = [int64](0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -b
 $created = New-Object System.Collections.ArrayList   # folders this run made
 $added = New-Object System.Collections.ArrayList    # exclusions this run added
 $ok = $false
+# The service existed before this run: a reinstall, whose service is never
+# undone (ADR-0070).
+$hadService = [bool](Get-Service -Name 'EasyRMMAgent' -ErrorAction SilentlyContinue)
 
 function Step([string]$Name) {
     if ($env:EASYRMM_INSTALL_TRACE) {
@@ -249,10 +252,31 @@ function Undo-Install {
         }
         if ($keep.Count -gt 0) { Save-Record $keep } else { Remove-Item -LiteralPath $recordFile -Force -ErrorAction SilentlyContinue }
     }
+    # The service this run created, and any process still running from a
+    # folder it made, go before the folders do.
+    if (-not $hadService -and (Get-Service -Name 'EasyRMMAgent' -ErrorAction SilentlyContinue)) {
+        try { Stop-Service -Name 'EasyRMMAgent' -Force -ErrorAction Stop } catch { Write-Warning "easyrmm: could not stop the EasyRMMAgent service: $($_.Exception.Message)" }
+        & sc.exe delete 'EasyRMMAgent' | Out-Null
+    }
+    foreach ($p in @($created)) {
+        foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+            $path = $null
+            try { $path = $proc.Path } catch { }
+            if ($path -and $path.StartsWith($p + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Write-Warning "easyrmm: could not stop $path : $($_.Exception.Message)" }
+            }
+        }
+    }
+    # Only folders this run made are listed, so all they hold is this run's
+    # or the agent's it ran. A process that just exited, or a scan, can hold
+    # a file for a moment: retry for up to fifteen seconds.
     $folders = @($created)
     [Array]::Reverse($folders)
     foreach ($p in $folders) {
-        try { [IO.Directory]::Delete($p, $false) } catch { }
+        for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath $p); $i++) {
+            try { [IO.Directory]::Delete($p, $true) } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (Test-Path -LiteralPath $p) { Write-Warning "easyrmm: could not remove $p, which this run made" }
     }
 }
 

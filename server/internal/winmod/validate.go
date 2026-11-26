@@ -122,6 +122,11 @@ func (a Action) Validate(raw json.RawMessage) (*Checked, error) {
 	if err := f.Err(); err != nil {
 		return nil, err
 	}
+	if a.Check != nil {
+		if err := a.Check(plain); err != nil {
+			return nil, err
+		}
+	}
 	b, err := MarshalParams(plain)
 	if err != nil {
 		return nil, err
@@ -156,9 +161,6 @@ func (p Param) check(v any) (any, string) {
 		case !utf8.ValidString(s) || strings.IndexFunc(s, unicode.IsControl) >= 0:
 			return "", "This holds a character that is not allowed."
 		}
-		if p.Pattern != "" && !regexp.MustCompile(p.Pattern).MatchString(s) {
-			return "", "This is not in the form that is allowed."
-		}
 		return s, ""
 	}
 	switch p.Type {
@@ -172,6 +174,9 @@ func (p Param) check(v any) (any, string) {
 		s, msg := str(defaultNameMax)
 		if msg == "" && !namePattern.MatchString(s) {
 			msg = "Use letters, digits, spaces and . _ - @ $ ' only."
+		}
+		if msg == "" && p.Pattern != nil && !p.Pattern.MatchString(s) {
+			msg = "This is not in the form that is allowed."
 		}
 		return s, msg
 	case Path:
@@ -233,7 +238,14 @@ func (p Param) check(v any) (any, string) {
 		}
 		return s, ""
 	case Text:
-		return str(defaultTextMax)
+		s, msg := str(defaultTextMax)
+		if msg == "" && p.Pattern != nil && !p.Pattern.MatchString(s) {
+			msg = "This is not in the form expected."
+		}
+		if msg == "" && p.Check != nil {
+			msg = p.Check(s)
+		}
+		return s, msg
 	}
 	return nil, "This parameter's type is not known."
 }

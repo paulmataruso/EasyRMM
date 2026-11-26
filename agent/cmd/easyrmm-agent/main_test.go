@@ -546,3 +546,42 @@ func TestRecoveryCopyGoesFirst(t *testing.T) {
 		t.Error("the uninstall never reached the service manager")
 	}
 }
+
+// A failed install leaves no service, process or file it made: not the copy
+// of a CA from a failed enrollment, and, when starting the service fails
+// after enrolling, not the unit, the program or the enrollment either.
+func TestFailedInstallLeavesNothing(t *testing.T) {
+	linuxOnly(t)
+	srv := fakeServer(t, new(atomic.Int32))
+	h := newHarness(t)
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("x")}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good", "--ca-file", ca); err == nil {
+		t.Fatal("a CA file without a valid certificate was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(h.e.paths.State(), "ca.pem")); err == nil {
+		t.Error("the failed enrollment kept its copy of the CA")
+	}
+
+	// Starting the service fails after the enrollment.
+	p := h.e.paths
+	h.e.sd = host.Systemd{Dir: p.Units(), Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "enable" {
+			return []byte("boom"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}}
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err == nil {
+		t.Fatal("install succeeded although the service did not start")
+	}
+	for _, f := range []string{filepath.Join(p.Units(), host.AgentUnit), p.Binary()} {
+		if _, err := os.Stat(f); err == nil {
+			t.Errorf("%s was left behind by a failed install", f)
+		}
+	}
+	if _, _, err := h.e.store.Load(); !errors.Is(err, state.ErrNotEnrolled) {
+		t.Errorf("the failed install kept its enrollment: %v", err)
+	}
+}

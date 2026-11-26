@@ -2,6 +2,7 @@ package winmod
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -14,7 +15,7 @@ func directoryAction() Action {
 	a.Params = []Param{
 		{Name: "id", Type: SID, RefuseWellKnown: true},
 		{Name: "ou", Type: DN},
-		{Name: "sam", Type: Name, Pattern: `^[a-z]{1,5}$`},
+		{Name: "sam", Type: Name, Pattern: regexp.MustCompile(`^[a-z]{1,5}$`)},
 		{Name: "title", Type: Text, Max: 20, AllowEmpty: true},
 		{Name: "password", Type: Text, Min: 8, Max: 64, Secret: true, Generate: true, Needs: rbac.PermADResetPassword},
 	}
@@ -74,8 +75,7 @@ func TestGeneratedSecretsAreSealedNotStored(t *testing.T) {
 		{Name: "x", Type: Text, Generate: true},
 		{Name: "x", Type: Text, Secret: true, Generate: true, Required: true},
 		{Name: "x", Type: Text, RefuseWellKnown: true},
-		{Name: "x", Type: Int, Pattern: "a"},
-		{Name: "x", Type: Name, Pattern: "("},
+		{Name: "x", Type: Int, Pattern: regexp.MustCompile("a")},
 	} {
 		b := sample()
 		b.Params = []Param{p}

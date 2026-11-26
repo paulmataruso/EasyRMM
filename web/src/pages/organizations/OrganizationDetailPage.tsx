@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BackupCard } from "../devices/backup/BackupCard";
 import { Link, useNavigate, useParams } from "react-router";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -21,6 +22,7 @@ import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
 import { PatchAllButton } from "../patching/PatchAllButton";
+import { SecurityCard } from "./tabs/SecurityTab";
 import { KeyContactsCard } from "./Contacts";
 import {
   addressLines,
@@ -228,6 +230,8 @@ export function OrganizationDetailPage() {
             </Card>
 
             <div className="flex flex-col gap-5">
+              <SecurityCard level="organization" id={o.id} organizationId={o.id} />
+              <BackupCard level="organization" id={o.id} />
               {documented && (
                 <Card
                   title={

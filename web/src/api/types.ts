@@ -39,6 +39,8 @@ export type Permission =
   | "log.view"
   | "defender.view"
   | "defender.manage"
+  | "defender.view_sensitive"
+  | "defender.weaken"
   | "ad.view"
   | "ad.manage"
   | "ad.reset_password"
@@ -56,6 +58,8 @@ export type Permission =
   | "print.manage"
   | "backup.view"
   | "backup.manage"
+  | "backup.view_sensitive"
+  | "backup.destroy"
   | "settings.manage";
 
 export type Role =
@@ -3489,4 +3493,214 @@ export interface DefenderStatus {
   signatureAgeDays: number | null;
   quickScanAgeDays: number | null;
   fullScanAgeDays: number | null;
+}
+
+// Server roles (ADR-0076): the DNS Server and DHCP Server modules' typed results.
+
+/** `dns.status`'s data; only `serviceState` is filled in where the DNS service is not running. */
+export interface DnsStatus {
+  serviceState: string;
+  zoneCount: number;
+  adIntegratedCount: number;
+  recursionEnabled: boolean | null;
+  forwarders: string[];
+  listenAddresses: string[];
+  scavengingHours: number | null;
+  /** Zones found transferring to any server, which gives anyone the whole zone. */
+  transferAnyZones: string[];
+}
+
+export interface DnsZone {
+  name: string;
+  type: string;
+  adIntegrated: boolean;
+  replicationScope: string;
+  dynamicUpdate: string;
+  reverse: boolean;
+  paused: boolean;
+  shutdown: boolean;
+  signed: boolean;
+  agingEnabled: boolean;
+}
+
+export interface DnsZoneList {
+  zones: DnsZone[];
+  truncated: boolean;
+}
+
+export interface DnsRecord {
+  name: string;
+  type: string;
+  ttl: number;
+  /** The canonical data text the change actions take back: "preference host" for MX, "priority weight port host" for SRV. */
+  data: string;
+  timestamp: string | null;
+  static: boolean;
+}
+
+export interface DnsRecordList {
+  total: number;
+  offset: number;
+  next: number | null;
+  records: DnsRecord[];
+}
+
+/** What a module change answers: how many objects it changed. */
+export interface WinmodDone {
+  count: number;
+}
+
+export interface DhcpStatus {
+  serviceState: string;
+  domainJoined: boolean | null;
+  authorized: boolean | null;
+  conflictDetectionAttempts: number | null;
+  bindings: { interface: string; address: string; enabled: boolean }[];
+  scopeCount: number;
+  activeScopeCount: number;
+}
+
+export interface DhcpScope {
+  scopeId: string;
+  name: string;
+  description: string;
+  state: string;
+  startRange: string;
+  endRange: string;
+  subnetMask: string;
+  leaseDurationSeconds: number;
+  free: number;
+  inUse: number;
+  percentageInUse: number;
+}
+
+export interface DhcpScopeList {
+  scopes: DhcpScope[];
+  truncated: boolean;
+}
+
+export interface DhcpReservation {
+  ipAddress: string;
+  clientId: string;
+  name: string;
+  description: string;
+}
+
+export interface DhcpOption {
+  optionId: number;
+  name: string;
+  value: string[];
+}
+
+export interface DhcpLease {
+  ipAddress: string;
+  clientId: string;
+  hostName: string;
+  state: string;
+  expires: string | null;
+}
+
+export interface DhcpLeaseList {
+  total: number;
+  offset: number;
+  next: number | null;
+  leases: DhcpLease[];
+}
+
+/** Windows Backup (ADR-0077). `windows_backup.status`'s data. */
+export interface BackupTarget {
+  kind: "volume" | "disk" | "network";
+  freeBytes: number | null;
+  totalBytes: number | null;
+  online: boolean;
+}
+
+export interface BackupJob {
+  type: string;
+  state: string;
+  startTime: string | null;
+  endTime: string | null;
+  percent: number | null;
+  hresult: number | null;
+  detailedHResult: number | null;
+}
+
+export interface BackupStatus {
+  installed: boolean;
+  configured: boolean;
+  running: boolean;
+  nextRun: string | null;
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  lastResultHR: number | null;
+  lastSuccessAgeDays: number | null;
+  versionCount: number | null;
+  oldestVersion: string | null;
+  newestVersion: string | null;
+  schedule: string[];
+  systemState: boolean;
+  bareMetal: boolean;
+  volumeCount: number;
+  fileSpecCount: number;
+  vssFull: boolean;
+  targets: BackupTarget[];
+  job: BackupJob | null;
+}
+
+export interface BackupSensitive {
+  targets: { path: string; label: string; kind: string }[];
+  include: string[];
+  exclude: string[];
+}
+
+export interface BackupVersion {
+  id: string;
+  time: string | null;
+  sizeBytes: number | null;
+  kinds: string[];
+}
+
+export interface BackupDisk {
+  number: number | null;
+  id: string;
+  name: string;
+  sizeBytes: number | null;
+  online: boolean;
+  hasData: boolean;
+  volumes: { label: string; sizeBytes: number | null; freeBytes: number | null }[];
+}
+
+export interface BackupJobs {
+  running: boolean;
+  jobs: BackupJob[];
+}
+
+export interface BackupPrunePreview {
+  total: number;
+  sets: { id: string; time: string | null }[];
+}
+
+/** The organization and site Backup cards. */
+export interface BackupFleetDevice {
+  deviceId: string;
+  siteId: string;
+  name: string;
+  state: "ok" | "stale" | "failed" | "overdue" | "not_configured" | "not_installed" | "no_data";
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  openAlerts: number;
+}
+
+export interface BackupFleet {
+  enabled: boolean;
+  counts: {
+    backedUp: number;
+    stale: number;
+    failed: number;
+    overdue: number;
+    notConfigured: number;
+    notInstalled: number;
+    noData: number;
+  };
+  devices: BackupFleetDevice[];
 }

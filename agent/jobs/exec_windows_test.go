@@ -113,3 +113,47 @@ func running(exe string) int {
 	}
 	return n
 }
+
+// A script that takes parameters (a Windows module's, ADR-0073) reads standard
+// input and writes standard output as UTF-8, whatever the console's code page:
+// Latin accents and CJK arrive and leave unchanged.
+func TestParamsScriptIsUTF8InAndOutOnWindows(t *testing.T) {
+	const name = "José Müller 日本語 ☃"
+	p := winPayload(agentproto.ShellPowerShell,
+		"$p = [Console]::In.ReadToEnd() | ConvertFrom-Json\n[Console]::Out.WriteLine('name=' + $p.name)\nWrite-Output ('host=' + $p.name)\n")
+	p.Params = []byte(`{"name":"` + name + `"}`)
+	res := Execute(context.Background(), p, t.TempDir())
+	if res.Status != agentproto.RunSucceeded {
+		t.Fatalf("result = %+v", res)
+	}
+	if !strings.Contains(res.Stdout, "name="+name) || !strings.Contains(res.Stdout, "host="+name) {
+		t.Errorf("stdout %q", res.Stdout)
+	}
+}
+
+func TestDecodeOutputKeepsUTF8OnWindows(t *testing.T) {
+	for _, s := range []string{"José Müller", "日本語 ☃", "plain"} {
+		if got := decodeOutput([]byte(s)); got != s {
+			t.Errorf("decodeOutput(%q) = %q", s, got)
+		}
+	}
+}
+
+// Only a PowerShell script with parameters gets the UTF-8 prologue (ADR-0073).
+func TestScriptBodyAddsThePrologueOnlyForPowerShellWithParams(t *testing.T) {
+	cases := []struct {
+		shell, params string
+		want          bool
+	}{
+		{agentproto.ShellPowerShell, `{}`, true},
+		{agentproto.ShellPwsh, `{"a":1}`, true},
+		{agentproto.ShellPowerShell, "", false},
+		{agentproto.ShellCmd, `{}`, false},
+	}
+	for _, c := range cases {
+		got := scriptBody(agentproto.JobPayload{Shell: c.shell, Script: "body", Params: []byte(c.params)})
+		if c.want != strings.HasPrefix(got, agentproto.ParamsPrologue) || !strings.HasSuffix(got, "body") {
+			t.Errorf("%s params %q: %q", c.shell, c.params, got)
+		}
+	}
+}

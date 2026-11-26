@@ -98,6 +98,8 @@ func Evaluate(in Inputs) []agentproto.Role {
 	switch {
 	case server && in.Services["wbengine"].Installed():
 		add(agentproto.RoleWindowsBackup, agentproto.RolePresent, "")
+	case server:
+		add(agentproto.RoleWindowsBackup, agentproto.RoleNotInstalled, "")
 	case in.ProductType == ProductClient:
 		// wbengine exists on desktops too, so a desktop is told apart by
 		// its product type: always reported, with its state from File
