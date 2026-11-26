@@ -162,6 +162,11 @@ type HeartbeatRequest struct {
 	// Transport names the connection the agent holds, which confirms it
 	// (ADR-0059). An agent without one sends none.
 	Transport *ChannelReport `json:"transport,omitempty"`
+	// Accepts lists the job capabilities this build takes, as a poll's
+	// does (PollRequest.Accepts, ADR-0064), so that the server learns them
+	// from an agent that holds the channel and does not poll (ADR-0059).
+	// Older agents send none.
+	Accepts []string `json:"accepts,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so

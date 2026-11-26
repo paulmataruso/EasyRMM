@@ -461,6 +461,7 @@ func (e *env) run(ctx context.Context) error {
 		Client:   c,
 		DeviceID: cfg.DeviceID,
 		Store:    e.store,
+		Accepts:  jobs.Accepts(),
 		Facts:    func() agentproto.Facts { return host.Facts(Version) },
 		Log:      e.log,
 		// MeshAgent's files are checked with the key pinned for jobs.

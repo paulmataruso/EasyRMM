@@ -26,7 +26,7 @@ func (s *Service) OnWork(f func(devices []uuid.UUID)) { s.hub.after = f }
 func (s *Service) ClaimFor(ctx context.Context, device uuid.UUID, maxBytes int) (*agentproto.PollResponse, error) {
 	var accepts []string
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT agent_accepts FROM devices WHERE id = $1`, device).Scan(&accepts)
+		return tx.QueryRow(ctx, `SELECT `+acceptsNow+` FROM devices d WHERE d.id = $1`, device).Scan(&accepts)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("jobs: reading what the agent accepts: %w", err)
@@ -81,7 +81,7 @@ func (s *Service) Waiting(ctx context.Context, device uuid.UUID) (bool, error) {
 				SELECT 1 FROM job_runs r JOIN jobs j ON j.id = r.job_id JOIN devices d ON d.id = r.device_id
 				WHERE r.device_id = $1 AND r.expires_at > now() AND r.cancel_requested_at IS NULL
 				  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
-				  AND j.requires <@ coalesce(d.agent_accepts, '{}'::text[])
+				  AND j.requires <@ coalesce(`+acceptsNow+`, '{}'::text[])
 				  AND `+oneChangeAtATime+`
 			) OR EXISTS (
 				SELECT 1 FROM job_runs WHERE device_id = $1 AND status = 'running' AND cancel_requested_at IS NOT NULL

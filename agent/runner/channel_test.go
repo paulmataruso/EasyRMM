@@ -33,6 +33,7 @@ func TestChannelWakeBringsTheHeartbeatForward(t *testing.T) {
 	r := newRunner(t, s, nil)
 	fc := &fakeChannel{wakes: make(chan channel.Wake, 1), report: &agentproto.ChannelReport{ConnID: "c", Since: 1}}
 	r.Channel, r.MinWake = fc, 10*time.Millisecond
+	r.Accepts = []string{agentproto.CapJobParams}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
@@ -62,6 +63,10 @@ func TestChannelWakeBringsTheHeartbeatForward(t *testing.T) {
 	if first, second := s.heartbeats[0], s.heartbeats[1]; first.Channel != nil || first.Transport != nil ||
 		len(second.Channel) != 1 || second.Transport == nil || second.Transport.ConnID != "c" {
 		t.Fatalf("channel fields: first %+v %+v, second %+v %+v", first.Channel, first.Transport, second.Channel, second.Transport)
+	}
+	// What the build accepts rides on the heartbeat, from level 2 (ADR-0059).
+	if first, second := s.heartbeats[0].Accepts, s.heartbeats[1].Accepts; first != nil || len(second) != 1 || second[0] != agentproto.CapJobParams {
+		t.Fatalf("accepts: first %v, second %v", first, second)
 	}
 	if len(fc.reported) < 2 || fc.reported[0] || !fc.reported[1] {
 		t.Fatalf("Answered's reported flags: %v", fc.reported)

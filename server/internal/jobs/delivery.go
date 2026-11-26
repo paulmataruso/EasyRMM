@@ -87,6 +87,15 @@ func acceptName(a string) bool {
 	return true
 }
 
+// KeepAccepts stores the list a heartbeat carries, as a poll's is kept; a
+// heartbeat without one leaves what the device keeps.
+func (s *Service) KeepAccepts(ctx context.Context, device uuid.UUID, accepts []string) error {
+	if accepts = cleanAccepts(accepts); accepts == nil {
+		return nil
+	}
+	return s.keepAccepts(ctx, device, accepts)
+}
+
 // keepAccepts stores a poll's list on its device with the build the device
 // runs now, writing only when either changed.
 func (s *Service) keepAccepts(ctx context.Context, device uuid.UUID, accepts []string) error {
