@@ -46,8 +46,8 @@ func TestComplianceMigrationsGoDownAndUp(t *testing.T) {
 	}
 	const objects = `SELECT count(*) FROM pg_class WHERE relname LIKE 'compliance\_%' AND relkind IN ('r', 'v')`
 	up := count(objects)
-	if up != 19 { // 16 of C1 and the fix queue's three
-		t.Fatalf("after up: %d compliance tables and views, want 19", up)
+	if up != 32 { // 16 of C1, the fix queue's three and C5's thirteen
+		t.Fatalf("after up: %d compliance tables and views, want 32", up)
 	}
 	var org, scan string
 	if err := super.QueryRow(ctx, `INSERT INTO organizations (name) VALUES ('Down') RETURNING id::text`).Scan(&org); err != nil {

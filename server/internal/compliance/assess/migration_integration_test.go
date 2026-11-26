@@ -46,7 +46,7 @@ func TestAssessmentMigrationDownAndUp(t *testing.T) {
 	if count() == 0 {
 		t.Fatal("the migration did not run")
 	}
-	if _, err := p.DownTo(ctx, 90390); err != nil {
+	if _, err := p.DownTo(ctx, 00075); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	if n := count(); n != 0 {
