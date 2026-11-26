@@ -1,0 +1,21 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    Assert-InDomain ([string]$p.target) $c
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    Assert-Versions $g
+    $inh = Get-GPInheritance -Target ([string]$p.target) @common
+    $cur = $null
+    foreach ($l in @($inh.GpoLinks)) { if (([string]$l.GpoId).ToLowerInvariant() -eq ([string]$p.id)) { $cur = $l } }
+    if ($null -eq $cur) { Stop-With 'not_found' 'That GPO is not linked there.' }
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'link_enabled' $c
+    $args2 = @{ Guid = [string]$p.id; Target = [string]$p.target }
+    $args2['LinkEnabled'] = $(if ($p.enabled -eq $true) { 'Yes' } else { 'No' })
+    $new = Set-GPLink @args2 @common
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Changed the enabled state of the link of {0} to {1}.' ([string]$g.DisplayName) ([string]$p.target)) ([ordered]@{ enabled = [string]$cur.Enabled }) ([ordered]@{ enabled = [string]$new.Enabled }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

@@ -60,6 +60,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/docsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/gpoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/hardwareapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
@@ -107,6 +108,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/activedirectory"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/backup"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy/gpowire"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
 )
 
@@ -167,7 +170,8 @@ type Deps struct {
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
 	// ModSnap keeps the Windows modules' snapshots (ADR-0073).
-	ModSnap *modsnap.Service
+	ModSnap     *modsnap.Service
+	GroupPolicy *grouppolicy.Service
 	// DefenderLog stores the Defender events agents send (ADR-0074).
 	DefenderLog *defenderlog.Store
 	// Recovery repairs agents that stopped working (ADR-0069).
@@ -317,6 +321,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	d.Jobs.SetWinmod(catalog, d.Modules, sealer)
+	// Group Policy (ADR-0083): its backups, approvals and the gate that checks them.
+	d.GroupPolicy = gpowire.New(db, auditLog, d.Modules, catalog, d.Jobs)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	// Snapshots and module alerts (ADR-0073, slices 6 and 7): a role that
 	// goes clears the module's snapshots and resolves its alerts; a module
@@ -686,6 +692,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
 	backupapi.New(backup.NewCards(d.DB, d.Modules)).Register(mux)
 	adapi.New(activedirectory.New(d.DB, d.Modules, d.Audit)).Register(mux)
+	gpoapi.New(d.GroupPolicy).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)

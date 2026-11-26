@@ -1,0 +1,243 @@
+function Write-Result($ok, $data, $code, $message) {
+    $r = [ordered]@{ ok = $ok; version = $version; data = $data; error = $null }
+    if (-not $ok) { $r.error = [ordered]@{ code = $code; message = $message } }
+    [Console]::Out.WriteLine('EASYRMM-WINMOD-RESULT-V1 ' + (ConvertTo-Json -InputObject $r -Compress -Depth 12))
+}
+function Stop-With($code, $message) {
+    Write-Result $false $null $code $message
+    exit 0
+}
+function Test-Param($name) {
+    return ($null -ne $p.PSObject.Properties[$name])
+}
+function Get-Prop($o, $name) {
+    if ($null -ne $o -and $null -ne $o.PSObject.Properties[$name]) { return $o.$name }
+    return $null
+}
+function Get-Text($o, $name) {
+    $v = Get-Prop $o $name
+    if ($null -eq $v) { return '' }
+    return [string]$v
+}
+function Get-UtcText($v) {
+    if ($null -eq $v) { return $null }
+    return ([datetime]$v).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+function Join-Text([string]$Left, [string]$Right) { return $Left + $Right }
+function Format-Text([string]$Template, [string]$A, [string]$B) { return [string]::Format($Template, $A, $B) }
+function Test-UnderDn([string]$Dn, [string]$Root) {
+    return ($Dn.Equals($Root, 'OrdinalIgnoreCase') -or $Dn.EndsWith(',' + $Root, 'OrdinalIgnoreCase'))
+}
+# The two Default policies (ADR-0083 section 7): their identifiers are fixed by Microsoft. A script never deletes, renames,
+# unlinks or disables them, whatever the server sent.
+function Test-DefaultPolicy([string]$Id) {
+    return (@('31b2f340-016d-11d2-945f-00c04fb984f9', '6ac1786c-016f-11d2-945f-00c04fb984f9') -contains $Id.ToLowerInvariant())
+}
+function Assert-NotDefault([string]$Id, [string]$What) {
+    if (Test-DefaultPolicy $Id) { Stop-With 'protected_policy' (Format-Text 'A Default policy is never {0} here.' $What '') }
+}
+function Import-GroupPolicyModule {
+    if (-not (Get-Module -ListAvailable -Name GroupPolicy)) {
+        Stop-With 'module_missing' 'The GroupPolicy PowerShell module is not installed on this computer. Install the Group Policy Management feature (GPMC).'
+    }
+    Import-Module GroupPolicy
+}
+# The controller this script runs on: every cmdlet addresses it and its domain by name, so a change never lands on another one.
+function Get-Context {
+    $dom = [System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()
+    $dcName = [System.Net.Dns]::GetHostEntry([System.Net.Dns]::GetHostName()).HostName
+    $root = 'DC=' + ($dom.Name -replace '\.', ',DC=')
+    $common = @{ Server = [string]$dcName; Domain = [string]$dom.Name }
+    return @{ Server = [string]$dcName; Domain = [string]$dom.Name; DomainDn = [string]$root; ControllersDn = ('OU=Domain Controllers,' + $root); Common = $common }
+}
+function Get-TargetKind([string]$Dn, [hashtable]$c) {
+    if ($Dn.Equals([string]$c.DomainDn, 'OrdinalIgnoreCase')) { return 'domain' }
+    if ($Dn.Equals([string]$c.ControllersDn, 'OrdinalIgnoreCase')) { return 'dc_ou' }
+    if ($Dn.IndexOf(',CN=Sites,CN=Configuration,', [System.StringComparison]::OrdinalIgnoreCase) -gt 0) { return 'site' }
+    return 'ou'
+}
+function Test-SensitiveKind([string]$Kind) { return (@('domain', 'dc_ou', 'site') -contains $Kind) }
+function Assert-InDomain([string]$Dn, [hashtable]$c) {
+    $kind = Get-TargetKind $Dn $c
+    if ($kind -eq 'site') { return }
+    if (-not (Test-UnderDn $Dn ([string]$c.DomainDn))) { Stop-With 'not_found' 'That container is not in this domain.' }
+}
+function Get-Versions($g) {
+    return [ordered]@{
+        computer = [ordered]@{ directory = [int]$g.Computer.DSVersion; sysvol = [int]$g.Computer.SysvolVersion }
+        user     = [ordered]@{ directory = [int]$g.User.DSVersion; sysvol = [int]$g.User.SysvolVersion }
+    }
+}
+# Optimistic concurrency (ADR-0083 section 4): the page read the GPO at these versions; if they moved, nothing is written.
+function Assert-Versions($g) {
+    if ((Test-Param 'expectComputerVersion') -and [int]$p.expectComputerVersion -ne [int]$g.Computer.DSVersion) {
+        Stop-With 'changed_meanwhile' 'The GPO was changed by someone else since it was read. Reload it and try again.'
+    }
+    if ((Test-Param 'expectUserVersion') -and [int]$p.expectUserVersion -ne [int]$g.User.DSVersion) {
+        Stop-With 'changed_meanwhile' 'The GPO was changed by someone else since it was read. Reload it and try again.'
+    }
+}
+function ConvertTo-GpoRow($g) {
+    $wmi = ''
+    $f = Get-Prop $g 'WmiFilter'
+    if ($null -ne $f) { $wmi = Get-Text $f 'Name' }
+    $id = ([string]$g.Id).ToLowerInvariant()
+    return [ordered]@{
+        id          = $id
+        name        = [string]$g.DisplayName
+        status      = [string]$g.GpoStatus
+        description = [string]$g.Description
+        owner       = [string]$g.Owner
+        created     = (Get-UtcText $g.CreationTime)
+        modified    = (Get-UtcText $g.ModificationTime)
+        computer    = [ordered]@{ directory = [int]$g.Computer.DSVersion; sysvol = [int]$g.Computer.SysvolVersion }
+        user        = [ordered]@{ directory = [int]$g.User.DSVersion; sysvol = [int]$g.User.SysvolVersion }
+        wmiFilter   = $wmi
+        default     = (Test-DefaultPolicy $id)
+        linkCount   = 0
+        links       = @()
+    }
+}
+function Get-DirSearcher([string]$Base, [hashtable]$c) {
+    $s = New-Object System.DirectoryServices.DirectorySearcher
+    $s.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry((Join-Text (Join-Text 'LDAP://' ([string]$c.Server)) (Join-Text '/' $Base)))
+    $s.PageSize = 500
+    return $s
+}
+# Every container a GPO can be linked to: the domain, its OUs and the forest's sites, by name, in a fixed order.
+function Get-LinkTargets([hashtable]$c) {
+    $list = New-Object System.Collections.Generic.List[object]
+    $list.Add(@{ dn = [string]$c.DomainDn; name = [string]$c.Domain; kind = 'domain' })
+    $s = Get-DirSearcher ([string]$c.DomainDn) $c
+    $s.Filter = '(objectCategory=organizationalUnit)'
+    [void]$s.PropertiesToLoad.Add('distinguishedName')
+    [void]$s.PropertiesToLoad.Add('name')
+    $ous = New-Object System.Collections.Generic.List[object]
+    $found = $s.FindAll()
+    try {
+        foreach ($r in $found) {
+            $ous.Add(@{ dn = [string]$r.Properties['distinguishedname'][0]; name = [string]$r.Properties['name'][0]; kind = (Get-TargetKind ([string]$r.Properties['distinguishedname'][0]) $c) })
+        }
+    } finally { $found.Dispose() }
+    foreach ($o in ($ous | Sort-Object { $_.dn })) { $list.Add($o) }
+    $rootDse = New-Object System.DirectoryServices.DirectoryEntry((Join-Text (Join-Text 'LDAP://' ([string]$c.Server)) '/RootDSE'))
+    $config = [string]$rootDse.Properties['configurationNamingContext'][0]
+    $sites = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name } | Sort-Object)
+    foreach ($site in $sites) {
+        $list.Add(@{ dn = (Join-Text (Join-Text 'CN=' $site) (Join-Text ',CN=Sites,' $config)); name = $site; kind = 'site' })
+    }
+    return @($list)
+}
+function Get-TargetLinks($t, [hashtable]$c) {
+    $common = $c.Common
+    $inh = Get-GPInheritance -Target ([string]$t.dn) @common
+    $links = @()
+    foreach ($l in @($inh.GpoLinks)) {
+        $links += [ordered]@{
+            gpoId = ([string]$l.GpoId).ToLowerInvariant(); gpoName = [string]$l.DisplayName; target = [string]$t.dn; targetName = [string]$t.name
+            kind = [string]$t.kind; enabled = ($l.Enabled -eq $true); enforced = ($l.Enforced -eq $true); order = [int]$l.Order
+        }
+    }
+    return @{ links = $links; blocked = ($inh.GpoInheritanceBlocked -eq $true) }
+}
+# The staging folder lives in the agent's own protected folder under ProgramData; a folder older than two hours is a leftover.
+function Get-StagingBase {
+    $base = [System.IO.Path]::Combine([System.Environment]::GetFolderPath('CommonApplicationData'), 'EasyRMM', 'gpo-staging')
+    [void](New-Item -ItemType Directory -Path $base -Force)
+    $cut = (Get-Date).AddHours(-2)
+    foreach ($d in @(Get-ChildItem -LiteralPath $base -Directory)) {
+        if ($d.LastWriteTime -lt $cut) { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    return $base
+}
+function Get-HexHash([byte[]]$Bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return (([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()) } finally { $sha.Dispose() }
+}
+# The automatic backup (ADR-0083 section 7): Microsoft's Backup-GPO into a fresh folder, zipped and returned in base64 for the
+# server to keep. A backup too large to travel in a result stops the change before anything is written.
+function Save-GpoBackup($g, [string]$Why, [hashtable]$c) {
+    $common = $c.Common
+    $root = [System.IO.Path]::Combine((Get-StagingBase), [guid]::NewGuid().ToString('N'))
+    $files = [System.IO.Path]::Combine($root, 'files')
+    [void](New-Item -ItemType Directory -Path $files -Force)
+    $b = Backup-GPO -Guid ([string]$g.Id) -Path $files -Comment (Join-Text 'EasyRMM backup before ' $Why) @common
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Path]::Combine($root, 'backup.zip')
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($files, $zip)
+    $bytes = [System.IO.File]::ReadAllBytes($zip)
+    Remove-Item -LiteralPath $root -Recurse -Force
+    if ($bytes.Length -gt 36000) { Stop-With 'backup_too_large' 'The backup of this GPO is too large for EasyRMM to keep, so nothing was changed. Change it in the Group Policy Management Console.' }
+    $v = Get-Versions $g
+    return [ordered]@{
+        backupId = ([string]$b.Id).ToLowerInvariant(); gpoId = ([string]$g.Id).ToLowerInvariant(); gpoName = [string]$g.DisplayName
+        domain = [string]$c.Domain; size = [int]$bytes.Length; sha256 = (Get-HexHash $bytes); computer = $v.computer; user = $v.user
+        zip = [System.Convert]::ToBase64String($bytes)
+    }
+}
+function Write-Changed([string]$Summary, $Before, $After, $G, $Backup, $Vb, $Va) {
+    $data = [ordered]@{
+        summary = $Summary; before = $Before; after = $After; gpoId = ''; gpoName = ''; backup = $Backup; versionBefore = $Vb; versionAfter = $Va
+    }
+    if ($null -ne $G) { $data.gpoId = ([string]$G.Id).ToLowerInvariant(); $data.gpoName = [string]$G.DisplayName }
+    Write-Result $true $data $null $null
+}
+function Stop-ForError($err) {
+    $t = $err.Exception.GetType().Name
+    $m = [string]$err.Exception.Message
+    if ($m -match 'already exists|already linked') { Stop-With 'conflict' 'A GPO or a link with that name or target already exists.' }
+    if ($m -match 'cannot be found|was not found|does not exist|No GPO|not found') { Stop-With 'not_found' 'The domain has no such GPO or container.' }
+    if ($m -match 'denied|not authorized|authoriz|Access is denied|0x80070005') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }
+    if ($t -match 'UnauthorizedAccess') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }
+    if ($m -match 'ActiveDirectoryObjectNotFound|ActiveDirectoryOperationException|domain controller') { Stop-With 'directory_unavailable' 'The domain controller did not answer.' }
+    Stop-With 'command_failed' (Join-Text 'The action failed: ' $t)
+}
+function Get-Sum([int]$A, [int]$B) { return ($A + $B) }
+function Get-XmlChild($node, [string]$Name) {
+    foreach ($k in $node.ChildNodes) { if ($k.LocalName -ceq $Name) { return [string]$k.InnerText } }
+    return ''
+}
+# The GPMC COM object model (GPMgmt.GPM): the one route to WMI filters. The module has no cmdlet for them.
+function Get-GpmDomain([hashtable]$c) {
+    $gpm = New-Object -ComObject GPMgmt.GPM
+    $const = $gpm.GetConstants()
+    return @{ Gpm = $gpm; Domain = $gpm.GetDomain([string]$c.Domain, [string]$c.Server, $const.UseAnyDC) }
+}
+function Get-WmiFilterList($gd) {
+    $found = $gd.Domain.SearchWmiFilters($gd.Gpm.CreateSearchCriteria())
+    $out = @()
+    foreach ($f in $found) { $out += $f }
+    return $out
+}
+# A SID's name and kind, for Set-GPPermission, which takes a name and a type. A well-known principal outside the directory
+# (Authenticated Users) is a group.
+function Resolve-Trustee([string]$Sid, [hashtable]$c) {
+    $acct = ''
+    try {
+        $acct = (New-Object System.Security.Principal.SecurityIdentifier($Sid)).Translate([System.Security.Principal.NTAccount]).Value
+    } catch { Stop-With 'not_found' 'That principal does not exist.' }
+    $short = $acct.Substring($acct.IndexOf('\') + 1)
+    $type = 'Group'
+    if ($Sid.StartsWith('S-1-5-21-')) {
+        try {
+            $e = New-Object System.DirectoryServices.DirectoryEntry((Join-Text (Join-Text (Join-Text 'LDAP://' ([string]$c.Server)) '/<SID=') (Join-Text $Sid '>')))
+            $classes = @($e.Properties['objectClass'] | ForEach-Object { [string]$_ })
+            if ($classes -contains 'computer') { $type = 'Computer' } elseif ($classes -contains 'group') { $type = 'Group' } else { $type = 'User' }
+        } catch { Stop-With 'not_found' 'That principal does not exist in this domain.' }
+    }
+    return @{ Name = $short; Type = $type }
+}
+# After a security filtering change somebody must still be able to read the GPO as a computer or user: Read or Apply (the
+# edit rights do not count), or the GPO stops applying (MS16-072). ADR-0083 section 7.
+function Test-AppliesToSomeone($perms, [string]$ExceptSid, [bool]$KeepRead) {
+    foreach ($e in @($perms)) {
+        if ((Get-Prop $e 'Denied') -eq $true) { continue }
+        $level = [string]$e.Permission
+        if ($e.Trustee.Sid.Value -eq $ExceptSid) {
+            if ($KeepRead -and ($level -eq 'GpoApply' -or $level -eq 'GpoRead')) { return $true }
+            continue
+        }
+        if ($level -eq 'GpoApply' -or $level -eq 'GpoRead') { return $true }
+    }
+    return $false
+}

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { BackupCard } from "../devices/backup/BackupCard";
 import { AdCard } from "../devices/modules/directory/AdCard";
+import { GpoCard } from "../devices/modules/roles/gpo/GpoCard";
 import { Link, useNavigate, useParams } from "react-router";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -234,6 +235,7 @@ export function OrganizationDetailPage() {
               <SecurityCard level="organization" id={o.id} organizationId={o.id} />
               <BackupCard level="organization" id={o.id} />
               <AdCard organizationId={o.id} />
+              <GpoCard organizationId={o.id} />
               {documented && (
                 <Card
                   title={

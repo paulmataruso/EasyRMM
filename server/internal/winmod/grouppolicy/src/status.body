@@ -1,0 +1,23 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $all = @(Get-GPO -All @common)
+    $empty = 0
+    foreach ($g in $all) { if ([int]$g.Computer.DSVersion -eq 0 -and [int]$g.User.DSVersion -eq 0) { $empty++ } }
+    $targets = @(Get-LinkTargets $c)
+    $unlinked = $null
+    if ($targets.Count -le 1000) {
+        $linked = @{}
+        foreach ($t in $targets) { foreach ($l in @((Get-TargetLinks $t $c).links)) { $linked[[string]$l.gpoId] = $true } }
+        $n = 0
+        foreach ($g in $all) { if (-not $linked.ContainsKey(([string]$g.Id).ToLowerInvariant())) { $n++ } }
+        $unlinked = $n
+    }
+    Write-Result $true ([ordered]@{
+        domain = [string]$c.Domain; domainDn = [string]$c.DomainDn; controller = [string]$c.Server
+        gpoCount = [int]$all.Count; empty = [int]$empty; unlinked = $unlinked; targets = [int]$targets.Count
+    }) $null $null
+} catch {
+    Stop-ForError $_
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-16"?>
+<GPO xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.microsoft.com/GroupPolicy/Settings">
+  <Identifier><Identifier xmlns="http://www.microsoft.com/GroupPolicy/Types">{11111111-2222-3333-4444-555555555555}</Identifier><Domain xmlns="http://www.microsoft.com/GroupPolicy/Types">corp.example.test</Domain></Identifier>
+  <Name>New GPO</Name>
+  <CreatedTime>2026-03-01T08:00:00</CreatedTime>
+  <ModifiedTime>2026-03-01T08:00:00</ModifiedTime>
+  <Computer><VersionDirectory>0</VersionDirectory><VersionSysvol>0</VersionSysvol><Enabled>true</Enabled></Computer>
+  <User><VersionDirectory>0</VersionDirectory><VersionSysvol>0</VersionSysvol><Enabled>true</Enabled></User>
+</GPO>

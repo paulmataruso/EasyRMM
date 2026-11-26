@@ -1,0 +1,15 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    Assert-Versions $g
+    $t = Resolve-Trustee ([string]$p.trustee) $c
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'sec_filter_add' $c
+    [void](Set-GPPermission -Guid ([string]$p.id) -TargetName ([string]$t.Name) -TargetType ([string]$t.Type) -PermissionLevel GpoApply @common)
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Added {0} to the security filtering of {1}.' ([string]$t.Name) ([string]$g.DisplayName)) ([ordered]@{}) ([ordered]@{ applies = [string]$t.Name }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

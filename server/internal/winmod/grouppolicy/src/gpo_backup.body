@@ -1,0 +1,11 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    $v = Get-Versions $g
+    $backup = Save-GpoBackup $g 'a manual backup' $c
+    Write-Changed (Format-Text 'Backed up the GPO {0}.' ([string]$g.DisplayName) '') ([ordered]@{}) ([ordered]@{}) $g $backup $v $v
+} catch {
+    Stop-ForError $_
+}

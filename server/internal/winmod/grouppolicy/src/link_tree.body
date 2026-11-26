@@ -1,0 +1,32 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $targets = @(Get-LinkTargets $c)
+    $total = [int]$targets.Count
+    $offset = 0
+    if (Test-Param 'offset') { $offset = [int]$p.offset }
+    $size = 40
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $page = @($targets | Select-Object -Skip $offset -First $size)
+    $items = @()
+    foreach ($t in $page) {
+        $info = Get-TargetLinks $t $c
+        $items += [ordered]@{
+            dn = [string]$t.dn; name = [string]$t.name; kind = [string]$t.kind; sensitive = (Test-SensitiveKind ([string]$t.kind))
+            inheritanceBlocked = [bool]$info.blocked; links = @($info.links)
+        }
+    }
+    $keep = $items.Count
+    while ($true) {
+        $slice = @($items | Select-Object -First $keep)
+        $next = $null
+        $end = Get-Sum $offset ([int]$slice.Count)
+        if ($end -lt $total) { $next = $end }
+        $data = [ordered]@{ domain = [string]$c.Domain; total = $total; offset = $offset; next = $next; targets = $slice }
+        if ($keep -le 1 -or (ConvertTo-Json -InputObject $data -Compress -Depth 12).Length -le 58000) { break }
+        $keep = [int][Math]::Floor($keep / 2)
+    }
+    Write-Result $true $data $null $null
+} catch {
+    Stop-ForError $_
+}

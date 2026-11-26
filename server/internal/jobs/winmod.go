@@ -47,6 +47,32 @@ func (s *Service) SetWinmod(c *winmod.Catalog, g ModuleGate, sealer *secrets.Sea
 	s.catalog, s.gate, s.sealer = c, g, sealer
 }
 
+// WinmodResultEvent is what a finished winmod run reported, for a module that keeps something of its own: Group Policy keeps
+// the backup a change took first (ADR-0083). Stdout is the run's whole output, which the hook reads before it is scrubbed.
+type WinmodResultEvent struct {
+	Action                        winmod.Action
+	RunID, JobID, DeviceID, OrgID uuid.UUID
+	SiteID                        uuid.UUID
+	Stdout                        string
+	Result                        *winmod.Result
+	Params                        []byte
+}
+
+// WinmodResultHook runs in the transaction that records a successful result. An error fails the whole recording.
+type WinmodResultHook func(ctx context.Context, tx pgx.Tx, ev WinmodResultEvent) error
+
+// OnWinmodResult registers a hook. Call it while wiring, before the server serves.
+func (s *Service) OnWinmodResult(h WinmodResultHook) { s.winmodHooks = append(s.winmodHooks, h) }
+
+// ApprovalGate decides, in the transaction that creates a winmod job, whether the request may run: it refuses one that needs
+// two people and has not been approved, and uses up the approval one that has (ADR-0083 section 7).
+type ApprovalGate interface {
+	CheckWinmod(ctx context.Context, tx pgx.Tx, c access.Caller, org, device uuid.UUID, a winmod.Action, params json.RawMessage) error
+}
+
+// SetApprovals gives the service the approval gate.
+func (s *Service) SetApprovals(g ApprovalGate) { s.approvals = g }
+
 // winmodRecord is a winmod job's record (jobs.winmod): what ran, without
 // any secret value.
 type winmodRecord struct {
@@ -184,6 +210,11 @@ func (s *Service) RunWinmod(ctx context.Context, c access.Caller, in WinmodInput
 			for _, p := range a.Params {
 				if _, sent := chk.Audit[p.Name]; sent && p.Needs != "" && !c.Can(p.Needs, rbac.Site(t.org, t.site)) {
 					return nil, apperr.Forbidden()
+				}
+			}
+			if s.approvals != nil {
+				if err := s.approvals.CheckWinmod(ctx, tx, c, t.org, t.id, a, chk.Params); err != nil {
+					return nil, err
 				}
 			}
 			if a.SubjectIsDeviceName && !strings.EqualFold(strings.TrimSpace(chk.Subject), strings.TrimSpace(t.name)) {
@@ -362,6 +393,11 @@ func (s *Service) recordWinmod(ctx context.Context, tx pgx.Tx, device, run uuid.
 	}
 	if err := keepSnapshot(ctx, tx, a, device, params, res, s.now()); err != nil {
 		return true, err
+	}
+	for _, h := range s.winmodHooks {
+		if err := h(ctx, tx, WinmodResultEvent{Action: a, RunID: run, JobID: jobID, DeviceID: device, OrgID: org, SiteID: site, Stdout: stdout, Result: res, Params: params}); err != nil {
+			return true, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE job_runs SET `+scrubOutput+` WHERE id = $1`, run); err != nil {
 		return true, err

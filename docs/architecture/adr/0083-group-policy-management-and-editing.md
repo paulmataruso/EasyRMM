@@ -591,3 +591,41 @@ needs the ADMX engine of 2 and nothing else.
    operator; a bulk model is later.
 9. **Whether a Group Policy alert** for changes made outside EasyRMM is wanted
    (from ADR-0060's event collection): default no.
+
+## Slice 1 amendments (built 2026-11-26)
+
+Each is *Amended 2026-11-26 (decided in review)*: the code proved the plan wrong, and the safe thing was done.
+
+1. **Backups travel inside a result, so they are small.** A result line is at most 64 KiB and a job's parameters at most 16 KiB
+   (`agentproto.MaxParamsBytes`), so the 20 MB cap of section 7 cannot hold. A backup is the zip of `Backup-GPO`'s folder in
+   base64 inside the change's result: at most **36,000 bytes zipped**. A GPO whose backup is larger stops the change
+   (`backup_too_large`, nothing is written) and is changed in the GPMC. The server moves the zip out of the result into
+   `gpo_backups` (the stored result holds none). A restore sends the backup back **in chunks of 12,000 base64 characters**:
+   `gpo_restore_stage` writes each into the agent's protected folder under ProgramData, then `gpo_restore` joins them, checks
+   the SHA-256 the server keeps, extracts and runs `Restore-GPO`. The server accepts a restore only of a backup it holds, for
+   that GPO and organization, by hash. A channel for larger backups (a chunked upload from the agent) is follow-up work and
+   the owner should decide whether it is wanted.
+2. **No per-request credential.** The GroupPolicy cmdlets take no `-Credential`, so section 1's fallback cannot be built the way
+   ADR-0075 does it. If SYSTEM on the controller may not write, the module is read-only until another way (a run-as) is
+   decided. The first real-controller step still answers the question.
+3. **Status and description are set on the `Gpo` object**, not through COM: `Get-GPO` returns a `Gpo` whose `GpoStatus` is
+   settable. COM (`GPMgmt.GPM`) is used only for WMI filters, where the module has no cmdlet.
+4. **The audit's diff is capped at 12 KiB**, not 64 KiB: the audit's own limit on a row's details is 16 KiB. A hash of the whole
+   diff and a `diffCut` marker say when it was cut. Slice 1 has no content editor, so the diff is the change's before and
+   after (`name`, `status`, `target`, ...); the settings diff comes with slice 2.
+5. **Approval covers more than the ADR lists, and one thing less.** The gate (server, before a job exists) refuses without an
+   approval: a change to a Default policy, a link, unlink, order, enabled, enforced or inheritance block at the domain root, the
+   Domain Controllers OU or a site (judged from the target's distinguished name), and a content change to a GPO that the
+   console last read as linked at one of those (from the stored `gpo_get` result; a GPO never read is not known to the gate).
+   An organization can require approval for everything. An approval is used once, within an hour, for exactly the stored
+   parameters. A request lapses after 24 hours and is closed when it is next read (no background job). Creating a GPO is held
+   only when the organization requires approval for everything.
+6. **The role is `gpmc` on a domain controller only.** A member server with GPMC as the chosen management host is not offered in
+   slice 1. The module is offered where the agent reports `gpmc`: a running NTDS, the controller product type, and the
+   GroupPolicy module installed.
+7. **The "affected computers" count, modeling and the settings diff are slice 2's** (section *Slices*), as is RSoP; slice 1 has
+   none of them. Delegation is shown, not changed (security filtering is changed); changing delegation is a later slice.
+8. **Unverified on a real controller** (the first run of the owner's smoke test): every script. They pass the AST check and run
+   to `module_missing` on a machine without the module; their calls were written from Microsoft's pages for each cmdlet and
+   the GPMC COM members (`GetDomain`, `SearchWmiFilters`, `GetGPO`, `SetWmiFilter`), and the sample outputs in the tests are
+   written by hand, not captured.

@@ -1,0 +1,51 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $all = @(Get-GPO -All @common | Sort-Object DisplayName)
+    if (Test-Param 'match') {
+        $needle = [string]$p.match
+        $all = @($all | Where-Object { ([string]$_.DisplayName).IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    }
+    $total = [int]$all.Count
+    $offset = 0
+    if (Test-Param 'offset') { $offset = [int]$p.offset }
+    $size = 30
+    if (Test-Param 'pageSize') { $size = [int]$p.pageSize }
+    $page = @($all | Select-Object -Skip $offset -First $size)
+    $links = @{}
+    $walked = $false
+    $targets = @(Get-LinkTargets $c)
+    if ($targets.Count -le 600) {
+        $walked = $true
+        foreach ($t in $targets) {
+            foreach ($l in @((Get-TargetLinks $t $c).links)) {
+                $k = [string]$l.gpoId
+                if (-not $links.ContainsKey($k)) { $links[$k] = New-Object System.Collections.Generic.List[object] }
+                $links[$k].Add($l)
+            }
+        }
+    }
+    $items = @()
+    foreach ($g in $page) {
+        $row = ConvertTo-GpoRow $g
+        if ($links.ContainsKey([string]$row.id)) {
+            $row['linkCount'] = [int]$links[[string]$row.id].Count
+            $row['links'] = @($links[[string]$row.id] | Select-Object -First 5)
+        }
+        $items += $row
+    }
+    $keep = $items.Count
+    while ($true) {
+        $slice = @($items | Select-Object -First $keep)
+        $next = $null
+        $end = Get-Sum $offset ([int]$slice.Count)
+        if ($end -lt $total) { $next = $end }
+        $data = [ordered]@{ total = $total; offset = $offset; next = $next; items = $slice; walked = $walked }
+        if ($keep -le 1 -or (ConvertTo-Json -InputObject $data -Compress -Depth 12).Length -le 58000) { break }
+        $keep = [int][Math]::Floor($keep / 2)
+    }
+    Write-Result $true $data $null $null
+} catch {
+    Stop-ForError $_
+}

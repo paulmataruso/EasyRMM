@@ -66,6 +66,8 @@ floors=(
   "server/internal/winmod/certauth        88"
   "server/internal/winmod/fileshares      85"
   "server/internal/winmod/printsrv        88"
+  # Group Policy (ADR-0083): catalog and guards, the report parser, backups, approvals; measured with the integration tests.
+  "server/internal/winmod/grouppolicy     80"
   # Snapshots of the Windows modules: reads, scheduled reads, retention (ADR-0073).
   "server/internal/modsnap                 75"
   # Windows hardening (ADR-0054): the ownership reader's package and the

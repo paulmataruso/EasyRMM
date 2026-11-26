@@ -103,6 +103,9 @@ type Service struct {
 	catalog *winmod.Catalog
 	gate    ModuleGate
 	sealer  *secrets.Sealer
+	// winmodHooks and approvals are a module's own business with a result and a request (ADR-0083).
+	winmodHooks []WinmodResultHook
+	approvals   ApprovalGate
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs

@@ -1,0 +1,15 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    Assert-InDomain ([string]$p.target) $c
+    $kind = Get-TargetKind ([string]$p.target) $c
+    if ($kind -eq 'site') { Stop-With 'invalid_target' 'Inheritance is blocked on the domain or an organizational unit, not on a site.' }
+    $cur = Get-GPInheritance -Target ([string]$p.target) @common
+    $want = 'No'
+    if ($p.blocked -eq $true) { $want = 'Yes' }
+    $new = Set-GPInheritance -Target ([string]$p.target) -IsBlocked $want @common
+    Write-Changed (Format-Text 'Changed whether {0} blocks inheritance.' ([string]$p.target) '') ([ordered]@{ blocked = [string]($cur.GpoInheritanceBlocked -eq $true) }) ([ordered]@{ blocked = [string]($new.GpoInheritanceBlocked -eq $true) }) $null $null $null $null
+} catch {
+    Stop-ForError $_
+}

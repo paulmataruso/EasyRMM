@@ -1,0 +1,11 @@
+try {
+    if (-not (Test-Param 'chunk')) { Stop-With 'invalid_request' 'This action takes a chunk of a backup.' }
+    $base = Get-StagingBase
+    $dir = [System.IO.Path]::Combine($base, (Join-Text 'restore-' ([string]$p.backupId)))
+    [void](New-Item -ItemType Directory -Path $dir -Force)
+    $file = [System.IO.Path]::Combine($dir, (Join-Text 'part-' ([string]$p.index)))
+    [System.IO.File]::WriteAllText($file, [string]$p.chunk)
+    Write-Result $true ([ordered]@{ index = [int]$p.index; count = [int]$p.count }) $null $null
+} catch {
+    Stop-ForError $_
+}

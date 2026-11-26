@@ -1,0 +1,17 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $args2 = @{ Name = [string]$p.newName }
+    if (Test-Param 'comment') { $args2['Comment'] = [string]$p.comment }
+    $new = New-GPO @args2 @common
+    $va = Get-Versions $new
+    Write-Result $true ([ordered]@{
+        summary = (Format-Text 'Created the GPO {0}.' ([string]$new.DisplayName) '')
+        before = [ordered]@{}; after = [ordered]@{ name = [string]$new.DisplayName; id = ([string]$new.Id).ToLowerInvariant() }
+        gpoId = ([string]$new.Id).ToLowerInvariant(); gpoName = [string]$new.DisplayName; backup = $null; versionBefore = $null; versionAfter = $va
+        id = ([string]$new.Id).ToLowerInvariant()
+    }) $null $null
+} catch {
+    Stop-ForError $_
+}
