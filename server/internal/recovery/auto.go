@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -187,6 +188,21 @@ func (s *Service) evaluateTarget(ctx context.Context, tx pgx.Tx, now time.Time, 
 		return err
 	}
 	for _, d := range list {
+		// The query already keeps to the dev scope (scopeArg); checked again
+		// before anything starts.
+		if !devscope.Allowed(d.org) {
+			continue
+		}
+		// The table of the one Repair button decides, as for a person: the
+		// target is repaired only when the plan names it.
+		var f Facts
+		if err := s.loadFacts(ctx, tx, d.id, &f); err != nil {
+			return err
+		}
+		f.Running = nil
+		if !slices.ContainsFunc(Decide(f).Repairs, func(a Action) bool { return a.Target == target }) {
+			continue
+		}
 		r, err := s.insert(ctx, tx, d.id, target, TriggerAutomatic, nil)
 		if errors.Is(err, errRunning) {
 			continue

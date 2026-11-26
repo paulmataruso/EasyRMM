@@ -5,7 +5,7 @@ import type { AgentLogPage, AgentLogRecord } from "../../api/types";
 import { baseRoutes, installFakeApi, noContent, ok, sessionView } from "../../test/fakeApi";
 import { device, history, inventory, metrics } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
-import { clock } from "./agentLogsText";
+import { clock, mergeNewestFirst } from "./agentLogsText";
 
 const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
 const SERVER = device("d1", "DB-01", { platform: "linux", agent: AGENT, canUpdateAgent: true, deviceGroupId: "g1", deviceGroupName: "Servers" });
@@ -39,7 +39,7 @@ describe("the Logs tab", () => {
     expect(screen.queryByRole("tab", { name: "Logs" })).not.toBeInTheDocument();
   });
 
-  it("shows the newest records oldest first, with source, level and details", async () => {
+  it("shows the records newest first, with source, level and details", async () => {
     installFakeApi(
       routes(
         TECH,
@@ -156,5 +156,27 @@ describe("the live tail", () => {
     });
     expect(server.callsTo("GET /devices/:id/agent-logs")).toHaveLength(n);
     expect(screen.getByText(/Paused/)).toBeInTheDocument();
+  });
+});
+
+describe("the merged order of the Logs tab", () => {
+  it("is by logged time, newest first, across sources, with the later-stored record first among equal times", () => {
+    const at = (s: number) => `2026-11-23T10:00:0${s}.000Z`;
+    // The easypatch records arrived in a late batch: higher ids, older times.
+    const a = [rec(3, "agent 5s", { time: at(5) }), rec(1, "agent 1s", { time: at(1) })];
+    const b = [rec(5, "mesh 3s", { time: at(3), source: "meshagent" }), rec(4, "patch 4s", { time: at(4), source: "easypatch" }), rec(2, "patch 1s", { time: at(1), source: "easypatch" })];
+    expect(mergeNewestFirst(a, b).map((r) => r.message)).toEqual(["agent 5s", "patch 4s", "mesh 3s", "patch 1s", "agent 1s"]);
+    // A record that is shown already is kept once.
+    expect(mergeNewestFirst(a, a)).toHaveLength(2);
+  });
+
+  it("shows what the server sent, newest at the top", async () => {
+    installFakeApi(
+      routes(TECH, page([rec(9, "newest", { time: "2026-11-23T10:00:09.000Z" }), rec(2, "oldest", { time: "2026-11-23T10:00:01.000Z", source: "meshagent" })])),
+    );
+    renderApp("/devices/d1?tab=logs");
+    const log = await screen.findByRole("log", { name: "Agent log records" });
+    const text = log.textContent ?? "";
+    expect(text.indexOf("newest")).toBeLessThan(text.indexOf("oldest"));
   });
 });

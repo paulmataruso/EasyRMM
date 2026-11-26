@@ -1,15 +1,17 @@
-import { CircleCheck, CircleX, Clock, LoaderCircle, RefreshCw, Wrench } from "lucide-react";
+import { useState } from "react";
+import { CircleCheck, CircleX, Clock, LoaderCircle, Wrench } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { Device, List, Repair, RepairStepName, RepairStepState, RepairTarget } from "../../api/types";
+import type { Device, List, Repair, RepairOutcome, RepairPlan, RepairStepName, RepairStepState, RepairTarget } from "../../api/types";
+import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Button, InlineError } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 
-// Repairing a device's agents (ADR-0069, Part R). Reconnecting remote access: the EasyRMM agent restarts MeshAgent and, if
-// that does not bring it back, puts its program and settings in place again, keeping its identity. Repairing the patching
-// agent: the EasyRMM agent restarts the EasyPatch agent and, if that does not help, reinstalls its package of the same
-// version over it, keeping its enrollment. The page shows the steps.
+// Repairing a device's agents (ADR-0069, Part R). One Repair button: the server decides what is down and which running
+// agent repairs it. The EasyRMM agent restarts MeshAgent or the EasyPatch agent and, if that does not bring it back, puts
+// it in place again keeping its identity; the EasyPatch agent does the same for a silent EasyRMM agent. The page shows
+// the steps.
 
 /** A finished repair is shown for this long, so that its outcome is not missed. */
 const SHOWN_FOR_MS = 60 * 60 * 1000;
@@ -46,7 +48,7 @@ function stepState(carrier: RepairTarget, state: RepairStepState): string {
 
 /** The device's latest repairs, refreshed every 5 seconds while one runs; read by those who may ask for one. */
 export function useRepairs(d: Device) {
-  return useApi<List<Repair>>(d.canReconnectRemote || d.canRepairPatching || d.canRepairEasyRmm ? `/devices/${d.id}/repairs` : null, undefined, {
+  return useApi<List<Repair>>(canRepair(d) ? `/devices/${d.id}/repairs` : null, undefined, {
     refetchInterval: (data) => (data?.items[0]?.state === "running" ? 5_000 : false),
   });
 }
@@ -65,75 +67,70 @@ export function shownRepair(items: Repair[] | undefined, now: number = Date.now(
   return now - ended < SHOWN_FOR_MS ? r : null;
 }
 
-/** The device page's button that reconnects remote access. */
-export function ReconnectRemoteButton({ device: d }: { device: Device }) {
-  const toast = useToast();
+/** True when someone may press Repair here: the device has an EasyRMM agent and the caller may repair some agent of it. */
+export function canRepair(d: Device): boolean {
+  return d.canReconnectRemote || d.canRepairPatching || d.canRepairEasyRmm;
+}
+
+/** The short name of an agent, as the repair plan uses it. */
+export const AGENT_NAMES: Record<RepairTarget, string> = {
+  "easyrmm-agent": "the EasyRMM agent",
+  meshagent: "MeshAgent",
+  "easypatch-agent": "the EasyPatch agent",
+};
+
+/**
+ * The device page's one Repair button (ADR-0069, amended 2026-11-26). The server knows which of the three agents is
+ * down and which running agent repairs it; the dialog says what will happen before it asks. A repair that runs
+ * already disables the button, since the steps show below.
+ */
+export function RepairButton({ device: d }: { device: Device }) {
+  const [open, setOpen] = useState(false);
   const repairs = useRepairs(d);
-  const ask = useApiMutation(() => api.post<Repair>(`/devices/${d.id}/repairs`, { target: "meshagent" }), {
-    invalidate: [`/devices/${d.id}/repairs`],
-    onSuccess: () => toast.success(`${d.name}'s EasyRMM agent restarts MeshAgent the next time it checks in.`),
-  });
-  if (!d.canReconnectRemote) return null;
-  const running = latestOf(repairs.data?.items, "meshagent")?.state === "running";
-  const why = !d.online ? "The device is not checking in, so nothing can be repaired from here." : undefined;
+  if (!canRepair(d)) return null;
+  const running = repairs.data?.items.some((r) => r.state === "running") ?? false;
   return (
-    <Button
-      icon={<RefreshCw className="size-4" aria-hidden />}
-      onClick={() => ask.mutate(undefined)}
-      loading={ask.isPending}
-      disabled={running || !d.online}
-      title={running ? "A repair is running." : why}
-    >
-      Reconnect remote access
-    </Button>
+    <>
+      <Button icon={<Wrench className="size-4" aria-hidden />} onClick={() => setOpen(true)} disabled={running} title={running ? "A repair is running." : undefined}>
+        Repair
+      </Button>
+      {open && <RepairDialog device={d} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
-/** The device page's button that repairs the EasyPatch agent. */
-export function RepairPatchingButton({ device: d }: { device: Device }) {
+function RepairDialog({ device: d, onClose }: { device: Device; onClose: () => void }) {
   const toast = useToast();
-  const repairs = useRepairs(d);
-  const ask = useApiMutation(() => api.post<Repair>(`/devices/${d.id}/repairs`, { target: "easypatch-agent" }), {
-    invalidate: [`/devices/${d.id}/repairs`],
-    onSuccess: () => toast.success(`${d.name}'s EasyRMM agent restarts the EasyPatch agent the next time it checks in.`),
+  const plan = useApi<RepairPlan>(`/devices/${d.id}/repair-plan`, undefined, { refetchInterval: false });
+  const ask = useApiMutation(() => api.post<RepairOutcome>(`/devices/${d.id}/repairs`, {}), {
+    invalidate: [`/devices/${d.id}/repairs`, `/devices/${d.id}/repair-plan`],
+    onSuccess: (r) => {
+      toast.success(`Repair started on ${d.name}: ${r.repairs.map((x) => AGENT_NAMES[x.target]).join(" and ")}.`);
+      onClose();
+    },
   });
-  if (!d.canRepairPatching) return null;
-  const running = latestOf(repairs.data?.items, "easypatch-agent")?.state === "running";
-  const why = !d.online ? "The device is not checking in, so nothing can be repaired from here." : undefined;
+  const p = plan.data;
   return (
-    <Button
-      icon={<Wrench className="size-4" aria-hidden />}
-      onClick={() => ask.mutate(undefined)}
-      loading={ask.isPending}
-      disabled={running || !d.online}
-      title={running ? "A repair is running." : why}
-    >
-      Repair patching agent
-    </Button>
-  );
-}
-
-/** The device page's button that repairs the EasyRMM agent through the EasyPatch agent. */
-export function RepairEasyRmmButton({ device: d }: { device: Device }) {
-  const toast = useToast();
-  const repairs = useRepairs(d);
-  const ask = useApiMutation(() => api.post<Repair>(`/devices/${d.id}/repairs`, { target: "easyrmm-agent" }), {
-    invalidate: [`/devices/${d.id}/repairs`],
-    onSuccess: () => toast.success(`The EasyPatch agent on ${d.name} restarts the EasyRMM agent through the patching engine.`),
-  });
-  if (!d.canRepairEasyRmm) return null;
-  const running = latestOf(repairs.data?.items, "easyrmm-agent")?.state === "running";
-  const why = d.online ? "The EasyRMM agent is checking in, so there is nothing to repair through patching." : undefined;
-  return (
-    <Button
-      icon={<Wrench className="size-4" aria-hidden />}
-      onClick={() => ask.mutate(undefined)}
-      loading={ask.isPending}
-      disabled={running || d.online}
-      title={running ? "A repair is running." : why}
-    >
-      Repair EasyRMM agent through patching
-    </Button>
+    <Dialog open onClose={onClose} title={`Repair ${d.name}`} description="EasyRMM works out which agent is down and which running agent repairs it.">
+      {plan.isPending && <LoaderCircle className="size-5 animate-spin text-muted" aria-label="Loading" />}
+      {plan.isError && <InlineError error={plan.error} />}
+      {p && (
+        <p className={p.refusal ? "text-sm text-muted" : "text-sm"} data-testid="repair-plan">
+          {p.summary}
+        </p>
+      )}
+      <InlineError error={ask.error} />
+      <div className="mt-4 flex justify-end gap-2 border-t border-line pt-3">
+        <Button onClick={onClose} disabled={ask.isPending}>
+          {p?.refusal ? "Close" : "Cancel"}
+        </Button>
+        {p && !p.refusal && (
+          <Button variant="primary" loading={ask.isPending} onClick={() => ask.mutate(undefined)}>
+            Repair
+          </Button>
+        )}
+      </div>
+    </Dialog>
   );
 }
 

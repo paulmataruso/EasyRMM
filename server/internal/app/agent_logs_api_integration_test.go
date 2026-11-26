@@ -62,7 +62,8 @@ func TestAgentLogsAPI(t *testing.T) {
 	}
 	var p page
 	admin.expect(http.StatusOK, "GET", device+"/agent-logs", nil, &p)
-	if len(p.Items) != 2 || strings.Contains(p.Items[0].Message, "AbCdEf") || p.Items[1].Attrs["password"] != "***" {
+	// Newest first; the two share a time, so the one stored later is first.
+	if len(p.Items) != 2 || strings.Contains(p.Items[1].Message, "AbCdEf") || p.Items[0].Attrs["password"] != "***" {
 		t.Fatalf("records %+v", p.Items)
 	}
 	admin.expect(http.StatusOK, "GET", device+"/agent-logs?source=easypatch&level=error&q=SCAN", nil, &p)

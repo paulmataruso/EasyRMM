@@ -532,6 +532,24 @@ export interface Repair {
   error: string;
 }
 
+/** What pressing Repair does for a device now (ADR-0069, amended 2026-11-26). */
+export interface RepairPlan {
+  down: RepairTarget[];
+  repairs: { target: RepairTarget; carriedBy: RepairTarget }[];
+  later: RepairTarget[] | null;
+  running: RepairTarget[] | null;
+  summary: string;
+  /** A code when nothing can be started: nothing_to_repair, no_running_agent, repair_running, ... */
+  refusal?: string;
+}
+
+/** What pressing Repair did: the plan and the repairs it started. */
+export interface RepairOutcome {
+  id: string;
+  plan: RepairPlan;
+  repairs: Repair[];
+}
+
 /**
  * A device's disk health (ADR-0065, "A device's disk health"): the highest of its disks' shown states in the order
  * failing, warning, unknown, healthy, else unavailable if any disk is, else unsupported; and how many disks show each

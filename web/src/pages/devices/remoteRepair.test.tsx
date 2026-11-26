@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Device, Repair, RemoteStatus } from "../../api/types";
+import type { Device, Repair, RepairPlan, RemoteStatus } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, ok, sessionView, unreportedRoutes } from "../../test/fakeApi";
 import { device } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
@@ -71,27 +71,74 @@ describe("why remote access is not connected", () => {
   });
 });
 
-describe("reconnecting remote access", () => {
-  it("asks for the repair and follows its steps to the end", async () => {
+const plan = (extra: Partial<RepairPlan> = {}): RepairPlan => ({
+  down: ["meshagent"],
+  repairs: [{ target: "meshagent", carriedBy: "easyrmm-agent" }],
+  later: null,
+  running: null,
+  summary: "The EasyRMM agent will restart MeshAgent and, if that does not bring it back, put its program and settings back, keeping its identity.",
+  ...extra,
+});
+
+describe("the one Repair button", () => {
+  const patching = (extra: Partial<Repair> = {}) => repair({ id: "r2", target: "easypatch-agent", ...extra });
+  const rmm = (extra: Partial<Repair> = {}) => repair({ id: "r3", target: "easyrmm-agent", carriedBy: "easypatch-agent", ...extra });
+
+  it("says what will happen, asks, and follows the steps of the repair it started", async () => {
     const user = userEvent.setup();
-    const d = device("d1", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent: AGENT, canReconnectRemote: true, remote: status({}) });
+    const d = device("d1", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent: AGENT, canReconnectRemote: true, canRepairPatching: true, remote: status({}) });
     const state: { list: Repair[] } = { list: [] };
     const server = installFakeApi({
       ...page(d, () => state.list),
+      "GET /devices/:id/repair-plan": ok(plan()),
       "POST /devices/:id/repairs": () => {
         state.list = [repair()];
-        return ok(state.list[0]);
+        return ok({ id: "p1", plan: plan(), repairs: state.list });
       },
     });
     renderApp("/devices/d1");
-    await user.click(await screen.findByRole("button", { name: "Reconnect remote access" }));
+    // One button, not three.
+    expect(screen.queryByRole("button", { name: "Reconnect remote access" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Repair patching agent" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Repair" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTestId("repair-plan")).toHaveTextContent("The EasyRMM agent will restart MeshAgent and, if that does not bring it back");
+    expect(server.callsTo("POST /devices/:id/repairs")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Repair" }));
     expect(await screen.findByText("Reconnecting remote access")).toBeInTheDocument();
-    expect(server.callsTo("POST /devices/:id/repairs")[0]?.body).toEqual({ target: "meshagent" });
+    expect(server.callsTo("POST /devices/:id/repairs")[0]?.body).toEqual({});
     expect(screen.getByText(/Restart MeshAgent/)).toBeInTheDocument();
     expect(screen.getByText(/Sent to the EasyRMM agent/)).toBeInTheDocument();
-    expect(screen.getByText(/Waiting for the EasyRMM agent to check in/)).toBeInTheDocument();
-    // One at a time.
-    expect(screen.getByRole("button", { name: "Reconnect remote access" })).toBeDisabled();
+    // One at a time: the steps show below, and the button waits.
+    expect(screen.getByRole("button", { name: "Repair" })).toBeDisabled();
+  });
+
+  it("says the EasyPatch agent repairs a silent EasyRMM agent, and what waits for it", async () => {
+    const user = userEvent.setup();
+    const d = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canRepairEasyRmm: true });
+    const summary = "The EasyPatch agent will restart the EasyRMM agent and, if that does not bring it back, put it back from its recovery copy. MeshAgent is down too; once the EasyRMM agent is back, press Repair again for it.";
+    installFakeApi({
+      ...page(d, () => []),
+      "GET /devices/:id/repair-plan": ok(plan({ down: ["easyrmm-agent", "meshagent"], repairs: [{ target: "easyrmm-agent", carriedBy: "easypatch-agent" }], later: ["meshagent"], summary })),
+    });
+    renderApp("/devices/d1");
+    await user.click(await screen.findByRole("button", { name: "Repair" }));
+    expect(await screen.findByTestId("repair-plan")).toHaveTextContent(summary);
+  });
+
+  it("shows the reason and no way to ask when nothing can be repaired", async () => {
+    const user = userEvent.setup();
+    const d = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canReconnectRemote: true });
+    installFakeApi({
+      ...page(d, () => []),
+      "GET /devices/:id/repair-plan": ok(plan({ down: ["easyrmm-agent"], repairs: [], refusal: "no_running_agent", summary: "No agent on the device can repair anything. Reinstall the EasyRMM agent on the device." })),
+    });
+    renderApp("/devices/d1");
+    await user.click(await screen.findByRole("button", { name: "Repair" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTestId("repair-plan")).toHaveTextContent("Reinstall the EasyRMM agent");
+    expect(within(dialog).queryByRole("button", { name: "Repair" })).not.toBeInTheDocument();
+    expect(within(dialog).getAllByRole("button", { name: "Close" }).length).toBeGreaterThan(0);
   });
 
   it("shows how a repair that failed ended, and what failed", async () => {
@@ -113,20 +160,12 @@ describe("reconnecting remote access", () => {
     expect(within(card).getByText("The last step failed: download failed")).toBeInTheDocument();
   });
 
-  it("is not offered without device.edit, or while the device is not checking in", async () => {
-    const readOnly = device("d1", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent: AGENT, canReconnectRemote: false });
-    installFakeApi(page(readOnly, () => []));
-    const { unmount } = renderApp("/devices/d1");
-    await screen.findByText("Remote access is not connected.");
-    expect(screen.queryByRole("button", { name: "Reconnect remote access" })).not.toBeInTheDocument();
-    unmount();
-
-    const asleep = device("d2", "SRV-02", { platform: "linux", online: false, remoteOnline: false, agent: AGENT, canReconnectRemote: true });
-    installFakeApi(page(asleep, () => []));
-    renderApp("/devices/d2");
-    const button = await screen.findByRole("button", { name: "Reconnect remote access" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "The device is not checking in, so nothing can be repaired from here.");
+  it("is not offered to someone who may repair none of the agents", async () => {
+    const without = device("d1", "SRV-01", { platform: "linux", online: true, agent: AGENT, canReconnectRemote: false, canRepairPatching: false, canRepairEasyRmm: false });
+    installFakeApi(page(without, () => []));
+    renderApp("/devices/d1");
+    await screen.findByText("SRV-01");
+    expect(screen.queryByRole("button", { name: "Repair" })).not.toBeInTheDocument();
   });
 
   it("can be asked again after the server refuses", async () => {
@@ -134,54 +173,15 @@ describe("reconnecting remote access", () => {
     const d = device("d1", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent: AGENT, canReconnectRemote: true });
     installFakeApi({
       ...page(d, () => []),
+      "GET /devices/:id/repair-plan": ok(plan()),
       "POST /devices/:id/repairs": fail(409, "device_leaving", "The device is being removed; nothing is repaired on it."),
     });
     renderApp("/devices/d1");
-    await user.click(await screen.findByRole("button", { name: "Reconnect remote access" }));
-    // The mutation's failure is not swallowed: the button is usable again.
-    expect(await screen.findByRole("button", { name: "Reconnect remote access" })).toBeEnabled();
-  });
-});
-
-describe("repairing the patching agent", () => {
-  const patching = (extra: Partial<Repair> = {}) => repair({ id: "r2", target: "easypatch-agent", ...extra });
-
-  it("asks for the repair and shows its steps, apart from remote access's", async () => {
-    const user = userEvent.setup();
-    const d = device("d1", "SRV-01", { platform: "linux", online: true, remoteOnline: true, agent: AGENT, canRepairPatching: true });
-    const state: { list: Repair[] } = { list: [repair({ state: "succeeded", endedAt: new Date().toISOString() })] };
-    const server = installFakeApi({
-      ...page(d, () => state.list),
-      "POST /devices/:id/repairs": () => {
-        state.list = [patching(), ...state.list];
-        return ok(state.list[0]);
-      },
-    });
-    renderApp("/devices/d1");
-    await user.click(await screen.findByRole("button", { name: "Repair patching agent" }));
-    expect(await screen.findByText("Repairing the patching agent")).toBeInTheDocument();
-    expect(server.callsTo("POST /devices/:id/repairs")[0]?.body).toEqual({ target: "easypatch-agent" });
-    expect(screen.getByText(/Restart the EasyPatch agent/)).toBeInTheDocument();
-    expect(screen.getByText(/Reinstall the EasyPatch agent's package of the same version, keeping its enrollment/)).toBeInTheDocument();
-    // Remote access's repair is another card.
-    expect(screen.getByText("Remote access is connected again")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Repair patching agent" })).toBeDisabled();
-  });
-
-  it("is not offered without device.edit or a linked agent, and not while the device is not checking in", async () => {
-    const without = device("d1", "SRV-01", { platform: "linux", online: true, agent: AGENT, canRepairPatching: false });
-    installFakeApi(page(without, () => []));
-    const { unmount } = renderApp("/devices/d1");
-    await screen.findByText("SRV-01");
-    expect(screen.queryByRole("button", { name: "Repair patching agent" })).not.toBeInTheDocument();
-    unmount();
-
-    const asleep = device("d2", "SRV-02", { platform: "linux", online: false, agent: AGENT, canRepairPatching: true });
-    installFakeApi(page(asleep, () => []));
-    renderApp("/devices/d2");
-    const button = await screen.findByRole("button", { name: "Repair patching agent" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "The device is not checking in, so nothing can be repaired from here.");
+    await user.click(await screen.findByRole("button", { name: "Repair" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(await within(dialog).findByRole("button", { name: "Repair" }));
+    expect(await within(dialog).findByText("The device is being removed; nothing is repaired on it.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Repair" })).toBeEnabled();
   });
 
   it("keeps each target's repair apart", () => {
@@ -191,46 +191,7 @@ describe("repairing the patching agent", () => {
     expect(latestOf(list, "easyrmm-agent")).toBeUndefined();
     expect(shownRepair([patching()], Date.now())).toBeNull();
     expect(shownRepair([patching()], Date.now(), "easypatch-agent")?.id).toBe("r2");
-  });
-});
-
-describe("repairing the EasyRMM agent through patching", () => {
-  const rmm = (extra: Partial<Repair> = {}) => repair({ id: "r3", target: "easyrmm-agent", carriedBy: "easypatch-agent", ...extra });
-
-  it("asks for the repair while the EasyRMM agent is silent and shows the EasyPatch agent's steps", async () => {
-    const user = userEvent.setup();
-    const d = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canRepairEasyRmm: true });
-    const state: { list: Repair[] } = { list: [] };
-    const server = installFakeApi({
-      ...page(d, () => state.list),
-      "POST /devices/:id/repairs": () => {
-        state.list = [rmm()];
-        return ok(state.list[0]);
-      },
-    });
-    renderApp("/devices/d1");
-    await user.click(await screen.findByRole("button", { name: "Repair EasyRMM agent through patching" }));
-    expect(await screen.findByText("Repairing the EasyRMM agent through patching")).toBeInTheDocument();
-    expect(server.callsTo("POST /devices/:id/repairs")[0]?.body).toEqual({ target: "easyrmm-agent" });
-    expect(screen.getByText(/Restart the EasyRMM agent/)).toBeInTheDocument();
-    expect(screen.getByText(/Put the EasyRMM agent back from its recovery copy/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Waiting for the patching engine/).length).toBeGreaterThan(0);
-  });
-
-  it("is not offered without patch.manage and a linked agent, and not while the EasyRMM agent checks in", async () => {
-    const without = device("d1", "SRV-01", { platform: "linux", online: false, agent: AGENT, canRepairEasyRmm: false });
-    installFakeApi(page(without, () => []));
-    const { unmount } = renderApp("/devices/d1");
-    await screen.findByText("SRV-01");
-    expect(screen.queryByRole("button", { name: "Repair EasyRMM agent through patching" })).not.toBeInTheDocument();
-    unmount();
-
-    const alive = device("d2", "SRV-02", { platform: "linux", online: true, agent: AGENT, canRepairEasyRmm: true });
-    installFakeApi(page(alive, () => []));
-    renderApp("/devices/d2");
-    const button = await screen.findByRole("button", { name: "Repair EasyRMM agent through patching" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", "The EasyRMM agent is checking in, so there is nothing to repair through patching.");
+    expect(shownRepair([rmm()], Date.now(), "easyrmm-agent")?.id).toBe("r3");
   });
 });
 

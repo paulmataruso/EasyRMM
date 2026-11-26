@@ -586,6 +586,96 @@ The owner confirmed (2026-11-23):
   folder, moves the new one in and deletes the old one (at the next restart if
   locked), removes leftover `.meshagent-*` files, and confirms the service
   runs. Linux is unchanged.
+* **Amended 2026-11-26: one Repair button.** The owner: "You have 3 different
+  buttons to repair things. There should just be one repair button, and it
+  should have the logic to know what to repair. If Mesh is offline but the
+  agents are online, then use the agents to repair the mesh. If Patch or RMM is
+  offline and there is still at least one agent running, then use the running
+  agent to repair what is not working." *By hand* above is replaced: the device
+  page has one **Repair** button, and the server decides.
+
+  *What is down.* The EasyRMM agent is down when it has not checked in for 3
+  minutes (`AgentFresh`). MeshAgent is down when this server runs remote access,
+  the device's site has a MeshCentral group and MeshCentral does not see it
+  connected. The EasyPatch agent is down when the device's organization is
+  patched, its agent is linked, and the engine has not heard from it for 10
+  minutes (`SilentAfter`). An agent the device is not meant to have is never
+  down.
+
+  *The decision table.* Only the EasyRMM agent and the EasyPatch agent can
+  carry a repair out (MeshAgent cannot: its program and settings are signed by
+  EasyRMM and carried by the EasyRMM agent).
+
+  | Down | Runs | Repair started now | Waits |
+  |---|---|---|---|
+  | MeshAgent | EasyRMM agent | MeshAgent, by the EasyRMM agent | |
+  | EasyPatch agent | EasyRMM agent | EasyPatch agent, by the EasyRMM agent | |
+  | MeshAgent and EasyPatch agent | EasyRMM agent | both, by the EasyRMM agent, as two repairs | |
+  | EasyRMM agent | EasyPatch agent (and MeshAgent or not) | EasyRMM agent, by the EasyPatch agent | |
+  | EasyRMM agent and MeshAgent | EasyPatch agent | EasyRMM agent, by the EasyPatch agent | MeshAgent: once the EasyRMM agent is back, Repair (or the automatic repair) takes it |
+  | EasyRMM agent and EasyPatch agent | MeshAgent only, or nothing | nothing | refused, `no_running_agent`: reinstall the EasyRMM agent on the device |
+  | all three | nothing | nothing | refused, `no_running_agent` |
+  | none | all | nothing | refused, `nothing_to_repair` |
+
+  Where several are down and a running agent can repair them, they are
+  repaired together, each as its own repair with its own steps. Where the
+  EasyRMM agent is down, the repair that brings it back goes first and the rest
+  wait for it, since only it can repair them; the dialog says so. A target
+  that is being repaired already is left alone; if that is all there is, the
+  press is refused (`repair_running`). A device that is leaving, one without an
+  EasyRMM agent and a server that cannot sign instructions are refused with
+  their own codes.
+
+  *No new trust path.* Each repair the plan names is an ordinary repair made
+  by `Request`: the same preconditions, the same signed instruction in a
+  heartbeat answer (or the same engine job through patching), the
+  `publishes()` check of the hash for the EasyRMM agent's repair step, the same
+  `agent_repairs` record and the same steps and waits. The plan only chooses
+  which targets and carriers; nothing it decides is sent to an agent.
+  Permissions stay those of the repairs: `device.edit` for what the EasyRMM
+  agent carries, `patch.manage` for the EasyRMM agent through patching; a press
+  whose plan needs a permission the caller lacks starts nothing.
+
+  *The endpoint.* `GET /api/v1/devices/{id}/repair-plan` says what pressing
+  Repair would do (the dialog's "what will happen" line, from the server so
+  that the words and the actions cannot differ); `POST /api/v1/devices/{id}/repairs`
+  with an empty object decides again, starts the repairs and audits
+  `device.repair_plan` with the plan's id, what was down, what waits and the
+  ids of the repairs it started (each repair keeps its own `device.repair_request`
+  row). The `target` field is gone from the request.
+
+  *Automatic repairs use the same table.* The conditions of Part R still say
+  when to try (how long, the limits, the organization's switch); before an
+  attempt starts, the table must name the target for the device now. No new
+  automatic behaviour is added, and each attempt is subject to the dev-scope
+  guard (`devscope.Allowed(organization)`) once it lands; the place is marked
+  in `recovery/auto.go` (`evaluateTarget`, before the plan is read).
+
+  *Per-agent actions.* The three buttons go and no per-agent action is kept in
+  the console: the table covers every state in which something can be repaired,
+  and a repair of an agent that is running (a restart nobody needs) has no
+  case. The service's `Request(target)` stays because the plan and automatic
+  repairs build on it, not as an API.
+
+  *Diagnostics into the Logs tab.* Slice R3 kept a step's diagnostics on
+  `agent_repairs.diagnostics`, waiting for the agent log table. They now go
+  into `agent_log_records` as records of the EasyPatch agent (the only carrier
+  that returns diagnostics): one per non-empty line, at the time the step
+  settled, level `info` (`warn` for a failed step), with the repair id and step
+  as attributes, redacted whole and per line as before (the engine's agent
+  redacted them first; `logredact` again here). They are the server's own
+  records (sequence -1) and follow the log's retention (14 days by default)
+  rather than the old column's. The column is dropped; migration `00047`
+  moves what repairs hold into the log first.
+
+  *The Logs tab's order.* The merged view was ordered by arrival, so a source
+  whose batch came late appeared out of time order. It is now ordered by the
+  time a record was logged, newest first, across every source, with the record
+  id (the order the server stored them in) breaking ties, higher first, and the
+  Logs tab shows the newest at the top. `before` pages to older records in that
+  order; `after` still means "stored after this record", which is what the live
+  tail needs, since a late batch can hold records older than the newest shown.
+  A download is in time order, oldest first. Migration `00046` adds the index.
 
 ## References
 

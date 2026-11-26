@@ -37,3 +37,21 @@ export function clock(iso: string): string {
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
+
+/** The highest record id of a list, the cursor of the live tail (it counts the order records were stored in). */
+export function highestId(items: { id: number }[], from: number): number {
+  return items.reduce((m, r) => Math.max(m, r.id), from);
+}
+
+/**
+ * The merged view of every source: newest logged time first, and among equal times the record stored later first (the
+ * higher id), the same order the server reads in. Records already shown are kept once.
+ */
+export function mergeNewestFirst<T extends { id: number; time: string }>(a: T[], b: T[]): T[] {
+  const seen = new Map<number, T>();
+  for (const r of [...a, ...b]) seen.set(r.id, r);
+  return [...seen.values()].sort((x, y) => {
+    const d = Date.parse(y.time) - Date.parse(x.time);
+    return d !== 0 ? d : y.id - x.id;
+  });
+}
