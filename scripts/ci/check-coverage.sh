@@ -79,6 +79,9 @@ floors=(
   "server/internal/compliance/scan         92"
   "server/internal/compliance/engine       70"
   "server/internal/compliance/fix          72"
+  # Security posture (ADR-0082) and the two compliance alerts.
+  "server/internal/posture                 75"
+  "server/internal/compliance/alerts       65"
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"
   "server/internal/monitoring              85"

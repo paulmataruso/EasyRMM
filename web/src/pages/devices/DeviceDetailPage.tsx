@@ -20,6 +20,7 @@ import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { PatchesPanel } from "./DevicePatches";
 import { HardeningPanel } from "./DeviceHardening";
+import { PosturePanel } from "./PosturePanel";
 import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
 import { DefenderPanel } from "./DeviceDefender";
@@ -205,6 +206,7 @@ export function DeviceDetailPage() {
 
       {tab === "hardening" && (
         <div role="tabpanel" aria-labelledby="tab-hardening">
+          <PosturePanel deviceId={d.id} />
           {d.platform === "windows" ? <WindowsHardeningPanel device={d} /> : <HardeningPanel device={d} />}
         </div>
       )}

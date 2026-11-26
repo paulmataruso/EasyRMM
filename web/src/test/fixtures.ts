@@ -142,6 +142,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     removal: null,
     hardening: null,
     diskHealth: null,
+    posture: null,
     ...extra,
   };
 }

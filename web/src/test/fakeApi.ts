@@ -186,6 +186,8 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /alerts/devices": ok({ items: [] }),
     "GET /scripts": ok({ items: [] }),
     "GET /devices/recent-connections": ok({ items: [] }),
+    // A device's security posture card (ADR-0082): a device posture does not cover shows none.
+    "GET /devices/:id/posture": ok({ covered: false, phrase: "", posture: null }),
     // A Windows device's Defender card (ADR-0070): a device that has reported nothing shows none.
     "GET /devices/:id/defender": ok({ defender: null, defenderAt: null, installed: null }),
     // A Windows device's module tabs (ADR-0073): a device that has reported no roles offers none.

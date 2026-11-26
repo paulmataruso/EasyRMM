@@ -151,3 +151,44 @@ func TestCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestScoreOf(t *testing.T) {
+	now := time.Now()
+	ok := func(id string, w int, st string, age time.Duration) rollup.Item {
+		return rollup.Item{ID: id, Label: id, Weight: w, Result: rollup.Result{State: st, CheckedAt: now.Add(-age)}}
+	}
+	fresh := 30 * 24 * time.Hour
+	t.Run("equal weights are N of M", func(t *testing.T) {
+		s := rollup.ScoreOf([]rollup.Item{ok("a", 1, "in_place", 0), ok("b", 1, "in_place", 0), ok("c", 1, "not_in_place", 0), ok("d", 1, "not_applicable", 0)}, now, fresh)
+		if s.Percent == nil || *s.Percent != 66 || s.Word != "does not meet" || s.NotApplicable != 1 || len(s.Reasons) != 1 {
+			t.Fatalf("%+v", s)
+		}
+	})
+	t.Run("weights count", func(t *testing.T) {
+		s := rollup.ScoreOf([]rollup.Item{ok("a", 3, "in_place", 0), ok("b", 1, "failed", 0)}, now, fresh)
+		if *s.Percent != 75 {
+			t.Fatalf("%+v", s)
+		}
+	})
+	t.Run("unknown and stale never pass, and cannot tell is not does not meet", func(t *testing.T) {
+		s := rollup.ScoreOf([]rollup.Item{ok("a", 1, "in_place", 0), ok("b", 2, "in_place", 31*24*time.Hour), ok("c", 1, "unknown", 0), ok("d", 1, "not_supported", 0)}, now, fresh)
+		if s.Word != "cannot tell" || *s.Percent != 20 || s.CannotTell != 3 || s.Reasons[0].ControlID != "b" || s.Reasons[0].State != "stale" {
+			t.Fatalf("%+v", s)
+		}
+	})
+	t.Run("all pass meets; nothing applies cannot tell with no score", func(t *testing.T) {
+		if s := rollup.ScoreOf([]rollup.Item{ok("a", 1, "in_place", 0)}, now, fresh); s.Word != "meets" || *s.Percent != 100 {
+			t.Fatalf("%+v", s)
+		}
+		if s := rollup.ScoreOf([]rollup.Item{ok("a", 1, "not_applicable", 0)}, now, fresh); s.Word != "cannot tell" || s.Percent != nil {
+			t.Fatalf("%+v", s)
+		}
+	})
+	t.Run("managed elsewhere takes the owner's word", func(t *testing.T) {
+		yes := true
+		it := rollup.Item{ID: "m", Weight: 1, Result: rollup.Result{State: "managed_elsewhere", CheckedAt: now, Owner: &rollup.Owner{Name: "Group Policy", Meets: &yes}}}
+		if s := rollup.ScoreOf([]rollup.Item{it}, now, fresh); s.Word != "meets" {
+			t.Fatalf("%+v", s)
+		}
+	})
+}

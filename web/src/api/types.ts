@@ -523,6 +523,37 @@ export interface Device {
   hardening: HardeningSummary | null;
   /** Its disks' health, summed up; null while its agent has reported none (ADR-0065). */
   diskHealth: DiskHealthSummary | null;
+  /** Its security posture (ADR-0082): one word and score; null where posture does not cover the device. */
+  posture: PostureSummary | null;
+}
+
+/** The compliance engine's words for a result (ADR-0078, section 9), which security posture shares. */
+export type PostureWord = "meets" | "does not meet" | "cannot tell";
+
+/** A device's security posture as the Devices list shows it. percent is null when nothing applies. */
+export interface PostureSummary {
+  word: PostureWord;
+  percent: number | null;
+  failing: number;
+  cannotTell: number;
+  checkedAt: string | null;
+}
+
+/** A control that is not passing, with why. state is stale when its result is older than the freshness window. */
+export interface PostureReason {
+  controlId: string;
+  label: string;
+  state: string;
+  word: PostureWord;
+  weight: number;
+  detail?: string;
+}
+
+/** A device's posture with its reasons (GET /devices/{id}/posture). */
+export interface DevicePosture {
+  covered: boolean;
+  phrase: string;
+  posture: (PostureSummary & { reasons: PostureReason[]; meeting: number; notApplicable: number }) | null;
 }
 
 /** Why a device's remote access is not connected (ADR-0069, "MeshAgent watchdog"). */
@@ -1839,7 +1870,8 @@ export interface SoftwareDevice {
 /** What a policy watches: no check-in, processor, memory or the fullest disk at a percentage, or each disk's health
  * with one of its checks (ADR-0065). remote_down: the EasyRMM agent checks in but MeshAgent is not connected;
  * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in; repair_failed: an automatic repair
- * ended with its agent still broken, an alert of no policy (ADR-0069). */
+ * ended with its agent still broken, an alert of no policy (ADR-0069); compliance_fix_failed and compliance_scan_stale
+ * are alerts of no policy too (ADR-0078, ADR-0082). */
 export type AlertKind =
   | "offline"
   | "cpu"
@@ -1848,7 +1880,9 @@ export type AlertKind =
   | "disk_health"
   | "remote_down"
   | "agent_silent"
-  | "repair_failed";
+  | "repair_failed"
+  | "compliance_fix_failed"
+  | "compliance_scan_stale";
 /** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
  * temperature (°C, or the drive's own limit without a threshold). */
 export type DiskCheck =
@@ -2000,6 +2034,7 @@ export type ReportName =
   | "software"
   | "health"
   | "alerts"
+  | "security"
   | "contacts"
   | "patch-compliance"
   | "patch-installations";

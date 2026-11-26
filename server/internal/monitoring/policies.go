@@ -42,6 +42,11 @@ const (
 	// its target still broken (ADR-0069). It belongs to no policy and is
 	// opened and resolved by the recovery service.
 	KindRepairFailed = "repair_failed"
+	// KindComplianceFixFailed and KindComplianceScanStale are the compliance
+	// alerts (ADR-0078, ADR-0082). They belong to no policy; the compliance
+	// alerts service opens and resolves them.
+	KindComplianceFixFailed = "compliance_fix_failed"
+	KindComplianceScanStale = "compliance_scan_stale"
 )
 
 // Disk health checks (Policy.CheckName).

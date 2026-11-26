@@ -104,6 +104,26 @@ export function alertGuide(a: Kind): AlertGuide {
         ],
         tabs: [OVERVIEW],
       };
+    case "compliance_fix_failed":
+      return {
+        means: `A fix from the compliance queue was made on this computer for ${a.subjectLabel || "a control"}, and the change did not stand. The alert's details say why.`,
+        next: [
+          "Open the computer's Compliance tab and look at the item: it keeps the value before and after.",
+          "Undo the fix there, or fix the cause and try again.",
+          "It resolves once the item is undone, set aside or no longer failed.",
+        ],
+        tabs: [OVERVIEW],
+      };
+    case "compliance_scan_stale":
+      return {
+        means: "The newest compliance result for this computer is older than the organization's freshness window, so it no longer counts as meeting anything: stale results are treated as not passing.",
+        next: [
+          "Start a scan for the organization from its Compliance tab, or check that scheduled scans are on.",
+          "Check that the computer is online and its agent checks in.",
+          "It resolves once a newer result arrives.",
+        ],
+        tabs: [OVERVIEW],
+      };
     default:
       return { means: `A ${String(a.kind)} alert, a kind this console does not know.`, next: [ACKNOWLEDGE], tabs: [OVERVIEW] };
   }
