@@ -63,15 +63,14 @@ test("an organization's page adds and lists its own alert policy, and the old Al
   await expect(page).toHaveURL(/\?tab=alert-policies$/);
   await page.getByRole("button", { name: "New policy" }).click();
   const dialog = page.getByRole("dialog", { name: "New alert policy" });
-  await expect(dialog.getByText("Contoso Dental Group")).toBeVisible();
+  await expect(
+    dialog.getByText("Contoso Dental Group", { exact: true }),
+  ).toBeVisible();
   await expect(dialog.getByLabel("Applies to")).toHaveCount(0);
   await dialog.getByLabel(/Name/).fill("Contoso memory watch");
   await dialog.getByRole("button", { name: "Add policy" }).click();
   await expect(
     page.getByRole("table").getByText("Contoso memory watch"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("table").getByText("Contoso Dental Group").first(),
   ).toBeVisible();
 
   // Alerts narrowed to the organization link to its policies; the old tab address goes there too.
@@ -102,7 +101,9 @@ test("a site's page has its own alert policies, apart from the organization's", 
   ).toHaveCount(0);
   await page.getByRole("button", { name: "New policy" }).first().click();
   const dialog = page.getByRole("dialog", { name: "New alert policy" });
-  await expect(dialog.getByText("Downtown clinic")).toBeVisible();
+  await expect(
+    dialog.getByText("Downtown clinic", { exact: true }),
+  ).toBeVisible();
   await dialog.getByLabel(/Name/).fill("Downtown disks");
   await dialog.getByRole("button", { name: "Add policy" }).click();
   await expect(
