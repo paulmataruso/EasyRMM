@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
@@ -41,5 +46,47 @@ func TestDownloadsDescribeEveryAddress(t *testing.T) {
 	b := New(nil, &agents.Builds{}, "https://rmm.example.com", nil, nil)
 	if len(b.addresses) != 1 || b.addresses[0].URL != "https://rmm.example.com" || b.ca != nil {
 		t.Errorf("default addresses = %+v", b.addresses)
+	}
+}
+
+// With a dev scope set, the console's downloads, tied to no organization,
+// are the stable builds; without one, the server's.
+func TestDownloadsFollowTheDevScope(t *testing.T) {
+	load := func(body string) *agents.Builds {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "easyrmm-agent-linux-amd64"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, err := agents.LoadBuilds(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	fresh, stable := load("new build"), load("stable build")
+	svc := agents.New(nil, nil, nil, nil)
+	svc.SetUpdates(fresh, nil)
+	a := New(svc, fresh, "https://rmm.example.com", nil, nil)
+	sums := func() []agents.Build {
+		w := httptest.NewRecorder()
+		if err := a.downloads(w, httptest.NewRequest(http.MethodGet, "/api/v1/agent-downloads", nil)); err != nil {
+			t.Fatal(err)
+		}
+		var got downloads
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Items
+	}
+	if got := sums(); len(got) != 1 || got[0].SHA256 != fresh.List()[0].SHA256 {
+		t.Errorf("no scope: %+v", got)
+	}
+	t.Cleanup(devscope.Set(uuid.New()))
+	if got := sums(); len(got) != 0 {
+		t.Errorf("scope set, no stable builds loaded, offered %+v", got)
+	}
+	svc.SetStable(stable)
+	if got := sums(); len(got) != 1 || got[0].SHA256 != stable.List()[0].SHA256 {
+		t.Errorf("scope set: %+v, want the stable build", got)
 	}
 }

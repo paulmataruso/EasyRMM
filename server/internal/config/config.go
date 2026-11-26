@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/net/publicsuffix"
 
 	"github.com/paulmataruso/easyrmm/server/internal/m365"
@@ -103,6 +104,14 @@ type Config struct {
 	WebDir                string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
 	AgentDir string
+	// DevScopeOrg limits test builds and automatic actions to one
+	// organization (EASYRMM_DEV_SCOPE_ORG, a development-only control);
+	// uuid.Nil when unset. Every other organization gets the builds in
+	// AgentStableDir.
+	DevScopeOrg uuid.UUID
+	// AgentStableDir holds the stable agent builds, laid out like AgentDir
+	// (EASYRMM_AGENT_STABLE_DIR). Only read while DevScopeOrg is set.
+	AgentStableDir string
 	// UpdaterStatusDir is the updater's status directory, mounted read-only
 	// (ADR-0052): while its hold file exists the server answers its health
 	// check and nothing else.
@@ -237,6 +246,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		ArgonMaxParallel:      l.integer("EASYRMM_ARGON2_MAX_PARALLEL", 4),
 		WebDir:                l.str("EASYRMM_WEB_DIR", ""),
 		AgentDir:              l.str("EASYRMM_AGENT_DIR", "/usr/share/easyrmm/agents"),
+		AgentStableDir:        l.orDefault("EASYRMM_AGENT_STABLE_DIR", "/usr/share/easyrmm/agents-stable"),
 		UpdaterStatusDir:      l.orDefault("EASYRMM_UPDATER_STATUS_DIR", DefaultUpdaterStatusDir),
 		DevInsecureCookie:     l.boolean("EASYRMM_DEV_INSECURE_COOKIES", false),
 		SMTP: SMTPConfig{
@@ -250,6 +260,13 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 			TenantID: l.str("EASYRMM_SMTP_TENANT_ID", ""),
 			ClientID: l.str("EASYRMM_SMTP_CLIENT_ID", ""),
 		},
+	}
+	if raw := l.orDefault("EASYRMM_DEV_SCOPE_ORG", ""); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil || id == uuid.Nil {
+			l.errs = append(l.errs, errors.New("EASYRMM_DEV_SCOPE_ORG must be an organization's UUID"))
+		}
+		c.DevScopeOrg = id
 	}
 	errs := len(l.errs)
 	c.SMTP.ClientSecretFile, c.SMTP.ClientSecret = l.fileOnly("EASYRMM_SMTP_CLIENT_SECRET")

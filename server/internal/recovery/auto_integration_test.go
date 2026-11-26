@@ -12,6 +12,8 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
 // meshDevice is a device whose EasyRMM agent supervises MeshAgent and
@@ -388,5 +390,114 @@ func TestEvaluateWithoutRemoteAccessOrPatchingJudgesNothing(t *testing.T) {
 	}
 	if _, err := f.svc.Request(f.ctx, f.tech, uuid.New(), agentproto.TargetMeshAgent); err == nil {
 		t.Error("a repair of a device that does not exist")
+	}
+}
+
+// While a dev scope is set, no automatic repair starts for a device outside
+// it, though the same condition has held as long; a repair an administrator
+// asks for still runs. Without a scope, both start (as the tests above show).
+func TestDevScopePausesAutomaticRepairOutsideTheScope(t *testing.T) {
+	f := newFixture(t)
+	in := f.meshDevice("pc-in")
+	other := f.id(`INSERT INTO organizations (name) VALUES ('Other') RETURNING id`)
+	site := f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, other)
+	f.exec(`INSERT INTO mesh_sites (site_id, organization_id, mesh_id, synced_name) VALUES ($1, $2, 'mesh-0987654321', 'HQ')`, site, other)
+	key := make([]byte, 32)
+	out := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform, agent_public_key, enrolled_at, agent_last_seen_at,
+			meshagent_state, meshagent_state_at, remote_online)
+		VALUES ($1, $2, 'pc-out', 'pc-out', 'linux', $3, now() - interval '1 day', now(),
+			'{"installed":true,"running":true}'::jsonb, now(), false) RETURNING id`, other, site, key)
+
+	t.Cleanup(devscope.Set(f.acme))
+	f.eval(0)
+	f.eval(10 * time.Minute)
+	if f.autos(in, "meshagent") != 1 {
+		t.Error("the device in the scope was not repaired")
+	}
+	if f.autos(out, "meshagent") != 0 {
+		t.Fatal("an automatic repair started outside the dev scope")
+	}
+	f.eval(7 * time.Hour)
+	if f.autos(out, "meshagent") != 0 {
+		t.Error("an automatic repair started outside the dev scope, later")
+	}
+	if _, err := f.svc.Request(f.ctx, f.user("tech@other.example", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: other}), out, agentproto.TargetMeshAgent); err != nil {
+		t.Errorf("an administrator's repair outside the scope was refused: %v", err)
+	}
+}
+
+// A recovery copy is checked against the builds of the device's own
+// organization: outside the dev scope, only the stable builds count, and a
+// signed build only when it was made from one of them.
+func TestDevScopeRecoveryAcceptsTheHashesOfTheOrganizationsBuilds(t *testing.T) {
+	f := newFixture(t)
+	other := uuid.New()
+	f.svc.SetBuilds(func(org uuid.UUID, platform, arch string) []string {
+		if platform != "linux" || arch != "amd64" {
+			return nil
+		}
+		if devscope.Allowed(org) {
+			return []string{"newhash"}
+		}
+		return []string{"stablehash"}
+	})
+	t.Cleanup(devscope.Set(f.acme))
+	arch := "amd64"
+	for _, c := range []struct {
+		org  uuid.UUID
+		sha  string
+		want bool
+	}{
+		{f.acme, "newhash", true}, {f.acme, "stablehash", false},
+		{other, "stablehash", true}, {other, "newhash", false},
+	} {
+		var got bool
+		if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			got = f.svc.publishes(f.ctx, tx, c.org, "linux", &arch, c.sha)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("publishes(%v, %s) = %v, want %v", c.org == f.acme, c.sha, got, c.want)
+		}
+	}
+
+	// A signed Windows build counts outside the scope only when it was made
+	// from one of the stable builds.
+	h := func(c string) string { return strings.Repeat(c, 64) }
+	f.svc.SetBuilds(func(org uuid.UUID, platform, arch string) []string {
+		if platform == "windows" && arch == "amd64" {
+			if devscope.Allowed(org) {
+				return []string{h("1")}
+			}
+			return []string{h("2")}
+		}
+		return nil
+	})
+	for i, c := range []struct{ sha, release string }{{h("a"), h("2")}, {h("b"), h("1")}} {
+		f.exec(`INSERT INTO signed_agent_builds (id, arch, version, sha256, release_sha256, content, signer_subject, signer_issuer,
+				thumbprint, not_before, not_after, timestamped)
+			VALUES ($1, 'amd64', $2, $3, $4, 'x', 's', 'i', $5, now(), now(), false)`,
+			uuid.New(), "v"+string(rune('1'+i)), c.sha, c.release, strings.Repeat("0", 40))
+	}
+	for _, c := range []struct {
+		org  uuid.UUID
+		sha  string
+		want bool
+	}{
+		{other, h("a"), true}, {other, h("b"), false}, {other, h("c"), false},
+		{f.acme, h("a"), true}, {f.acme, h("b"), true}, {f.acme, h("c"), false},
+	} {
+		var got bool
+		if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			got = f.svc.publishes(f.ctx, tx, c.org, "windows", &arch, c.sha)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("signed: publishes(inside=%v, %.1s) = %v, want %v", c.org == f.acme, c.sha, got, c.want)
+		}
 	}
 }

@@ -116,7 +116,7 @@ type ServedBuild struct {
 
 // BuildLookup returns the agent build the server serves for a platform and
 // architecture.
-type BuildLookup func(platform, arch string) (ServedBuild, bool)
+type BuildLookup func(org uuid.UUID, platform, arch string) (ServedBuild, bool)
 
 // Device is a managed endpoint as the console shows it.
 type Device struct {
@@ -416,7 +416,7 @@ func (s *Service) updateStatus(d *Device) {
 	var b ServedBuild
 	ok := false
 	if s.builds != nil {
-		b, ok = s.builds(d.Platform, a.Arch)
+		b, ok = s.builds(d.OrganizationID, d.Platform, a.Arch)
 	}
 	if !ok {
 		a.Update = nil

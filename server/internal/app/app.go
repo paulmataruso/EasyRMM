@@ -28,6 +28,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
@@ -254,6 +255,17 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		log.Warn("the agent builds have no "+agents.VersionFile+" file; agent updates still work, but the console cannot show versions", "dir", cfg.AgentDir)
 	}
 	d.Agents.SetUpdates(builds, jobKey)
+	// The dev scope (development only): organizations outside it keep the
+	// stable builds. A server that cannot offer them does not start.
+	devscope.Set(cfg.DevScopeOrg)
+	if devscope.Active() {
+		stable, err := loadStable(cfg.AgentStableDir)
+		if err != nil {
+			return nil, err
+		}
+		d.Agents.SetStable(stable)
+	}
+	devscope.Log(log)
 	// Windows builds an operator signed take the release's place (ADR-0049).
 	if err := d.Agents.LoadSignedBuilds(ctx); err != nil {
 		return nil, err
@@ -261,6 +273,19 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
 	return d, nil
+}
+
+// loadStable loads the stable agent builds the dev scope needs: a server that
+// cannot offer them, a missing or empty directory, does not start.
+func loadStable(dir string) (*agents.Builds, error) {
+	stable, err := agents.LoadBuilds(dir)
+	if err != nil {
+		return nil, fmt.Errorf("EASYRMM_DEV_SCOPE_ORG is set, so the stable agent builds are needed: %w", err)
+	}
+	if len(stable.List()) == 0 {
+		return nil, fmt.Errorf("EASYRMM_DEV_SCOPE_ORG is set, but EASYRMM_AGENT_STABLE_DIR (%s) holds no agent builds: organizations outside the scope would get none", dir)
+	}
+	return stable, nil
 }
 
 // buildRemote assembles the MeshCentral integration.

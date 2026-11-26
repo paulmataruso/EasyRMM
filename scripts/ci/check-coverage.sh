@@ -24,6 +24,8 @@ floors=(
   # Agent identity: enrollment, request signatures, and their HTTP surface.
   "internal/agentproto                     95"
   "server/internal/agents                  88"
+  # The development-only dev scope guard.
+  "server/internal/devscope                95"
   # Reads the signatures operators upload (ADR-0049).
   "server/internal/agents/authenticode     90"
   "server/internal/httpapi/agentapi        88"

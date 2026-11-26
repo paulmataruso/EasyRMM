@@ -67,7 +67,8 @@ func TestInstallScriptPerAddress(t *testing.T) {
 	for _, want := range []string{
 		"SERVER='https://203.0.113.10'\n",
 		"PIN='" + testPin + "'\n",
-		`curl -fsSL --proto '=https' --insecure --pinnedpubkey "$PIN"`,
+		`curl -K - -fsSL --proto '=https' --insecure --pinnedpubkey "$PIN"`,
+		`X-Easyrmm-Token: %s`,
 		`fetch "$SERVER/api/agent/v1/ca.pem" "$TMP/ca.pem"`,
 		`install --server "$SERVER" --ca-file "$TMP/ca.pem"`,
 		"curl is required to check the server's public key",

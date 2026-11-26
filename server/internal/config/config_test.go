@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/m365/m365test"
 )
 
@@ -558,6 +560,31 @@ func TestSMTPSignIn(t *testing.T) {
 	} {
 		if _, err := LoadFrom(env(c.env), read); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestDevScope(t *testing.T) {
+	c, err := LoadFrom(env(base()), noFiles)
+	if err != nil || c.DevScopeOrg != uuid.Nil || c.AgentStableDir != "/usr/share/easyrmm/agents-stable" {
+		t.Fatalf("defaults: %+v, %v", c.DevScopeOrg, err)
+	}
+	org := uuid.New()
+	m := base()
+	m["EASYRMM_DEV_SCOPE_ORG"] = org.String()
+	m["EASYRMM_AGENT_STABLE_DIR"] = "/stable"
+	if c, err = LoadFrom(env(m), noFiles); err != nil || c.DevScopeOrg != org || c.AgentStableDir != "/stable" {
+		t.Errorf("set: %v %s, %v", c.DevScopeOrg, c.AgentStableDir, err)
+	}
+	// Docker Compose passes a blank value for an unset variable.
+	m["EASYRMM_DEV_SCOPE_ORG"] = ""
+	if c, err = LoadFrom(env(m), noFiles); err != nil || c.DevScopeOrg != uuid.Nil {
+		t.Errorf("blank: %v, %v", c.DevScopeOrg, err)
+	}
+	for _, bad := range []string{"not-a-uuid", uuid.Nil.String()} {
+		m["EASYRMM_DEV_SCOPE_ORG"] = bad
+		if _, err := LoadFrom(env(m), noFiles); err == nil || !strings.Contains(err.Error(), "EASYRMM_DEV_SCOPE_ORG") {
+			t.Errorf("%q: %v", bad, err)
 		}
 	}
 }

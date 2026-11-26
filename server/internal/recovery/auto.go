@@ -12,6 +12,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 )
 
 // Automatic repairs (ADR-0069, Part R). The server watches for the
@@ -157,13 +158,14 @@ func (s *Service) evaluateTarget(ctx context.Context, tx pgx.Tx, now time.Time, 
 	rows, err := tx.Query(ctx, `SELECT k.device_id, d.name, d.organization_id, d.site_id
 		FROM agent_conditions k JOIN devices d ON d.id = k.device_id JOIN organizations o ON o.id = d.organization_id
 		WHERE k.target = $2::text AND k.since <= $1::timestamptz - make_interval(secs => $3::int) AND o.auto_repair
+		  AND ($6::uuid IS NULL OR d.organization_id = $6::uuid)
 		  AND NOT EXISTS (SELECT 1 FROM agent_repairs r WHERE r.device_id = k.device_id AND r.target = k.target AND r.state = 'running')
 		  AND NOT EXISTS (SELECT 1 FROM agent_repairs r WHERE r.device_id = k.device_id AND r.target = k.target AND r.trigger = 'automatic'
 			AND r.started_at > $1::timestamptz - make_interval(secs => $4::int))
 		  AND (SELECT count(*) FROM agent_repairs r WHERE r.device_id = k.device_id AND r.target = k.target AND r.trigger = 'automatic'
 			AND r.started_at > $1::timestamptz - interval '24 hours') < $5::int
 		ORDER BY k.since, k.device_id LIMIT 200`,
-		now, target, int(seenFor.Seconds()), int(AttemptEvery.Seconds()), PerDay)
+		now, target, int(seenFor.Seconds()), int(AttemptEvery.Seconds()), PerDay, scopeArg())
 	if err != nil {
 		return err
 	}
@@ -199,6 +201,16 @@ func (s *Service) evaluateTarget(ctx context.Context, tx pgx.Tx, now time.Time, 
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// scopeArg is the organization automatic repairs are limited to while a dev
+// scope is set, or nil: the server starts no automatic action on a device
+// outside the scope.
+func scopeArg() *uuid.UUID {
+	if org, ok := devscope.Org(); ok {
+		return &org
 	}
 	return nil
 }

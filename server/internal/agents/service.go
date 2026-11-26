@@ -58,7 +58,10 @@ type Service struct {
 	jobKey                 string
 	// Agent updates (ADR-0027); nil without builds. updateKey is the job
 	// key, which also signs uninstall instructions (ADR-0050).
-	builds    *Builds
+	builds *Builds
+	// stable is what organizations outside the dev scope are offered
+	// (SetStable).
+	stable    *Builds
 	updateKey ed25519.PrivateKey
 	// tokens seals the secrets of new deployment and approval tokens, so
 	// they can be shown again (ADR-0047); nil keeps only their hashes.

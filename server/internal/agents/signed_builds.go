@@ -113,28 +113,53 @@ func (s *Service) LoadSignedBuilds(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		choice, withheld := chooseSigned(s.builds.Release(), kept, p.SignedOnly)
-		served := make(map[string]signedContent, len(choice))
-		for file, b := range choice {
-			var content []byte
-			if err := tx.QueryRow(ctx, `SELECT content FROM signed_agent_builds WHERE id = $1`, b.ID).Scan(&content); err != nil {
-				return err
-			}
-			if sum := sha256.Sum256(content); hex.EncodeToString(sum[:]) != b.SHA256 {
-				return fmt.Errorf("the signed build %s for %s does not match its SHA-256", b.Version, b.Arch)
-			}
-			signer := b.Signer
-			served[file] = signedContent{content: content, older: !releaseOf(s.builds, file, b.ReleaseSHA256), build: Build{
-				OS: windowsOS, Arch: b.Arch, File: file, Size: int64(len(content)), SHA256: b.SHA256,
-				Version: b.Version, Signed: &signer, modTime: b.UploadedAt,
-			}}
+		if err := serveSigned(ctx, tx, s.builds, kept, p.SignedOnly); err != nil {
+			return err
 		}
-		s.builds.serve(served, withheld)
-		return nil
+		if s.stable == nil {
+			return nil
+		}
+		// The stable builds take only builds signed from an earlier release
+		// than the server's own: a build signed from a release under test
+		// never reaches an organization outside the dev scope.
+		var older []SignedBuild
+		for _, b := range kept {
+			if !releaseHas(s.builds, b.ReleaseSHA256) || releaseHas(s.stable, b.ReleaseSHA256) {
+				older = append(older, b)
+			}
+		}
+		return serveSigned(ctx, tx, s.stable, older, p.SignedOnly)
 	})
 	if err != nil {
 		return fmt.Errorf("agents: loading the signed builds: %w", err)
 	}
+	return nil
+}
+
+// releaseHas says whether any of the release's builds has the SHA-256.
+func releaseHas(b *Builds, sha string) bool {
+	return slices.ContainsFunc(b.Release(), func(it Build) bool { return it.SHA256 == sha })
+}
+
+// serveSigned has b serve the signed builds kept, as chooseSigned decides.
+func serveSigned(ctx context.Context, tx pgx.Tx, b *Builds, kept []SignedBuild, signedOnly bool) error {
+	choice, withheld := chooseSigned(b.Release(), kept, signedOnly)
+	served := make(map[string]signedContent, len(choice))
+	for file, sb := range choice {
+		var content []byte
+		if err := tx.QueryRow(ctx, `SELECT content FROM signed_agent_builds WHERE id = $1`, sb.ID).Scan(&content); err != nil {
+			return err
+		}
+		if sum := sha256.Sum256(content); hex.EncodeToString(sum[:]) != sb.SHA256 {
+			return fmt.Errorf("the signed build %s for %s does not match its SHA-256", sb.Version, sb.Arch)
+		}
+		signer := sb.Signer
+		served[file] = signedContent{content: content, older: !releaseOf(b, file, sb.ReleaseSHA256), build: Build{
+			OS: windowsOS, Arch: sb.Arch, File: file, Size: int64(len(content)), SHA256: sb.SHA256,
+			Version: sb.Version, Signed: &signer, modTime: sb.UploadedAt,
+		}}
+	}
+	b.serve(served, withheld)
 	return nil
 }
 

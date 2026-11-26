@@ -312,8 +312,10 @@ func TestPrivateCA(t *testing.T) {
 func TestDownload(t *testing.T) {
 	build := bytes.Repeat([]byte{0x42}, 3000)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			t.Error("a build download is signed; it needs no identity")
+		// The download names the device, so that a server holding test
+		// builds back from some organizations knows whose build to send.
+		if a, err := agentproto.Parse(r.Header.Get("Authorization")); err != nil || a.Device != "dev-1" {
+			t.Errorf("a build download is signed by the device: %+v, %v", a, err)
 		}
 		switch r.URL.EscapedPath() {
 		case agentproto.PathAgentDownload("easyrmm-agent-linux-amd64"):
@@ -333,6 +335,11 @@ func TestDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, devKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetIdentity("dev-1", devKey)
 	ctx := context.Background()
 
 	var buf bytes.Buffer

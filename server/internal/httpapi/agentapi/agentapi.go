@@ -31,6 +31,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -751,14 +752,64 @@ func (a *API) authorityCert(w http.ResponseWriter, _ *http.Request) error {
 	return nil
 }
 
+// HeaderDeployToken is the header an installer sends its deployment token
+// in when it downloads the agent: the server hands a build to the
+// organization the token belongs to (package devscope).
+const HeaderDeployToken = "X-Easyrmm-Token" //nolint:gosec // a header name, not a credential
+
+// servedBuilds are the builds this download is for. Without a dev scope
+// they are the server's, as ever. With one, a request that names a device by
+// its signature, or an organization by a deployment token, within the scope
+// gets the server's builds; every other gets the stable ones.
+func (a *API) servedBuilds(r *http.Request) (*agents.Builds, error) {
+	if !devscope.Active() {
+		return a.builds, nil
+	}
+	org := uuid.Nil
+	switch h := r.Header.Get("Authorization"); {
+	case h != "":
+		p, err := a.svc.BeginSigned(r.Context(), h)
+		if err != nil {
+			return nil, mapError(err)
+		}
+		if !a.requests.Allow(p.DeviceID().String()) {
+			return nil, errTooFrequent
+		}
+		target := r.RequestURI
+		if target == "" {
+			target = r.URL.RequestURI()
+		}
+		d, err := a.svc.FinishSigned(r.Context(), p, r.Method, target, nil)
+		if err != nil {
+			return nil, mapError(err)
+		}
+		org = d.OrganizationID
+	case r.Header.Get(HeaderDeployToken) != "":
+		if o, ok := a.svc.TokenOrg(r.Context(), r.Header.Get(HeaderDeployToken)); ok {
+			org = o
+		}
+	}
+	if devscope.Allowed(org) {
+		return a.builds, nil
+	}
+	return a.svc.BuildsFor(org), nil
+}
+
 func (a *API) download(w http.ResponseWriter, r *http.Request) error {
+	builds, err := a.servedBuilds(r)
+	if err != nil {
+		return err
+	}
+	if builds == nil {
+		return httpapi.ErrNotFound
+	}
 	name := r.PathValue("file")
 	if name == "SHA256SUMS" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, a.builds.Checksums())
+		_, _ = io.WriteString(w, builds.Checksums()) //nolint:gosec // the sums of the server's own builds, served as text/plain
 		return nil
 	}
-	f, b, err := a.builds.Open(name)
+	f, b, err := builds.Open(name)
 	if err != nil {
 		return httpapi.ErrNotFound
 	}
