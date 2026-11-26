@@ -707,6 +707,12 @@ The assessment workspace (ADR-0078 C5, migration `90391`): every table an assess
 `_poam_milestones`, `_documents`, `_document_sections`, `_score_snapshots`) is the organization's own record and is listed as
 owned: a device move leaves it alone. `compliance_scope_assets` names computers: its rows stay with the assessment
 (listed as stays), and a computer that has moved to another organization drops out of that organization's scope reading.
+### Amended 2026-11-26 (decided in review), the registry editor's masked store
+
+`registry_masked_values` (ADR-0067, migration `00072`) holds a copy of the
+organization and site a value was read or typed at, as `job_runs` does, and
+stays with that organization after a move (listed as stays): data kept for a
+change's backup is evidence of what that organization's people did.
 
 ### Amended 2026-11-26 (decided in review), Quick Assist tables
 

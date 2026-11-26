@@ -5,6 +5,7 @@ import { useUrlState } from "../../lib/urlState";
 import { settingsParts } from "../../nav/SectionNav";
 import { AgentFilesTab } from "./AgentFilesTab";
 import { AlertPoliciesSettings } from "./AlertPoliciesSettings";
+import { KeystoreTab } from "./KeystoreTab";
 import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
@@ -25,6 +26,7 @@ const SUBTITLES: Record<string, string> = {
   "alert-policies": "Shared alert policies: what raises an alert on every device in every organization. An organization's or a site's own are on its page.",
   patching:
     "The patching engine, the default patch policy and tags every organization starts from, and the engine's own settings, OS lifecycle dates, agent packages, alert rules, notifications and audit log. An organization's or a site's own patching settings are on its page.",
+  keystore: "The service that holds the key protecting disk recovery keys: its state, its key versions and the alerts about it. An organization's own reads and switches are on its page.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -68,6 +70,7 @@ export function SettingsPage() {
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "alert-policies" && <AlertPoliciesSettings />}
       {part.id === "patching" && <PatchingTab />}
+      {part.id === "keystore" && <KeystoreTab />}
       {part.id === "sso" && <SingleSignOnTab />}
     </>
   );

@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/posture"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -189,6 +190,10 @@ type Device struct {
 	// DiskHealth sums up its disks' health, nil while its agent has
 	// reported none (ADR-0065).
 	DiskHealth *DiskHealthSummary `json:"diskHealth"`
+	// Posture is its security posture (ADR-0082): a word, a score and how
+	// many controls fail or cannot be told. Nil for a device posture does
+	// not cover (no EasyRMM agent, or neither Linux nor Windows).
+	Posture *posture.Summary `json:"posture"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
@@ -278,7 +283,14 @@ type Query struct {
 	DiskHealth string
 	// Compliance is "" or ComplianceFailing.
 	Compliance string
+	// Posture is "" or one of posture.Filter*: the devices whose security
+	// posture meets its policy, does not, or cannot be told (ADR-0082).
+	Posture string
 }
+
+// maxPostureScan bounds how many devices a posture filter looks through before
+// it keeps MaxList of them.
+const maxPostureScan = 100000
 
 // MaxList bounds one list response.
 const MaxList = 5000
@@ -462,6 +474,13 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	if q.Compliance != "" && q.Compliance != ComplianceFailing {
 		return nil, apperr.Invalid("compliance", "Use failing.")
 	}
+	if !posture.ValidFilter(q.Posture) {
+		return nil, apperr.Invalid("posture", "Use meets, does_not_meet or cannot_tell.")
+	}
+	limit := MaxList
+	if q.Posture != "" {
+		limit = maxPostureScan
+	}
 	switch q.DiskHealth {
 	case "", DiskFailing, DiskWarning, DiskUnknown, DiskHealthy, DiskUnavailable, DiskUnsupported, DiskNotReported:
 	default:
@@ -490,7 +509,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				WHEN 'unsupported' THEN coalesce(ds.states ? $8, false)
 				ELSE ds.label IS NOT DISTINCT FROM $8 END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
-			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates,
+			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, limit, q.Hardening, attentionStates,
 			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped, q.Compliance, complianceFailingStates)
 		if err != nil {
 			return err
@@ -507,9 +526,38 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 			s.decorate(c, d)
 			out = append(out, d)
 		}
-		return rows.Err()
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return s.attachPosture(ctx, tx, &out, q.Posture)
 	})
 	return out, err
+}
+
+// attachPosture sets each device's posture and, with a filter, keeps the
+// devices that match it, at most MaxList of them (ADR-0082).
+func (s *Service) attachPosture(ctx context.Context, tx pgx.Tx, list *[]*Device, filter string) error {
+	refs := make([]posture.Ref, 0, len(*list))
+	for _, d := range *list {
+		refs = append(refs, posture.Ref{ID: d.ID, Org: d.OrganizationID, Platform: d.Platform, Enrolled: d.Agent != nil})
+	}
+	m, err := posture.Load(ctx, tx, refs, time.Now())
+	if err != nil {
+		return err
+	}
+	kept := (*list)[:0]
+	for _, d := range *list {
+		p := m[d.ID]
+		if p != nil {
+			d.Posture = p.Summary()
+		}
+		if posture.Matches(p, filter) && len(kept) < MaxList {
+			kept = append(kept, d)
+		}
+	}
+	*list = kept
+	return nil
 }
 
 // Get returns one device the caller can see.

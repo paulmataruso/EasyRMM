@@ -350,8 +350,12 @@ func TestVerifyEscrowMatchAndMismatch(t *testing.T) {
 	if _, e := verify("garbage", c, enc, ct, fp[:]); e != keystore.CodeBadRequest {
 		t.Errorf("garbage: %q", e)
 	}
-	if _, err := k.VerifyEscrow(wrapped, c, enc, ct, fp[:], "luks"); code(t, err) != keystore.CodeBadRequest {
-		t.Errorf("luks: %v", err)
+	if _, err := k.VerifyEscrow(wrapped, c, enc, ct, fp[:], "veracrypt"); code(t, err) != keystore.CodeBadRequest {
+		t.Errorf("an unknown kind: %v", err)
+	}
+	// A BitLocker password is not a LUKS passphrase: it opens, and is a mismatch.
+	if r, err := k.VerifyEscrow(wrapped, c, enc, ct, fp[:], "luks"); err != nil || r != keystore.Mismatch {
+		t.Errorf("a password checked as a LUKS passphrase: %q %v", r, err)
 	}
 }
 

@@ -5,6 +5,7 @@ package app_test
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/paulmataruso/easyrmm/agent/escrow"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/keystored"
 )
@@ -40,7 +44,10 @@ func (s stubBitLocker) RecoveryPassword(context.Context, string, string) ([]byte
 // a real keystore on a real socket, the real agent client and escrow code with
 // a stub for WMI, the signed instruction and routes, the verification inside
 // the keystore, and the console's per-volume state.
-func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
+// escrowKeystore starts a keystore, in the opt-in file mode so that no person or TPM is needed, on a real socket
+// and returns the socket's path.
+func escrowKeystore(t *testing.T) string {
+	t.Helper()
 	// The keystore, in the opt-in file mode so that no person or TPM is needed.
 	dir, err := os.MkdirTemp("", "ks-app")
 	if err != nil {
@@ -70,7 +77,12 @@ func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
 	srv := &keystored.Server{KS: ks, ServiceUIDs: []uint32{uid}, AdminUID: uid}
 	go func() { _ = srv.Serve(ctx, ln, nil); close(done) }()
 	t.Cleanup(func() { stop(); <-done })
+	return sock
+}
 
+func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
+	sock := escrowKeystore(t)
+	ctx := context.Background()
 	h := newHarnessWith(t, false, func(c *config.Config) { c.KeystoreSocket = sock })
 	admin, adminTOTP := setUp(t, h)
 	acme := orgID(t, admin, "Acme")
@@ -259,6 +271,37 @@ func readRecoveryKey(t *testing.T, h *harness, admin *client, adminTOTP, org, de
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/keystore/alerts", nil, &al)
 
+	// An alert is resolved by a person who may (the control of slice 3): an organization's by its
+	// administrators and the platform's by whoever manages settings; another person gets a 404.
+	var alertID string
+	if err := h.db.DB.InTx(context.Background(), database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `INSERT INTO keystore_alerts (organization_id, kind, severity, subject, detail)
+			VALUES ($1, 'escrow_conflict', 'warning', 'x', 'A different key arrived.') RETURNING id::text`, org).Scan(&alertID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var open struct {
+		Alerts []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"alerts"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/keystore/alerts", nil, &open)
+	if len(open.Alerts) != 1 || open.Alerts[0].ID != alertID {
+		t.Fatalf("alerts: %+v", open.Alerts)
+	}
+	tom.expect(http.StatusOK, "GET", "/api/v1/keystore/alerts", nil, &open)
+	if len(open.Alerts) != 0 {
+		t.Fatalf("a technician sees alerts: %+v", open.Alerts)
+	}
+	wantStatus(t, tom.do("POST", "/api/v1/keystore/alerts/"+alertID+"/resolve", nil), http.StatusNotFound, "")
+	wantStatus(t, admin.do("POST", "/api/v1/keystore/alerts/"+alertID+"/resolve", nil), http.StatusNoContent, "")
+	wantStatus(t, admin.do("POST", "/api/v1/keystore/alerts/"+alertID+"/resolve", nil), http.StatusNotFound, "")
+	admin.expect(http.StatusOK, "GET", "/api/v1/keystore/alerts", nil, &open)
+	if len(open.Alerts) != 0 {
+		t.Fatalf("the resolved alert is still listed: %+v", open.Alerts)
+	}
+
 	// The two-person setting: off by default, needs two approvers and a step-up, and is an
 	// organization administrator's.
 	sp := "/api/v1/organizations/" + org + "/keystore-settings"
@@ -335,4 +378,149 @@ func readRecoveryKey(t *testing.T, h *harness, admin *client, adminTOTP, org, de
 		t.Fatalf("deny: %+v", decided)
 	}
 	wantStatus(t, rae.do("POST", path, map[string]any{"volume": vol, "protector": prot, "requestId": pending.Pending.ID}), http.StatusConflict, "")
+}
+
+// stubLUKS stands in for cryptsetup, which the real-volume tests (scripts/ci/luks-test.sh) exercise: it hands the
+// agent a volume it can unlock, and keeps the passphrase the agent gave the slot so that the test can read it back
+// through the console and compare.
+type stubLUKS struct {
+	vol  string
+	slot escrow.LUKSSlot
+	pass []byte
+}
+
+func (s *stubLUKS) Volumes(context.Context) ([]escrow.LUKSVolume, error) {
+	v := escrow.LUKSVolume{UUID: s.vol, Mount: "/", Version: 2, State: agentproto.LUKSEscrowable}
+	if s.slot.TokenID != "" {
+		v.Slots = []escrow.LUKSSlot{s.slot}
+	}
+	return []escrow.LUKSVolume{v}, nil
+}
+
+func (s *stubLUKS) AddSlot(_ context.Context, _ string, pass []byte) (escrow.LUKSSlot, error) {
+	s.pass = append([]byte(nil), pass...)
+	s.slot = escrow.LUKSSlot{TokenID: "0a0a0a0a-0000-4000-8000-000000000001", Hash: strings.Repeat("ab", 32)}
+	return s.slot, nil
+}
+
+func (s *stubLUKS) RemoveSlot(context.Context, string, string) error { return nil }
+
+// TestLUKSEscrowEndToEnd is ADR-0081 slice 3 through the real server: a Linux agent gets the signed key, reports a
+// LUKS volume it can unlock, escrows the passphrase it put in a key slot of its own, the keystore verifies it, the
+// console shows the volume, and a person with the add-on reads the very passphrase back, once and audited.
+func TestLUKSEscrowEndToEnd(t *testing.T) {
+	sock := escrowKeystore(t)
+	ctx := context.Background()
+	h := newHarnessWith(t, false, func(c *config.Config) { c.KeystoreSocket = sock })
+	admin, adminTOTP := setUp(t, h)
+	acme := orgID(t, admin, "Acme")
+	var hq idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
+	var token struct {
+		Secret string `json:"secret"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/sites/"+hq.ID+"/enrollment-tokens", map[string]any{"name": "Linux", "expiresInDays": 1}, &token)
+
+	ac := h.agentClient()
+	key := newKey(t)
+	linux := agentproto.Facts{Hostname: "lx-01", OS: "Debian GNU/Linux 12", Platform: "linux", Arch: "amd64", AgentVersion: "1.2.3-test"}
+	enr, err := ac.Enroll(ctx, token.Secret, key.Public().(ed25519.PublicKey), linux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac.SetIdentity(enr.DeviceID, key)
+	jobKey, err := agentproto.DecodeKey(enr.JobKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: linux, Caps: []string{agentproto.CapEscrow}})
+	if err != nil || resp.Escrow == nil {
+		t.Fatalf("a Linux agent got no escrow key: %+v %v", resp.Escrow, err)
+	}
+	store, _, err := state.Open(host.Paths{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(store.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	luksVol := "6c4a9e2a-1111-4222-8333-444455556666"
+	l := &stubLUKS{vol: luksVol}
+	// Opt-in: with the switch off the agent reports the volume and adds nothing.
+	agentOff := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
+		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	agentOff.Answered(resp.Escrow)
+	agentOff.Sync(ctx)
+	if l.slot.TokenID != "" {
+		t.Fatal("the agent added a key slot with LUKS escrow off")
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, adminTOTP, time.Now().Add(30*time.Second))}, nil)
+	admin.expect(http.StatusOK, "PUT", "/api/v1/organizations/"+acme+"/keystore-settings", map[string]any{"luksEscrow": true}, nil)
+	agent := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
+		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	agent.Answered(resp.Escrow)
+	agent.Sync(ctx) // reports the volume, learns it needs a key, makes the slot and escrows
+	if l.slot.TokenID == "" {
+		t.Fatal("the agent made no key slot")
+	}
+
+	var esc struct {
+		Applicable bool `json:"applicable"`
+		Volumes    []struct {
+			Kind       string `json:"kind"`
+			State      string `json:"state"`
+			Protectors []struct {
+				ID    string `json:"id"`
+				State string `json:"state"`
+			} `json:"protectors"`
+		} `json:"volumes"`
+	}
+	r := admin.do("GET", "/api/v1/devices/"+enr.DeviceID+"/escrow", nil)
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+enr.DeviceID+"/escrow", nil, &esc)
+	if !esc.Applicable || len(esc.Volumes) != 1 || esc.Volumes[0].Kind != "luks" || esc.Volumes[0].State != "verified" ||
+		len(esc.Volumes[0].Protectors) != 1 || esc.Volumes[0].Protectors[0].ID != l.slot.TokenID {
+		t.Fatalf("console: %s", r.body)
+	}
+	if strings.Contains(string(r.body), string(l.pass)) {
+		t.Fatal("the console response holds the passphrase")
+	}
+
+	// A person with the add-on reads it back, through the audited route.
+	invite(t, h, admin, "rae@acme.example", []map[string]any{{"role": "technician", "organizationId": acme}, {"role": "key_reader", "organizationId": acme}})
+	rae := h.client()
+	secret := rae.signIn("rae@acme.example", "a long and unusual passphrase", "")
+	rae.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, secret, time.Now().Add(30*time.Second))}, nil)
+	got := rae.do("POST", "/api/v1/devices/"+enr.DeviceID+"/escrow/read", map[string]any{
+		"volume": luksVol, "protector": l.slot.TokenID, "reason": "The server will not boot after a kernel update"})
+	wantStatus(t, got, http.StatusOK, "")
+	var read struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(got.body, &read); err != nil || read.Key != string(l.pass) {
+		t.Fatalf("the key read is not the passphrase the agent put in the slot: %v", err)
+	}
+	if cc := got.header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q", cc)
+	}
+	if strings.Contains(h.logs.String(), string(l.pass)) {
+		t.Fatal("the passphrase is in the server's log")
+	}
+	var notices struct {
+		Notices []struct{ Reason string } `json:"notices"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/keystore/notices", nil, &notices)
+	if len(notices.Notices) != 1 {
+		t.Fatalf("notices: %+v", notices)
+	}
+}
+
+// stubNoBitLocker is the BitLocker reader of a Linux computer: there is none.
+type stubNoBitLocker struct{}
+
+func (stubNoBitLocker) Volumes(context.Context) ([]escrow.Volume, error) {
+	return nil, escrow.ErrUnsupported
+}
+
+func (stubNoBitLocker) RecoveryPassword(context.Context, string, string) ([]byte, error) {
+	return nil, escrow.ErrUnsupported
 }

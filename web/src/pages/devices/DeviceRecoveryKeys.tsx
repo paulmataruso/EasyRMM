@@ -58,6 +58,21 @@ export const ESCROW_STATE_TEXT: Record<
     tone: "danger",
     help: "A different key arrived for a protector that already has a verified one. The verified one is kept.",
   },
+  cannot_escrow: {
+    label: "Cannot escrow",
+    tone: "warn",
+    help: "Only a passphrase unlocks this volume, so the agent cannot add a key slot of its own. Nothing was changed on it.",
+  },
+  escrow_off: {
+    label: "Escrow off",
+    tone: "neutral",
+    help: "LUKS escrow is off for this organization. Turn it on in the organization's Recovery keys tab.",
+  },
+  managed_elsewhere: {
+    label: "Managed elsewhere",
+    tone: "neutral",
+    help: "Clevis or the distribution's own scheme manages how this volume unlocks. EasyRMM does not rewrite it.",
+  },
 };
 
 /** Why escrow is not running, in words, or null while the keystore is ready. */
@@ -132,7 +147,14 @@ function Approvals({ deviceId }: { deviceId: string }) {
   );
 }
 
-export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
+export function RecoveryKeysCard({
+  deviceId,
+  hideWhenEmpty = false,
+}: {
+  deviceId: string;
+  /** Linux computers mostly have no LUKS volume: the card shows only when one was reported. */
+  hideWhenEmpty?: boolean;
+}) {
   const { can } = useAuth();
   const q = useApi<DeviceEscrow>(`/devices/${deviceId}/escrow`, undefined, {
     refetchInterval: 60_000,
@@ -144,7 +166,7 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
       <ErrorState error={q.error} onRetry={() => void q.refetch()} compact />
     );
   const e = q.data;
-  if (!e.applicable) return null;
+  if (!e.applicable || (hideWhenEmpty && e.volumes.length === 0)) return null;
   const notice = keystoreNotice(e.keystore);
   return (
     <Card title="Disk recovery keys" padded={false}>
@@ -157,9 +179,9 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
           </Alert>
         )}
         <p className="text-xs text-muted">
-          The agent seals each BitLocker recovery key to your organization’s key
-          before it leaves the device. The server stores it and has the keystore
-          check it; it cannot open it.{" "}
+          The agent seals each recovery key to your organization’s key before it
+          leaves the device. The server stores it and has the keystore check it;
+          it cannot open it.{" "}
           {e.canRead
             ? "You may reveal a key: it asks for your second factor and a reason, is shown once, and your administrators are told."
             : "Reading a key needs the Recovery Key Reader add-on."}
@@ -172,12 +194,20 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
           read its BitLocker key there without the keystore; the keystore
           protects the keys of devices that are offline, lost or dead.
         </p>
+        {e.volumes.some((v) => v.kind === "luks") && (
+          <p className="text-xs text-muted">
+            On Linux the agent adds a key slot of its own to a LUKS volume it
+            can unlock by itself (a key file in /etc/crypttab or a TPM2 token)
+            and escrows that passphrase. A volume only a passphrase unlocks
+            cannot be escrowed this way.
+          </p>
+        )}
       </div>
       {e.volumes.length === 0 ? (
         <div className="border-t border-line">
-          <EmptyState title="No BitLocker volumes reported" compact>
+          <EmptyState title="No encrypted volumes reported" compact>
             Volumes appear once the agent has the organization’s key and finds
-            BitLocker on a disk.
+            BitLocker (Windows) or LUKS (Linux) on a disk.
           </EmptyState>
         </div>
       ) : (
@@ -200,16 +230,23 @@ export function RecoveryKeysCard({ deviceId }: { deviceId: string }) {
                         {v.mount || "Volume"}
                       </span>
                       <span className="ml-2 text-xs text-muted">
-                        {v.status}
+                        {v.kind === "luks" ? `LUKS (${v.status})` : v.status}
                       </span>
                     </td>
                     <td className="px-4 py-2 align-top">
                       <Badge tone={t.tone} title={t.help}>
                         {t.label}
                       </Badge>
-                      {v.protectors.length === 0 && (
+                      {v.reason && (
+                        <p className="mt-1 max-w-xs text-xs text-muted">
+                          {v.reason}
+                        </p>
+                      )}
+                      {v.protectors.length === 0 && !v.reason && (
                         <span className="ml-2 text-xs text-muted">
-                          No recovery password protector
+                          {v.kind === "luks"
+                            ? "No key slot of EasyRMM's yet"
+                            : "No recovery password protector"}
                         </span>
                       )}
                     </td>

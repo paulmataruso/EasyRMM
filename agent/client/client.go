@@ -359,13 +359,14 @@ func (c *Client) Start(ctx context.Context, runID string) (*agentproto.StartResp
 	return &out, c.call(ctx, http.MethodPost, agentproto.PathJobStart(runID), []byte("{}"), true, &out)
 }
 
-// Result reports how a run ended. The program it started goes only to a
-// server of protocol level 2 or higher; a result that names one waits for
+// Result reports how a run ended. The program it started, a structured
+// job's result and the build that ran it go only to a server of protocol
+// level 2 or higher; a result that names one waits for
 // this process's first heartbeat answer to know the level, so a result kept
 // across a restart still carries it (ADR-0064), until LevelWait after the
 // client was made: then it goes without, as to a server of level 1.
 func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRequest) error {
-	if r.Interpreter != nil {
+	if r.Interpreter != nil || r.Result != "" || r.AgentVersion != "" {
 		if wait := time.Until(c.knownBy); wait > 0 {
 			t := time.NewTimer(wait)
 			select {
@@ -378,7 +379,9 @@ func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRe
 			t.Stop()
 		}
 		if !c.newFields() {
-			r.Interpreter = nil
+			// A server of level 1 reads none of the newer fields; a structured
+			// job only comes from one that does (ADR-0067).
+			r.Interpreter, r.Result, r.ResultCut, r.AgentVersion = nil, "", false, ""
 		}
 	}
 	body, err := json.Marshal(r)

@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"crypto/hpke"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"regexp"
@@ -93,9 +94,63 @@ func NormalizeBitLockerBytes(b []byte) ([]byte, error) {
 	return b, nil
 }
 
+// Kinds of secret this package normalizes.
+const (
+	KindBitLocker = "bitlocker"
+	KindLUKS      = "luks"
+)
+
+// LUKSAlphabet is the 32-letter alphabet of an escrowed LUKS passphrase (RFC
+// 4648 base32, lowercase): five bits a letter.
+const LUKSAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
+
+// LUKSPassphraseLen is the length of an escrowed LUKS passphrase: forty letters
+// of five bits, 200 bits in all.
+const LUKSPassphraseLen = 40
+
+// NewLUKSPassphrase makes a passphrase from the system's random source. The
+// caller zeroes it.
+func NewLUKSPassphrase() ([]byte, error) {
+	buf := make([]byte, LUKSPassphraseLen)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, err
+	}
+	for i, b := range buf {
+		buf[i] = LUKSAlphabet[b&31] // 256 is a multiple of 32: no bias
+	}
+	return buf, nil
+}
+
+// NormalizeLUKSBytes checks that b is a passphrase this package makes and
+// returns it, copying nothing: the key of a LUKS slot is the passphrase as it is.
+func NormalizeLUKSBytes(b []byte) ([]byte, error) {
+	b = bytes.TrimSpace(b)
+	if len(b) != LUKSPassphraseLen {
+		return nil, ErrSecret
+	}
+	for _, c := range b {
+		if strings.IndexByte(LUKSAlphabet, c) < 0 {
+			return nil, ErrSecret
+		}
+	}
+	return b, nil
+}
+
+// NormalizeBytes normalizes a secret of a kind, in place.
+func NormalizeBytes(kind string, b []byte) ([]byte, error) {
+	switch kind {
+	case KindBitLocker:
+		return NormalizeBitLockerBytes(b)
+	case KindLUKS:
+		return NormalizeLUKSBytes(b)
+	}
+	return nil, ErrSecret
+}
+
 // Fingerprint is the first 16 bytes of SHA-256 over
 // easyrmm-fp-v1|protector id|normalized secret. A BitLocker numerical
-// password carries 128 bits of entropy, so this reveals nothing usable.
+// password carries 128 bits of entropy and a LUKS passphrase made here 200, so
+// this reveals nothing usable.
 func Fingerprint(protector string, secret []byte) [FingerprintSize]byte {
 	h := sha256.New()
 	h.Write([]byte(fingerprintLabel + "|" + protector + "|"))

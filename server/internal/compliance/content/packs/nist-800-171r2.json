@@ -2156,7 +2156,7 @@
     "win.session.fips"
    ],
    "relation": "satisfies_objective",
-   "note": "Shows FIPS-compliant algorithms are required; it does not show that the cryptographic modules are validated."
+   "note": "Shows FIPS-approved algorithms are required; it does not show that the cryptographic modules are validated."
   },
   {
    "req_id": "3.13.13",

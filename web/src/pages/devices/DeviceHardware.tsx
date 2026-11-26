@@ -55,6 +55,9 @@ export function HardwarePanel({ data, device }: { data: DeviceInventory; device:
       {inv.os.id === "windows" && <PowerShellCard installs={inv.powerShell} />}
       <DisksCard device={device} disks={inv.disks} />
       {inv.os.id === "windows" && <RecoveryKeysCard deviceId={device.id} />}
+      {inv.os.id !== "windows" && (
+        <RecoveryKeysCard deviceId={device.id} hideWhenEmpty />
+      )}
       {data.metrics && data.metrics.filesystems.length > 0 && <FilesystemsCard data={data} />}
       <NetworkCard inv={inv} />
     </div>

@@ -424,6 +424,7 @@ function hardeningResult(): string {
     { module: "usb-storage", state: "not_in_place" },
     { module: "mac", state: "not_applicable", reason: "Neither SELinux nor AppArmor is installed." },
     { module: "integrity", state: "not_in_place" },
+    { module: "lockout", state: "not_in_place" },
   ];
   const platform = { id: "debian", versionId: "13", family: "debian", container: "none", support: "full" };
   return `EASYRMM-HARDENING-RESULT-V1 ${JSON.stringify({ version: 1, mode: "check", platform, modules })}\n`;
@@ -437,12 +438,12 @@ test("a hardening check runs through the device's agent; its findings show on th
   await page.getByRole("button", { name: "Run check…" }).click();
   const dialog = page.getByRole("dialog", { name: "Check hardening" });
   // The recommended modules are chosen; the optional ones, chosen one by one here, carry their risk.
-  await expect(dialog.getByText("10 of 14 modules")).toBeVisible();
+  await expect(dialog.getByText("10 of 15 modules")).toBeVisible();
   await expect(dialog.getByText("When applied: USB disks and backup drives stop working.")).toBeVisible();
-  for (const name of ["Shared memory", "USB storage", "SELinux or AppArmor", "File integrity"]) {
+  for (const name of ["Shared memory", "USB storage", "SELinux or AppArmor", "File integrity", "Account lockout"]) {
     await dialog.getByRole("checkbox", { name: new RegExp(`^${name}`) }).check();
   }
-  await expect(dialog.getByText("14 of 14 modules")).toBeVisible();
+  await expect(dialog.getByText("15 of 15 modules")).toBeVisible();
   await dialog.getByRole("button", { name: "Run check" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Checking hardening", { exact: true })).toBeVisible();
@@ -453,7 +454,7 @@ test("a hardening check runs through the device's agent; its findings show on th
   expect(job?.shell).toBe("sh");
   expect(job?.args).toEqual([
     "check",
-    "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity",
+    "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity,lockout",
     "time-limit=1800",
   ]);
   expect(job?.script).toContain("EASYRMM-HARDENING-RESULT-V1");
@@ -462,7 +463,7 @@ test("a hardening check runs through the device's agent; its findings show on th
   await agent.succeeded(job!.runId, `EasyRMM hardening check: debian 13 (debian family; container: none; support: full).\n${hardeningResult()}`);
 
   // Once the run ends, the tab reads what the server kept.
-  await expect(page.getByText("5 of 13 in place")).toBeVisible();
+  await expect(page.getByText("5 of 14 in place")).toBeVisible();
   const ssh = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "SSH", level: 3 }) });
   await expect(ssh).toContainText("Partly in place");
   await expect(ssh).toContainText("PermitRootLogin prohibit-password (now yes)");
@@ -479,7 +480,7 @@ test("a hardening check runs through the device's agent; its findings show on th
   // Across the fleet: the Devices list's column, and its filter on the server.
   await page.goto("/devices");
   const row = page.getByRole("row", { name: /dt-reception-01/ });
-  await expect(row).toContainText("5 of 13 in place");
+  await expect(row).toContainText("5 of 14 in place");
   await page.getByLabel("Hardening").selectOption({ label: "Needs attention" });
   await expect(page).toHaveURL(/\/devices\?hardening=attention$/);
   await expect(row).toBeVisible();
@@ -1282,11 +1283,11 @@ test("a domain controller's Directory tab reads the domain, and a password reset
   // The agent says what its build takes (parameters on standard input) before the server sends it a module action.
   await agent.poll(caps);
   const SID = "S-1-5-21-1-2-3-1104";
-  // The agent answers the next winmod job with the typed result its script would print.
+  // The agent answers the next winmod job (the Repair step queued above, still waiting on the device, is not one) with the typed result its script would print.
   const answer = async (action: string, data: unknown) => {
     let job;
     await expect
-      .poll(async () => (job = (await agent.poll(caps)).find((j) => j.script.length > 0)), { timeout: 20_000 })
+      .poll(async () => (job = (await agent.poll(caps)).find((j) => j.script.includes("EASYRMM-WINMOD-RESULT-V1"))), { timeout: 20_000 })
       .toBeTruthy();
     expect(await agent.start(job!.runId)).toBe(true);
     await agent.succeeded(job!.runId, "EASYRMM-WINMOD-RESULT-V1 " + JSON.stringify({ ok: true, version: 1, data, error: null }) + "\n");

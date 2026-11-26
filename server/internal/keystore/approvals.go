@@ -193,6 +193,9 @@ func (s *Service) Decide(ctx context.Context, c access.Caller, id uuid.UUID, app
 // Settings is an organization's keystore setting.
 type Settings struct {
 	TwoPerson bool `json:"twoPerson"`
+	// LUKSEscrow: the agent adds a key slot to each encrypted Linux volume it can
+	// unlock by itself (off by default).
+	LUKSEscrow bool `json:"luksEscrow"`
 	// Approvers is how many people hold the approve permission here; two are
 	// needed to turn the rule on.
 	Approvers int `json:"approvers"`
@@ -217,7 +220,54 @@ func (s *Service) SettingsOf(ctx context.Context, c access.Caller, org uuid.UUID
 		return Settings{}, err
 	}
 	n, err := s.approvers(ctx, org)
-	return Settings{TwoPerson: on, Approvers: n}, err
+	if err != nil {
+		return Settings{}, err
+	}
+	l, err := s.luksEscrowOn(ctx, org)
+	return Settings{TwoPerson: on, LUKSEscrow: l, Approvers: n}, err
+}
+
+// luksEscrowOn says whether the organization has turned LUKS escrow on.
+func (s *Service) luksEscrowOn(ctx context.Context, org uuid.UUID) (bool, error) {
+	on := false
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT luks_escrow FROM keystore_org_settings WHERE organization_id = $1`, org).Scan(&on)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	return on, err
+}
+
+// SetLUKSEscrow turns LUKS escrow on or off for an organization: it needs
+// org.manage and step-up and is audited. Off, volumes are still reported and
+// shown as "escrow off", and the agent adds nothing.
+func (s *Service) SetLUKSEscrow(ctx context.Context, c access.Caller, org uuid.UUID, on bool) (Settings, error) {
+	if err := c.Require(rbac.PermOrgManage, rbac.Org(org)); err != nil {
+		return Settings{}, err
+	}
+	if c.Principal == nil || s.stepUp == nil {
+		return Settings{}, apperr.Forbidden()
+	}
+	if err := s.stepUp.VerifyStepUp(ctx); err != nil {
+		return Settings{}, err
+	}
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO keystore_org_settings (organization_id, luks_escrow, updated_by) VALUES ($1, $2, $3)
+			ON CONFLICT (organization_id) DO UPDATE SET luks_escrow = EXCLUDED.luks_escrow, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+			org, on, c.Principal.UserID); err != nil {
+			return err
+		}
+		return s.audit.Write(ctx, tx, audit.Event{
+			Actor: c.Actor, Action: ActionLUKSSetting, Outcome: audit.Success, OrganizationID: org,
+			TargetType: "organization", TargetID: org.String(), Details: map[string]any{"luksEscrow": on},
+		})
+	})
+	if err != nil {
+		return Settings{}, err
+	}
+	return s.SettingsOf(ctx, c, org)
 }
 
 // SetTwoPerson turns the two-person rule on or off for an organization
@@ -254,5 +304,8 @@ func (s *Service) SetTwoPerson(ctx context.Context, c access.Caller, org uuid.UU
 			TargetType: "organization", TargetID: org.String(), Details: map[string]any{"twoPerson": on},
 		})
 	})
-	return Settings{TwoPerson: on, Approvers: n}, err
+	if err != nil {
+		return Settings{}, err
+	}
+	return s.SettingsOf(ctx, c, org)
 }

@@ -210,8 +210,8 @@ func (f *fx) state(device uuid.UUID, protector string) string {
 func TestInstructionConditions(t *testing.T) {
 	f := newFx(t)
 	dev := f.dv(f.dev, f.acme, f.hq)
-	if s := f.svc.Instruction(f.ctx, dev, "linux", caps); s != nil {
-		t.Error("a Linux device got an escrow key")
+	if s := f.svc.Instruction(f.ctx, dev, "macos", caps); s != nil {
+		t.Error("a device of a platform with no escrow got an escrow key")
 	}
 	if s := f.svc.Instruction(f.ctx, dev, "windows", nil); s != nil {
 		t.Error("an agent that did not announce the capability got an escrow key")
@@ -541,10 +541,10 @@ func TestDeviceStateAndIsolation(t *testing.T) {
 	if n := f.str(`SELECT count(*)::text FROM recovery_key_escrows`); n == "0" {
 		t.Error("an organization scope deleted escrow rows")
 	}
-	// A device that does not run Windows has nothing to show.
-	lin := f.device(f.acme, f.hq, "lin", "linux")
-	if st, _ := f.svc.DeviceState(f.ctx, acmeTech, lin); st == nil || st.Applicable {
-		t.Errorf("linux device applicable: %+v", st)
+	// A device that runs neither Windows nor Linux has nothing to show.
+	mac := f.device(f.acme, f.hq, "mac", "macos")
+	if st, _ := f.svc.DeviceState(f.ctx, acmeTech, mac); st == nil || st.Applicable {
+		t.Errorf("macos device applicable: %+v", st)
 	}
 }
 

@@ -11,6 +11,7 @@ import { HardeningTab } from "./tabs/HardeningTab";
 import { InstallTab } from "./tabs/InstallTab";
 import { PatchingTab } from "./tabs/PatchingTab";
 import { PeopleTab } from "./tabs/PeopleTab";
+import { RecoveryKeysTab } from "./tabs/RecoveryKeysTab";
 import { SecurityTab } from "./tabs/SecurityTab";
 import { WindowsModulesTab } from "./tabs/WindowsModulesTab";
 
@@ -97,6 +98,13 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "org.view",
     levels: ["organization", "site"],
     component: WindowsModulesTab,
+  },
+  {
+    id: "recovery-keys",
+    label: "Recovery keys",
+    permission: "org.manage",
+    levels: ["organization"],
+    component: RecoveryKeysTab,
   },
   {
     id: "hardening",

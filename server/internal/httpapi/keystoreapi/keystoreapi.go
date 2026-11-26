@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 )
@@ -31,6 +32,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/keystore/requests/{id}/deny", a.decide(false))
 	r("GET /api/v1/keystore/notices", a.notices)
 	r("GET /api/v1/keystore/alerts", a.alerts)
+	r("POST /api/v1/keystore/alerts/{id}/resolve", a.resolveAlert)
 	r("GET /api/v1/organizations/{id}/keystore-settings", a.settings)
 	r("PUT /api/v1/organizations/{id}/keystore-settings", a.setSettings)
 }
@@ -69,7 +71,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	for _, c := range res.Key {
-		if (c < '0' || c > '9') && c != '-' {
+		if (c < '0' || c > '9') && c != '-' && (c < 'a' || c > 'z') { // a BitLocker password, or a LUKS passphrase
 			return errors.New("keystoreapi: the key is not in the form the console shows") // never says what it was
 		}
 	}
@@ -130,6 +132,18 @@ func (a *API) alerts(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *API) resolveAlert(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.ResolveAlert(r.Context(), httpapi.Caller(r), id); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 func (a *API) settings(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
@@ -150,14 +164,25 @@ func (a *API) setSettings(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var b struct {
-		TwoPerson bool `json:"twoPerson"`
+		TwoPerson  *bool `json:"twoPerson"`
+		LUKSEscrow *bool `json:"luksEscrow"`
 	}
 	if err := httpapi.DecodeJSON(w, r, &b); err != nil {
 		return err
 	}
-	out, err := a.svc.SetTwoPerson(r.Context(), httpapi.Caller(r), id, b.TwoPerson)
-	if err != nil {
-		return err
+	var out keystore.Settings
+	if b.TwoPerson != nil {
+		if out, err = a.svc.SetTwoPerson(r.Context(), httpapi.Caller(r), id, *b.TwoPerson); err != nil {
+			return err
+		}
+	}
+	if b.LUKSEscrow != nil {
+		if out, err = a.svc.SetLUKSEscrow(r.Context(), httpapi.Caller(r), id, *b.LUKSEscrow); err != nil {
+			return err
+		}
+	}
+	if b.TwoPerson == nil && b.LUKSEscrow == nil {
+		return apperr.Invalid("twoPerson", "Say which setting to change.")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

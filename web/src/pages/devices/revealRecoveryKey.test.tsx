@@ -47,6 +47,7 @@ const escrow = (over: Partial<DeviceEscrow> = {}): DeviceEscrow => ({
   volumes: [
     {
       id: "vol-1",
+      kind: "bitlocker",
       mount: "C:",
       status: "encrypted",
       state: "verified",

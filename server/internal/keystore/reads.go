@@ -27,11 +27,12 @@ import (
 
 // Audit actions of reads (ADR-0007). None carries a key.
 const (
-	ActionRead      = "recovery_key.read"
-	ActionRequested = "recovery_key.read_requested"
-	ActionApproved  = "recovery_key.read_approved"
-	ActionDenied    = "recovery_key.read_denied"
-	ActionSetting   = "keystore.two_person"
+	ActionRead        = "recovery_key.read"
+	ActionRequested   = "recovery_key.read_requested"
+	ActionApproved    = "recovery_key.read_approved"
+	ActionDenied      = "recovery_key.read_denied"
+	ActionSetting     = "keystore.two_person"
+	ActionLUKSSetting = "keystore.luks_escrow"
 )
 
 // ReadLimits are the server's own limits on reads (section 7); the
@@ -118,9 +119,9 @@ func (r *ReadResult) Wipe() {
 	}
 }
 
-// keyShaped finds a BitLocker recovery password typed where it must not go (a
-// reason or a ticket reference).
-var keyShaped = regexp.MustCompile(`\d{6}\W{0,3}\d{6}\W{0,3}\d{6}`)
+// keyShaped finds a BitLocker recovery password, or a run of letters as long as
+// a LUKS passphrase, typed where it must not go (a reason or a ticket reference).
+var keyShaped = regexp.MustCompile(`\d{6}\W{0,3}\d{6}\W{0,3}\d{6}|[a-z2-7]{32,}`)
 
 // escrowRef is the verified record a read opens, with what the keystore needs.
 type escrowRef struct {
@@ -361,7 +362,7 @@ func (s *Service) release(ctx context.Context, c access.Caller, e *escrowRef, in
 		asked = true
 		var kerr error
 		key, kerr = s.ks.ReadEscrow(ctx, rid, e.id.String(), e.wrapped, EscrowContext{
-			Org: e.org.String(), Device: e.device.String(), Volume: e.volume, Protector: e.protector, OrgKey: e.orgKey.String(),
+			Org: e.org.String(), Device: e.device.String(), Volume: e.volume, Protector: e.protector, OrgKey: e.orgKey.String(), Kind: e.kind,
 		}, e.enc, e.ct, e.finger)
 		return kerr
 	})

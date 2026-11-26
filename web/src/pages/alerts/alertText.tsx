@@ -14,6 +14,8 @@ export const KIND_NAMES: Record<AlertKind, string> = {
   remote_down: "Remote access down",
   agent_silent: "EasyRMM agent silent",
   repair_failed: "Repair failed",
+  compliance_fix_failed: "Compliance fix failed",
+  compliance_scan_stale: "Compliance results out of date",
 };
 
 export const KINDS: AlertKind[] = ["offline", "cpu", "memory", "disk", "disk_health", "remote_down", "agent_silent"];
@@ -62,6 +64,10 @@ export function conditionText(c: Condition): string {
       return `No EasyRMM check-in for ${span}, while MeshAgent is connected`;
     case "repair_failed":
       return "An automatic repair ended with the agent still broken";
+    case "compliance_fix_failed":
+      return "A compliance fix was made and the control still does not meet";
+    case "compliance_scan_stale":
+      return "A computer's newest compliance result is past the organization's freshness window";
     default:
       // A kind a newer server knows.
       return String(c.kind);
@@ -93,6 +99,8 @@ export function valueText(a: Pick<AlertEntry, "kind" | "lastValue"> & { checkNam
   if (a.kind === "remote_down") return `Not connected ${formatDuration(a.lastValue * 60)}`;
   if (a.kind === "agent_silent") return `Silent ${formatDuration(a.lastValue * 60)}`;
   if (a.kind === "repair_failed") return "Repair failed";
+  if (a.kind === "compliance_fix_failed") return "Fix failed";
+  if (a.kind === "compliance_scan_stale") return `${v.toLocaleString()} days old`;
   if (a.kind !== "disk_health") return `${v}%`;
   switch (a.checkName) {
     case "failing":

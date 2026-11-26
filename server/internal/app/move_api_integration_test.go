@@ -335,7 +335,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"devices": moves,
 		// follows
 		"agent_nonces": follows, "agent_updates": follows, "device_disk_health": follows, "device_disk_health_samples": follows,
-		"device_hardening": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
+		"device_hardening": follows, "posture_patching": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
 		"device_metrics": follows, "device_removals": follows, "device_software": follows, "enrollment_requests": follows,
 		"retired_agent_nonces": follows,
 		// recovery (R1-R3): the machine's own state and repair history
@@ -349,7 +349,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// group's is owned by the group.
 		"agent_log_verbose": ends,
 		// stays
-		"job_runs": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays, "compliance_fix_items": stays, "compliance_fix_agreements": stays, "hardening_setting_results": stays,
+		"job_runs": stays, "registry_masked_values": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays, "compliance_fix_items": stays, "compliance_fix_agreements": stays, "hardening_setting_results": stays,
 		// owned
 		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
 		// the assessment workspace (ADR-0078 C5): a record of the organization; a scope entry names a computer and stays with the record

@@ -1,7 +1,8 @@
 // Package escrow is the agent's side of recovery-key escrow (ADR-0081). It
 // reads a Windows computer's BitLocker recovery passwords itself, in its own
 // process, seals each to the organization's escrow public key and sends the
-// record on a signed route of its own. The password is never a job's output,
+// record on a signed route of its own. On Linux it adds a key slot of its own to
+// a LUKS volume it can unlock by itself and escrows that passphrase the same way. The password is never a job's output,
 // a script's, a log line or a file: it lives in this process's memory until
 // the upload is done, and is zeroed.
 package escrow
@@ -76,6 +77,9 @@ type Agent struct {
 	Server Server
 	Store  KeyStore
 	Log    *slog.Logger
+	// LUKS escrows the passphrase of a key slot the agent adds to a LUKS volume
+	// it can unlock by itself (Linux, ADR-0081 section 5); nil where there is none.
+	LUKS LUKS
 	// Now is the clock, replaced by tests.
 	Now func() time.Time
 
@@ -92,6 +96,8 @@ type Agent struct {
 	needs      []agentproto.EscrowNeed
 	lastTry    map[string]time.Time
 	busy       atomic.Bool
+
+	luks luksState
 }
 
 func (a *Agent) now() time.Time {
@@ -168,6 +174,14 @@ func (a *Agent) Sync(ctx context.Context) {
 	if key == nil || !now.Before(key.ExpiresAt) {
 		return
 	}
+	a.syncBitLocker(ctx, key, pub, now)
+	if a.LUKS != nil {
+		a.syncLUKS(ctx, key, pub, now)
+	}
+}
+
+// syncBitLocker is Sync for BitLocker.
+func (a *Agent) syncBitLocker(ctx context.Context, key *agentproto.EscrowKeyPayload, pub []byte, now time.Time) {
 	readEvery, reportEvery := a.ReadEvery, a.ReportEvery
 	if readEvery == 0 {
 		readEvery = defaultReadEvery
@@ -268,6 +282,6 @@ func (a *Agent) upload(ctx context.Context, key *agentproto.EscrowKeyPayload, pu
 	a.Log.Info("escrowed a BitLocker recovery key", "state", ans.State, "volume", n.VolumeID)
 	if !ans.Again {
 		// Done: asked for again only when a later report says so.
-		a.needs = slices.DeleteFunc(a.needs, func(x agentproto.EscrowNeed) bool { return x == n })
+		a.needs = slices.DeleteFunc(a.needs, func(x agentproto.EscrowNeed) bool { return x.VolumeID == n.VolumeID && x.ProtectorID == n.ProtectorID })
 	}
 }

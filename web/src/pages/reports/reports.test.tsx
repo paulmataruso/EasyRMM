@@ -58,6 +58,15 @@ function report(name: ReportName, extra: Partial<Report> = {}): Report {
       ],
       rows: [["2026-11-16T10:00:00Z", "WEB-01", "Disk nearly full"]],
     },
+    security: {
+      title: "Security",
+      columns: [
+        { key: "device", label: "Device", type: "text" },
+        { key: "posture", label: "Security policy", type: "text" },
+        { key: "score", label: "Score", type: "percent" },
+      ],
+      rows: [["WEB-01", "Does not meet its security policy", 50]],
+    },
     contacts: {
       title: "Contacts",
       columns: [
@@ -177,7 +186,7 @@ describe("reports", () => {
     installFakeApi(routes(sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "report.view"] })));
     renderApp("/reports?report=alerts");
     await screen.findByRole("table", { name: "Device inventory" });
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Device inventory", "Device health"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Device inventory", "Device health", "Security"]);
     expect(screen.getByRole("navigation", { name: "Main" })).toHaveTextContent("Reports");
   });
 

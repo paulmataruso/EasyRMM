@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance"
+	calerts "github.com/paulmataruso/easyrmm/server/internal/compliance/alerts"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/assess"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/content"
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/engine"
@@ -65,6 +66,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/keystoreapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/modulesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/postureapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/quickassistapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/rdpcredsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
@@ -84,6 +86,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/posture"
 	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rdpcreds"
 	"github.com/paulmataruso/easyrmm/server/internal/recovery"
@@ -144,6 +147,10 @@ type Deps struct {
 	ComplianceFix *fix.Service
 	// ComplianceAssess is the assessment workspace (ADR-0078, slice C5).
 	ComplianceAssess *assess.Service
+	// Posture is endpoint security posture (ADR-0082), and ComplianceAlerts the
+	// two compliance alerts.
+	Posture          *posture.Service
+	ComplianceAlerts *calerts.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
 	// Modules is the Windows management framework: roles and toggles
@@ -276,6 +283,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.ComplianceFix.SetStepUp(sessions)
 	d.ComplianceAssess = assess.New(db, auditLog, sealer, log)
 	d.ComplianceAssess.SetStepUp(sessions)
+	d.ComplianceAlerts = calerts.New(db, log)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
 		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
@@ -333,6 +341,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.OnRemoved(d.EasyPatch.Kick)
 	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
+	d.Posture = posture.New(db, d.EasyPatch, log)
 	if err := usePatchingEngine(cfg, d, sealer, log); err != nil {
 		return nil, err
 	}
@@ -655,6 +664,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
 	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
+	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
+	postureapi.New(d.Posture).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
@@ -835,6 +846,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Compliance.Run(ctx) })
 	wg.Go(func() { deps.ComplianceFix.Run(ctx) })
+	wg.Go(func() { deps.ComplianceAlerts.Run(ctx) })
+	wg.Go(func() { deps.Posture.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.ModSnap.Run(ctx) })
 	wg.Go(func() { deps.Recovery.Run(ctx) })

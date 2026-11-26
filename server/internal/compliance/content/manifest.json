@@ -19,7 +19,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "f1935145296d2b5cc14829f3b6f63c4c7c9114a252147209e75fca82643358c5"
+   "sha256": "eece672e882530684082876932dbcf777734716a2e4fbfdd3ce2a2697bacedb3"
   },
   {
    "path": "packs/cis-xref.json",
@@ -49,7 +49,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "80d37875e9d503d35e9dae2f81b2161ebcc5a6bbd9c708950bf36aaa2a7942f0"
+   "sha256": "2240e91c9e7106557c6043bc208546b1b839e58a272e9fbf774c2d34d84c98a8"
   },
   {
    "path": "packs/gdpr-indicative.json",
@@ -79,7 +79,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "914f0e833ee7f9b8645e5cf1cddc088caa9813129c68a0ae9e2e59d07ff3621b"
+   "sha256": "b60cde0fa266bb2c338db460b09ed3ddafa83d7a438d9e6681c684f050cc5e54"
   },
   {
    "path": "packs/nist-800-53r5.json",

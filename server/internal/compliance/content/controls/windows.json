@@ -9265,8 +9265,8 @@
     {
       "id": "win.session.fips",
       "version": 1,
-      "title": "FIPS-compliant cryptographic algorithms required",
-      "description": "FIPS-compliant cryptographic algorithms required.",
+      "title": "FIPS-approved cryptographic algorithms required",
+      "description": "FIPS-approved cryptographic algorithms required.",
       "platforms": {
         "os": "windows"
       },
@@ -9286,7 +9286,7 @@
       "expected": {
         "state": "in_place"
       },
-      "remediation_text": "Make this true: FIPS-compliant cryptographic algorithms required. The hardening page applies it for you and can put the old value back.",
+      "remediation_text": "Make this true: FIPS-approved cryptographic algorithms required. The hardening page applies it for you and can put the old value back.",
       "apply_ref": {
         "kind": "hardening",
         "mode": "apply",

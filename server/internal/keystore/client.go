@@ -111,7 +111,7 @@ func (c *Client) CreateOrgKey(ctx context.Context, org, keyID, purpose string) (
 // The answer is Match or Mismatch; nothing of the key comes back.
 func (c *Client) VerifyEscrow(ctx context.Context, requestID, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) (string, error) {
 	r, err := c.Do(ctx, Request{Op: OpVerifyEscrow, ID: requestID, WrappedPrivate: wrappedPrivate, Context: &ec,
-		Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: "bitlocker"})
+		Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: ec.kindOrDefault()})
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +127,7 @@ func (c *Client) VerifyEscrow(ctx context.Context, requestID, wrappedPrivate str
 // ID.
 func (c *Client) ReadEscrow(ctx context.Context, requestID, record, wrappedPrivate string, ec EscrowContext, enc, ct, fingerprint []byte) ([]byte, error) {
 	r, err := c.do(ctx, Request{Op: OpReadEscrow, ID: requestID, Record: record, WrappedPrivate: wrappedPrivate, Context: &ec,
-		Enc: enc, Ciphertext: ct, Fingerprint: fingerprint}, true)
+		Enc: enc, Ciphertext: ct, Fingerprint: fingerprint, Kind: ec.kindOrDefault()}, true)
 	if err != nil {
 		if r != nil {
 			clear(r.Plaintext)

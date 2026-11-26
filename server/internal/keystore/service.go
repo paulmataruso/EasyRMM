@@ -76,6 +76,10 @@ type Service struct {
 	mu       sync.Mutex
 	status   Status
 	statusAt time.Time
+	// down counts failed status checks in a row; sealedAt is when the monitor
+	// first saw the keystore sealed.
+	down     int
+	sealedAt time.Time
 	keys     map[uuid.UUID]cachedKey
 }
 
@@ -272,12 +276,12 @@ func (s *Service) EnsureEscrowKey(ctx context.Context, org uuid.UUID) (*EscrowKe
 }
 
 // Instruction is the signed escrow key an agent gets in its heartbeat answer
-// (ADR-0081 section 5): for a Windows device whose agent announced the
+// (ADR-0081 section 5): for a Windows or Linux device whose agent announced the
 // capability, in an organization the dev-scope guard allows, once the
 // keystore can wrap. It is nil in every other case and never an error: the
 // heartbeat does not depend on the keystore.
 func (s *Service) Instruction(ctx context.Context, d Device, platform string, caps []string) *agentproto.SignedEscrowKey {
-	if platform != "windows" || !hasCap(caps) || !devscope.Allowed(d.Org) || s.ks == nil || len(s.signKey) == 0 {
+	if (platform != "windows" && platform != "linux") || !hasCap(caps) || !devscope.Allowed(d.Org) || s.ks == nil || len(s.signKey) == 0 {
 		return nil
 	}
 	key := s.cachedKey(d.Org)

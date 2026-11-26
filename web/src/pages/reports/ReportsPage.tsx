@@ -11,6 +11,7 @@ import { useUrlState } from "../../lib/urlState";
 import { categoryLabel, COMPLIANCE } from "../patching/patchText";
 import { UPDATE_CATEGORIES } from "../patching/PatchUpdates";
 import { MonthlyReports, PatchTrendCard } from "./PatchReports";
+import { POSTURE_FILTERS } from "../devices/postureText";
 
 interface ReportInfo {
   name: ReportName;
@@ -18,7 +19,7 @@ interface ReportInfo {
   description: string;
   /** What the rows show; report.view is needed as well. */
   permission: Permission;
-  filters: ("platform" | "search" | "health" | "alerts" | "compliance" | "installations")[];
+  filters: ("platform" | "search" | "health" | "alerts" | "compliance" | "installations" | "posture")[];
   search?: { label: string; placeholder: string };
   /** The report comes from EasyPatch, so it is offered once EasyPatch is set up. */
   patching?: true;
@@ -59,6 +60,15 @@ export const REPORTS: ReportInfo[] = [
     filters: ["alerts"],
   },
   {
+    name: "security",
+    label: "Security",
+    description:
+      "Whether each Windows and Linux device meets its security policy, with a score and the reasons: hardening and patching judged as one, where a result that is unknown or too old never counts as passing.",
+    permission: "device.view",
+    filters: ["platform", "posture", "search"],
+    search: { label: "Device", placeholder: "Name or host name" },
+  },
+  {
     name: "contacts",
     label: "Contacts",
     description: "The customers' contacts, organization by organization: who to call, how, and who is primary or for emergencies.",
@@ -88,7 +98,7 @@ export const REPORTS: ReportInfo[] = [
 ];
 
 /** The URL parameters that narrow reports; each report reads its own. */
-const PARAMS = ["organizationId", "siteId", "platform", "q", "offlineDays", "diskPercent", "days", "severity", "compliance", "category", "result"] as const;
+const PARAMS = ["organizationId", "siteId", "platform", "q", "offlineDays", "diskPercent", "days", "severity", "compliance", "category", "result", "posture"] as const;
 
 export function ReportsPage() {
   const { can } = useAuth();
@@ -174,6 +184,8 @@ function applies(info: ReportInfo, key: (typeof PARAMS)[number]): boolean {
       return info.filters.includes("alerts");
     case "compliance":
       return info.filters.includes("compliance");
+    case "posture":
+      return info.filters.includes("posture");
     case "category":
     case "result":
       return info.filters.includes("installations");
@@ -261,6 +273,14 @@ function Filters({ info }: { info: ReportInfo }) {
             ...Object.entries(COMPLIANCE).map(([status, c]): [string, string] => [status, c.label]),
             ["unlinked", "Not patched"],
           ]}
+        />
+      )}
+      {info.filters.includes("posture") && (
+        <Choice
+          label="Security"
+          value={url.get("posture")}
+          onChange={(v) => url.set({ posture: v })}
+          options={[["", "Any security"], ...POSTURE_FILTERS.map((f): [string, string] => [f.value, f.label])]}
         />
       )}
       {info.filters.includes("installations") && (

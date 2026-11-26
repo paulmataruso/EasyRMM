@@ -45,6 +45,8 @@ export type Permission =
   | "doc.view"
   | "doc.manage"
   | "log.view"
+  | "registry.view"
+  | "registry.edit"
   | "defender.view"
   | "defender.manage"
   | "defender.view_sensitive"
@@ -523,6 +525,37 @@ export interface Device {
   hardening: HardeningSummary | null;
   /** Its disks' health, summed up; null while its agent has reported none (ADR-0065). */
   diskHealth: DiskHealthSummary | null;
+  /** Its security posture (ADR-0082): one word and score; null where posture does not cover the device. */
+  posture: PostureSummary | null;
+}
+
+/** The compliance engine's words for a result (ADR-0078, section 9), which security posture shares. */
+export type PostureWord = "meets" | "does not meet" | "cannot tell";
+
+/** A device's security posture as the Devices list shows it. percent is null when nothing applies. */
+export interface PostureSummary {
+  word: PostureWord;
+  percent: number | null;
+  failing: number;
+  cannotTell: number;
+  checkedAt: string | null;
+}
+
+/** A control that is not passing, with why. state is stale when its result is older than the freshness window. */
+export interface PostureReason {
+  controlId: string;
+  label: string;
+  state: string;
+  word: PostureWord;
+  weight: number;
+  detail?: string;
+}
+
+/** A device's posture with its reasons (GET /devices/{id}/posture). */
+export interface DevicePosture {
+  covered: boolean;
+  phrase: string;
+  posture: (PostureSummary & { reasons: PostureReason[]; meeting: number; notApplicable: number }) | null;
 }
 
 /** Why a device's remote access is not connected (ADR-0069, "MeshAgent watchdog"). */
@@ -1297,7 +1330,7 @@ export interface JobArguments {
   args: string[];
 }
 
-export type JobKind = "script" | "software" | "hardening";
+export type JobKind = "script" | "software" | "hardening" | "registry_query" | "registry_change";
 
 /** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
@@ -1839,7 +1872,8 @@ export interface SoftwareDevice {
 /** What a policy watches: no check-in, processor, memory or the fullest disk at a percentage, or each disk's health
  * with one of its checks (ADR-0065). remote_down: the EasyRMM agent checks in but MeshAgent is not connected;
  * agent_silent: MeshAgent is connected but the EasyRMM agent does not check in; repair_failed: an automatic repair
- * ended with its agent still broken, an alert of no policy (ADR-0069). */
+ * ended with its agent still broken, an alert of no policy (ADR-0069); compliance_fix_failed and compliance_scan_stale
+ * are alerts of no policy too (ADR-0078, ADR-0082). */
 export type AlertKind =
   | "offline"
   | "cpu"
@@ -1848,7 +1882,9 @@ export type AlertKind =
   | "disk_health"
   | "remote_down"
   | "agent_silent"
-  | "repair_failed";
+  | "repair_failed"
+  | "compliance_fix_failed"
+  | "compliance_scan_stale";
 /** A disk health policy's check: failing (no threshold), errors and pending (a count), wear (a percentage),
  * temperature (°C, or the drive's own limit without a threshold). */
 export type DiskCheck =
@@ -2000,6 +2036,7 @@ export type ReportName =
   | "software"
   | "health"
   | "alerts"
+  | "security"
   | "contacts"
   | "patch-compliance"
   | "patch-installations";
@@ -3914,7 +3951,18 @@ export interface QuickAssistSession {
 }
 
 /** The state of one volume's recovery-key escrow (ADR-0081). No key, ciphertext or fingerprint is ever shown. */
-export type EscrowState = "missing" | "pending" | "verified" | "stale" | "conflict";
+export type EscrowState =
+  | "missing"
+  | "pending"
+  | "verified"
+  | "stale"
+  | "conflict"
+  /** A LUKS volume only a passphrase unlocks, or LUKS1: the agent cannot escrow it (ADR-0081, slice 3). */
+  | "cannot_escrow"
+  /** A LUKS volume Clevis or a distribution's own scheme manages: never rewritten. */
+  | "managed_elsewhere"
+  /** The organization has not turned LUKS escrow on. */
+  | "escrow_off";
 
 export interface EscrowProtector {
   id: string;
@@ -3925,6 +3973,10 @@ export interface EscrowProtector {
 
 export interface EscrowVolume {
   id: string;
+  /** "bitlocker" or "luks". */
+  kind: "bitlocker" | "luks";
+  /** Why a LUKS volume cannot be escrowed, in words. */
+  reason?: string;
   mount: string;
   status: string;
   state: EscrowState;
@@ -3939,6 +3991,58 @@ export interface KeystoreSummary {
   recoveryVerified: boolean;
   detail?: string;
   fileMode: boolean;
+}
+
+/** One of the keystore's open alerts (ADR-0081 section 7). `organizationId` is absent for a keystore-wide one. */
+export interface KeystoreAlert {
+  id: string;
+  organizationId?: string;
+  kind: string;
+  subject?: string;
+  severity: "warning" | "critical";
+  detail: string;
+  openedAt: string;
+}
+
+/** The notice of a read: who read which device's key, why. Never the key. */
+export interface KeystoreNotice {
+  id: string;
+  device: string;
+  deviceId: string;
+  organizationId: string;
+  by: string;
+  approver?: string;
+  reason: string;
+  at: string;
+}
+
+/** An organization's keystore settings. The two-person switch is off until an organization turns it on. */
+export interface KeystoreOrgSettings {
+  twoPerson: boolean;
+  /** The agent adds a key slot to each encrypted Linux volume it can unlock by itself; off until turned on. */
+  luksEscrow: boolean;
+  /** People holding the Recovery Key Approver add-on here. */
+  approvers: number;
+}
+
+/** One KEK version, metadata only. */
+export interface KeystoreKekVersion {
+  version: number;
+  mode: string;
+  state: string;
+  open: boolean;
+  createdAt: string;
+  recoveryVerifiedAt?: string;
+}
+
+/** The keystore's own status, for whoever manages platform settings. */
+export interface KeystoreStatus {
+  state: KeystoreSummary["state"];
+  mode?: KeystoreSummary["mode"];
+  primary: number;
+  versions: KeystoreKekVersion[];
+  recoveryVerified: boolean;
+  detail?: string;
 }
 
 /** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
@@ -3965,7 +4069,7 @@ export interface DeviceEscrow {
   canRead: boolean;
   /** A read waits for a second person's approval. */
   twoPerson: boolean;
-  /** False where the device cannot escrow here: not a Windows device, or outside the dev scope. */
+  /** False where the device cannot escrow here: neither a Windows nor a Linux device, or outside the dev scope. */
   applicable: boolean;
   keystore: KeystoreSummary;
   volumes: EscrowVolume[];
@@ -4327,4 +4431,120 @@ export interface RefreshResult {
   keptStated: number;
   inScope: number;
   notes: string[];
+// The registry editor (ADR-0067, slice 1).
+
+/** A read the server accepted: the run to follow, and the key as the server read it. */
+export interface RegistryRun {
+  jobId: string;
+  runId: string;
+  op: RegistryOp;
+  hive: RegistryHive;
+  view: RegistryView;
+  path: string[];
+  expiresAt: string;
+}
+
+export type RegistryOp = "list" | "value" | "search" | "export";
+export type RegistryHive = "HKLM" | "HKU" | "HKCR" | "HKCC";
+export type RegistryView = "64" | "32";
+
+/** What a read asks for. Either `text` (the address bar) or `hive` and `path`. */
+export interface RegistryQuery {
+  op: RegistryOp;
+  view: RegistryView;
+  hive?: RegistryHive;
+  path?: string[];
+  text?: string;
+  valueName?: string;
+  cursor?: { subkey?: string; value?: string };
+  term?: string;
+  depth?: number;
+}
+
+/** reported: read; unavailable: Windows denied access; refused: EasyRMM's rule; not_found; unknown: no answer, with why. */
+export type RegistryState = "reported" | "unavailable" | "not_found" | "refused" | "unknown";
+
+export interface RegistryKeyInfo {
+  kernel: string;
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  readAt: string;
+  link?: string;
+}
+
+export interface RegistrySubkey {
+  name: string;
+  rawName?: string;
+  /** -1 when the agent ran out of time before it opened the key. */
+  subkeys: number;
+  values: number;
+  lastWrite?: string;
+  state?: "" | "link" | "denied" | "refused";
+  target?: string;
+  rule?: string;
+  label?: string;
+}
+
+export interface RegistryValue {
+  name: string;
+  rawName?: string;
+  /** The registry's type number. */
+  type: number;
+  size: number;
+  masked?: boolean;
+  noData?: boolean;
+  denied?: boolean;
+  text?: string;
+  items?: string[];
+  number?: number;
+  decimal?: string;
+  base64?: string;
+  raw?: string;
+  display?: string;
+  odd?: boolean;
+  cut?: boolean;
+}
+
+export interface RegistryMatch {
+  kind: "key" | "valueName" | "data" | "link";
+  path: string[];
+  name?: string;
+  type?: number;
+}
+
+export interface RegistryEnd {
+  complete: boolean;
+  stoppedBy?: "depth" | "matches" | "keys" | "time" | "size" | "exportKeys";
+  firstUnvisited?: string[];
+  visited?: number;
+  matches?: number;
+  moreSubkeys?: boolean;
+  moreValues?: boolean;
+  nextSubkey?: string;
+  nextValue?: string;
+  elapsedMs: number;
+}
+
+export interface RegistryResult {
+  state: RegistryState;
+  reason?: string;
+  complete: boolean;
+  kind: string;
+  runStatus: string;
+  op?: RegistryOp;
+  hive?: RegistryHive;
+  view?: RegistryView;
+  path?: string[];
+  readAt?: string;
+  agentVersion?: string;
+  rules?: number;
+  key?: RegistryKeyInfo;
+  subkeys?: RegistrySubkey[];
+  values?: RegistryValue[];
+  matches?: RegistryMatch[];
+  end?: RegistryEnd;
+  refused?: { path: string[]; rule: string; kernel?: string }[];
+  exportKeys?: number;
+  exportValues?: number;
 }

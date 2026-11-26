@@ -214,3 +214,39 @@ func TestLogChainDetectsATamperedLog(t *testing.T) {
 		t.Fatalf("a keystore with a damaged log returned a key: %v", err)
 	}
 }
+
+// A LUKS passphrase is verified and read the same way, by kind, and a record of
+// one kind is never accepted as the other.
+func TestLUKSPassphraseVerifiesAndReads(t *testing.T) {
+	k := readyKeystore(t, Options{})
+	pub, wrapped, _, err := k.CreateOrgKey("org1", "key1", "escrow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, err := escrowcrypto.NewLUKSPassphrase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ctxOf("org1", "dev1", "luks-uuid", "tok-1", "key1")
+	enc, ct, err := escrowcrypto.Seal(pub, c, pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := escrowcrypto.Fingerprint("tok-1", pass)
+	if r, err := k.VerifyEscrow(wrapped, c, enc, ct, fp[:], "luks"); err != nil || r != keystore.Match {
+		t.Fatalf("verify luks: %q %v", r, err)
+	}
+	if r, err := k.VerifyEscrow(wrapped, c, enc, ct, fp[:], "bitlocker"); err != nil || r != keystore.Mismatch {
+		t.Fatalf("a passphrase checked as a password: %q %v", r, err)
+	}
+	req := ReadRequest{RequestID: "rid-l", Record: "rec-l", Kind: "luks", Wrapped: wrapped, Context: c, Enc: enc, Ciphertext: ct, Fingerprint: fp[:]}
+	got, err := k.ReadEscrow(req)
+	if err != nil || string(got) != string(pass) {
+		t.Fatalf("read luks: %v", err)
+	}
+	req.RequestID = "rid-l2"
+	req.Kind = ""
+	if got, err := k.ReadEscrow(req); err == nil || got != nil {
+		t.Fatal("a LUKS record was read as a BitLocker one")
+	}
+}

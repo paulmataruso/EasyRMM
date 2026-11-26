@@ -80,6 +80,16 @@ type EscrowContext struct {
 	Volume    string `json:"volume"`
 	Protector string `json:"protector"`
 	OrgKey    string `json:"orgKey"`
+	// Kind is the record's kind ("bitlocker", or "luks"); it travels as the
+	// request's own field, not in the record's context.
+	Kind string `json:"-"`
+}
+
+func (c EscrowContext) kindOrDefault() string {
+	if c.Kind == "" {
+		return "bitlocker"
+	}
+	return c.Kind
 }
 
 // Request is one call. Fields are used by the operation that names them.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +198,37 @@ func TestKeyDerivationAndRawSeal(t *testing.T) {
 	Zero(x)
 	if !bytes.Equal(x, []byte{0, 0, 0}) {
 		t.Error("Zero left bytes")
+	}
+}
+
+func TestLUKSPassphrase(t *testing.T) {
+	seen := map[string]bool{}
+	for range 50 {
+		p, err := NewLUKSPassphrase()
+		if err != nil || len(p) != LUKSPassphraseLen {
+			t.Fatalf("passphrase: %v len %d", err, len(p))
+		}
+		norm, err := NormalizeLUKSBytes(p)
+		if err != nil || string(norm) != string(p) {
+			t.Fatalf("a passphrase it made does not normalize: %v", err)
+		}
+		if seen[string(p)] {
+			t.Fatal("a passphrase repeated")
+		}
+		seen[string(p)] = true
+	}
+	for _, bad := range []string{"", "short", strings.Repeat("a", 41), strings.Repeat("A", 40), strings.Repeat("1", 40), strings.Repeat("a", 39) + "-"} {
+		if _, err := NormalizeLUKSBytes([]byte(bad)); err == nil {
+			t.Errorf("%q normalized", bad)
+		}
+	}
+	if _, err := NormalizeBytes("luks", []byte(strings.Repeat("a", 40))); err != nil {
+		t.Error(err)
+	}
+	if _, err := NormalizeBytes("bitlocker", []byte(strings.Repeat("a", 40))); err == nil {
+		t.Error("a LUKS passphrase passed as BitLocker")
+	}
+	if _, err := NormalizeBytes("other", []byte("x")); err == nil {
+		t.Error("an unknown kind normalized")
 	}
 }
