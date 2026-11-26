@@ -207,7 +207,14 @@ func (p Param) check(v any) (any, string) {
 		}
 		return s, ""
 	case Text:
-		return str(defaultTextMax)
+		s, msg := str(defaultTextMax)
+		if msg == "" && p.Pattern != nil && !p.Pattern.MatchString(s) {
+			msg = "This is not in the form expected."
+		}
+		if msg == "" && p.Check != nil {
+			msg = p.Check(s)
+		}
+		return s, msg
 	}
 	return nil, "This parameter's type is not known."
 }

@@ -45,6 +45,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/backupapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/defenderapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/docsapi"
@@ -83,6 +84,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/backup"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 )
 
@@ -253,7 +255,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetRoleStore(d.Modules)
 	// The winmod job kind runs the catalog's actions where the module is
 	// on (ADR-0073, slice 5).
-	catalog, err := winmod.NewCatalog(defender.Actions()...)
+	catalog, err := winmod.NewCatalog(append(defender.Actions(), backup.Actions()...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +265,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	// goes clears the module's snapshots and resolves its alerts; a module
 	// turned on gets its default policies.
 	if err := monitoring.RegisterModuleAlerts(defender.AlertKinds()); err != nil {
+		return nil, err
+	}
+	if err := monitoring.RegisterModuleAlerts(backup.AlertKinds()); err != nil {
 		return nil, err
 	}
 	d.ModSnap = modsnap.New(db, catalog, d.Modules, d.Modules, d.Jobs, log)
@@ -328,6 +333,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	d.Recovery.SetBuilds(d.Agents.ReleaseHashes)
+	d.wireChannel()
 	// The hash list of everything the server hands out or installs, kept
 	// current: on start, on a signed build, on a new agent version, on a
 	// timer (ADR-0070). Where the development scope takes effect: see
@@ -600,6 +606,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	agentlogsapi.New(d.AgentLogs).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
+	backupapi.New(backup.NewCards(d.DB, d.Modules)).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)

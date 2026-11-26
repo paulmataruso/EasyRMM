@@ -47,6 +47,10 @@ func (s *Service) SetAudit(a *audit.Logger) { s.audit = a }
 // so that remote access follows them (ADR-0069).
 func (s *Service) OnMoved(f func()) { s.moved = f }
 
+// OnMovedDevices registers a function called with the devices that moved,
+// after they did, so that their agents are told at once (ADR-0059).
+func (s *Service) OnMovedDevices(f func([]uuid.UUID)) { s.movedDevices = f }
+
 type moving struct {
 	id                  uuid.UUID
 	name                string
@@ -80,8 +84,10 @@ func (s *Service) Move(ctx context.Context, c access.Caller, in MoveInput) (*Mov
 		return nil, err
 	}
 	res := &MoveResult{}
+	var moved []uuid.UUID
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		*res = MoveResult{}
+		moved = nil
 		var tgtOrg uuid.UUID
 		var tgtSite string
 		err := tx.QueryRow(ctx, `SELECT organization_id, name FROM sites WHERE id = $1`, in.SiteID).Scan(&tgtOrg, &tgtSite)
@@ -172,6 +178,9 @@ func (s *Service) Move(ctx context.Context, c access.Caller, in MoveInput) (*Mov
 			}
 		}
 		res.Moved = len(todo)
+		for _, m := range todo {
+			moved = append(moved, m.id)
+		}
 		return nil
 	})
 	if err != nil {
@@ -179,6 +188,9 @@ func (s *Service) Move(ctx context.Context, c access.Caller, in MoveInput) (*Mov
 	}
 	if res.Moved > 0 && s.moved != nil {
 		s.moved()
+	}
+	if len(moved) > 0 && s.movedDevices != nil {
+		s.movedDevices(moved)
 	}
 	return res, nil
 }

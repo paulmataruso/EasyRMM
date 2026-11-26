@@ -687,6 +687,81 @@ All are additive.
   workstation rule; the evaluator skips the other class and resolves with
   `not applicable`.
 
+## Amended 2026-11-26 (decided in review): what the first build does
+
+The first build (branch `ws/bkp`) follows this ADR for servers and differs in
+the points below. Nothing here has been run on a real server; the real-device
+steps R1 to R12 are still to do.
+
+* **No event reader yet.** `agent/winevents` does not exist, so section 6's
+  event path is not built. The hourly `backup.status` read supplies what the
+  alerts need: the last success and failure, from `Get-WBSummary`, and the
+  target state and space. A failure between two reads shows at the next one
+  (at most an hour later). The kinds that need events (a failure seen between
+  reads, a target not found at backup time, File History) wait for the event
+  reader and for R1. No migration is needed, so `backup_events` is not
+  created.
+* **Six alert kinds, six defaults.** Built: `backup_failed`,
+  `backup_overdue`, `backup_target_missing`, `backup_target_low_space`,
+  `backup_not_configured`, `backup_stuck`, with the server defaults of
+  section 6 (`not_configured` off). `backup_not_installed` is not built: the
+  hourly read does not run on a server without the feature. The workstation
+  rules, `AppliesTo` and `deviceClass` are not built either, because a desktop
+  has no policy and no status read; every kind is server-only. The framework
+  caps a threshold at 100, so `backup_overdue` counts days (1 to 100) and
+  `backup_stuck` counts **hours** (1 to 100, default 12, which is the 720
+  minutes of the table).
+* **Role states.** A server without `wbengine` now reports `windows_backup`
+  with the state `not_installed` (a new role state), so the install action is
+  reachable; `present` is a server with the feature. Whether a policy exists
+  comes from the status read, not from the role. Desktops report as before
+  (`present` or `unconfigured` by the File History service); `events_seen` and
+  `none` are not built.
+* **Restore takes one path.** Windows Server Backup runs one operation at a
+  time, so `restore_files` and `restore_files_overwrite` take one `source`
+  path, not a list.
+* **`versions_prune` is two actions.** `versions_prune_preview` (tier 0) lists
+  what a prune would remove; `versions_prune` (tier 3) takes `expect`, the
+  number the preview showed, and refuses with `changed` if the count differs
+  now. Both refuse a prune that would leave no version.
+* **Tiers in the framework.** Tier 3 is an action whose permission is
+  `backup.destroy` (held by Site Administrators and above, who hold
+  `backup.manage`), `Destructive` (confirmation and step-up). Tier 2 uses a new
+  `Confirm` flag on the framework's action: the typed confirmation without a
+  step-up. The confirmation subject of tier 2 and 3 is a required `device`
+  parameter, the computer's name, which the server compares with the device's
+  real name (`SubjectIsDeviceName`; trimmed, ignoring case) and refuses on a
+  mismatch.
+* **First policy.** `policy_set` on a computer with no policy needs
+  `targetVolume`, a local volume; `target_volume_set`, `target_network_set`
+  and `target_disk_set` need a policy to change (`no_policy`). A server that
+  can only back up to a share sets a local volume first and changes it after.
+* **Disk identity.** `target_disk_set` repeats the disk number and its id, and
+  the script refuses (`disk_changed`) when the disk with that number no longer
+  has that id. The five-minute freshness of the `disks` read is not enforced
+  separately.
+* **Sensitive data.** `backup.status` holds no path, share or account.
+  `backup.sensitive` returns the targets' paths and the included folders and is
+  opened by `backup.view_sensitive`.
+* **Credentials.** `New-EasyRmmCredential` is in `_credential.ps1` and pinned
+  in `scripts/ci/winmod-helper-pins.json`. A script is the text the agent
+  receives: its file with `_common.ps1` (and, for the share target,
+  `_credential.ps1`) put in where it says `#@library`; the catalogue pins that
+  text. No script uses `wbadmin`.
+* **Desktops: B13 not started.** R11 has not been run, so option A and the
+  File History policy switch are not built, as this ADR requires, and
+  `DesktopImageVerified` is `false`. One more reason to settle before they are:
+  the SYSTEM task's command line would carry the chosen target, and the AST
+  check bans building a command from a parameter, so the task needs a reviewed
+  design (a helper that passes the target some other way). Until then a
+  desktop's tab is the explanation card, which says that the Windows 11 Backup
+  app has no management interface.
+* **Cards and the group column.** The organization and site Backup cards read
+  the stored `backup.status` snapshots (`GET /organizations/{id}/backup`,
+  `GET /sites/{id}/backup`) and send no job. The group column and filter are
+  not built (there are no Facts for them yet). The tab has no Events panel,
+  for the same reason as the event reader.
+
 ## References
 
 Read on 2026-11-26 unless marked otherwise:

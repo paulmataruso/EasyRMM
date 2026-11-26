@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BackupCard } from "../devices/backup/BackupCard";
 import { Link, useNavigate, useParams } from "react-router";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -230,6 +231,7 @@ export function OrganizationDetailPage() {
 
             <div className="flex flex-col gap-5">
               <SecurityCard level="organization" id={o.id} organizationId={o.id} />
+              <BackupCard level="organization" id={o.id} />
               {documented && (
                 <Card
                   title={

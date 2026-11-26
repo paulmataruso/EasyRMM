@@ -27,3 +27,5 @@ ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.t
 78e7d2b253cf29cc16bf57779762ca4046282aa3:server/internal/recovery/companion_integration_test.go:generic-api-key:146
 78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:generic-api-key:278
 78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:private-key:221
+# A pinned helper's SHA-256 (ADR-0077), not a key.
+93479ac683233560e47f4d1d7f7f5e1932350d77:scripts/ci/winmod-helper-pins.json:generic-api-key:2

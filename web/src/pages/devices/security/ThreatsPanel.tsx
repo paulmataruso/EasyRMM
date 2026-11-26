@@ -51,7 +51,7 @@ export function ThreatsPanel({ device, canManage, canWeaken, canSeeSensitive }: 
         confirmLabel="Remove threats"
         effect={<p>Defender will remove every active threat it knows on this computer, which can delete or quarantine files.</p>}
         run={async () => {
-          await runAction(device.id, "threats_remove", {}, "defender.threats_remove:");
+          await runAction(device.id, "threats_remove", { device: device.name }, `defender.threats_remove:${device.name}`);
           toast.success("Defender removed the active threats.");
           threats.load();
         }}

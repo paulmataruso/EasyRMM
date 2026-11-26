@@ -562,10 +562,20 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 		// The heartbeat confirms the connection it names (ADR-0059).
 		c, _ := r.Context().Value(signedCallKey{}).(signedCall)
 		a.channel.Heartbeat(d.ID, in.Transport, c.req.SignedAt())
+		if in.Transport != nil && in.Transport.LastReplayed != 0 {
+			a.log.Warn("agent: an upgrade of this device's channel was replayed by someone else", "device_id", d.ID)
+		}
 		if devscope.Allowed(d.OrganizationID) {
 			out.Features = append(out.Features, agentproto.FeatureChannel)
 			out.Instance = a.channel.Instance()
 			out.JobsWaiting = a.channel.TakeJobsWaiting(d.ID)
+			if !out.JobsWaiting && a.jobs != nil && a.channel.Live(d.ID) {
+				// A live agent holds no poll: work the channel has not
+				// carried (a lost push, a held-back run) is found here.
+				if w, err := a.jobs.Waiting(r.Context(), d.ID); err == nil {
+					out.JobsWaiting = w
+				}
+			}
 		}
 	}
 	if a.inv != nil {

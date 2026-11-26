@@ -104,6 +104,12 @@ func confirmed(a winmod.Action, subject string) winmod.Action {
 	return a
 }
 
+// deviceNamed makes the confirmation the computer's own name, which the server compares with the real one.
+func deviceNamed(a winmod.Action) winmod.Action {
+	a.SubjectIsDeviceName = true
+	return a
+}
+
 func weakening(a winmod.Action, subject string) winmod.Action {
 	a.Permission, a.Destructive, a.Subject = rbac.PermDefenderWeaken, true, subject
 	return a
@@ -160,7 +166,8 @@ func Actions() []winmod.Action {
 			[]winmod.Param{{Name: "path", Type: winmod.Text, Required: true, Max: 260}}, winmod.Typed[ScanDone]()), checkScanPath),
 		change("scan_cancel", "Cancel the running Defender scan", 60, nil, winmod.Typed[Canceled]()),
 		change("signatures_update", "Update Defender's signatures", secs(10*time.Minute), nil, winmod.Typed[SignaturesUpdated]()),
-		confirmed(change("threats_remove", "Remove Defender's active threats", secs(10*time.Minute), nil, winmod.Typed[ThreatsRemoved]()), ""),
+		deviceNamed(confirmed(change("threats_remove", "Remove Defender's active threats", secs(10*time.Minute),
+			[]winmod.Param{{Name: "device", Type: winmod.Name, Required: true}}, winmod.Typed[ThreatsRemoved]()), "device")),
 		weakening(checked(change("quarantine_restore", "Restore a quarantined item to its original place", secs(2*time.Minute),
 			[]winmod.Param{{Name: "name", Type: winmod.Text, Required: true, Max: 200}}, winmod.Typed[Restored]()), checkQuarantineName), "name"),
 

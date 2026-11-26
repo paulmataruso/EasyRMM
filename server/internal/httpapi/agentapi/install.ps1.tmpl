@@ -249,10 +249,16 @@ function Undo-Install {
         }
         if ($keep.Count -gt 0) { Save-Record $keep } else { Remove-Item -LiteralPath $recordFile -Force -ErrorAction SilentlyContinue }
     }
+    # Only folders this run made are listed, so all they hold is this run's
+    # or the agent's it ran. A process that just exited, or a scan, can hold
+    # a file for a moment: retry for up to five seconds.
     $folders = @($created)
     [Array]::Reverse($folders)
     foreach ($p in $folders) {
-        try { [IO.Directory]::Delete($p, $false) } catch { }
+        for ($i = 0; $i -lt 10 -and (Test-Path -LiteralPath $p); $i++) {
+            try { [IO.Directory]::Delete($p, $true) } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (Test-Path -LiteralPath $p) { Write-Warning "easyrmm: could not remove $p, which this run made" }
     }
 }
 

@@ -119,8 +119,13 @@ func TestDefenderActionsAPI(t *testing.T) {
 	rm := map[string]any{"kind": "path", "value": `D:\LineOfBusiness`}
 	wantStatus(t, owner.do("POST", path("exclusion_remove"), body(rm)), http.StatusUnprocessableEntity, "validation_failed")
 	owner.expect(http.StatusAccepted, "POST", path("exclusion_remove"), map[string]any{"params": rm, "confirm": `defender.exclusion_remove:D:\LineOfBusiness`}, nil)
-	tech.expect(http.StatusUnprocessableEntity, "POST", path("threats_remove"), body(nil), nil)
-	tech.expect(http.StatusAccepted, "POST", path("threats_remove"), map[string]any{"confirm": "defender.threats_remove:"}, nil)
+	tr := map[string]any{"device": "ws-02"}
+	tech.expect(http.StatusUnprocessableEntity, "POST", path("threats_remove"), body(tr), nil)
+	wrong := tech.do("POST", path("threats_remove"), map[string]any{"params": map[string]any{"device": "other"}, "confirm": "defender.threats_remove:other"})
+	if wrong.status != http.StatusUnprocessableEntity || !strings.Contains(string(wrong.body), "not the computer's name") {
+		t.Errorf("a wrong computer name: %d %s", wrong.status, wrong.body)
+	}
+	tech.expect(http.StatusAccepted, "POST", path("threats_remove"), map[string]any{"params": tr, "confirm": "defender.threats_remove:ws-02"}, nil)
 }
 
 // TestDefenderEventsThroughTheHeartbeat sends Defender events in the agent's

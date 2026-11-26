@@ -90,6 +90,9 @@ func (r *Runner) startRepair(ctx context.Context, s *agentproto.SignedRepair) {
 			r.Log.Info("a repair step is done", "target", p.Target, "step", p.Step)
 		}
 		r.repair.finish(rep, time.Now())
+		if r.Nudge != nil {
+			r.Nudge("repair") // the outcome is reported in the next heartbeat
+		}
 	})
 }
 

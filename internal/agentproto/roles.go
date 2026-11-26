@@ -25,6 +25,9 @@ const (
 	RoleUnconfigured = "unconfigured" // installed, not set up (DHCP without its parameters)
 	RoleUnknown      = "unknown"      // found, but the state could not be read in time
 	RolePassive      = "passive"      // Defender installed, another product active
+	// RoleNotInstalled is a server without the Windows Server Backup feature:
+	// reported so the console can offer to install it (ADR-0077).
+	RoleNotInstalled = "not_installed"
 )
 
 // Role is one entry of Facts.Roles.
@@ -46,5 +49,5 @@ func ValidRoleName(name string) bool {
 
 // ValidRoleState reports whether state is one a role may carry.
 func ValidRoleState(state string) bool {
-	return state == RolePresent || state == RoleUnconfigured || state == RolePassive || state == RoleUnknown
+	return state == RolePresent || state == RoleUnconfigured || state == RolePassive || state == RoleUnknown || state == RoleNotInstalled
 }

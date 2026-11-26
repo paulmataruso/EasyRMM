@@ -398,3 +398,10 @@ func DecodeKey(s string) (ed25519.PublicKey, error) {
 	}
 	return ed25519.PublicKey(b), nil
 }
+
+// ParamsPrologue is put before a PowerShell script that takes parameters
+// (ADR-0073), by the Windows agent after it has verified the signed script:
+// standard input and output are UTF-8 without a byte order mark. Windows
+// PowerShell otherwise reads and writes the console's OEM code page, which
+// would alter a name such as "José Müller" or "日本語" in either direction.
+const ParamsPrologue = "[Console]::InputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false\r\n"

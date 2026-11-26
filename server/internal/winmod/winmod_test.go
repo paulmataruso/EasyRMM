@@ -243,11 +243,11 @@ func TestCheckHookAndConfirm(t *testing.T) {
 	if a.NeedsConfirm() || a.NeedsStepUp() {
 		t.Error("a plain action needs no confirmation")
 	}
-	a.Confirm = true
+	a.Confirm, a.Subject = true, "user"
 	if _, err := NewCatalog(a); err != nil {
-		t.Fatalf("a confirmed action with no subject: %v", err)
+		t.Fatalf("a confirmed action: %v", err)
 	}
-	if !a.NeedsConfirm() || a.NeedsStepUp() || a.ConfirmText("") != "defender.sample:" {
-		t.Errorf("confirm %v, step-up %v, text %q", a.NeedsConfirm(), a.NeedsStepUp(), a.ConfirmText(""))
+	if !a.NeedsConfirm() || a.NeedsStepUp() || a.ConfirmText("alice") != "defender.sample:alice" {
+		t.Errorf("confirm %v, step-up %v", a.NeedsConfirm(), a.NeedsStepUp())
 	}
 }
