@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using EasyPatch.Agent.Core.Abstractions;
+using EasyPatch.Agent.Core.Defender;
 
 namespace EasyPatch.Agent.Platform;
 
@@ -19,6 +20,8 @@ internal sealed class WindowsAgentInstaller : IAgentInstaller
             CreateNoWindow = true,
             WorkingDirectory = Environment.SystemDirectory,
         };
+        // ADR-0070: msiexec's temporary files are in the agent's protected, excluded work folder, not in %TEMP%.
+        AgentFolders.UseWorkAsTemp(info, SecureStorage.DefaultDataDirectory);
 
         // Upgrade in place: no properties, so the installed server URL and proxy are kept and nothing is re-enrolled.
         foreach (var argument in (string[])["/i", Path.GetFullPath(packagePath), "/qn", "/norestart", "/l*v", Path.GetFullPath(logPath)])

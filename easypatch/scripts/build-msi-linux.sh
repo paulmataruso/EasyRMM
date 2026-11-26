@@ -50,7 +50,7 @@ built=()
 for arch in "${arches[@]}"; do
   name="EasyPatchAgent-$version-$arch.msi"
   echo "==> Building $name"
-  rm -f "artifacts/installer/$name" "artifacts/installer/$name.sha256"
+  rm -f "artifacts/installer/$name" "artifacts/installer/$name.sha256" "artifacts/installer/$name.files.json"
   docker run --rm --network none \
     -v "$repo_root/agent:/src:ro" \
     -v "$repo_root/artifacts/agent/win-$arch:/publish:ro" \
@@ -71,6 +71,11 @@ for arch in "${arches[@]}"; do
 
   hash="$(sha256sum "artifacts/installer/$name" | cut -d' ' -f1)"
   printf '%s  %s' "$hash" "$name" > "artifacts/installer/$name.sha256"
+  # ADR-0070: the hash of every program file the package installs (the console's list of what runs on a device).
+  exe="artifacts/agent/win-$arch/EasyPatch.Agent.exe"
+  printf '{"version":"%s","architecture":"%s","files":[{"name":"EasyPatch.Agent.exe","size":%s,"md5":"%s","sha256":"%s"}]}\n' \
+    "$version" "$arch" "$(stat -c %s "$exe")" "$(md5sum "$exe" | cut -d' ' -f1)" "$(sha256sum "$exe" | cut -d' ' -f1)" \
+    > "artifacts/installer/$name.files.json"
   echo "    artifacts/installer/$name"
   echo "    SHA-256 $hash"
   built+=("artifacts/installer/$name")

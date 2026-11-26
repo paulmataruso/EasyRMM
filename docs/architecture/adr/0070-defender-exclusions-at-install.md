@@ -731,3 +731,29 @@ handling, the subtree walk), `TEMP`/`TMP` on the winget and `msiexec`
 `Environment` and the custom actions, `Package.wxs` (the list on
 `INSTALLFOLDER`, the custom action, the MSI order), the per-file hash
 list the build emits, and the `FileTrust` table shared with A.
+
+## Amendments from building slice B
+
+* Amended 2026-11-26 (decided in review), while building slice B: (1) the
+  list on `%ProgramFiles%\EasyPatch Agent` is SYSTEM and Administrators full
+  control **plus Users read and execute**, not administrators only: the tray
+  (`EasyPatch.Agent.exe tray`) is started by the service in each user's
+  session and must read and run the program. Users get no write right, so the
+  folder is still "administrators only" by the check in section 2. (2) The
+  program is not on disk when the MSI must exclude, so the first half of the
+  MSI's order (create, lock down, verify, exclude the two folders as path and
+  Attack Surface Reduction exclusions) is a fixed PowerShell text in the
+  package, run between `CreateFolders` and `InstallFiles`, which writes the
+  record before each add; the second half (the full subtree check, process
+  and Controlled Folder Access exclusions) is the agent's own `defender add`
+  after `InstallFiles`. (3) A subtree entry that fails the check is **reset**
+  (a link is removed, the owner set to Administrators, the list set to inherit)
+  and the agent refuses to start only if that does not make it safe; a top-level
+  folder that fails is moved aside as in section 2. (4) The EasyPatch agent
+  takes no gate from the server: its builds reach devices only through the
+  dev-only override of the development scope, and its exclusions at install are
+  unconditional, as in `install.ps1`. (5) The build writes
+  `<msi>.files.json` (name, size, MD5, SHA-256 of `EasyPatch.Agent.exe`) beside
+  the MSI, as the per-file hash list. (6) The tray process's own extraction
+  folder is not moved: the tray is not a service or an installer command, and
+  nothing here sets the variable machine-wide.

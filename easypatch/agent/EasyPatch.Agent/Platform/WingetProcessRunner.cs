@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using EasyPatch.Agent.Core.Applications;
+using EasyPatch.Agent.Core.Defender;
 using Microsoft.Extensions.Logging;
 
 namespace EasyPatch.Agent.Platform;
@@ -35,8 +36,9 @@ internal sealed class WingetProcessRunner(ILogger<WingetProcessRunner> logger) :
             RedirectStandardInput = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = Path.GetTempPath(),
         };
+        // ADR-0070: winget's working directory and temporary files are in the agent's protected, excluded work folder, not in %TEMP%.
+        AgentFolders.UseWorkDirectory(info, SecureStorage.DefaultDataDirectory);
         foreach (var argument in arguments)
         {
             info.ArgumentList.Add(argument);

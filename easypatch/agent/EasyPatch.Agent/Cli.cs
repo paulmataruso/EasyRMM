@@ -259,6 +259,13 @@ internal static class Cli
 
     // ================================================================== misc
 
+    /// <summary><c>defender add|remove|status</c> (ADR-0070).</summary>
+    public static async Task<int> DefenderAsync(string[] args)
+    {
+        using var loggerFactory = CreateCliLoggerFactory(AgentComposition.DataDirectory);
+        return await DefenderSupport.RunAsync(args, loggerFactory);
+    }
+
     public static int Version()
     {
         Console.WriteLine(AgentComposition.AgentVersion);
@@ -279,6 +286,8 @@ internal static class Cli
               status [--json]           Show enrollment and agent status.
               unenroll [--reason <text>]
                                         Notify the server (best effort) and delete the agent identity.
+              defender add|remove|status
+                                        Add, remove or show the Microsoft Defender exclusions of this agent's folders.
               version                   Print the agent version.
 
             Exit codes: 0 success, 1 failure, 2 usage, 3 enrolled with another server (use --force),

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using EasyPatch.Agent.Core.Abstractions;
+using EasyPatch.Agent.Core.Defender;
 using EasyPatch.Agent.Core.Jobs;
 
 namespace EasyPatch.Agent.Platform;
@@ -39,6 +40,8 @@ internal sealed partial class WindowsAgentUninstaller : IAgentUninstaller
             CreateNoWindow = true,
             WorkingDirectory = Environment.SystemDirectory,
         };
+        // ADR-0070: msiexec's temporary files are in the agent's protected, excluded work folder, not in %TEMP%.
+        AgentFolders.UseWorkAsTemp(info, SecureStorage.DefaultDataDirectory);
 
         foreach (var argument in (string[])["/x", productCode, "/qn", "/norestart", "/l*v", Path.GetFullPath(logPath)])
         {

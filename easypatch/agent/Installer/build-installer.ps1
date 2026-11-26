@@ -9,7 +9,7 @@
   3. WiX v5 build of the MSI
   4. optional Authenticode signing of the MSI
   5. release signature for agent self-update (<msi>.sig)
-  6. writes <msi>.sha256
+  6. writes <msi>.sha256 and <msi>.files.json (the hashes of the installed program files)
 
   Signing is enabled when one of these is set (never commit certificates or passwords):
     EASYPATCH_SIGN_CERT_THUMBPRINT   SHA-1 thumbprint of a code-signing certificate in Cert:\CurrentUser\My or LocalMachine\My
@@ -221,5 +221,18 @@ else {
 
 $hash = (Get-FileHash -Algorithm SHA256 -Path $msi).Hash.ToLowerInvariant()
 Set-Content -Path "$msi.sha256" -Value "$hash  $msiName" -Encoding ascii -NoNewline
+# ADR-0070: the hash of every program file the package installs, for the console's list of what runs on a device. The
+# executable is hashed after signing, as it is installed.
+$fileEntries = foreach ($installed in 'EasyPatch.Agent.exe') {
+    $path = Join-Path $publishDir $installed
+    [ordered]@{
+        name   = $installed
+        size   = (Get-Item $path).Length
+        md5    = (Get-FileHash -Algorithm MD5 -Path $path).Hash.ToLowerInvariant()
+        sha256 = (Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant()
+    }
+}
+[ordered]@{ version = $Version; architecture = $Architecture; files = @($fileEntries) } | ConvertTo-Json -Depth 4 |
+    Set-Content -Path "$msi.files.json" -Encoding utf8
 Write-Host "==> $msi"
 Write-Host "    SHA-256 $hash"

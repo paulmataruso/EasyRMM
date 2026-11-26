@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="EasyPatch.Agent.Tests" />
+    <InternalsVisibleTo Include="EasyPatch.Agent" />
   </ItemGroup>
 </Project>

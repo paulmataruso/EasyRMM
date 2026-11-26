@@ -75,12 +75,118 @@
       <Directory Id="INSTALLFOLDER" Name="EasyPatch Agent" />
     </StandardDirectory>
     <StandardDirectory Id="CommonAppDataFolder">
-      <Directory Id="DATAFOLDER" Name="EasyPatch" />
+      <Directory Id="DATAFOLDER" Name="EasyPatch">
+        <!-- ADR-0070: where winget and msiexec keep their temporary files, and where each .NET service or command extracts
+             its single file (one folder each, never shared). All under the data folder, so all locked down and excluded with it. -->
+        <Directory Id="WORKFOLDER" Name="work" />
+        <Directory Id="BUNDLEFOLDER" Name="bundle">
+          <Directory Id="BUNDLESERVICEFOLDER" Name="EasyPatchAgent" />
+          <Directory Id="BUNDLEUNENROLLFOLDER" Name="unenroll" />
+          <Directory Id="BUNDLEDEFENDERFOLDER" Name="defender" />
+        </Directory>
+      </Directory>
     </StandardDirectory>
 
     <Feature Id="Agent" Title="EasyPatch Agent" Level="1">
       <ComponentGroupRef Id="AgentComponents" />
     </Feature>
+
+    <!-- ===================================================================== Microsoft Defender (ADR-0070) -->
+
+    <!-- The order of an install is: create the folders (CreateFolders), lock them down, verify them, exclude them, and only then lay
+         down the files (InstallFiles). The program is not on disk yet, so the first half is this fixed PowerShell text, run by
+         DefenderPreExclude between CreateFolders and InstallFiles: it locks down the two folders with the access lists below,
+         verifies them (a plain folder, an owner that is SYSTEM, Administrators or TrustedInstaller, no one else who may write it,
+         nothing above it that others may replace), and adds the path and Attack Surface Reduction exclusions of the verified
+         folders, writing state\defender-exclusions.json BEFORE each add. The paths are fixed from the system folders, never from
+         a property. After the files are laid down, DefenderExclude runs the agent's own "defender add", which repeats the full
+         check (the whole subtree) and adds the process and Controlled Folder Access exclusions. A third-party antivirus, Defender
+         in passive mode or switched off, or a missing Defender module changes nothing here (state not_applicable), and no failure
+         of either step fails the installation. The value is a property so that its text is never formatted by Windows Installer;
+         it is private (mixed case) and holds no double quote. -->
+    <Property Id="DefenderPreScript" Value="$ErrorActionPreference = 'Stop';
+$trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464');
+$pf = Join-Path $env:ProgramFiles 'EasyPatch Agent';
+$pd = Join-Path $env:ProgramData 'EasyPatch';
+$sddlData = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)';
+$sddlProgram = 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)';
+function Lock($d, $sddl) { New-Item -ItemType Directory -Force -Path $d | Out-Null; $a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm($sddl); Set-Acl -LiteralPath $d -AclObject $a };
+function Problem($d, $mask, $self) {
+  $i = Get-Item -LiteralPath $d -Force;
+  if ($i.Attributes -band 1024) { return ($d + ' is a link') };
+  $a = Get-Acl -LiteralPath $d;
+  $t = ('System.Security.Principal.SecurityIdentifier' -as 'type');
+  $o = $a.GetOwner($t).Value;
+  if ($trusted -notcontains $o) { return ($d + ' is owned by ' + $o) };
+  foreach ($r in $a.GetAccessRules($true, $true, $t)) {
+    if ($r.AccessControlType -ne 'Allow') { continue };
+    if (($r.FileSystemRights.value__ -band $mask) -eq 0) { continue };
+    if ((-not $self) -and ($r.PropagationFlags.value__ -band 2)) { continue };
+    $w = $r.IdentityReference.Value;
+    if (($trusted -contains $w) -or ($w -eq 'S-1-3-0') -or ($w -eq 'S-1-3-1')) { continue };
+    return ($d + ' may be changed by ' + $w)
+  };
+  return $null
+};
+Lock $pd $sddlData; Lock $pf $sddlProgram;
+$ok = @();
+foreach ($d in @($pf, $pd)) {
+  $own = Problem $d 0x500D0156 $true;
+  $above = Problem (Split-Path -Parent $d) 0x100D0040 $false;
+  if ((-not $own) -and (-not $above)) { $ok += $d }
+};
+if ($ok.Count -eq 0) { exit 0 };
+if (-not (Get-Command Get-MpPreference -ErrorAction SilentlyContinue)) { exit 0 };
+$s = Get-MpComputerStatus; $p = Get-MpPreference;
+if (($s.AMRunningMode -ne 'Normal') -or (-not $s.AntivirusEnabled) -or (-not $s.RealTimeProtectionEnabled)) { exit 0 };
+$rec = Join-Path $pd 'state\defender-exclusions.json';
+$entries = @();
+if (Test-Path -LiteralPath $rec) { $j = Get-Content -Raw -LiteralPath $rec | ConvertFrom-Json; if ($j.version -ne 1) { exit 0 }; $entries = @($j.entries) };
+function Save { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $rec) | Out-Null; $json = ConvertTo-Json -Depth 4 @{ version = 1; entries = @($entries) }; $w = New-Object System.IO.StreamWriter($rec, $false, (New-Object System.Text.UTF8Encoding($false))); $w.Write($json); $w.Close() };
+foreach ($d in $ok) {
+  foreach ($k in @('path', 'asr')) {
+    $param = @{ path = 'ExclusionPath'; asr = 'AttackSurfaceReductionOnlyExclusions' }.$k;
+    $list = @($p.$param);
+    if (@($list | Where-Object { $_ -ieq $d }).Count -gt 0) { continue };
+    $entries = @($entries) + (New-Object psobject -Property @{ kind = $k; path = $d; at = (Get-Date).ToUniversalTime().ToString('o'); agentVersion = $v });
+    Save;
+    try { $x = @{ $param = $d }; Add-MpPreference @x }
+    catch { $entries = @($entries | Where-Object { -not (($_.kind -eq $k) -and ($_.path -eq $d)) }); Save }
+  }
+}" />
+
+    <CustomAction Id="DefenderPreExclude"
+                  Directory="TARGETDIR"
+                  ExeCommand="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;$v='[ProductVersion]'; [DefenderPreScript]&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- The agent's own command, after the files are laid down. The command gets its own extraction folder: cmd sets the variable for it
+         alone, since a custom action does not inherit the service's environment. -->
+    <CustomAction Id="DefenderExclude"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /s /c &quot;set &quot;DOTNET_BUNDLE_EXTRACT_BASE_DIR=[DATAFOLDER]bundle\defender&quot;&amp;&amp; &quot;[INSTALLFOLDER]EasyPatch.Agent.exe&quot; defender add&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- Moves the service's single-file extraction into its own folder under the data folder, in the service's own Environment value
+         and nowhere else (never machine-wide). The service key exists once InstallServices has run. -->
+    <CustomAction Id="ServiceBundleEnvironment"
+                  Directory="TARGETDIR"
+                  ExeCommand="&quot;[SystemFolder]reg.exe&quot; add HKLM\SYSTEM\CurrentControlSet\Services\EasyPatchAgent /v Environment /t REG_MULTI_SZ /d &quot;DOTNET_BUNDLE_EXTRACT_BASE_DIR=[DATAFOLDER]bundle\EasyPatchAgent&quot; /f"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- On a real removal (never an upgrade) the agent removes exactly the exclusions it recorded, before the identity is deleted. -->
+    <CustomAction Id="DefenderRemove"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /s /c &quot;set &quot;DOTNET_BUNDLE_EXTRACT_BASE_DIR=[DATAFOLDER]bundle\defender&quot;&amp;&amp; &quot;[INSTALLFOLDER]EasyPatch.Agent.exe&quot; defender remove&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
 
     <!-- ===================================================================== uninstall -->
 
@@ -88,13 +194,19 @@
          (never during a major upgrade). Exit code is ignored: uninstall must not fail when the server is down. -->
     <CustomAction Id="UnenrollAgent"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="&quot;[INSTALLFOLDER]EasyPatch.Agent.exe&quot; unenroll --reason &quot;Agent uninstalled&quot;"
+                  ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /s /c &quot;set &quot;DOTNET_BUNDLE_EXTRACT_BASE_DIR=[DATAFOLDER]bundle\unenroll&quot;&amp;&amp; &quot;[INSTALLFOLDER]EasyPatch.Agent.exe&quot; unenroll --reason &quot;Agent uninstalled&quot;&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="UnenrollAgent" After="StopServices" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- Install order (ADR-0070): CreateFolders, lock down + verify + exclude, then InstallFiles. -->
+      <Custom Action="DefenderPreExclude" After="CreateFolders" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="ServiceBundleEnvironment" After="InstallServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="DefenderExclude" After="ServiceBundleEnvironment" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <!-- Removal: the exclusions first, then the identity. An upgrade keeps the exclusions. -->
+      <Custom Action="DefenderRemove" After="StopServices" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="UnenrollAgent" After="DefenderRemove" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
   </Package>
 
@@ -137,6 +249,32 @@
         <CreateFolder>
           <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
         </CreateFolder>
+      </Component>
+
+      <!-- ADR-0070: the program folder, which Program Files only lets SYSTEM, Administrators and TrustedInstaller change by
+           inheritance and nothing enforced: SYSTEM and Administrators full control, Users read and execute (the tray runs the program
+           in each user's session), inheritance off. The agent sets and verifies the same list at every start. -->
+      <Component Id="InstallFolder" Directory="INSTALLFOLDER" Guid="A2C8F1D4-6B7E-4E35-9C1A-5D3F8B2E7A64" Bitness="always64">
+        <CreateFolder>
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+        </CreateFolder>
+      </Component>
+
+      <!-- ADR-0070: the work and extraction folders, locked down like the data folder they are in. -->
+      <Component Id="WorkFolder" Directory="WORKFOLDER" Guid="B3D9E2A5-7C8F-4F46-8D2B-6E4A9C3F8B75" Bitness="always64">
+        <CreateFolder><PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+      </Component>
+      <Component Id="BundleFolder" Directory="BUNDLEFOLDER" Guid="C4EAF3B6-8D90-4A57-9E3C-7F5BAD4A9C86" Bitness="always64">
+        <CreateFolder><PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+      </Component>
+      <Component Id="BundleServiceFolder" Directory="BUNDLESERVICEFOLDER" Guid="D5FB04C7-9EA1-4B68-8F4D-806CBE5BAD97" Bitness="always64">
+        <CreateFolder><PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+      </Component>
+      <Component Id="BundleUnenrollFolder" Directory="BUNDLEUNENROLLFOLDER" Guid="E60C15D8-AFB2-4C79-9A5E-917DCF6CBEA8" Bitness="always64">
+        <CreateFolder><PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
+      </Component>
+      <Component Id="BundleDefenderFolder" Directory="BUNDLEDEFENDERFOLDER" Guid="F71D26E9-B0C3-4D8A-8B6F-A28E0D7DCFB9" Bitness="always64">
+        <CreateFolder><PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" /></CreateFolder>
       </Component>
 
       <!-- Bootstrap registry key, restricted to SYSTEM and Administrators (it may briefly hold an enrollment token). -->

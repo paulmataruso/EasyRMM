@@ -21,6 +21,7 @@ try
         "enroll" => await Cli.EnrollAsync(rest),
         "status" => Cli.Status(rest),
         "unenroll" => await Cli.UnenrollAsync(rest),
+        "defender" => await Cli.DefenderAsync(rest),
         "version" or "--version" or "-v" => Cli.Version(),
         "help" or "--help" or "-h" or "/?" or "-?" => Cli.Help(),
         _ => Cli.UnknownCommand(command),
@@ -125,6 +126,9 @@ static async Task<int> RunAgentAsync(string[] arguments)
     builder.Services.AddHostedService<AgentHostedService>();
 
     using var host = builder.Build();
+
+    // ADR-0070: beside SecureDataDirectory, lock down and exclude the agent's folders. Never stops the agent.
+    DefenderSupport.ReconcileInBackground(host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("EasyPatch.Defender"));
     await host.RunAsync();
     return 0;
 }

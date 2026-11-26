@@ -102,8 +102,123 @@ internal static class FileTrust
             return $"{full} may be changed by {writer}.";
         }
 
-        var directory = Path.GetDirectoryName(full);
-        var folder = true; // its own folder: anything that lets someone add or change what it holds counts
+        return CheckChain(Path.GetDirectoryName(full), folder: true, stopAt);
+    }
+
+    /// <summary>ADR-0070, section 2: a folder the agent means to exclude from Defender. The folder is a plain folder (not a link) owned by
+    /// the administration, no one else may write it or replace anything above it, and everything below it has an owner that is the
+    /// administration or <paramref name="agentSid"/>, entries from the administration alone for writing, and no link or reparse point.
+    /// The reason it cannot be trusted, null when it can.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static string? CheckFolderWindows(string folder, string? agentSid)
+    {
+        var full = Path.GetFullPath(folder);
+        var attributes = TryAttributes(full);
+        if (attributes is null)
+        {
+            return $"{full} cannot be read.";
+        }
+
+        if ((attributes.Value & FileAttributes.Directory) == 0)
+        {
+            return $"{full} is not a folder.";
+        }
+
+        return CheckChain(full, folder: true, stopAt: null) ?? CheckTree(full, agentSid);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static string? CheckTree(string root, string? agentSid)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            List<string> children;
+            try
+            {
+                children = Directory.EnumerateFileSystemEntries(directory).ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return $"{directory} cannot be read.";
+            }
+
+            foreach (var child in children)
+            {
+                if (EntryProblemWindows(child, agentSid) is { } problem)
+                {
+                    return problem;
+                }
+
+                if (IsRealDirectory(child))
+                {
+                    pending.Push(child);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Checks one file or folder on its own (not what is above or below it): not a link, an owner that is the administration or
+    /// <paramref name="agentSid"/>, and no one else who may write it. The reason, null when it can be trusted.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static string? EntryProblemWindows(string path, string? agentSid)
+    {
+        var attributes = TryAttributes(path);
+        if (attributes is null)
+        {
+            return $"{path} cannot be read.";
+        }
+
+        var reparse = (attributes.Value & FileAttributes.ReparsePoint) != 0;
+        string? owner = null;
+        List<AclEntry>? dacl = null;
+        if (!reparse)
+        {
+            FileSystemSecurity security = (attributes.Value & FileAttributes.Directory) != 0
+                ? new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access)
+                : new FileInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+            (owner, dacl) = ReadAcl(security);
+        }
+
+        return TreeProblem(path, reparse, owner, dacl, agentSid);
+    }
+
+    /// <summary>Whether <paramref name="path"/> is a folder and not a link, so the walk may enter it.</summary>
+    public static bool IsRealDirectory(string path) =>
+        TryAttributes(path) is { } a && (a & FileAttributes.Directory) != 0 && (a & FileAttributes.ReparsePoint) == 0;
+
+    /// <summary>Whether one file or folder below an excluded folder can be trusted: not a link, a list that exists, an owner that is the
+    /// administration or the agent's own account, and no one else who may write it. The reason, null when it can.</summary>
+    internal static string? TreeProblem(string path, bool reparse, string? owner, IReadOnlyList<AclEntry>? dacl, string? agentSid)
+    {
+        if (reparse)
+        {
+            return $"{path} is a link or reparse point.";
+        }
+
+        if (dacl is null)
+        {
+            return $"{path} has no access list, so everyone may change it.";
+        }
+
+        if (owner is null || !(TrustedDirectoryOwner(owner) || (agentSid is not null && owner == agentSid)))
+        {
+            return $"{path} is owned by {owner ?? "no one"}.";
+        }
+
+        return Grantee(dacl, WriteRights, passedOn: true) is { } who ? $"{path} may be changed by {who}." : null;
+    }
+
+    /// <summary>Checks <paramref name="start"/> and every directory above it, up to <paramref name="stopAt"/>. <paramref name="folder"/>
+    /// says whether <paramref name="start"/> is the agent's own folder, where anything that lets someone add or change what it holds counts.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static string? CheckChain(string? start, bool folder, string? stopAt)
+    {
+        var directory = start;
         while (directory is not null)
         {
             var dirAttributes = TryAttributes(directory);
