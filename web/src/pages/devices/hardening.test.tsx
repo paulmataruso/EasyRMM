@@ -151,11 +151,11 @@ describe("a device's hardening", () => {
     expect(within(dialog).getByRole("checkbox", { name: /^Time synchronisation/ })).toBeChecked();
     expect(within(dialog).getByRole("checkbox", { name: /^USB storage/ })).not.toBeChecked();
     expect(within(dialog).getByText("When applied: USB disks and backup drives stop working.")).toBeInTheDocument();
-    expect(within(dialog).getByText("10 of 15 modules")).toBeInTheDocument();
+    expect(within(dialog).getByText("10 of 19 modules")).toBeInTheDocument();
 
     // None at all is refused before anything is sent.
     await user.click(within(dialog).getByRole("checkbox", { name: /^Recommended/ }));
-    expect(within(dialog).getByText("0 of 15 modules")).toBeInTheDocument();
+    expect(within(dialog).getByText("0 of 19 modules")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Run check" }));
     expect(within(dialog).getByText("Choose at least one module.")).toBeInTheDocument();
     expect(server.callsTo("POST /jobs/hardening")).toHaveLength(0);
