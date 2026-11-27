@@ -16,6 +16,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
+	"github.com/paulmataruso/easyrmm/server/internal/notify"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -41,6 +42,9 @@ const (
 	RunFailed    = "failed"
 	RunSkipped   = "skipped"
 )
+
+// MaxStaggerMinutes bounds a task's stagger.
+const MaxStaggerMinutes = 1440
 
 // Tick is how often the scheduler looks for due tasks. An occurrence found
 // later than Grace past its time counts as missed.
@@ -81,20 +85,27 @@ type Task struct {
 	ScriptSHA256     string     `json:"scriptSha256"`
 	// ScriptChanged says the library's script is no longer the pinned one:
 	// runs fail until the task is saved again with Repin.
-	ScriptChanged bool       `json:"scriptChanged"`
-	ScriptArgs    []string   `json:"scriptArgs"`
-	Targets       Targets    `json:"targets"`
-	Timezone      string     `json:"timezone"`
-	MissedRunRule string     `json:"missedRunRule"`
-	WaitHours     int        `json:"waitHours"`
-	OwnerID       uuid.UUID  `json:"ownerId"`
-	OwnerEmail    string     `json:"ownerEmail"`
-	State         string     `json:"state"`
-	NextRunAt     *time.Time `json:"nextRunAt"`
-	LastRunAt     *time.Time `json:"lastRunAt"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
-	CanEdit       bool       `json:"canEdit"`
+	ScriptChanged bool     `json:"scriptChanged"`
+	ScriptArgs    []string `json:"scriptArgs"`
+	Targets       Targets  `json:"targets"`
+	Timezone      string   `json:"timezone"`
+	MissedRunRule string   `json:"missedRunRule"`
+	WaitHours     int      `json:"waitHours"`
+	// WindowID is the maintenance window the task is held to: it fires only
+	// while the window is open. StaggerMinutes spreads a site's devices over
+	// that long; OnlyIfOnline leaves offline devices out.
+	WindowID       *uuid.UUID `json:"windowId"`
+	WindowName     string     `json:"windowName"`
+	StaggerMinutes int        `json:"staggerMinutes"`
+	OnlyIfOnline   bool       `json:"onlyIfOnline"`
+	OwnerID        uuid.UUID  `json:"ownerId"`
+	OwnerEmail     string     `json:"ownerEmail"`
+	State          string     `json:"state"`
+	NextRunAt      *time.Time `json:"nextRunAt"`
+	LastRunAt      *time.Time `json:"lastRunAt"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	CanEdit        bool       `json:"canEdit"`
 }
 
 // Run is one occurrence of a task.
@@ -131,9 +142,11 @@ const taskSelect = `SELECT a.id, a.organization_id, o.name, a.site_id, coalesce(
 	a.script_id, coalesce(sc.name, ''), a.script_sha256,
 	coalesce(encode(sha256(convert_to(sc.body, 'UTF8')), 'hex') <> a.script_sha256, true),
 	a.script_args, a.target_query, coalesce(si.timezone, o.timezone), a.missed_run_rule, a.wait_hours,
+	a.window_id, coalesce(mw.name, ''), a.stagger_minutes, a.only_if_online,
 	a.owner_id, coalesce(u.email, ''), a.state, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
 	FROM automations a JOIN organizations o ON o.id = a.organization_id
 	LEFT JOIN sites si ON si.id = a.site_id
+	LEFT JOIN site_maintenance_windows mw ON mw.id = a.window_id
 	LEFT JOIN scripts sc ON sc.id = a.script_id
 	LEFT JOIN users u ON u.id = a.owner_id`
 
@@ -141,7 +154,7 @@ func scanTask(row pgx.Row) (*Task, error) {
 	var t Task
 	if err := row.Scan(&t.ID, &t.OrganizationID, &t.OrganizationName, &t.SiteID, &t.SiteName, &t.Name, &t.Schedule,
 		&t.ScriptID, &t.ScriptName, &t.ScriptSHA256, &t.ScriptChanged, &t.ScriptArgs, &t.Targets, &t.Timezone,
-		&t.MissedRunRule, &t.WaitHours, &t.OwnerID, &t.OwnerEmail, &t.State, &t.NextRunAt, &t.LastRunAt,
+		&t.MissedRunRule, &t.WaitHours, &t.WindowID, &t.WindowName, &t.StaggerMinutes, &t.OnlyIfOnline, &t.OwnerID, &t.OwnerEmail, &t.State, &t.NextRunAt, &t.LastRunAt,
 		&t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -188,6 +201,9 @@ type Input struct {
 	Schedule       Schedule    `json:"schedule"`
 	MissedRunRule  string      `json:"missedRunRule"`
 	WaitHours      int         `json:"waitHours"`
+	WindowID       *uuid.UUID  `json:"windowId"`
+	StaggerMinutes int         `json:"staggerMinutes"`
+	OnlyIfOnline   bool        `json:"onlyIfOnline"`
 }
 
 // Patch edits a task; nil fields stay. Saving makes the editor the owner,
@@ -200,8 +216,42 @@ type Patch struct {
 	Schedule      *Schedule    `json:"schedule"`
 	MissedRunRule *string      `json:"missedRunRule"`
 	WaitHours     *int         `json:"waitHours"`
+	// WindowID holds the task to a window; ClearWindow lifts the hold.
+	WindowID       *uuid.UUID `json:"windowId"`
+	ClearWindow    bool       `json:"clearWindow"`
+	StaggerMinutes *int       `json:"staggerMinutes"`
+	OnlyIfOnline   *bool      `json:"onlyIfOnline"`
 	// Repin adopts the library script as it is now.
 	Repin bool `json:"repin"`
+}
+
+func checkStagger(f apperr.Fields, minutes *int) {
+	if minutes != nil {
+		f.Check(*minutes >= 0 && *minutes <= MaxStaggerMinutes, "staggerMinutes", fmt.Sprintf("Stagger from 0 to %d minutes.", MaxStaggerMinutes))
+	}
+}
+
+// checkWindow says whether a task may be held to the window: it must be in
+// the task's organization and site, allow tasks, and be at least as long as
+// the stagger.
+func checkWindow(ctx context.Context, tx pgx.Tx, now time.Time, org uuid.UUID, site, window *uuid.UUID, stagger int) error {
+	if window == nil {
+		return nil
+	}
+	w, err := notify.LoadTaskWindow(ctx, tx, *window, now)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return apperr.Invalid("windowId", "That maintenance window does not exist.")
+	case err != nil:
+		return err
+	case w.OrganizationID != org || (site != nil && w.SiteID != *site):
+		return apperr.Invalid("windowId", "That window belongs to another organization or site.")
+	case !notify.AllowsTasks(w.Purpose):
+		return apperr.Invalid("windowId", "That window does not allow tasks; set its purpose to tasks or both.")
+	case stagger > w.LengthMinutes:
+		return apperr.Invalid("staggerMinutes", "The stagger is longer than the window.")
+	}
+	return nil
 }
 
 func checkCommon(f apperr.Fields, name *string, args *[]string, rule *string, wait *int) {
@@ -237,7 +287,8 @@ func (s *Service) auditTx(ctx context.Context, tx pgx.Tx, actor audit.Actor, act
 
 func details(t *Task) map[string]any {
 	return map[string]any{"name": t.Name, "script": t.ScriptName, "scriptId": t.ScriptID.String(), "scriptSha256": t.ScriptSHA256,
-		"schedule": t.Schedule.Kind, "timezone": t.Timezone, "missedRunRule": t.MissedRunRule}
+		"schedule": t.Schedule.Kind, "timezone": t.Timezone, "missedRunRule": t.MissedRunRule,
+		"window": t.WindowName, "staggerMinutes": t.StaggerMinutes, "onlyIfOnline": t.OnlyIfOnline}
 }
 
 // pin reads the library script for the caller and checks it can run where
@@ -270,6 +321,7 @@ func (s *Service) Create(ctx context.Context, c access.Caller, in Input) (*Task,
 		in.WaitHours = jobs.DefaultWaitHours
 	}
 	checkCommon(f, &in.Name, &in.ScriptArgs, &in.MissedRunRule, &in.WaitHours)
+	checkStagger(f, &in.StaggerMinutes)
 	f.Check(in.OrganizationID != uuid.Nil, "organizationId", "Choose an organization.")
 	f.Check(in.ScriptID != uuid.Nil, "scriptId", "Choose a script.")
 	f.Check(len(in.DeviceIDs) <= jobs.MaxDevices, "deviceIds", "Choose fewer devices, or none for all.")
@@ -318,12 +370,15 @@ func (s *Service) Create(ctx context.Context, c access.Caller, in Input) (*Task,
 		if !ok {
 			return apperr.Invalid("schedule", "That time has already passed.")
 		}
+		if err := checkWindow(ctx, tx, now, in.OrganizationID, in.SiteID, in.WindowID, in.StaggerMinutes); err != nil {
+			return err
+		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `INSERT INTO automations (organization_id, site_id, name, schedule, script_id, script_sha256,
-			script_args, target_query, timezone, missed_run_rule, wait_hours, owner_id, next_run_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+			script_args, target_query, timezone, missed_run_rule, wait_hours, owner_id, next_run_at, window_id, stagger_minutes, only_if_online)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
 			in.OrganizationID, in.SiteID, in.Name, sched, sc.ID, sc.SHA256, in.ScriptArgs, Targets{DeviceIDs: in.DeviceIDs}, tz,
-			in.MissedRunRule, in.WaitHours, c.Actor.ID, next).Scan(&id); err != nil {
+			in.MissedRunRule, in.WaitHours, c.Actor.ID, next, in.WindowID, in.StaggerMinutes, in.OnlyIfOnline).Scan(&id); err != nil {
 			return err
 		}
 		t, err := scanTask(tx.QueryRow(ctx, taskSelect+` WHERE a.id = $1`, id))
@@ -373,6 +428,7 @@ var errFinished = apperr.Conflict("task_finished", "That task is cancelled or ha
 func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p Patch) (*Task, error) {
 	f := apperr.Fields{}
 	checkCommon(f, p.Name, p.ScriptArgs, p.MissedRunRule, p.WaitHours)
+	checkStagger(f, p.StaggerMinutes)
 	if p.DeviceIDs != nil {
 		f.Check(len(*p.DeviceIDs) <= jobs.MaxDevices, "deviceIds", "Choose fewer devices, or none for all.")
 	}
@@ -402,6 +458,20 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 		}
 		if p.WaitHours != nil {
 			t.WaitHours = *p.WaitHours
+		}
+		if p.ClearWindow {
+			t.WindowID = nil
+		} else if p.WindowID != nil {
+			t.WindowID = p.WindowID
+		}
+		if p.StaggerMinutes != nil {
+			t.StaggerMinutes = *p.StaggerMinutes
+		}
+		if p.OnlyIfOnline != nil {
+			t.OnlyIfOnline = *p.OnlyIfOnline
+		}
+		if err := checkWindow(ctx, tx, s.now(), t.OrganizationID, t.SiteID, t.WindowID, t.StaggerMinutes); err != nil {
+			return err
 		}
 		if p.ScriptID != nil || p.Repin {
 			sid := t.ScriptID
@@ -434,9 +504,10 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 			next = &n
 		}
 		if _, err := tx.Exec(ctx, `UPDATE automations SET name = $2, schedule = $3, script_id = $4, script_sha256 = $5,
-			script_args = $6, target_query = $7, missed_run_rule = $8, wait_hours = $9, owner_id = $10, next_run_at = $11
+			script_args = $6, target_query = $7, missed_run_rule = $8, wait_hours = $9, owner_id = $10, next_run_at = $11,
+			window_id = $12, stagger_minutes = $13, only_if_online = $14
 			WHERE id = $1`, id, t.Name, t.Schedule, t.ScriptID, t.ScriptSHA256, t.ScriptArgs, t.Targets,
-			t.MissedRunRule, t.WaitHours, c.Actor.ID, next); err != nil {
+			t.MissedRunRule, t.WaitHours, c.Actor.ID, next, t.WindowID, t.StaggerMinutes, t.OnlyIfOnline); err != nil {
 			return err
 		}
 		if out, err = s.reload(ctx, tx, c, id); err != nil {

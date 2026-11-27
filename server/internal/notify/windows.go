@@ -49,13 +49,32 @@ type Window struct {
 	Start string `json:"start,omitempty"`
 	// StartsAt is a one-off window's start, "2006-01-02T15:04", as the
 	// site's clock reads it.
-	StartsAt      string    `json:"startsAt,omitempty"`
-	LengthMinutes int       `json:"lengthMinutes"`
-	Enabled       bool      `json:"enabled"`
-	Active        bool      `json:"active"`
-	CreatedAt     time.Time `json:"createdAt"`
-	CanEdit       bool      `json:"canEdit"`
+	StartsAt      string `json:"startsAt,omitempty"`
+	LengthMinutes int    `json:"lengthMinutes"`
+	Enabled       bool   `json:"enabled"`
+	// Purpose says what the window is for: it holds notifications, allows
+	// scheduled tasks, or both (feature plan F4).
+	Purpose   string    `json:"purpose"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"createdAt"`
+	CanEdit   bool      `json:"canEdit"`
 }
+
+// Window purposes.
+const (
+	PurposeNotifications = "notifications"
+	PurposeTasks         = "tasks"
+	PurposeBoth          = "both"
+)
+
+// HoldsNotifications reports whether the window holds notifications.
+func (w *Window) HoldsNotifications() bool {
+	return w.Purpose == PurposeNotifications || w.Purpose == PurposeBoth
+}
+
+// AllowsTasks reports whether scheduled tasks may run in a window of the
+// purpose.
+func AllowsTasks(purpose string) bool { return purpose == PurposeTasks || purpose == PurposeBoth }
 
 const (
 	hhmm   = "15:04"
@@ -141,17 +160,50 @@ func (w *Window) spans(loc *time.Location, at time.Time) []span {
 	return nil
 }
 
-// ActiveAt reports whether the window holds notifications at that moment.
+// ActiveAt reports whether the window is open at that moment.
 func (w *Window) ActiveAt(loc *time.Location, at time.Time) bool {
+	_, ok := w.OpenUntil(loc, at)
+	return ok
+}
+
+// OpenUntil is when the occurrence of the window that is open at that
+// moment ends, and false when it is not open (or disabled).
+func (w *Window) OpenUntil(loc *time.Location, at time.Time) (time.Time, bool) {
 	if !w.Enabled {
-		return false
+		return time.Time{}, false
 	}
 	for _, sp := range w.spans(loc, at) {
 		if !at.Before(sp.start) && at.Before(sp.end) {
-			return true
+			return sp.end, true
 		}
 	}
-	return false
+	return time.Time{}, false
+}
+
+// TaskWindow is a window as the scheduler reads it.
+type TaskWindow struct {
+	OrganizationID uuid.UUID
+	SiteID         uuid.UUID
+	Name           string
+	Purpose        string
+	Enabled        bool
+	Open           bool
+	// Until is when the open occurrence ends.
+	Until time.Time
+	// LengthMinutes is the window's length, for checks at save.
+	LengthMinutes int
+}
+
+// LoadTaskWindow reads a window and whether it is open at the moment.
+// pgx.ErrNoRows says it does not exist.
+func LoadTaskWindow(ctx context.Context, tx pgx.Tx, id uuid.UUID, at time.Time) (TaskWindow, error) {
+	w, tz, err := scanWindow(tx.QueryRow(ctx, `SELECT `+windowCols+` FROM site_maintenance_windows w JOIN sites s ON s.id = w.site_id WHERE w.id = $1`, id))
+	if err != nil {
+		return TaskWindow{}, err
+	}
+	until, open := w.OpenUntil(siteLocation(tz), at)
+	return TaskWindow{OrganizationID: w.OrganizationID, SiteID: w.SiteID, Name: w.Name, Purpose: w.Purpose, Enabled: w.Enabled,
+		Open: open, Until: until, LengthMinutes: w.LengthMinutes}, nil
 }
 
 func siteLocation(name string) *time.Location {
@@ -164,6 +216,12 @@ func siteLocation(name string) *time.Location {
 
 func (s *Service) cleanWindow(in Window, loc *time.Location) (Window, error) {
 	var err error
+	if in.Purpose == "" {
+		in.Purpose = PurposeNotifications
+	}
+	if in.Purpose != PurposeNotifications && in.Purpose != PurposeTasks && in.Purpose != PurposeBoth {
+		return in, apperr.Invalid("purpose", "A window holds notifications, allows tasks, or both.")
+	}
 	if in.Name, err = cleanName(in.Name); err != nil {
 		return in, err
 	}
@@ -214,13 +272,13 @@ func (s *Service) cleanWindow(in Window, loc *time.Location) (Window, error) {
 }
 
 const windowCols = `w.id, w.organization_id, w.site_id, s.name, s.timezone, w.name, w.kind, w.days, coalesce(to_char(w.start_local, 'HH24:MI'), ''),
-	coalesce(to_char(w.starts_local, 'YYYY-MM-DD"T"HH24:MI'), ''), w.length_minutes, w.enabled, w.active, w.created_at`
+	coalesce(to_char(w.starts_local, 'YYYY-MM-DD"T"HH24:MI'), ''), w.length_minutes, w.enabled, w.purpose, w.active, w.created_at`
 
 func scanWindow(row pgx.Row) (Window, string, error) {
 	var w Window
 	var days []int16
 	var tz string
-	err := row.Scan(&w.ID, &w.OrganizationID, &w.SiteID, &w.SiteName, &tz, &w.Name, &w.Kind, &days, &w.Start, &w.StartsAt, &w.LengthMinutes, &w.Enabled, &w.Active, &w.CreatedAt)
+	err := row.Scan(&w.ID, &w.OrganizationID, &w.SiteID, &w.SiteName, &tz, &w.Name, &w.Kind, &days, &w.Start, &w.StartsAt, &w.LengthMinutes, &w.Enabled, &w.Purpose, &w.Active, &w.CreatedAt)
 	w.Days = make([]int, 0, len(days))
 	for _, d := range days {
 		w.Days = append(w.Days, int(d))
@@ -232,6 +290,9 @@ func scanWindow(row pgx.Row) (Window, string, error) {
 type WindowQuery struct {
 	OrganizationID *uuid.UUID
 	SiteID         *uuid.UUID
+	// Purpose keeps the windows that serve it: "tasks" lists those that
+	// allow tasks (tasks or both), "notifications" those that hold them.
+	Purpose string
 }
 
 // Windows lists the maintenance windows the caller may see
@@ -252,6 +313,9 @@ func (s *Service) Windows(ctx context.Context, c access.Caller, q WindowQuery) (
 				return err
 			}
 			if !c.Can(rbac.PermMonitorView, rbac.Site(w.OrganizationID, w.SiteID)) {
+				continue
+			}
+			if (q.Purpose == PurposeTasks && !AllowsTasks(w.Purpose)) || (q.Purpose == PurposeNotifications && !w.HoldsNotifications()) {
 				continue
 			}
 			w.CanEdit = c.Can(rbac.PermMonitorManage, rbac.Site(w.OrganizationID, w.SiteID))
@@ -294,9 +358,9 @@ func (s *Service) CreateWindow(ctx context.Context, c access.Caller, site uuid.U
 		if n >= 50 {
 			return apperr.Conflict("window_limit", "A site can have at most 50 maintenance windows.")
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO site_maintenance_windows (id, organization_id, site_id, name, kind, days, start_local, starts_local, length_minutes, enabled, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6::smallint[], NULLIF($7, '')::time, NULLIF($8, '')::timestamp, $9, $10, $11)`,
-			id, org, site, in.Name, in.Kind, in.Days, in.Start, in.StartsAt, in.LengthMinutes, in.Enabled, actorID(c.Actor)); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO site_maintenance_windows (id, organization_id, site_id, name, kind, days, start_local, starts_local, length_minutes, enabled, purpose, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6::smallint[], NULLIF($7, '')::time, NULLIF($8, '')::timestamp, $9, $10, $11, $12)`,
+			id, org, site, in.Name, in.Kind, in.Days, in.Start, in.StartsAt, in.LengthMinutes, in.Enabled, in.Purpose, actorID(c.Actor)); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: ActionWindowCreate, OrganizationID: org, SiteID: site, TargetType: "maintenance_window",
@@ -341,13 +405,13 @@ func (s *Service) UpdateWindow(ctx context.Context, c access.Caller, id uuid.UUI
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE site_maintenance_windows SET name = $2, kind = $3, days = $4::smallint[], start_local = NULLIF($5, '')::time,
-				starts_local = NULLIF($6, '')::timestamp, length_minutes = $7, enabled = $8 WHERE id = $1`,
-			id, in.Name, in.Kind, in.Days, in.Start, in.StartsAt, in.LengthMinutes, in.Enabled); err != nil {
+				starts_local = NULLIF($6, '')::timestamp, length_minutes = $7, enabled = $8, purpose = $9 WHERE id = $1`,
+			id, in.Name, in.Kind, in.Days, in.Start, in.StartsAt, in.LengthMinutes, in.Enabled, in.Purpose); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: ActionWindowUpdate, OrganizationID: cur.OrganizationID, SiteID: cur.SiteID,
 			TargetType: "maintenance_window", TargetID: id.String(), Outcome: audit.Success,
-			Details: map[string]any{"name": in.Name, "kind": in.Kind, "lengthMinutes": in.LengthMinutes, "enabled": in.Enabled}})
+			Details: map[string]any{"name": in.Name, "kind": in.Kind, "lengthMinutes": in.LengthMinutes, "enabled": in.Enabled, "purpose": in.Purpose}})
 	})
 	if err != nil {
 		return Window{}, err
@@ -365,6 +429,13 @@ func (s *Service) DeleteWindow(ctx context.Context, c access.Caller, id uuid.UUI
 		return apperr.NotFound()
 	}
 	return s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM automations WHERE window_id = $1 AND state IN ('active', 'paused')`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return apperr.Conflict("window_in_use", "Scheduled tasks use this window; change or cancel them first.")
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM site_maintenance_windows WHERE id = $1`, id); err != nil {
 			return err
 		}

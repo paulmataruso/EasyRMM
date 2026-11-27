@@ -24,6 +24,7 @@ func (a *API) registerRules(mux *http.ServeMux) {
 	r("PUT /api/v1/notifications/rules/{id}", a.updateRule)
 	r("DELETE /api/v1/notifications/rules/{id}", a.deleteRule)
 	r("GET /api/v1/maintenance-windows", a.windows)
+	r("GET /api/v1/organizations/{id}/maintenance-windows", a.orgWindows)
 	r("POST /api/v1/sites/{id}/maintenance-windows", a.createWindow)
 	r("PUT /api/v1/maintenance-windows/{id}", a.updateWindow)
 	r("DELETE /api/v1/maintenance-windows/{id}", a.deleteWindow)
@@ -113,6 +114,29 @@ func (a *API) windows(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	q := notify.WindowQuery{OrganizationID: org}
+	if site != uuid.Nil {
+		q.SiteID = &site
+	}
+	out, err := a.svc.Windows(r.Context(), httpapi.Caller(r), q)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"windows": out})
+	return nil
+}
+
+// orgWindows lists an organization's windows, with an optional siteId and
+// purpose to narrow them.
+func (a *API) orgWindows(w http.ResponseWriter, r *http.Request) error {
+	org, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	site, err := httpapi.QueryID(r, "siteId")
+	if err != nil {
+		return err
+	}
+	q := notify.WindowQuery{OrganizationID: &org, Purpose: r.URL.Query().Get("purpose")}
 	if site != uuid.Nil {
 		q.SiteID = &site
 	}

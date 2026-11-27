@@ -48,6 +48,7 @@ const WINDOW: MaintenanceWindow = {
   start: "22:00",
   lengthMinutes: 240,
   enabled: true,
+  purpose: "notifications",
   active: true,
   createdAt: "2026-11-26T10:00:00Z",
   canEdit: true,

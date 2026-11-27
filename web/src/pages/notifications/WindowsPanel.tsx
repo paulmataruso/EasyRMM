@@ -2,12 +2,13 @@ import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useSites } from "../../api/hooks";
-import type { MaintenanceWindow, MaintenanceWindowInput } from "../../api/types";
+import type { MaintenanceWindow, MaintenanceWindowInput, WindowPurpose } from "../../api/types";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, InlineError, SelectField, Spinner, TableWrap, TextField } from "../../components/ui";
 
 const WINDOWS = "/maintenance-windows";
+const PURPOSES: Record<WindowPurpose, string> = { notifications: "Holds notifications", tasks: "Allows scheduled tasks", both: "Notifications and tasks" };
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function when(w: MaintenanceWindow): string {
@@ -67,6 +68,7 @@ export function WindowsPanel({ organizationId }: { organizationId: string | null
                 <tr className="border-b border-line text-left text-xs text-muted">
                   <th className="px-4 py-2 font-medium">Site</th>
                   <th className="px-4 py-2 font-medium">Window</th>
+                  <th className="px-4 py-2 font-medium">Purpose</th>
                   <th className="px-4 py-2 font-medium">When (site time)</th>
                   <th className="px-4 py-2" />
                 </tr>
@@ -78,6 +80,7 @@ export function WindowsPanel({ organizationId }: { organizationId: string | null
                     <td className="px-4 py-2 align-top">
                       {w.name} {w.active && <Badge tone="warn">Holding now</Badge>} {!w.enabled && <Badge tone="neutral">Off</Badge>}
                     </td>
+                    <td className="px-4 py-2 align-top text-xs">{PURPOSES[w.purpose] ?? w.purpose}</td>
                     <td className="px-4 py-2 align-top text-xs">{when(w)}</td>
                     <td className="px-4 py-2 text-right align-top">
                       {editable && w.canEdit && (
@@ -118,6 +121,7 @@ function WindowDialog({ organizationId, onClose }: { organizationId: string; onC
   const [start, setStart] = useState("22:00");
   const [startsAt, setStartsAt] = useState("");
   const [hours, setHours] = useState(4);
+  const [purpose, setPurpose] = useState<WindowPurpose>("notifications");
   const site = siteId || sites.data?.items[0]?.id || "";
   const create = useApiMutation((input: MaintenanceWindowInput) => api.post<MaintenanceWindow>(`/sites/${site}/maintenance-windows`, input), {
     invalidate: [WINDOWS, "/audit"],
@@ -132,7 +136,7 @@ function WindowDialog({ organizationId, onClose }: { organizationId: string; onC
         className="flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          create.mutate(kind === "weekly" ? { name, kind, days, start, lengthMinutes: Math.round(hours * 60), enabled: true } : { name, kind, days: [], startsAt, lengthMinutes: Math.round(hours * 60), enabled: true });
+          create.mutate(kind === "weekly" ? { name, kind, days, start, lengthMinutes: Math.round(hours * 60), enabled: true, purpose } : { name, kind, days: [], startsAt, lengthMinutes: Math.round(hours * 60), enabled: true, purpose });
         }}
       >
         <SelectField label="Site" value={site} onChange={(e) => setSiteId(e.target.value)}>
@@ -143,6 +147,13 @@ function WindowDialog({ organizationId, onClose }: { organizationId: string; onC
           ))}
         </SelectField>
         <TextField label="Name" required value={name} maxLength={100} onChange={(e) => setName(e.target.value)} error={fieldError(create.error, "name")} />
+        <SelectField label="Purpose" value={purpose} onChange={(e) => setPurpose(e.target.value as WindowPurpose)}>
+          {(Object.keys(PURPOSES) as WindowPurpose[]).map((p) => (
+            <option key={p} value={p}>
+              {PURPOSES[p]}
+            </option>
+          ))}
+        </SelectField>
         <SelectField label="Repeats" value={kind} onChange={(e) => setKind(e.target.value as "weekly" | "once")}>
           <option value="weekly">Every week</option>
           <option value="once">Once</option>
@@ -164,7 +175,7 @@ function WindowDialog({ organizationId, onClose }: { organizationId: string; onC
           <TextField label="Starts" type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} hint="Within 90 days; at most 7 days long." error={fieldError(create.error, "startsAt")} />
         )}
         <TextField label="Lasts (hours)" type="number" min={0.5} max={kind === "weekly" ? 24 : 168} step={0.5} value={hours} onChange={(e) => setHours(Number(e.target.value))} error={fieldError(create.error, "lengthMinutes")} />
-        <InlineError error={create.error} fields={["name", "start", "startsAt", "lengthMinutes"]} />
+        <InlineError error={create.error} fields={["name", "start", "startsAt", "lengthMinutes", "purpose"]} />
         <div className="flex justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={create.isPending} disabled={!site}>

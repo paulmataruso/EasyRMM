@@ -16,6 +16,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
+	"github.com/paulmataruso/easyrmm/server/internal/notify"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -56,7 +57,7 @@ func (s *Service) Fire(ctx context.Context) error {
 			s.log.Error("schedule: running an occurrence failed", "run", id, "error", err)
 		}
 	}
-	return nil
+	return s.dispatch(ctx)
 }
 
 // claim records the due occurrences and moves each task to its next one. A
@@ -150,7 +151,8 @@ func (s *Service) recover(ctx context.Context) ([]uuid.UUID, error) {
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		cutoff := s.now().Add(-stuckAfter)
 		if _, err := tx.Exec(ctx, `UPDATE automation_runs SET state = 'failed', completed_at = $2,
-			detail = 'The server stopped while this run was starting.' WHERE state = 'running' AND started_at < $1`, cutoff, s.now()); err != nil {
+			detail = 'The server stopped while this run was starting.' WHERE state = 'running' AND started_at < $1
+			AND NOT EXISTS (SELECT 1 FROM automation_run_batches b WHERE b.run_id = automation_runs.id AND b.state IN ('pending', 'running'))`, cutoff, s.now()); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id FROM automation_runs WHERE state = 'pending' AND created_at < $1 LIMIT 100`, s.now().Add(-time.Minute))
@@ -181,8 +183,11 @@ func (s *Service) finish(ctx context.Context, id uuid.UUID, t *Task, key string,
 			return err
 		}
 		outcome, action := audit.Success, "automation.run_finished"
-		if state == RunFailed {
+		switch state {
+		case RunFailed:
 			outcome, action = audit.Failure, "automation.run_failed"
+		case RunSkipped:
+			action = "automation.run_skipped"
 		}
 		d := details(t)
 		d["occurrence"], d["detail"], d["jobs"] = key, detail, len(jobIDs)
@@ -217,72 +222,204 @@ func (s *Service) execute(ctx context.Context, runID uuid.UUID) error {
 	if !devscope.Allowed(t.OrganizationID) {
 		return s.finish(ctx, runID, t, key, RunSkipped, " Not started: the development scope does not reach this organization.", nil)
 	}
-	ids, state, msg := s.launch(ctx, t)
+	ids, state, msg, batches := s.launch(ctx, t, runID)
+	if batches > 0 && state == RunSucceeded {
+		// The later starts of a staggered run are still to come: the run
+		// stays open until the last of them has been made.
+		return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE automation_runs SET detail = left(detail || $2, 2000), job_ids = job_ids || $3 WHERE id = $1`, runID, msg, ids)
+			return err
+		})
+	}
 	return s.finish(ctx, runID, t, key, state, msg, ids)
 }
 
-func (s *Service) launch(ctx context.Context, t *Task) (jobIDs []uuid.UUID, state, msg string) {
-	fail := func(format string, a ...any) ([]uuid.UUID, string, string) {
-		return jobIDs, RunFailed, " " + fmt.Sprintf(format, a...)
+// gate says why a task held to a window may not start now: the empty string
+// when it may.
+func (s *Service) gate(ctx context.Context, t *Task) (reason string, w notify.TaskWindow, err error) {
+	if t.WindowID == nil {
+		return "", w, nil
 	}
+	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		var err error
+		w, err = notify.LoadTaskWindow(ctx, tx, *t.WindowID, s.now())
+		return err
+	})
+	switch {
+	case err != nil:
+		return "", w, err
+	case !w.Enabled || !notify.AllowsTasks(w.Purpose):
+		return " Not started: the maintenance window is switched off or no longer allows tasks.", w, nil
+	case !w.Open:
+		return " Not started: the maintenance window is not open.", w, nil
+	}
+	return "", w, nil
+}
+
+// prepare checks, as the task's owner, everything a run depends on: the
+// owner's account and permissions and the script's hash. A non-empty bad
+// says why the run fails.
+func (s *Service) prepare(ctx context.Context, t *Task) (c access.Caller, sc *jobs.Script, bad string) {
 	var status, email string
 	if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT status, email FROM users WHERE id = $1`, t.OwnerID).Scan(&status, &email)
 	}); err != nil || status != "active" {
-		return fail("The task's owner no longer has an active account.")
+		return c, nil, "The task's owner no longer has an active account."
 	}
 	p, err := s.principals.LoadPrincipal(ctx, t.OwnerID)
 	if err != nil {
-		return fail("The owner's permissions could not be read: %v", err)
+		return c, nil, fmt.Sprintf("The owner's permissions could not be read: %v", err)
 	}
-	c := access.User(p, s.scopeOf(p), audit.Actor{Type: audit.ActorUser, ID: t.OwnerID, Label: email + " (scheduled task " + t.Name + ")"})
+	c = access.User(p, s.scopeOf(p), audit.Actor{Type: audit.ActorUser, ID: t.OwnerID, Label: email + " (scheduled task " + t.Name + ")"})
 	if !c.Can(rbac.PermScriptRun, t.resource()) {
-		return fail("The owner may no longer run scripts here.")
+		return c, nil, "The owner may no longer run scripts here."
 	}
-	sc, err := s.scripts.GetScript(ctx, c, t.ScriptID)
+	sc, err = s.scripts.GetScript(ctx, c, t.ScriptID)
 	switch {
 	case errors.Is(err, apperr.ErrNotFound):
-		return fail("The script no longer exists, or the owner can no longer read it.")
+		return c, nil, "The script no longer exists, or the owner can no longer read it."
 	case err != nil:
-		return fail("The script could not be read: %v", err)
+		return c, nil, fmt.Sprintf("The script could not be read: %v", err)
 	case sc.SHA256 != t.ScriptSHA256:
-		return fail("The script has changed since the task was saved (pinned %.12s, now %.12s). Review it and save the task again.", t.ScriptSHA256, sc.SHA256)
+		return c, nil, fmt.Sprintf("The script has changed since the task was saved (pinned %.12s, now %.12s). Review it and save the task again.", t.ScriptSHA256, sc.SHA256)
 	}
-	var devs []uuid.UUID
+	return c, sc, ""
+}
+
+// device is a target of a run.
+type device struct {
+	id, site uuid.UUID
+	online   bool
+}
+
+// resolve lists the devices a run reaches now, in site and ID order. Held
+// to a window, a task reaches that window's site only. only, when not
+// empty, narrows to those devices (a later batch). With OnlyIfOnline the
+// offline ones are left out and counted.
+func (s *Service) resolve(ctx context.Context, c access.Caller, t *Task, sc *jobs.Script, w notify.TaskWindow, only []uuid.UUID) (devs []device, offline int, err error) {
+	if only == nil {
+		only = []uuid.UUID{}
+	}
+	site := t.SiteID
+	if t.WindowID != nil {
+		site = &w.SiteID
+	}
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id FROM devices
+		rows, err := tx.Query(ctx, `SELECT id, site_id, coalesce(agent_online_until > now(), false) FROM devices
 			WHERE organization_id = $1 AND ($2::uuid IS NULL OR site_id = $2) AND platform = ANY($3) AND agent_public_key IS NOT NULL
-			  AND (cardinality($4::uuid[]) = 0 OR id = ANY($4))
-			ORDER BY id`, t.OrganizationID, t.SiteID, agentproto.ShellPlatforms(sc.Shell), t.Targets.DeviceIDs)
+			  AND (cardinality($4::uuid[]) = 0 OR id = ANY($4)) AND (cardinality($5::uuid[]) = 0 OR id = ANY($5))
+			ORDER BY site_id, id`, t.OrganizationID, site, agentproto.ShellPlatforms(sc.Shell), t.Targets.DeviceIDs, only)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id uuid.UUID
-			if err := rows.Scan(&id); err != nil {
+			var d device
+			var st *uuid.UUID
+			if err := rows.Scan(&d.id, &st, &d.online); err != nil {
 				return err
 			}
-			devs = append(devs, id)
+			if st != nil {
+				d.site = *st
+			}
+			if t.OnlyIfOnline && !d.online {
+				offline++
+				continue
+			}
+			devs = append(devs, d)
 		}
 		return rows.Err()
 	})
-	if err != nil {
-		return fail("The targets could not be resolved: %v", err)
-	}
-	if len(devs) == 0 {
-		return nil, RunSucceeded, " No device matched the targets; no job was made."
-	}
+	return devs, offline, err
+}
+
+// makeJobs makes jobs for the devices, in batches of at most the bound on
+// a job.
+func (s *Service) makeJobs(ctx context.Context, c access.Caller, t *Task, devs []uuid.UUID) (jobIDs []uuid.UUID, err error) {
 	for len(devs) > 0 {
 		n := min(jobs.MaxDevices, len(devs))
 		j, err := s.scripts.CreateJob(ctx, c, jobInput(t, devs[:n]))
 		if err != nil {
-			return fail("A job could not be made: %v", err)
+			return jobIDs, err
 		}
 		jobIDs = append(jobIDs, j.ID)
 		devs = devs[n:]
 	}
-	return jobIDs, RunSucceeded, fmt.Sprintf(" Made %d job(s).", len(jobIDs))
+	return jobIDs, nil
+}
+
+// launch starts one occurrence: the jobs of the devices whose turn it is
+// now, and the batches of the rest when the task staggers. batches counts
+// those.
+func (s *Service) launch(ctx context.Context, t *Task, runID uuid.UUID) (jobIDs []uuid.UUID, state, msg string, batches int) {
+	fail := func(format string, a ...any) ([]uuid.UUID, string, string, int) {
+		return jobIDs, RunFailed, " " + fmt.Sprintf(format, a...), 0
+	}
+	reason, w, err := s.gate(ctx, t)
+	if err != nil {
+		return fail("The maintenance window could not be read: %v", err)
+	}
+	if reason != "" {
+		return nil, RunSkipped, reason, 0
+	}
+	c, sc, bad := s.prepare(ctx, t)
+	if bad != "" {
+		return fail("%s", bad)
+	}
+	devs, offline, err := s.resolve(ctx, c, t, sc, w, nil)
+	if err != nil {
+		return fail("The targets could not be resolved: %v", err)
+	}
+	note := ""
+	if offline > 0 {
+		note = fmt.Sprintf(" %d offline device(s) left out.", offline)
+	}
+	if len(devs) == 0 {
+		return nil, RunSucceeded, " No device matched the targets; no job was made." + note, 0
+	}
+	span := time.Duration(t.StaggerMinutes) * time.Minute
+	if t.WindowID != nil {
+		span = min(span, w.Until.Sub(s.now())-time.Minute)
+	}
+	now, later := Plan(devs, span), []slot(nil)
+	var first []uuid.UUID
+	for _, sl := range now {
+		if sl.offset == 0 {
+			first = append(first, sl.devices...)
+		} else {
+			later = append(later, sl)
+		}
+	}
+	if len(later) > 0 {
+		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			for _, sl := range later {
+				for rest := sl.devices; len(rest) > 0; {
+					n := min(jobs.MaxDevices, len(rest))
+					if _, err := tx.Exec(ctx, `INSERT INTO automation_run_batches (run_id, automation_id, organization_id, site_id, due_at, device_ids)
+						VALUES ($1, $2, $3, $4, $5, $6)`, runID, t.ID, t.OrganizationID, t.SiteID, s.now().Add(sl.offset), rest[:n]); err != nil {
+						return err
+					}
+					batches++
+					rest = rest[n:]
+				}
+			}
+			return nil
+		}); err != nil {
+			return fail("The staggered starts could not be planned: %v", err)
+		}
+	}
+	jobIDs, err = s.makeJobs(ctx, c, t, first)
+	if err != nil {
+		if batches > 0 {
+			// The planned starts still run; this run keeps what it made.
+			return jobIDs, RunSucceeded, fmt.Sprintf(" A job could not be made for the first devices: %v. %d later start(s) planned.", err, batches), batches
+		}
+		return fail("A job could not be made: %v", err)
+	}
+	if batches > 0 {
+		return jobIDs, RunSucceeded, fmt.Sprintf(" Made %d job(s) now; %d later start(s) over %d minute(s).%s", len(jobIDs), batches, int(span/time.Minute), note), batches
+	}
+	return jobIDs, RunSucceeded, fmt.Sprintf(" Made %d job(s).%s", len(jobIDs), note), 0
 }
 
 func jobInput(t *Task, devs []uuid.UUID) jobs.JobInput {
