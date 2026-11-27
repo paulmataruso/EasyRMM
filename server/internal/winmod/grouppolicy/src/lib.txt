@@ -203,7 +203,7 @@ function Stop-ForError($err) {
     if ($m -match 'denied|not authorized|authoriz|Access is denied|0x80070005') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }
     if ($t -match 'UnauthorizedAccess') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }
     if ($m -match 'ActiveDirectoryObjectNotFound|ActiveDirectoryOperationException|domain controller') { Stop-With 'directory_unavailable' 'The domain controller did not answer.' }
-    Stop-With 'command_failed' (Join-Text 'The action failed: ' $t)
+    Stop-With 'command_failed' (Join-Text (Join-Text (Join-Text 'The action failed: ' $t) ': ') $m)
 }
 function Get-Sum([int]$A, [int]$B) { return ($A + $B) }
 function Get-XmlChild($node, [string]$Name) {

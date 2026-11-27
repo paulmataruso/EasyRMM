@@ -95,14 +95,14 @@ function Stop-ForError($fn_err) {
         'ADPasswordComplexityException|ADInvalidPasswordException|PasswordException' { Stop-With 'password_policy' 'The domain refused the password (length, complexity or history).' }
         'UnauthorizedAccessException|ADException' {
             if ($fn_err.Exception.Message -match 'denied|authoriz|access') { Stop-With 'access_denied' 'The directory refused the change: this computer is not allowed to make it.' }
-            Stop-With 'command_failed' 'The directory returned an error.'
+            Stop-With 'command_failed' ('The directory returned an error: ' + $fn_err.Exception.Message)
         }
         'ADServerDownException|ADWS|ADServerDown' { Stop-With 'adws_unavailable' 'Active Directory Web Services is not running on this controller.' }
-        'ADDefaultDomainPasswordPolicy' { Stop-With 'command_failed' 'The directory returned an error.' }
+        'ADDefaultDomainPasswordPolicy' { Stop-With 'command_failed' ('The directory returned an error: ' + $fn_err.Exception.Message) }
     }
     if ($fn_err.Exception.Message -match 'object not found|does not exist|Cannot find an object') { Stop-With 'not_found' 'The directory has no such object.' }
     if ($fn_err.Exception.Message -match 'Web Services|ADWS|9389') { Stop-With 'adws_unavailable' 'Active Directory Web Services is not running on this controller.' }
-    Stop-With 'command_failed' ('The action failed: ' + $fn_t)
+    Stop-With 'command_failed' ('The action failed: ' + $fn_t + ': ' + $fn_err.Exception.Message)
 }
 
 function New-Check([string]$Name, [string]$State, [string]$Detail) {

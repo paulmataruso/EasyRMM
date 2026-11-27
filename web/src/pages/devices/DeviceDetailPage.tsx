@@ -38,6 +38,8 @@ import { openSessionWindow, sessionPath } from "./sessionWindow";
 import { DeviceCompliance, useComplianceEnabled } from "../compliance/DeviceCompliance";
 import { ModuleOff } from "./modules/ModuleTab";
 import { DEVICE_MODULE_TABS, moduleTabState } from "./modules/moduleTabs";
+import { NtpTab } from "./modules/NtpTab";
+import { LapsTab } from "./modules/LapsTab";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
 export function remoteAccessState(
@@ -110,6 +112,8 @@ export function DeviceDetailPage() {
     // The event viewer (ADR-0068): Windows devices with the agent, for holders of eventlog.view at the device's site. The
     // Logs tab above is the agent's own log (ADR-0069), so this one is its own tab.
     { id: "eventlog", label: "Event logs", hidden: !hasAgent || d.platform !== "windows" || !atDevice("eventlog.view") },
+    { id: "ntp", label: "Time", hidden: !hasAgent || d.platform !== "windows" || !atDevice("device.view") },
+    { id: "laps", label: "LAPS", hidden: !hasAgent || d.platform !== "windows" || !atDevice("device.view") },
     // Compliance (ADR-0078): hidden where the module is off or the viewer may not see its results.
     { id: "compliance", label: "Compliance", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") || !complianceOn },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
@@ -259,6 +263,18 @@ export function DeviceDetailPage() {
       {tab === "eventlog" && (
         <div role="tabpanel" aria-labelledby="tab-eventlog">
           <EventLogPanel device={d} />
+        </div>
+      )}
+
+      {tab === "ntp" && (
+        <div role="tabpanel" aria-labelledby="tab-ntp">
+          <NtpTab device={d} />
+        </div>
+      )}
+
+      {tab === "laps" && (
+        <div role="tabpanel" aria-labelledby="tab-laps">
+          <LapsTab device={d} />
         </div>
       )}
 

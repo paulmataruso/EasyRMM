@@ -3711,6 +3711,45 @@ export interface DefenderStatus {
   fullScanAgeDays: number | null;
 }
 
+// NTP module (ADR-0086): the device's timezone, Windows Time service and NTP configuration.
+
+export interface NtpTimezone {
+  id: string;
+  displayName: string;
+  standardName: string;
+  utcOffset: string;
+  daylightName: string;
+  supportsDst: boolean;
+  isDst: boolean;
+}
+
+export interface NtpServiceInfo {
+  state: string;
+  source: string;
+  lastSync: string | null;
+  lastSyncError: string | null;
+}
+
+export interface NtpConfig {
+  ntpServer: string;
+  type: string;
+}
+
+export interface NtpPeer {
+  name: string;
+  state: string;
+  lastSync: string | null;
+  pollInterval: number;
+}
+
+export interface NtpStatus {
+  timezone: NtpTimezone;
+  service: NtpServiceInfo;
+  config: NtpConfig;
+  peers: NtpPeer[];
+  systemTimeUtc: string;
+}
+
 // Server roles (ADR-0076): the DNS Server and DHCP Server modules' typed results.
 
 /** `dns.status`'s data; only `serviceState` is filled in where the DNS service is not running. */
