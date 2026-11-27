@@ -261,6 +261,7 @@
    "req_id": "SI.L1-3.14.2",
    "control_ids": [
     "win.defender.realtime",
+    "win.defender.signature-age",
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.pua"
@@ -282,9 +283,11 @@
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",
+    "win.defender.last-scan",
     "win.defender.network-protection",
     "win.defender.pua",
     "win.defender.realtime",
+    "win.defender.signature-age",
     "win.defender.smartscreen",
     "win.defender.smartscreen-level"
    ],
@@ -295,6 +298,7 @@
    "req_id": "SI.L1-3.14.2",
    "control_ids": [
     "win.defender.cloud-block-level",
+    "win.defender.last-scan",
     "win.defender.network-protection",
     "win.defender.smartscreen",
     "win.defender.smartscreen-level"
@@ -308,9 +312,11 @@
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",
+    "win.defender.last-scan",
     "win.defender.network-protection",
     "win.defender.pua",
     "win.defender.realtime",
+    "win.defender.signature-age",
     "win.defender.smartscreen",
     "win.defender.smartscreen-level"
    ],
@@ -323,6 +329,7 @@
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",
+    "win.defender.last-scan",
     "win.defender.network-protection",
     "win.defender.pua",
     "win.defender.smartscreen",

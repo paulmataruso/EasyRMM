@@ -34,6 +34,8 @@
     {"id": "defender-smartscreen", "module": "defender", "what": "SmartScreen for Explorer on", "kind": "smartscreen", "path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "EnableSmartScreen", "csp": "SmartScreen/EnableSmartScreenInShell"},
     {"id": "defender-smartscreen-level", "module": "defender", "what": "SmartScreen warns (Block with smartscreen-block)", "kind": "smartscreen", "path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\System", "name": "ShellSmartScreenLevel", "want": "in", "data": ["Warn", "Block"], "option": "smartscreen-block", "optionData": "Block", "csp": "SmartScreen/PreventOverrideForFilesInShell", "cite": "differs"},
     {"id": "defender-cloud-block-level", "module": "defender", "what": "Cloud protection level High (cloud-block-high)", "kind": "defender", "path": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\MpEngine", "name": "MpCloudBlockLevel", "property": "CloudBlockLevel", "want": "min", "data": 2, "option": "cloud-block-high", "csp": "Defender/CloudBlockLevel", "cite": "not_set"},
+    {"id": "defender-signature-age", "module": "defender", "what": "Signatures no more than 7 days old", "kind": "custom"},
+    {"id": "defender-last-scan", "module": "defender", "what": "A scan finished in the last 7 days", "kind": "custom"},
 
     {"id": "asr-vulnerable-drivers", "module": "asr", "what": "Abuse of exploited vulnerable signed drivers blocked", "kind": "asr", "rule": "56a863a9-875e-4185-98a7-b882c64b5ce5", "block": true, "csp": "Defender/AttackSurfaceReductionRules"},
     {"id": "asr-lsass", "module": "asr", "what": "Credential stealing from LSASS blocked", "kind": "asr", "rule": "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2", "block": true, "csp": "Defender/AttackSurfaceReductionRules"},

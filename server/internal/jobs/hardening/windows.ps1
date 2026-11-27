@@ -1013,6 +1013,8 @@ function Test-ErCustomSetting {
         'device-guard-vbs' { return Test-ErDeviceGuard $Def 'vbs' }
         'device-guard-hvci' { return Test-ErDeviceGuard $Def 2 }
         'device-guard-credential-guard' { return Test-ErDeviceGuard $Def 1 }
+        'defender-signature-age' { return Test-ErDefenderAge $Def 'signature' }
+        'defender-last-scan' { return Test-ErDefenderAge $Def 'scan' }
         'bitlocker-protected' { return Test-ErBitLocker $Def 'protected' }
         'bitlocker-preboot-pin' { return Test-ErBitLocker $Def 'pin' }
         'bitlocker-recovery-password' { return Test-ErBitLocker $Def 'recovery' }
@@ -1711,6 +1713,28 @@ function Test-ErBitLocker {
         }
         'recovery' { return New-ErSetting $Def $(if ($bl.Types -contains 3) { 'in_place' } else { 'not_in_place' }) $(if ($bl.Types -contains 3) { 'yes' } else { 'no' }) 'yes' }
     }
+}
+
+# Defender's signature currency and last scan, from Get-MpComputerStatus
+# (ADR-0082, P3). Report-only: a check never changes either. Both want at
+# most 7 days; a status that did not report the value is unknown.
+function Test-ErDefenderAge {
+    param($Def, [string]$What)
+    $st = (Get-ErMpStatus).Status
+    if ($null -eq $st) { return New-ErSetting $Def 'unknown' $null '' 'Microsoft Defender did not report its status.' }
+    if ($What -eq 'signature') {
+        $age = $st.AntivirusSignatureAge
+        if ($null -eq $age) { return New-ErSetting $Def 'unknown' $null '<= 7 days' 'Defender did not report the signature age.' }
+        return New-ErSetting $Def $(if ([int]$age -le 7) { 'in_place' } else { 'not_in_place' }) "$age days" '<= 7 days'
+    }
+    $when = $null
+    foreach ($n in 'QuickScanEndTime', 'FullScanEndTime') {
+        $t = $st.$n
+        if ($t -is [datetime] -and $t.Year -gt 1970 -and ($null -eq $when -or $t -gt $when)) { $when = $t }
+    }
+    if ($null -eq $when) { return New-ErSetting $Def 'not_in_place' 'never' 'within 7 days' }
+    $days = [int][math]::Floor(((Get-Date) - $when).TotalDays)
+    return New-ErSetting $Def $(if ($days -le 7) { 'in_place' } else { 'not_in_place' }) "$days days ago" 'within 7 days'
 }
 
 # Windows LAPS, by its policy (from Group Policy or the LAPS CSP), or

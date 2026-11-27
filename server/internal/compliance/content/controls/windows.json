@@ -2219,6 +2219,148 @@
       "review_state": "none"
     },
     {
+      "id": "win.defender.signature-age",
+      "version": 1,
+      "title": "Signatures no more than 7 days old",
+      "description": "Signatures no more than 7 days old.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "defender",
+        "setting": "defender-signature-age"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module defender, setting defender-signature-age."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: Signatures no more than 7 days old. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "defender"
+        ],
+        "platform": "windows",
+        "settings": [
+          "defender-signature-age"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "defender"
+        ],
+        "platform": "windows",
+        "settings": [
+          "defender-signature-age"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting defender-signature-age"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "win.defender.last-scan",
+      "version": 1,
+      "title": "A scan finished in the last 7 days",
+      "description": "A scan finished in the last 7 days.",
+      "platforms": {
+        "os": "windows"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "windows",
+        "module": "defender",
+        "setting": "defender-last-scan"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM windows hardening check, module defender, setting defender-last-scan."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Make this true: A scan finished in the last 7 days. The hardening page applies it for you and can put the old value back.",
+      "apply_ref": {
+        "kind": "hardening",
+        "mode": "apply",
+        "modules": [
+          "defender"
+        ],
+        "platform": "windows",
+        "settings": [
+          "defender-last-scan"
+        ]
+      },
+      "undo_ref": {
+        "kind": "hardening",
+        "mode": "undo",
+        "modules": [
+          "defender"
+        ],
+        "platform": "windows",
+        "settings": [
+          "defender-last-scan"
+        ]
+      },
+      "apply_supported": true,
+      "undo_kind": "restore_backup",
+      "risk_tier": "T2",
+      "warning_id": "warn.t2.v1",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "windows hardening setting defender-last-scan"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
       "id": "win.asr.vulnerable-drivers",
       "version": 1,
       "title": "Abuse of exploited vulnerable signed drivers blocked",

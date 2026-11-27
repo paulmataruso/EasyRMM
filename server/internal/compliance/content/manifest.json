@@ -19,7 +19,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "eece672e882530684082876932dbcf777734716a2e4fbfdd3ce2a2697bacedb3"
+   "sha256": "27536d0e321668a850829a626ca87113ef4c13e4fbc84096bdcd3aa07844d5ba"
   },
   {
    "path": "packs/cis-xref.json",
@@ -39,7 +39,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "f65851a735319a6d6543e2e7da6cca29b05e77aee68c1d9c42633f3c35094aa5"
+   "sha256": "add214991b8ec0c9731a11ac39b5e69d4b5d06296830239151ed7cf27f0b43a5"
   },
   {
    "path": "packs/cmmc-l2.json",
@@ -49,7 +49,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "2240e91c9e7106557c6043bc208546b1b839e58a272e9fbf774c2d34d84c98a8"
+   "sha256": "ca272471c3d818a366809766d851f4e9291615c632e26ff79cafa8c901c5e196"
   },
   {
    "path": "packs/gdpr-indicative.json",
@@ -59,7 +59,7 @@
    "review_state": "needed",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "2dd0dac1eb5b602af83d461f88a5d7bc0e1e14c37ea5a76ae877df1a5fe3c618"
+   "sha256": "107fc195a352ca777b305a8f1e2d5cba417a73e71f06192348151b3c6922fea4"
   },
   {
    "path": "packs/hipaa-security.json",
@@ -69,7 +69,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "61ce274cc95089cf27983c863325fc9c5cb3d68d40aedc2719b793f823aa9d74"
+   "sha256": "f67f4a02e1aad8d74688febe389a220fe21ce92889a697ae0f4747aecf8e22c0"
   },
   {
    "path": "packs/nist-800-171r2.json",
@@ -79,7 +79,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "b60cde0fa266bb2c338db460b09ed3ddafa83d7a438d9e6681c684f050cc5e54"
+   "sha256": "90911def9269fb53b95198ecdf926c6f60ea7ef484afa5e4dd9999111d3c53b0"
   },
   {
    "path": "packs/nist-800-53r5.json",
@@ -89,7 +89,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "e59a4135234a56d14c5e3d62a9874dae2484abb3f0a59f8e0a3332cb81a82d1b"
+   "sha256": "cf5d5631a9ec1622c028b85afd871137549325f2adf2bbf3cf37a4a1d6f8ba63"
   },
   {
    "path": "packs/nist-csf-2.json",
@@ -99,7 +99,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "6f861dc932e1025f065627ced731d961d8734a4e581002b89a8a8512a819c5a1"
+   "sha256": "ddf209e30611f858e3e94a260f5833b573a76a1fe778a4491aa4c69fcf78dddb"
   },
   {
    "path": "packs/profiles.json",
@@ -119,7 +119,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "1b61fb11f5fef4fcc4fb2c4d9f8ba70bb78080f2c1a5898543756de320b08cf8"
+   "sha256": "c2a44edd45dd05a7136177456c53258e84d2daad7813a893bf0ff1041e0c49d3"
   },
   {
    "path": "packs/stig-defender-antivirus.json",
