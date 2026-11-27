@@ -199,8 +199,12 @@ func (e *env) needAdmin(what string) error {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		_, _ = io.WriteString(stderr, usage)
-		return errors.New("no command given")
+		if self, err := os.Executable(); err == nil && strings.Contains(strings.ToLower(filepath.Base(self)), "quick-assist") {
+			args = []string{"quick-assist"}
+		} else {
+			_, _ = io.WriteString(stderr, usage)
+			return errors.New("no command given")
+		}
 	}
 	return newEnv(stdout, stderr).dispatch(ctx, args, stderr)
 }
