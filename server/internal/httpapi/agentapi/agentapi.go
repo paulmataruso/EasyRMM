@@ -37,6 +37,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
+	"github.com/paulmataruso/easyrmm/server/internal/logstore"
 )
 
 //go:embed install.sh.tmpl
@@ -62,6 +63,7 @@ type API struct {
 	inv     *inventory.Service
 	hw      *hardware.Service
 	logs    *agentlogs.Service
+	collect *logstore.Store
 	ep      EasyPatchInstalls
 	repairs Repairs
 	channel *agentchannel.Hub
@@ -75,6 +77,7 @@ type API struct {
 	inventories *auth.KeyedLimiter
 	hardware    *auth.KeyedLimiter
 	logLimit    *auth.KeyedLimiter
+	collectLim  *auth.KeyedLimiter
 	upgrades    *auth.KeyedLimiter
 	escrowLimit *auth.KeyedLimiter
 	pollMu      sync.Mutex
@@ -97,7 +100,11 @@ const (
 	// An agent sends logs every 30 seconds, every 2 while someone watches.
 	logEvery = time.Second
 	logBurst = 10
-	maxPolls = 4
+	// The collector's blocks go up once a minute, in as many requests as the
+	// spool needs to catch up.
+	collectedEvery = 2 * time.Second
+	collectedBurst = 20
+	maxPolls       = 4
 	// maxTracked bounds the devices the limits remember; idle ones are
 	// forgotten first.
 	maxTracked = 200_000
@@ -152,6 +159,7 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 		inventories: auth.NewKeyedLimiter(inventoryEvery, inventoryBurst, maxTracked),
 		hardware:    auth.NewKeyedLimiter(hardwareEvery, hardwareBurst, maxTracked),
 		logLimit:    auth.NewKeyedLimiter(logEvery, logBurst, maxTracked),
+		collectLim:  auth.NewKeyedLimiter(collectedEvery, collectedBurst, maxTracked),
 		upgrades:    auth.NewKeyedLimiter(agentproto.ChannelUpgradeEvery, agentproto.ChannelUpgradeBurst, maxTracked),
 		polls:       map[uuid.UUID]int{},
 	}
@@ -230,6 +238,14 @@ func (a *API) WithAgentLogs(logs *agentlogs.Service) *API {
 	return a
 }
 
+// WithCollectedLogs stores the blocks agents' collectors send in the log
+// store (ADR-0060). With none, or a store that is down, the route answers
+// 404 or 503 and agents keep their blocks.
+func (a *API) WithCollectedLogs(st *logstore.Store) *API {
+	a.collect = st
+	return a
+}
+
 // WithEasyPatch has heartbeats carry EasyPatch agent installs (ADR-0031).
 func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
 	a.ep = ep
@@ -270,6 +286,9 @@ func (a *API) Handler() http.Handler {
 	}
 	if a.logs != nil {
 		mux.Handle("POST "+agentproto.PathAgentLogs, httpapi.Handle(a.signedWith(agentproto.MaxLogBody, a.logLimit, a.agentLogs)))
+	}
+	if a.collect != nil {
+		mux.Handle("POST "+agentproto.PathCollectedLogs, httpapi.Handle(a.signedWith(agentproto.MaxCollectedBody, a.collectLim, a.collectedLogs)))
 	}
 	if a.escrow != nil {
 		mux.Handle("POST "+agentproto.PathEscrowVolumes, httpapi.Handle(a.signedWith(agentproto.MaxEscrowVolumesBody, a.escrowLimit, a.escrowVolumes)))
@@ -323,6 +342,10 @@ var (
 		Message: "The inventory is not valid JSON."}
 	errBadHardware = &httpapi.Error{Status: http.StatusBadRequest, Code: "hardware_invalid",
 		Message: "The hardware report is not valid JSON."}
+	errBadCollected = &httpapi.Error{Status: http.StatusBadRequest, Code: "collected_logs_invalid",
+		Message: "That batch of log blocks is not valid."}
+	errLogStoreDown = &httpapi.Error{Status: http.StatusServiceUnavailable, Code: "logs_unavailable",
+		Message: "The log store is not available.", RetryAfter: time.Minute}
 	errBadLogs = &httpapi.Error{Status: http.StatusBadRequest, Code: "logs_invalid",
 		Message: "The log batch is not valid."}
 	errTooFrequent = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
@@ -701,6 +724,27 @@ func (a *API) agentLogs(w http.ResponseWriter, r *http.Request, d *agents.Device
 	ack, err := a.logs.Ingest(r.Context(), d.ID, in)
 	if err != nil {
 		return mapError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, ack)
+	return nil
+}
+
+// collectedLogs stores a batch of a device's collector blocks and answers with
+// the stream's position.
+func (a *API) collectedLogs(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in agentproto.CollectedBatch
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	ack, err := a.collect.Ingest(r.Context(), logstore.Device{ID: d.ID, Organization: d.OrganizationID, Site: d.SiteID}, in)
+	switch {
+	case errors.Is(err, logstore.ErrNotAllowed):
+		return httpapi.ErrNotFound
+	case errors.Is(err, logstore.ErrBadBatch):
+		return errBadCollected
+	case err != nil:
+		a.log.Warn("storing collected logs failed", "device_id", d.ID, "error", err)
+		return errLogStoreDown
 	}
 	httpapi.WriteJSON(w, http.StatusOK, ack)
 	return nil

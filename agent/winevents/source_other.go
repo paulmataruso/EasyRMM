@@ -18,3 +18,6 @@ func (unsupported) Read(context.Context, Query) (Result, error) {
 
 // NewDefenderSource returns a source that refuses, off Windows.
 func NewDefenderSource() Source { return unsupported{} }
+
+// NewChannelSource returns a source that refuses, off Windows.
+func NewChannelSource(string) Source { return unsupported{} }

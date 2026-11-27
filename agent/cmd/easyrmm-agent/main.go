@@ -100,6 +100,13 @@ commands:
             (what a job does); it reads and writes the files named in
             EASYRMM_JOB_INPUT and EASYRMM_JOB_RESULT
   run       run the agent in the foreground (what the service does)
+  collect --spool DIR [--audit-socket FILE]
+            the log collector (ADR-0060): a process of its own, started by its
+            unit or service, that reads the computer's logs and writes
+            compressed blocks to the spool; it sends nothing
+  collect-unit install|remove
+            write and start, or stop and remove, the collector's systemd unit
+            (Linux; run as root)
   status    show the enrollment, the server keys this agent trusts, its latest
             accepted instructions and the last heartbeat
   trust-key <generation>:<key> [--force]
@@ -244,6 +251,10 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.repairInstall(ctx)
 	case "run":
 		return e.run(ctx)
+	case "collect":
+		return e.collect(ctx, rest)
+	case "collect-unit":
+		return e.collectUnit(rest)
 	case "status":
 		return e.status(ctx)
 	case "trust-key":
@@ -685,6 +696,7 @@ func (e *env) run(ctx context.Context) error {
 	g.Go(func() { e.watchFile(ctx, cfg) })
 	g.Go(func() { _ = w.Run(ctx) })
 	g.Go(func() { ship.Run(ctx, send) })
+	e.startCollected(ctx, &g, c)
 	if ship != nil && mesh != nil {
 		// MeshAgent's side of the device's log: what the agent observes of it.
 		emit := func(level, msg string, attrs map[string]string) {

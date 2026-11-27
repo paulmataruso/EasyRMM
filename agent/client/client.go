@@ -495,6 +495,20 @@ func (c *Client) AgentLogs(ctx context.Context, b agentproto.LogBatch) (agentpro
 	return out, err
 }
 
+// CollectedLogs sends a batch of the log collector's blocks (ADR-0060) and
+// returns the server's answer. A server without the endpoint answers 404,
+// and one whose log store is down 503, each an *Error the caller may keep the
+// blocks for.
+func (c *Client) CollectedLogs(ctx context.Context, b agentproto.CollectedBatch) (agentproto.CollectedAck, error) {
+	body, err := json.Marshal(b)
+	if err != nil {
+		return agentproto.CollectedAck{}, err
+	}
+	var out agentproto.CollectedAck
+	err = c.call(ctx, http.MethodPost, agentproto.PathCollectedLogs, body, true, &out)
+	return out, err
+}
+
 // EscrowVolumes reports the BitLocker volumes and their recovery-password
 // protectors' IDs and learns which need escrow (ADR-0081). Never a password.
 func (c *Client) EscrowVolumes(ctx context.Context, rep agentproto.EscrowVolumesReport) (agentproto.EscrowVolumesAnswer, error) {

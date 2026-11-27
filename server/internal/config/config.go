@@ -84,7 +84,13 @@ type Config struct {
 
 	DatabaseURL          string
 	DatabaseMigrationURL string
-	DatabaseMaxConns     int32
+	// LogsDatabaseURL and LogsDatabaseMigrationURL connect to the log store
+	// (ADR-0060), a PostgreSQL instance of its own, as easyrmm_logs_app and
+	// easyrmm_logs_owner. Both are optional: without the first the server
+	// takes and shows no collected logs and nothing else changes.
+	LogsDatabaseURL          string
+	LogsDatabaseMigrationURL string
+	DatabaseMaxConns         int32
 
 	SecretKeys []secrets.Key // first is primary
 	DataDir    string
@@ -307,6 +313,8 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		}
 	}
 	c.DatabaseMigrationURL = l.secret("EASYRMM_DATABASE_MIGRATION_URL")
+	c.LogsDatabaseURL = l.secret("EASYRMM_LOGS_DATABASE_URL")
+	c.LogsDatabaseMigrationURL = l.secret("EASYRMM_LOGS_DATABASE_MIGRATION_URL")
 	c.JobOutputRetention = l.duration("EASYRMM_JOB_OUTPUT_RETENTION", min(DefaultJobOutputRetention, c.JobRetention))
 	c.Mesh = MeshConfig{
 		Enabled:   l.boolean("EASYRMM_MESH_ENABLED", true),
