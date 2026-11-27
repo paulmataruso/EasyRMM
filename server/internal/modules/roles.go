@@ -185,6 +185,9 @@ func (s *Service) Roles(ctx context.Context, c access.Caller, deviceID uuid.UUID
 // the caller may view it; otherwise the answer is not found, never forbidden,
 // so that the endpoint confirms nothing about the device's roles.
 func (s *Service) Offered(ctx context.Context, c access.Caller, deviceID uuid.UUID, m Module) (*devices.Device, error) {
+	if nonRole[m] {
+		return s.offeredNonRole(ctx, c, deviceID, m)
+	}
 	def, ok := Lookup(m)
 	if !ok {
 		return nil, apperr.NotFound()
@@ -208,6 +211,20 @@ func (s *Service) Offered(ctx context.Context, c access.Caller, deviceID uuid.UU
 		return nil, fmt.Errorf("modules: reading the toggle: %w", err)
 	}
 	if !on {
+		return nil, apperr.NotFound()
+	}
+	return d, nil
+}
+
+func (s *Service) offeredNonRole(ctx context.Context, c access.Caller, deviceID uuid.UUID, m Module) (*devices.Device, error) {
+	d, err := devices.Lookup(ctx, s.db, c, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if !c.Can(rbac.PermDeviceView, rbac.Site(d.OrganizationID, d.SiteID)) {
+		return nil, apperr.NotFound()
+	}
+	if d.Platform != "windows" {
 		return nil, apperr.NotFound()
 	}
 	return d, nil

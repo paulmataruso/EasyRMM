@@ -3,14 +3,15 @@ import type { Device } from "../../../../../api/types";
 import { Dialog } from "../../../../../components/Dialog";
 import { Alert, Badge, Button, InlineError, KeyValueList, TableWrap } from "../../../../../components/ui";
 import { formatDateTime } from "../../../../../lib/format";
-import { SkeletonKeyValue } from "../../skeletons";
+import { SkeletonKeyValue, SkeletonTable } from "../../skeletons";
 import { failureText, useWinmodRead } from "../../winmod";
 import {
   BackupNowDialog, CopyGpoDialog, DeleteGpoDialog, LinkAddDialog, LinkEditDialog, LinkRemoveDialog, RenameGpoDialog, SecurityAddDialog,
   SecurityRemoveDialog, StatusDialog, WmiDialog, type LinkEdit,
 } from "./GpoDialogs";
 import { MODULE, STATUS_LABEL, versionText } from "./gpoText";
-import type { Gpo, GpoDetail, LinkTree, Trustee, WmiFilters } from "./types";
+import { SettingsTree } from "./SettingsTree";
+import type { Gpo, GpoDetail, GpoReport, LinkTree, Trustee, WmiFilters } from "./types";
 
 type Open =
   | { k: "copy" | "rename" | "delete" | "status" | "wmi" | "backup" | "secAdd" | "linkAdd" }
@@ -24,17 +25,16 @@ export function GpoDetailDialog({
   gpo,
   perms,
   writable,
-  onReport,
   onClose,
 }: {
   device: Device;
   gpo: Gpo;
   perms: { manage: boolean; link: boolean };
   writable: boolean;
-  onReport: () => void;
   onClose: () => void;
 }) {
   const read = useWinmodRead<GpoDetail>(device.id, `${MODULE}.gpo_get`, { id: gpo.id });
+  const report = useWinmodRead<GpoReport>(device.id, `${MODULE}.gpo_report`, { id: gpo.id });
   const wmi = useWinmodRead<WmiFilters>(device.id, `${MODULE}.wmi_filters`, {}, perms.manage);
   const tree = useWinmodRead<LinkTree>(device.id, `${MODULE}.link_tree`, { offset: 0, pageSize: 60 }, perms.link);
   const [open, setOpen] = useState<Open | null>(null);
@@ -66,7 +66,6 @@ export function GpoDetailDialog({
               ]}
             />
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={onReport}>Show every setting</Button>
               {can && perms.manage && (
                 <>
                   <Button size="sm" onClick={() => setOpen({ k: "status" })}>Status</Button>
@@ -136,6 +135,15 @@ export function GpoDetailDialog({
                   </tbody>
                 </table>
               </TableWrap>
+            </section>
+            <section aria-label="Settings">
+              <h3 className="mb-1 text-sm font-semibold">Settings</h3>
+              {report.data?.failure && <Alert tone="warn">{failureText(report.data.failure)}</Alert>}
+              {report.data?.data ? (
+                <SettingsTree report={report.data.data} />
+              ) : !report.data?.failure && (
+                <SkeletonTable columns={2} rows={4} />
+              )}
             </section>
           </>
         )}

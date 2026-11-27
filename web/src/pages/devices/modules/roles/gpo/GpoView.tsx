@@ -171,7 +171,7 @@ function GposPanel({ device, perms, writable, onSettings }: { device: Device; pe
         </div>
       )}
       {creating && <CreateGpoDialog device={device} onClose={() => setCreating(false)} />}
-      {detail && <GpoDetailDialog device={device} gpo={detail} perms={perms} writable={writable} onReport={() => { onSettings(detail); setDetail(null); }} onClose={() => setDetail(null)} />}
+      {detail && <GpoDetailDialog device={device} gpo={detail} perms={perms} writable={writable} onClose={() => setDetail(null)} />}
     </Card>
   );
 }
