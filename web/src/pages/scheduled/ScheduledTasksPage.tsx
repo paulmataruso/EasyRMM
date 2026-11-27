@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { CalendarClock, Pause, Pencil, Play, Plus, History, XCircle } from "lucide-react";
-import { api } from "../../api/client";
-import { useApiMutation, useList, useOrganizations, useSites } from "../../api/hooks";
+import { api, fieldError } from "../../api/client";
+import { useApi, useApiMutation, useList, useOrganizations, useSites } from "../../api/hooks";
 import type {
+  MaintenanceWindow,
   MissedRunRule,
   ScheduleKind,
   ScheduledRunState,
@@ -273,6 +274,13 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
   const [rule, setRule] = useState<MissedRunRule>(task?.missedRunRule ?? "skip");
   const [waitHours, setWaitHours] = useState(task?.waitHours ?? 24);
   const [repin, setRepin] = useState(false);
+  const [windowId, setWindowId] = useState(task?.windowId ?? "");
+  const [stagger, setStagger] = useState(task?.staggerMinutes ?? 0);
+  const [onlyOnline, setOnlyOnline] = useState(task?.onlyIfOnline ?? false);
+  const windows = useApi<{ windows: MaintenanceWindow[] }>(
+    organizationId ? `/organizations/${organizationId}/maintenance-windows` : null,
+    { siteId: siteId || undefined, purpose: "tasks" },
+  );
   const sites = useSites(organizationId || null);
   const scripts = useList<Script>("/scripts", organizationId ? { organizationId, siteId: siteId || undefined } : undefined);
 
@@ -288,6 +296,10 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
           missedRunRule: rule,
           waitHours,
           repin,
+          windowId: windowId || undefined,
+          clearWindow: windowId === "",
+          staggerMinutes: stagger,
+          onlyIfOnline: onlyOnline,
         });
       }
       const input: ScheduledTaskInput = {
@@ -300,6 +312,9 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
         schedule,
         missedRunRule: rule,
         waitHours,
+        windowId: windowId || null,
+        staggerMinutes: stagger,
+        onlyIfOnline: onlyOnline,
       };
       return api.post<ScheduledTask>("/scheduled-tasks", input);
     },
@@ -449,10 +464,38 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
             hint="Each job waits this long for a device that is offline."
           />
         </div>
+        <fieldset className="grid gap-4 sm:grid-cols-2">
+          <legend className="mb-1 text-sm font-medium">Maintenance window</legend>
+          <Field label="Only run in the window" htmlFor="st-window" hint="The task is skipped, with a note in its history, if the window is closed when it fires. With a window and no site, it reaches the window's site.">
+            <Select id="st-window" value={windowId} onChange={(e) => setWindowId(e.target.value)}>
+              <option value="">Any time</option>
+              {(windows.data?.windows ?? []).map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.siteName ? `${w.siteName}: ` : ""}
+                  {w.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <TextField
+            label="Stagger starts over (minutes)"
+            type="number"
+            min={0}
+            max={1440}
+            value={stagger}
+            onChange={(e) => setStagger(Number(e.target.value))}
+            hint="A site's devices start one after another over this long, so they never restart at once. 0 starts them together."
+            error={fieldError(save.error, "staggerMinutes")}
+          />
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" className="size-4 accent-accent" checked={onlyOnline} onChange={(e) => setOnlyOnline(e.target.checked)} />
+            Only devices that are online when it starts (offline ones get no job)
+          </label>
+        </fieldset>
         <p className="text-xs text-muted">
           Saving asks you to confirm a second factor. The task runs with your permissions, checked again at every run.
         </p>
-        <InlineError error={save.error} fields={["name", "schedule"]} />
+        <InlineError error={save.error} fields={["name", "schedule", "windowId", "staggerMinutes"]} />
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
             Close

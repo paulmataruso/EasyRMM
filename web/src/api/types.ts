@@ -4736,12 +4736,16 @@ export interface MaintenanceWindow {
   startsAt?: string;
   lengthMinutes: number;
   enabled: boolean;
+  /** What the window is for: it holds notifications, allows scheduled tasks, or both. */
+  purpose: WindowPurpose;
   active: boolean;
   createdAt: string;
   canEdit: boolean;
 }
 
-export type MaintenanceWindowInput = Pick<MaintenanceWindow, "name" | "kind" | "days" | "lengthMinutes" | "enabled"> & { start?: string; startsAt?: string };
+export type WindowPurpose = "notifications" | "tasks" | "both";
+
+export type MaintenanceWindowInput = Pick<MaintenanceWindow, "name" | "kind" | "days" | "lengthMinutes" | "enabled" | "purpose"> & { start?: string; startsAt?: string };
 
 export interface FleetSilence {
   id: string;
@@ -5105,6 +5109,13 @@ export interface ScheduledTask {
   timezone: string;
   missedRunRule: MissedRunRule;
   waitHours: number;
+  /** The maintenance window the task is held to: it fires only while that window is open. */
+  windowId: string | null;
+  windowName: string;
+  /** A site's devices start spread over this many minutes; 0 starts them together. */
+  staggerMinutes: number;
+  /** Offline devices get no job. */
+  onlyIfOnline: boolean;
   ownerId: string;
   ownerEmail: string;
   state: ScheduledTaskState;
@@ -5125,6 +5136,9 @@ export interface ScheduledTaskInput {
   schedule: TaskSchedule;
   missedRunRule: MissedRunRule;
   waitHours: number;
+  windowId?: string | null;
+  staggerMinutes?: number;
+  onlyIfOnline?: boolean;
 }
 
 export interface ScheduledTaskRun {

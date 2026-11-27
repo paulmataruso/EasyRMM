@@ -97,7 +97,7 @@ func (s *Service) windowsTick(ctx context.Context, tx pgx.Tx, now time.Time) (ma
 	}
 	held := map[uuid.UUID]bool{}
 	for _, x := range all {
-		active := x.ActiveAt(siteLocation(x.tz), now)
+		active := x.HoldsNotifications() && x.ActiveAt(siteLocation(x.tz), now)
 		if active {
 			held[x.SiteID] = true
 		}
