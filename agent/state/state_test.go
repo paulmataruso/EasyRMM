@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -55,7 +56,7 @@ func TestSaveAndLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, k, err := s.Load()
-	if err != nil || *got != *cfg || !k.Equal(key) {
+	if err != nil || !reflect.DeepEqual(*got, *cfg) || !k.Equal(key) {
 		t.Fatalf("loaded %+v, %v", got, err)
 	}
 	// Windows protects the folder with its access list instead

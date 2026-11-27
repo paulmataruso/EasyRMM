@@ -26,6 +26,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -131,7 +132,7 @@ func newFx(t *testing.T) *fx {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a := audit.New(inst.DB, time.Now)
-	f.jobs = jobs.New(inst.DB, a, priv, 90*24*time.Hour, 30*24*time.Hour, log)
+	f.jobs = jobs.New(inst.DB, a, jobkeys.Static(priv), 90*24*time.Hour, 30*24*time.Hour, log)
 	cat, err := winmod.NewCatalog(Actions()...)
 	if err != nil {
 		t.Fatal(err)

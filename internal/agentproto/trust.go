@@ -1,7 +1,6 @@
 package agentproto
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
@@ -175,19 +174,17 @@ func SignTrust(key ed25519.PrivateKey, p TrustPayload) (SignedTrust, error) {
 // is expired, issued in the future or valid longer than TrustValid, and one
 // with unknown fields. A nil or wrong-sized key never verifies: an agent with
 // no pinned key refuses every instruction.
-func VerifyTrust(key ed25519.PublicKey, s SignedTrust, deviceID, origin string, now time.Time) (TrustPayload, error) {
+func VerifyTrust[K KeyArg](key K, s SignedTrust, deviceID, origin string, now time.Time) (TrustPayload, error) {
 	b, err := base64.StdEncoding.DecodeString(s.Payload)
 	if err != nil {
 		return TrustPayload{}, ErrTrustMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(trustSigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(trustSigContext), b...), sig) {
 		return TrustPayload{}, ErrTrustSignature
 	}
 	var p TrustPayload
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&p); err != nil || dec.More() {
+	if err := decodeStrict(b, &p); err != nil {
 		return TrustPayload{}, ErrTrustMalformed
 	}
 	if err := p.validate(); err != nil {

@@ -7,7 +7,6 @@ package tlstrust
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // Chain is a certificate chain a name is, or will be, served with: DER, leaf
@@ -73,7 +73,7 @@ type Beat struct {
 type Service struct {
 	db    *database.DB
 	audit *audit.Logger
-	key   ed25519.PrivateKey
+	keys  jobkeys.Source
 	log   *slog.Logger
 	now   func() time.Time
 
@@ -84,9 +84,10 @@ type Service struct {
 	easyPatchHost func(ctx context.Context, device uuid.UUID) string
 }
 
-// New builds the service. key is the job key that signs instructions.
-func New(db *database.DB, auditLog *audit.Logger, key ed25519.PrivateKey, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, key: key, log: log, now: time.Now}
+// New builds the service. keys picks the job key that signs each device's
+// instructions (ADR-0057).
+func New(db *database.DB, auditLog *audit.Logger, keys jobkeys.Source, log *slog.Logger) *Service {
+	return &Service{db: db, audit: auditLog, keys: keys, log: log, now: time.Now}
 }
 
 // SetSource tells the service what hosts are served with. Until it is set the
@@ -240,7 +241,7 @@ func (s *Service) loadState(ctx context.Context, tx pgx.Tx, device uuid.UUID) (s
 // for the answer, nil when there is none. It is never a reason to fail the
 // heartbeat: a failure is logged and the device is asked again at its next.
 func (s *Service) Heartbeat(ctx context.Context, d Device, b Beat) *agentproto.SignedTrust {
-	if len(s.key) == 0 || !devscope.Allowed(d.Org) {
+	if s.keys == nil || !devscope.Allowed(d.Org) {
 		return nil
 	}
 	capable := slices.Contains(b.Caps, agentproto.CapTrust)
@@ -437,7 +438,11 @@ func (s *Service) instruction(ctx context.Context, tx pgx.Tx, d Device, origin s
 	p.ID = requestID(p)
 	now := s.now().UTC()
 	p.IssuedAt, p.ExpiresAt = now, now.Add(agentproto.TrustValid)
-	signed, err := agentproto.SignTrust(s.key, p)
+	key, _, err := s.keys.Issue(ctx, tx, d.ID, agentproto.InstructionTrust, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	signed, err := agentproto.SignTrust(key, p)
 	if err != nil {
 		// A chain too large or broken to send: logged, and the rest of the
 		// heartbeat goes on.

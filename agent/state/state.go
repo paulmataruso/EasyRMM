@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 // Config is the agent's enrollment, stored as JSON. It holds no secret.
@@ -35,7 +36,38 @@ type Config struct {
 	// JobKey is the server's job-signing public key, pinned the first time
 	// the server sends it (ADR-0017). Jobs signed by any other key are
 	// refused.
+	//
+	// Since ADR-0057 it is the oldest key of JobKeys, written again with
+	// every change so that a build from before that ADR, which reads this
+	// field alone, still trusts the key that is used for it. When JobKeys
+	// exists the agent ignores JobKey on reading.
 	JobKey string `json:"jobKey,omitempty"`
+	// JobKeys are the keys the agent trusts, each with its generation
+	// (ADR-0057): two in practice, three when it also trusts a key the
+	// server never held, at most four.
+	JobKeys []JobKey `json:"jobKeys,omitempty"`
+	// DroppedJobKeys are keys a cut-over (or trust-key) took away, kept to
+	// recognize a job signed with one and to name them in errors. They are
+	// public keys and are never trusted.
+	DroppedJobKeys []JobKey `json:"droppedJobKeys,omitempty"`
+	// KeyTransitionUntil is the end of the declared key transition: ten
+	// minutes after the signed cut-over the agent accepted (ADR-0057).
+	KeyTransitionUntil time.Time `json:"keyTransitionUntil,omitzero"`
+}
+
+// JobKey is a server key and its generation; generation 0 is unknown.
+type JobKey struct {
+	Key        string `json:"key"`
+	Generation int64  `json:"generation,omitempty"`
+}
+
+// PinFirstKey pins the server's key from an enrollment answer, with its
+// generation (0 from a server that sends none). An empty key pins nothing.
+func (c *Config) PinFirstKey(key string, generation int64) {
+	if key == "" {
+		return
+	}
+	c.JobKey, c.JobKeys = key, []JobKey{{Key: key, Generation: max(generation, 0)}}
 }
 
 // Store reads and writes the agent's files in its state folder. Only Open
@@ -52,6 +84,8 @@ const (
 	statusFile  = "status.json"
 	escrowFile  = "escrow.json"
 	trustFile   = "trust.json"
+	keysFile    = "jobkeys.json"
+	instrFile   = "instructions.json"
 	caFile      = "ca.pem"
 	packageFile = "package.json"
 )
@@ -70,6 +104,8 @@ var layout = [][]string{
 	{statusFile},
 	{escrowFile},
 	{trustFile},
+	{keysFile},
+	{instrFile},
 	{packageFile},
 	{".tmp-*"},                         // writeFile's
 	{"removal.json"},                   // removal.File
@@ -283,6 +319,9 @@ func (s Store) LoadPending() (*Pending, ed25519.PrivateKey, error) {
 // Approved turns the pending enrollment into the enrollment c, with the key
 // already written. The token goes with the pending file.
 func (s Store) Approved(c *Config) error {
+	if err := s.ClearKeyState(); err != nil {
+		return err
+	}
 	if err := s.SaveConfig(c); err != nil {
 		return err
 	}
@@ -308,6 +347,10 @@ func NewKey() (ed25519.PrivateKey, error) {
 // key.
 func (s Store) Save(c *Config, key ed25519.PrivateKey) error {
 	if err := s.protect(); err != nil {
+		return err
+	}
+	// A new enrollment starts a new log (ADR-0057).
+	if err := s.ClearKeyState(); err != nil {
 		return err
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
@@ -475,6 +518,90 @@ func (s Store) SaveTrustLog(l TrustLog) error {
 		return err
 	}
 	return s.write(trustFile, append(b, '\n'))
+}
+
+// KeyLog is what the agent remembers of the key statements it handled
+// (ADR-0057), so that none can be replayed: the newest issue time handled and
+// the IDs of recent ones.
+type KeyLog struct {
+	Issued  time.Time `json:"issued,omitzero"`
+	Handled []string  `json:"handled,omitempty"`
+}
+
+// LoadKeyLog reads the key statement log; an empty one when there is none or
+// it is damaged.
+func (s Store) LoadKeyLog() KeyLog {
+	var l KeyLog
+	path, err := s.path(keysFile)
+	if err != nil {
+		return l
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if err != nil || json.Unmarshal(b, &l) != nil {
+		return KeyLog{}
+	}
+	return l
+}
+
+// SaveKeyLog records the key statement log.
+func (s Store) SaveKeyLog(l KeyLog) error {
+	b, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	return s.write(keysFile, append(b, '\n'))
+}
+
+// InstructionLog is the agent's record of the instructions it accepted
+// (ADR-0057): the last MaxInstructionLog of them, the sequence of the next,
+// and the sequence of the last the server acknowledged.
+type InstructionLog struct {
+	Next  uint64 `json:"next"`
+	Acked uint64 `json:"acked"`
+	// Entries are the entries after Acked, oldest first.
+	Entries []agentproto.LoggedInstruction `json:"entries,omitempty"`
+	// Recent are the last acknowledged entries, for `status`.
+	Recent []agentproto.LoggedInstruction `json:"recent,omitempty"`
+}
+
+// LoadInstructionLog reads the log; an empty one when there is none or it is
+// damaged.
+func (s Store) LoadInstructionLog() InstructionLog {
+	var l InstructionLog
+	path, err := s.path(instrFile)
+	if err != nil {
+		return l
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if err != nil || json.Unmarshal(b, &l) != nil {
+		return InstructionLog{}
+	}
+	return l
+}
+
+// SaveInstructionLog records the log.
+func (s Store) SaveInstructionLog(l InstructionLog) error {
+	b, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	return s.write(instrFile, append(b, '\n'))
+}
+
+// ClearKeyState deletes the key statement log and the instruction log: a new
+// enrollment starts both again, so that a device enrolled again is never
+// compared with what its previous identity was acknowledged (ADR-0057).
+func (s Store) ClearKeyState() error {
+	for _, name := range []string{keysFile, instrFile} {
+		path, err := s.path(name)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Package records which package holds the agent (ADR-0056) and what the

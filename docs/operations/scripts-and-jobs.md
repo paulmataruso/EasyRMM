@@ -208,7 +208,8 @@ The agent checks for work continuously (a long poll), so an online device
 starts a script within a second or two.
 
 Before running anything, the agent verifies the job's Ed25519 signature
-against the job key it pinned when it enrolled, and checks that the job is
+against the job keys it trusts (the one it pinned when it enrolled, and any the
+server handed it with a signed statement, ADR-0057), and checks that the job is
 for this device and has not expired. A job that fails these checks is
 reported as failed and never runs.
 

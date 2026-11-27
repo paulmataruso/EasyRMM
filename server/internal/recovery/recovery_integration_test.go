@@ -21,6 +21,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
@@ -48,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 	f.svc = New(inst.DB, audit.New(inst.DB, nil), true, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f.pub = pub
-	f.svc.SetKey(priv)
+	f.svc.SetKey(jobkeys.Static(priv))
 	f.svc.FollowMesh(func() (bool, time.Time) { return f.connected, f.start.Add(-time.Hour) })
 	f.svc.now = func() time.Time { return f.start }
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)

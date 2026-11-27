@@ -106,13 +106,13 @@ func SignUpdate(key ed25519.PrivateKey, p UpdatePayload) (SignedUpdate, error) {
 // VerifyUpdate checks a signed update with the pinned server key and
 // returns its payload. It refuses updates for other devices, expired ones
 // and ones that do not name a build properly.
-func VerifyUpdate(key ed25519.PublicKey, u SignedUpdate, deviceID string, now time.Time) (UpdatePayload, error) {
+func VerifyUpdate[K KeyArg](key K, u SignedUpdate, deviceID string, now time.Time) (UpdatePayload, error) {
 	b, err := base64.StdEncoding.DecodeString(u.Payload)
 	if err != nil {
 		return UpdatePayload{}, ErrUpdateMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(u.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(updateSigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(updateSigContext), b...), sig) {
 		return UpdatePayload{}, ErrUpdateSignature
 	}
 	var p UpdatePayload

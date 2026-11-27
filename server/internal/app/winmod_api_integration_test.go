@@ -60,7 +60,7 @@ func TestWinmodAPI(t *testing.T) {
 	}
 	short, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, _ = ac.Poll(short, []string{agentproto.CapJobParams})
+	_, _ = ac.Poll(short, []string{agentproto.CapJobParams}, nil)
 
 	// Who may, and what is not found.
 	wantStatus(t, viewer.do("POST", path, map[string]any{}), http.StatusUnprocessableEntity, "validation_failed")
@@ -86,7 +86,7 @@ func TestWinmodAPI(t *testing.T) {
 		t.Errorf("the Jobs list shows %d jobs", len(list.Items))
 	}
 
-	poll, err := ac.Poll(ctx, []string{agentproto.CapJobParams})
+	poll, err := ac.Poll(ctx, []string{agentproto.CapJobParams}, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

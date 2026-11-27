@@ -202,11 +202,27 @@ func (s *Service) MeshAgentSettings(ctx context.Context, d *Device) ([]byte, err
 // settings) with the job key it pinned, back to the verified request p for
 // target (agentproto.SignDownload). Without the key it signs nothing, and
 // agents refuse the download.
-func (s *Service) SignDownload(p *SignedRequest, target string, body []byte) string {
-	if s.updateKey == nil {
+func (s *Service) SignDownload(ctx context.Context, p *SignedRequest, target string, body []byte) string {
+	if s.keys == nil {
 		return ""
 	}
-	return agentproto.SignDownload(s.updateKey, p.auth, target, sha256.Sum256(body))
+	// The key the device trusts, recorded as issued by the request's nonce in
+	// the transaction that signs (ADR-0057): nothing leaves unrecorded, so a
+	// download that cannot be recorded is not signed, and the agent refuses it.
+	var sig string
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		key, _, err := s.keys.Issue(ctx, tx, p.device.ID, agentproto.InstructionDownload, p.auth.Nonce)
+		if err != nil {
+			return err
+		}
+		sig = agentproto.SignDownload(key, p.auth, target, sha256.Sum256(body))
+		return nil
+	})
+	if err != nil {
+		s.log.Error("agents: signing a download failed", "error", err, "device_id", p.device.ID)
+		return ""
+	}
+	return sig
 }
 
 // ChannelSettings is what a settings push carries for a device (ADR-0059):

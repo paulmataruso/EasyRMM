@@ -171,13 +171,13 @@ func SignRepair(key ed25519.PrivateKey, p RepairPayload) (SignedRepair, error) {
 // VerifyRepair checks a signed repair instruction with the pinned server key
 // and returns its payload. It refuses instructions for other devices,
 // expired ones, and any whose target or step is not on the fixed lists.
-func VerifyRepair(key ed25519.PublicKey, s SignedRepair, deviceID string, now time.Time) (RepairPayload, error) {
+func VerifyRepair[K KeyArg](key K, s SignedRepair, deviceID string, now time.Time) (RepairPayload, error) {
 	b, err := base64.StdEncoding.DecodeString(s.Payload)
 	if err != nil {
 		return RepairPayload{}, ErrRepairMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(repairSigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(repairSigContext), b...), sig) {
 		return RepairPayload{}, ErrRepairSignature
 	}
 	var p RepairPayload

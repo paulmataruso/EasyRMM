@@ -131,9 +131,9 @@ func (f *chanFixture) startAgent() *chanAgent {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var pinned atomic.Pointer[ed25519.PublicKey]
-	pinnedKey := func() ed25519.PublicKey {
+	pinnedKey := func() agentproto.Keys {
 		if p := pinned.Load(); p != nil {
-			return *p
+			return agentproto.Keys{*p}
 		}
 		return nil
 	}
@@ -146,7 +146,7 @@ func (f *chanFixture) startAgent() *chanAgent {
 	a.w = &agentjobs.Worker{Client: c, DeviceID: f.deviceID, Dir: t.TempDir(), Log: log, MinRetry: 100 * time.Millisecond, MaxRetry: time.Second}
 	// The handlers are the runner's, the worker's and the shipper's own
 	// functions, counted; they run after the runner exists.
-	a.ch = channel.New(channel.Config{Dialer: c, DeviceID: f.deviceID, Key: pinnedKey, Log: log, Device: f.key,
+	a.ch = channel.New(channel.Config{Dialer: c, DeviceID: f.deviceID, Keys: pinnedKey, Log: log, Device: f.key,
 		Timing: channel.Timing{FirstWait: 50 * time.Millisecond, MinRetry: 50 * time.Millisecond, MaxRetry: 200 * time.Millisecond},
 		Handlers: channel.Handlers{
 			Jobs: a.w.Deliver, Logs: a.ship.Apply, PollNow: a.w.PollNow,
@@ -157,14 +157,14 @@ func (f *chanFixture) startAgent() *chanAgent {
 			},
 		}})
 	a.r = &runner.Runner{
-		Client: c, Store: store, DeviceID: f.deviceID, Log: log, Channel: a.ch, Key: pinnedKey,
+		Client: c, Store: store, DeviceID: f.deviceID, Log: log, Channel: a.ch, Keys: pinnedKey,
 		Accepts: agentjobs.Accepts(),
 		Facts: func() agentproto.Facts {
 			a.beats.Add(1)
 			return facts("chan-01")
 		},
 		Every: time.Hour, MinWake: 20 * time.Millisecond,
-		OnJobKey: func(k string) {
+		OnJobKey: func(k string, _ int64) {
 			if pub, err := agentproto.DecodeKey(k); err == nil {
 				pinned.Store(&pub)
 				_ = a.w.SetKey(k)

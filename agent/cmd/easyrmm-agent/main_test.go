@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -498,7 +499,7 @@ func TestRepairInstall(t *testing.T) {
 		t.Errorf("output = %q", h.out)
 	}
 	after, key2, err := h.e.store.Load()
-	if err != nil || *after != *cfg || !key2.Equal(key) {
+	if err != nil || !reflect.DeepEqual(*after, *cfg) || !key2.Equal(key) {
 		t.Errorf("the enrollment changed: %v", err)
 	}
 	if beats.Load() != 0 {

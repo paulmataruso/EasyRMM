@@ -45,12 +45,12 @@ func SignDownload(key ed25519.PrivateKey, a Auth, target string, sum [sha256.Siz
 
 // VerifyDownload checks the server's signature on a download whose SHA-256
 // is sum, fetched by this device with a request for target carrying nonce.
-func VerifyDownload(key ed25519.PublicKey, signature, device, target, nonce string, sum [sha256.Size]byte) error {
+func VerifyDownload[K KeyArg](key K, signature, device, target, nonce string, sum [sha256.Size]byte) error {
 	if signature == "" {
 		return ErrDownloadUnsigned
 	}
 	sig, err := base64.StdEncoding.DecodeString(signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, downloadMessage(device, target, nonce, sum), sig) {
+	if err != nil || !keysOf(key).verify(downloadMessage(device, target, nonce, sum), sig) {
 		return ErrDownloadSignature
 	}
 	return nil

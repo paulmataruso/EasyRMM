@@ -287,9 +287,9 @@ type Signed struct {
 	SHA256                           [sha256.Size]byte
 }
 
-// Verify checks the signature with the pinned job key.
-func (s Signed) Verify(key ed25519.PublicKey) error {
-	return agentproto.VerifyDownload(key, s.Signature, s.Device, s.Target, s.Nonce, s.SHA256)
+// Verify checks the signature with the server keys the agent trusts.
+func (s Signed) Verify(keys agentproto.Keys) error {
+	return agentproto.VerifyDownload(keys, s.Signature, s.Device, s.Target, s.Nonce, s.SHA256)
 }
 
 // MeshAgent downloads the MeshAgent binary for a platform into w and
@@ -411,10 +411,13 @@ func (c *Client) send(ctx context.Context, method, target string, body []byte, s
 // (ADR-0064), is sent only while the last heartbeat answer was of protocol
 // level 2 or higher: a process's first poll, before any answer, says
 // nothing, and the server keeps what it was told before.
-func (c *Client) Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error) {
+func (c *Client) Poll(ctx context.Context, accepts []string, keys []agentproto.TrustedKey) (*agentproto.PollResponse, error) {
 	var req agentproto.PollRequest
 	if c.newFields() {
 		req.Accepts = append([]string{}, accepts...)
+		// Like Accepts, only while the last answer was of level 2 or higher
+		// (ADR-0009): the server keys the agent trusts (ADR-0057).
+		req.JobKeys = keys
 	}
 	body, err := json.Marshal(req)
 	if err != nil {

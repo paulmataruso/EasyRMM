@@ -44,7 +44,7 @@ func TestDefenderActionsAPI(t *testing.T) {
 	}
 	short, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	_, _ = ac.Poll(short, []string{agentproto.CapJobParams})
+	_, _ = ac.Poll(short, []string{agentproto.CapJobParams}, nil)
 
 	invite(t, h, admin, "tess@acme.example", []map[string]any{{"role": "technician", "organizationId": acme}})
 	tech := h.client()

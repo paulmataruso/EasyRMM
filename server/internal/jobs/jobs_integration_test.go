@@ -22,8 +22,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
-	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
 
@@ -56,7 +56,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 		return time.Now()
 	}
-	f.svc = New(inst.DB, audit.New(inst.DB, clock), priv, 90*24*time.Hour, 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.svc = New(inst.DB, audit.New(inst.DB, clock), jobkeys.Static(priv), 90*24*time.Hour, 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	f.svc.pollWait = 200 * time.Millisecond
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)
@@ -158,40 +158,6 @@ func fieldErr(t *testing.T, err error, field, contains string) {
 	e, ok := apperr.As(err)
 	if !ok || e.Kind != apperr.KindInvalid || !strings.Contains(e.Fields[field], contains) {
 		t.Fatalf("want %s error containing %q, got %v (%+v)", field, contains, err, e)
-	}
-}
-
-func TestSigningKeyIsSealedAndKept(t *testing.T) {
-	inst := testdb.New(t)
-	ctx := context.Background()
-	raw := make([]byte, 32)
-	_, _ = rand.Read(raw)
-	sealer, err := secrets.NewSealer(secrets.Key{ID: "k1", Raw: raw})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := LoadKey(ctx, inst.DB, sealer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := LoadKey(ctx, inst.DB, sealer)
-	if err != nil || !a.Equal(b) {
-		t.Fatalf("key not kept: %v", err)
-	}
-	var value string
-	if err := inst.DB.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT value::text FROM settings WHERE key = 'jobs.signing_key'`).Scan(&value)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(value, `"sealed"`) || strings.Contains(value, agentproto.EncodeKey(a.Public().(ed25519.PublicKey))) {
-		t.Errorf("stored key is not sealed: %s", value)
-	}
-	other := make([]byte, 32)
-	_, _ = rand.Read(other)
-	wrong, _ := secrets.NewSealer(secrets.Key{ID: "k1", Raw: other})
-	if _, err := LoadKey(ctx, inst.DB, wrong); err == nil {
-		t.Error("opened with another secret key")
 	}
 }
 

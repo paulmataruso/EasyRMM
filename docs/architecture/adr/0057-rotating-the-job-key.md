@@ -1,6 +1,9 @@
 # ADR-0057: Rotating the job key
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21). Slice 1 ("Agents that can follow, the
+  ring, and the tripwires") is implemented (2026-11-27); slices 2 to 4 are
+  not. The first release with slice 1 has no way to rotate: the ring holds
+  the one key it was born with. See "Amended 2026-11-27" under Slices.
 * Revised (2026-11-21) after an independent review: what a leaked backup
   set gives besides the job key, the key the server signs with, the order
   in which devices are moved, generations, older servers on a migrated
@@ -1383,6 +1386,108 @@ builds, so slice 2 does not merge before 5b2 either.
    with backup-restore.md (its restore procedure ending with `incident
    restored`), docker.md's encryption key steps and the threat model
    updated.
+
+### Amended 2026-11-27 (decided in review), slice 1 as built
+
+What the code made of the design, where the ADR left a choice or the code
+proved it wrong. Each is a decision, not the owner's.
+
+* **One verifier signature for a key or a set.** `Verify*` in `agentproto`
+  take `K ed25519.PublicKey | agentproto.Keys` (a generic parameter), so the
+  existing single-key callers and tests compile unchanged and every verifier
+  accepts a signature by any key of the set. The agent packages take
+  `Keys func() agentproto.Keys` where they took `Key func() ed25519.PublicKey`.
+  This covers the escrow key, repair, trust and channel verifiers too, not only
+  the five contexts the Context section names.
+* **Where the trust store lives.** In `agent/trust`, the package ADR-0055 5b1
+  already uses for its trust instruction: `keys.go` (the key store and the two
+  statements), `instructions.go` (the log). The coverage floor of 90 covers both.
+* **Statements are bound to the install.** Beside the device ID, a statement
+  carries `install`, the SHA-256 of the device's public key
+  (`agentproto.InstallID`), so a statement made for an earlier enrollment of the
+  same computer (a new device key) is refused as "for another install". Hand-over
+  and cut-over share one payload, `KeyStatement`, under their own contexts
+  (`EASYRMM-JOB-KEY-HANDOVER-V1`, `EASYRMM-JOB-KEY-CUTOVER-V1`); the cut-over
+  verifies under the key it names, which must be one the agent trusts. They are
+  limited to 2,048 bytes of payload and read strictly, as ADR-0055's trust
+  instruction is (`decodeStrict` is the code they share).
+* **Replay and older statements** work as the trust instruction's do: the agent
+  keeps the newest issue time handled and the last 16 statement IDs in
+  `jobkeys.json`. A statement already handled, or a key already trusted at the
+  same generation, changes nothing and is no error. One issued before a
+  statement already handled is refused. A statement refused as ahead of the
+  clock is not remembered, so it is offered again.
+* **Dropped keys are kept as public keys**, at most 8, in `agent.json`
+  (`droppedJobKeys`), not only their fingerprints: "a job signed by a key the
+  agent dropped" cannot be told from one signed by a key it never trusted
+  without the key. They are never trusted, and `trust-key` and cut-overs
+  put the keys they take away there.
+* **The third delivery** of a run signed with a dropped key is counted in the
+  worker's memory (at most 256 runs). A restart resets the count, which delays
+  the failure by one redelivery at most.
+* **The report** is `jobKeys` in the heartbeat and in the job poll, `authorities`
+  (SHA-256 of each certificate in `ca.pem`), `keyRefused` (the statement the agent
+  refused, until an answer carries none) and `instructionLog`; the answer adds
+  `jobKeyGeneration`, `keyHandover`, `keyCutover` and `instructionAck`. The
+  capability is `jobkeys.v1` in `caps`; the log is sent only after an answer that
+  lists the feature `instruction-log`. No protocol level was added: ADR-0009's rule
+  (a field added after level 2 is sent only after an answer of level 2 or higher)
+  covers every field.
+* **Instruction log entries**: `job`, `update`, `uninstall`, `easypatch`,
+  `download`, `repair`, `trust`, `handover`, `cutover`. An entry is made when an
+  instruction verifies and is acted on, once per kind, ID and signer (an update or
+  an uninstall repeated with each heartbeat while open is one entry). The escrow
+  key is not logged, and the server does not record it: it hands the agent a
+  public key and runs nothing. The server records the same kinds in
+  `issued_instructions`, appended once per device, kind, ID and key generation.
+  A hand-over's or cut-over's ID in the log and in the table is the fingerprint
+  of the key it introduces.
+* **Who may be flagged for what**: an entry is checked against rows of the
+  generation of the key its signer fingerprint names; a fingerprint of no key of
+  the ring is flagged. An entry older than 90 days, dated before the last
+  `incident restored`, or before the heartbeat that showed an unrecorded restore
+  is not checked.
+* **A possible unrecorded restore** is a row in `server_restores` with source
+  `suspected` and the devices that showed it, and an audit record
+  (`device.instruction_log_ahead`); `incident restored` confirms it. Its banner is
+  slice 3's. **The updater's status as a source of restores** is not read: the
+  updater records no rollback the server can read yet, so only the host command
+  records one. `easyrmm-server incident restored [--at TIME]` is built in this
+  slice, since the table needs a writer; the rest of `incident` is slice 4's.
+* **The key a device is signed for** follows the ADR's rule (`jobkeys.Ring.For`),
+  with `job_key_given_generation` (the generation enrollment gave, NULL for
+  devices from before the ring: generation 1) for a device that never reported.
+  A request's report is stored, when it is newer than the stored one by the signed
+  request's time and differs from it (or the build differs), before anything is
+  signed for the device; "the newer of the request's and the stored report" is
+  then the stored one. A device that trusts no key the ring holds is signed for
+  with the floor's key and the choice says it needs re-pinning; the refusal with
+  the command is slice 2's.
+* **Every service that signs for a device** takes a `jobkeys.Source` (the ring, or
+  `jobkeys.Static(key)` for tools and tests) and calls `Issue` in the transaction
+  that signs: jobs, agent updates, uninstalls, MeshAgent's downloads (in a
+  transaction of their own, so a download that cannot be recorded is not signed),
+  EasyPatch installs, repairs and trust instructions (each in a transaction of its
+  own). **Not yet through the ring**: the WebSocket channel's frames
+  (`agentchannel.Options.Key`) and Quick Assist's tickets and runner key take the
+  ring's newest key when the server starts. Slice 2 changes both before a second
+  key exists: the channel looks the key up for each message (ADR-0059's rule,
+  item 2 under "What depends on this"), and a Quick Assist runner is given the
+  key its device is signed for.
+* **`server_instances`** is written at start, with each reload (every 30
+  seconds), within a second of a change in the updater's hold, and removed when
+  the server stops; rows not seen for a day are purged. The server names its
+  database connections `easyrmm-server/<version>` (`database.AppName`); the
+  refusals that read the names are slice 2's.
+* **`NextGeneration`** (the ring's rule for a new key's generation) is built and
+  tested in this slice, since the "injected key" test belongs to the tripwires,
+  and is first called by slice 2's rotation.
+* **Not verified here**: the bundle test's step 1 with machine 3 and step 6
+  (`scripts/e2e/bundle.sh` needs Docker machines with systemd and a last-release
+  agent by tag; see the notes), this agent against the last release's server, the
+  upgrade and rollback test across the move (the updater is merged, but
+  `updater/machinetest` needs virtual machines), and Windows (the agent builds
+  and lints for Windows and its unit tests are portable; none ran on Windows).
 
 ## Consequences
 * The job key can be rotated with no downtime, and with nothing to do for

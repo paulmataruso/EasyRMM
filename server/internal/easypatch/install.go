@@ -20,6 +20,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -97,7 +98,7 @@ func (s *installScan) view() *AgentInstall {
 
 // SetSigner gives the service the server's job key, which signs install
 // instructions as it signs jobs and updates. Without it nothing is sent.
-func (s *Service) SetSigner(key ed25519.PrivateKey) { s.signer = key }
+func (s *Service) SetSigner(keys jobkeys.Source) { s.signer = keys }
 
 // ---------------------------------------------------------------- eligibility
 
@@ -480,13 +481,23 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 		ServerURL: server, CACert: caForAgent(r.caCert), Packages: chosen, Token: token.Secret,
 		IssuedAt: now.UTC(), ExpiresAt: now.Add(installValidFor).UTC(),
 	}
-	signed, err := agentproto.SignEasyPatchInstall(s.signer, p)
+	// The key the device trusts, recorded as issued in its own transaction
+	// (ADR-0057): the instruction is not sent unless it is recorded.
+	var key ed25519.PrivateKey
+	if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		k, _, err := s.signer.Issue(ctx, tx, deviceID, agentproto.InstructionEasyPatch, attempt.String())
+		key = k
+		return err
+	}); err != nil {
+		return nil, &token.ID, "", err
+	}
+	signed, err := agentproto.SignEasyPatchInstall(key, p)
 	if err != nil {
 		return nil, &token.ID, "", err
 	}
 	// The agent checks the instruction as strictly; refuse here what it
 	// would refuse there, with a reason someone can act on.
-	pub, _ := s.signer.Public().(ed25519.PublicKey)
+	pub, _ := key.Public().(ed25519.PublicKey)
 	if _, err := agentproto.VerifyEasyPatchInstall(pub, signed, deviceID.String(), now); err != nil {
 		return nil, &token.ID, "The patching engine's address, packages or enrollment token are not in a form the agent accepts: " +
 			strings.TrimPrefix(err.Error(), "agentproto: ") + ". Check the patching engine's public address (https) and its agent packages.", nil

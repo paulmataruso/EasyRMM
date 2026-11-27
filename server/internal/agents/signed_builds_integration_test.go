@@ -22,6 +22,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agents/authenticode"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -63,7 +64,7 @@ func (f *updates) windowsBuilds(version string, amd64 []byte) *Builds {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.svc.SetUpdates(b, f.priv)
+	f.svc.SetUpdates(b, jobkeys.Static(f.priv))
 	if err := f.svc.LoadSignedBuilds(f.ctx); err != nil {
 		f.t.Fatal(err)
 	}

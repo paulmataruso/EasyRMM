@@ -544,6 +544,26 @@ ADR-0055, slice 5b1. Both tables follow `devices`: read by whoever may see the d
 
 The down migration drops both tables.
 
+## The job key ring and what agents report of it (migrations 00085 and 00086, ADR-0057 slice 1)
+
+The server's job key moves out of the `settings` row `jobs.signing_key` into a ring, on the first start with this version, in one transaction under an advisory lock: the same seed and public key become generation 1, sealed again under the additional data `easyrmm:job_key:<generation>` and recorded as cut over to. The `settings` row becomes a **tombstone**, a JSON string that names the ADR, which a server from before the ring cannot read into its stored key, so it refuses to start against the migrated database instead of making a key of its own. A fresh install makes generation 1 and writes the tombstone too. The migration numbers are the builder's; the integrator renumbers them.
+
+Written by the server with the platform scope. `job_keys`, `server_instances` and `server_restores` are the deployment's: row-level security allows the platform scope only. The four tables that hold a device's id follow the device, and are read by whoever may see the device.
+
+| Table | Notes |
+|---|---|
+| `job_keys` | One row per key the server ever made: its `generation` (only increases, even across a restore), `public_key`, `sealed_seed` (NULL once the seed is deleted, with `seed_deleted_at`), why (`reason`: `initial`, `planned`, `moving`, `compromised`, `lost_replacement`), when, by whom and through what it was made, and when it was cut over to, marked compromised or lost |
+| `server_instances` | One row per server process sharing the database: its version, when it started and last reloaded the ring, whether the updater holds it, and when it was last seen. A server removes its row when it stops; rows not seen for a day are purged |
+| `issued_instructions` | Everything the server signed for a device: `kind`, `instruction_id`, `device_id`, the `generation` of the key that signed it and when. Appended in the transaction that signs; never updated; no foreign key, so removing or deleting a device keeps it; kept 90 days |
+| `device_unknown_keys` | A key a device reports that this server never held ("Trusts an unknown key"): fingerprint, public key, the generation the device reported, first and last seen. Cleared when the device stops reporting it |
+| `device_instruction_log` | One row per device whose agent sends its instruction log: the last sequence this server recorded, and, when the device claimed the server had acknowledged more than that, when and both sequences, with `not_checked_before` |
+| `device_instruction_flags` | An entry of a device's log that matched nothing the server issued ("Ran instructions this server never issued"): its sequence, kind, ID, signer fingerprint and time, and when it was withdrawn |
+| `server_restores` | When the server was restored from a backup: `incident` (the host command `easyrmm-server incident restored`, which applies to every device) or `suspected` (devices claimed more than the database recorded; the devices are listed, and it changes nothing for any other until an incident record confirms it) |
+
+The migration also adds columns to `devices`: the last report of the keys the device trusts (`job_keys_report`, each key with its generation) with the signed request's time, the build it came with and when it first sent one; the generation enrollment gave it (`job_key_given_generation`, NULL for devices from before the ring); the cut-over the server sent it (`job_key_cutover_generation`, `job_key_cutover_at`, written by slice 2); and the SHA-256 of each certificate in the `ca.pem` its agent loaded (`agent_authorities`). `retired_devices` keeps the same report columns for a removed device, written when the device is removed. The settings tombstone, the report columns and the last restore are the only places the slice leaves state besides these tables.
+
+The down migrations drop the tables and the columns. A server from before the ring cannot run against the migrated database whatever the down migration does, until the tombstone is replaced by the key: restoring the key means restoring the backup that holds it.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

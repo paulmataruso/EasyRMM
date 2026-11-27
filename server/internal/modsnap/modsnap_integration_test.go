@@ -24,6 +24,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/modsnap"
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
@@ -60,7 +61,7 @@ func newFx(t *testing.T) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.jobs = jobs.New(inst.DB, au, key, 30*24*time.Hour, 7*24*time.Hour, log)
+	f.jobs = jobs.New(inst.DB, au, jobkeys.Static(key), 30*24*time.Hour, 7*24*time.Hour, log)
 	f.jobs.SetWinmod(cat, mods, nil)
 	f.svc = modsnap.New(inst.DB, cat, mods, mods, f.jobs, log)
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)

@@ -35,7 +35,7 @@ func TestRepairsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	ac.SetIdentity(enr.DeviceID, key)
-	jobKey, err := agentproto.DecodeKey(h.deps.Jobs.PublicKey())
+	jobKey, err := agentproto.DecodeKey(h.deps.JobKeys.Newest().Encoded())
 	if err != nil {
 		t.Fatal(err)
 	}

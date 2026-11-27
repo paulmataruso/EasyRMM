@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -80,9 +80,9 @@ func updateBackoff(n int) time.Duration {
 }
 
 // SetUpdates turns agent updates on: the builds the server serves and the
-// job key that signs update instructions.
-func (s *Service) SetUpdates(b *Builds, key ed25519.PrivateKey) {
-	s.builds, s.updateKey = b, key
+// job keys that sign update instructions.
+func (s *Service) SetUpdates(b *Builds, keys jobkeys.Source) {
+	s.builds, s.keys = b, keys
 }
 
 // SetStable gives the service the stable builds: what every organization
@@ -218,7 +218,7 @@ func (u *update) retarget(b Build) {
 // instruction to send, if any. It runs in the heartbeat's transaction.
 func (s *Service) planUpdate(ctx context.Context, tx pgx.Tx, d *Device, f facts, report *agentproto.UpdateReport, ip netip.Addr) (*agentproto.SignedUpdate, error) {
 	builds := s.BuildsFor(d.OrganizationID)
-	if builds == nil || s.updateKey == nil {
+	if builds == nil || s.keys == nil {
 		return nil, nil
 	}
 	b, haveBuild := builds.For(f.platform, f.arch)
@@ -325,7 +325,11 @@ func (s *Service) planUpdate(ctx context.Context, tx pgx.Tx, d *Device, f facts,
 		return nil, nil
 	}
 	// Sent again while in flight: the last answer may not have arrived.
-	signed, err := agentproto.SignUpdate(s.updateKey, agentproto.UpdatePayload{
+	key, _, err := s.keys.Issue(ctx, tx, d.ID, agentproto.InstructionUpdate, u.attempt.String())
+	if err != nil {
+		return nil, err
+	}
+	signed, err := agentproto.SignUpdate(key, agentproto.UpdatePayload{
 		V: agentproto.UpdatePayloadVersion, ID: u.attempt.String(), DeviceID: d.ID.String(),
 		File: b.File, Size: b.Size, SHA256: b.SHA256, Version: b.Version,
 		IssuedAt: now, ExpiresAt: now.Add(updateValidity),
@@ -508,7 +512,7 @@ func (s *Service) RequestUpdate(ctx context.Context, c access.Caller, deviceID u
 	}
 	var b Build
 	ok := false
-	if builds := s.BuildsFor(d.OrganizationID); builds != nil && s.updateKey != nil {
+	if builds := s.BuildsFor(d.OrganizationID); builds != nil && s.keys != nil {
 		b, ok = builds.For(d.Platform, d.Agent.Arch)
 	}
 	switch {
@@ -530,7 +534,7 @@ func (s *Service) RequestAll(ctx context.Context, c access.Caller) (int, error) 
 	if err := c.RequireGlobal(rbac.PermSettingsManage); err != nil {
 		return 0, err
 	}
-	if s.updateKey == nil {
+	if s.keys == nil {
 		return 0, nil
 	}
 	// The organizations a set of builds is for: all of them, or with a dev

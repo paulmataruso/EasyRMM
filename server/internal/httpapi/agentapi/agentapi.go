@@ -527,7 +527,7 @@ type signedCallKey struct{}
 // settings) back to the signed request it answers.
 func (a *API) signDownload(w http.ResponseWriter, r *http.Request, body []byte) {
 	c, _ := r.Context().Value(signedCallKey{}).(signedCall)
-	w.Header().Set(agentproto.HeaderDownloadSignature, a.svc.SignDownload(c.req, c.target, body))
+	w.Header().Set(agentproto.HeaderDownloadSignature, a.svc.SignDownload(r.Context(), c.req, c.target, body))
 }
 
 // enterPoll counts an open job poll for a device, unless it has maxPolls
@@ -555,6 +555,10 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	if err := decode(r, body, &in); err != nil {
 		return err
 	}
+	// The time in the signature: a report of the keys the agent trusts is
+	// stored only when it is newer than the stored one (ADR-0057).
+	sc, _ := r.Context().Value(signedCallKey{}).(signedCall)
+	r = r.WithContext(agents.WithSignedAt(r.Context(), sc.req.SignedAt()))
 	if d.Retired {
 		out, err := a.svc.RetiredHeartbeat(r.Context(), d)
 		if err != nil {
@@ -711,6 +715,10 @@ func (a *API) poll(w http.ResponseWriter, r *http.Request, d *agents.Device, bod
 		return errTooManyPolls
 	}
 	defer a.leavePoll(d.ID)
+	// What the agent trusts, before the poll claims anything: a job it
+	// delivers is signed with a key the agent trusts (ADR-0057).
+	sc, _ := r.Context().Value(signedCallKey{}).(signedCall)
+	a.svc.ObservePoll(agents.WithSignedAt(r.Context(), sc.req.SignedAt()), d, in.JobKeys)
 	out, err := a.jobs.Poll(r.Context(), d.ID, in.Accepts)
 	if err != nil && r.Context().Err() != nil {
 		return nil //nolint:nilerr // the agent went away; there is no one to answer

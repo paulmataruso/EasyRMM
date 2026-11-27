@@ -29,6 +29,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/keystored"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -95,7 +96,7 @@ func newFx(t *testing.T) *fx {
 
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f.signPub = pub
-	f.svc = keystore.New(f.db, audit.New(f.db, nil), &keystore.Client{Path: f.sock, Timeout: 10 * time.Second}, priv, slog.New(slog.DiscardHandler))
+	f.svc = keystore.New(f.db, audit.New(f.db, nil), &keystore.Client{Path: f.sock, Timeout: 10 * time.Second}, jobkeys.Static(priv), slog.New(slog.DiscardHandler))
 
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)

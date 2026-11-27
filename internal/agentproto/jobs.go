@@ -182,6 +182,10 @@ type PollRequest struct {
 	// heartbeat answer was of level 2 or higher. Nil (absent) says nothing
 	// and leaves what the server keeps; an empty list says "none".
 	Accepts []string `json:"accepts,omitzero"`
+	// JobKeys are the server keys the agent trusts, as a heartbeat reports
+	// them (ADR-0057), under the same rule: only while its last heartbeat
+	// answer was of level 2 or higher.
+	JobKeys []TrustedKey `json:"jobKeys,omitzero"`
 }
 
 // PollResponse carries new jobs and the runs to stop.
@@ -432,13 +436,13 @@ func DecodeJob(j SignedJob) (JobPayload, []byte, error) {
 
 // VerifyJob checks a signed job with the pinned server key and returns its
 // payload. It refuses jobs for other devices and expired jobs.
-func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Time) (JobPayload, error) {
+func VerifyJob[K KeyArg](key K, j SignedJob, deviceID string, now time.Time) (JobPayload, error) {
 	p, b, err := DecodeJob(j)
 	if err != nil {
 		return JobPayload{}, err
 	}
 	sig, err := base64.StdEncoding.DecodeString(j.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(jobSigContextFor(p.V)), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(jobSigContextFor(p.V)), b...), sig) {
 		return p, ErrJobSignature
 	}
 	if err := checkParams(p); err != nil {

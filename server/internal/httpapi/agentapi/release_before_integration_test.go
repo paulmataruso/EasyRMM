@@ -31,6 +31,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
@@ -54,10 +55,9 @@ func TestAgentOfTheReleaseBefore(t *testing.T) {
 	auditLog := audit.New(inst.DB, time.Now)
 	svc := agents.New(inst.DB, auditLog, nil, log)
 	_, jobKey, _ := ed25519.GenerateKey(rand.Reader)
-	js := jobs.New(inst.DB, auditLog, jobKey, 24*time.Hour, 24*time.Hour, log)
+	js := jobs.New(inst.DB, auditLog, jobkeys.Static(jobKey), 24*time.Hour, 24*time.Hour, log)
 	t.Cleanup(js.Close)
-	svc.SetJobKey(js.PublicKey())
-	svc.SetUpdates(&agents.Builds{}, jobKey)
+	svc.SetUpdates(&agents.Builds{}, jobkeys.Static(jobKey))
 	invs := inventory.New(inst.DB, 24*time.Hour, log)
 
 	// The agent API on loopback, over HTTP, which the agent allows there.

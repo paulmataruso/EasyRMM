@@ -17,6 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // Heartbeat records that a device's agent is alive, refreshes its facts and
@@ -43,6 +44,9 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		return nil, err
 	}
 	var (
+		jobKey   jobkeys.Key
+		keyAck   uint64
+		keyTaken bool
 		before   string
 		interval = int(HeartbeatInterval.Seconds())
 		rescan   bool
@@ -108,6 +112,14 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 				return err
 			}
 		}
+		// What the device trusts (ADR-0057), stored before anything is signed
+		// for it, and the key its answer is signed with.
+		if s.keys != nil {
+			var err error
+			if jobKey, keyAck, keyTaken, err = s.followKeys(ctx, tx, d, f.hostname, f.sha256, ip, req); err != nil {
+				return err
+			}
+		}
 		// A device being removed gets nothing but its uninstall
 		// instruction (ADR-0050).
 		if uninstall, err = s.uninstallFor(ctx, tx, d); err != nil || uninstall != nil {
@@ -147,7 +159,10 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		Protocol:         agentproto.Protocol,
 		HeartbeatSeconds: interval,
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available, SettingsSHA256: s.pendingSettings(ctx, d, f, available)},
-		JobKey:           s.jobKey,
+		JobKey:           encodedOrEmpty(jobKey),
+		JobKeyGeneration: jobKey.Generation,
+		Features:         s.keyFeatures(),
+		InstructionAck:   ackFor(keyTaken, keyAck),
 		Update:           update,
 		Uninstall:        uninstall,
 		Defender:         &agentproto.DefenderPolicy{Enabled: allowed, Events: logOn, EventsAck: logAck},
@@ -278,4 +293,94 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 func keepNode(ctx context.Context, tx pgx.Tx, d *Device, node string) error {
 	_, err := tx.Exec(ctx, `UPDATE retired_devices SET mesh_node_id = NULL WHERE mesh_node_id = $1 AND site_id = $2`, node, d.SiteID)
 	return err
+}
+
+type signedAtKey struct{}
+
+// WithSignedAt gives a request's context the time in its signature, on the
+// agent's clock: a report of the keys an agent trusts is stored only when it
+// is newer than the stored one (ADR-0057). Without it the server's clock is
+// used.
+func WithSignedAt(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, signedAtKey{}, t)
+}
+
+func signedAt(ctx context.Context, fallback time.Time) time.Time {
+	if t, ok := ctx.Value(signedAtKey{}).(time.Time); ok && !t.IsZero() {
+		return t
+	}
+	return fallback
+}
+
+// followKeys is what a heartbeat does with the keys the agent trusts
+// (ADR-0057), in the heartbeat's transaction: it stores the report, audits a
+// statement the agent refused, takes the instruction log, and returns the key
+// the answer and everything signed for the device after it use. The report,
+// the refusal and the log are extras like the roles: a failure to store them
+// never fails the heartbeat, and a log that could not be stored is not
+// acknowledged. Choosing the key is not an extra.
+func (s *Service) followKeys(ctx context.Context, tx pgx.Tx, d *Device, hostname, build string, ip netip.Addr, req agentproto.HeartbeatRequest) (key jobkeys.Key, ack uint64, taken bool, err error) {
+	o := jobkeys.Observation{Device: d.ID, Org: d.OrganizationID, Site: d.SiteID, Label: hostname, IP: ip,
+		Keys: req.JobKeys, Authorities: req.Authorities, SignedAt: signedAt(ctx, s.now()), Build: build}
+	if len(o.Keys) > 0 || o.Authorities != nil || req.KeyRefused != nil || req.InstructionLog != nil {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return jobkeys.Key{}, 0, false, err
+		}
+		var res jobkeys.LogResult
+		err = s.keys.Observe(ctx, sp, o)
+		if err == nil && req.KeyRefused != nil {
+			err = s.keys.RefusedStatement(ctx, sp, o, *req.KeyRefused)
+		}
+		if err == nil && req.InstructionLog != nil {
+			res, err = s.keys.AcceptLog(ctx, sp, jobkeys.LogDevice{ID: d.ID, Org: d.OrganizationID, Site: d.SiteID, Label: hostname}, *req.InstructionLog, s.now())
+			ack, taken = res.Ack, err == nil
+		}
+		if err != nil {
+			s.log.Error("agents: storing what the agent trusts failed", "error", err, "device_id", d.ID)
+			ack, taken = 0, false
+			if err := sp.Rollback(ctx); err != nil {
+				return jobkeys.Key{}, 0, false, err
+			}
+		} else if err := sp.Commit(ctx); err != nil {
+			return jobkeys.Key{}, 0, false, err
+		}
+	}
+	c, err := s.keys.For(ctx, tx, d.ID)
+	if err != nil {
+		return jobkeys.Key{}, 0, false, err
+	}
+	return c.Key, ack, taken, nil
+}
+
+// ObservePoll stores the keys a job poll says the agent trusts, as a
+// heartbeat's report is stored, before the poll claims anything.
+func (s *Service) ObservePoll(ctx context.Context, d *Device, keys []agentproto.TrustedKey) {
+	if s.keys == nil || len(keys) == 0 {
+		return
+	}
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		return s.keys.Observe(ctx, tx, jobkeys.Observation{Device: d.ID, Org: d.OrganizationID, Site: d.SiteID, Label: d.Hostname,
+			Keys: keys, SignedAt: signedAt(ctx, s.now())})
+	})
+	if err != nil && ctx.Err() == nil {
+		s.log.Error("agents: storing what the agent trusts from its poll failed", "error", err, "device_id", d.ID)
+	}
+}
+
+// keyFeatures lists what the server offers about the job keys: it takes the
+// instruction log (ADR-0057).
+func (s *Service) keyFeatures() []string {
+	if s.keys != nil && s.keys.Logs() {
+		return []string{agentproto.FeatureInstructionLog}
+	}
+	return nil
+}
+
+// ackFor is the answer's acknowledgment: none unless the log was taken.
+func ackFor(taken bool, ack uint64) uint64 {
+	if taken {
+		return ack
+	}
+	return 0
 }

@@ -38,7 +38,7 @@ func TestUninstallSignature(t *testing.T) {
 	if _, err := VerifyUninstall(otherPub, s, "dev-1", now); !errors.Is(err, ErrUninstallSignature) {
 		t.Errorf("another key: %v", err)
 	}
-	if _, err := VerifyUninstall(nil, s, "dev-1", now); !errors.Is(err, ErrUninstallSignature) {
+	if _, err := VerifyUninstall(Keys(nil), s, "dev-1", now); !errors.Is(err, ErrUninstallSignature) {
 		t.Errorf("no key: %v", err)
 	}
 	if _, err := VerifyUninstall(pub, s, "dev-2", now); !errors.Is(err, ErrUninstallDevice) {

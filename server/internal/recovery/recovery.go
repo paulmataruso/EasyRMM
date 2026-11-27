@@ -28,6 +28,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -142,7 +143,7 @@ type Service struct {
 	audit  *audit.Logger
 	log    *slog.Logger
 	now    func() time.Time
-	key    ed25519.PrivateKey
+	key    jobkeys.Source
 	remote bool
 	link   MeshLink
 	patch  Patching
@@ -160,9 +161,9 @@ func New(db *database.DB, auditLog *audit.Logger, remote bool, log *slog.Logger)
 	return &Service{db: db, audit: auditLog, remote: remote, log: log, now: time.Now, wake: make(chan struct{}, 1)}
 }
 
-// SetKey sets the job key repair instructions are signed with. Without it
-// no repair is asked for.
-func (s *Service) SetKey(k ed25519.PrivateKey) { s.key = k }
+// SetKey gives the service the job keys repair instructions are signed with
+// (ADR-0057). Without them no repair is asked for.
+func (s *Service) SetKey(k jobkeys.Source) { s.key = k }
 
 // SetBuilds tells the service which builds the server bundles, by platform
 // and architecture. A recovery copy is only checked against a hash the
@@ -478,13 +479,24 @@ func (s *Service) AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, rep *a
 		}
 		p.EasyPatch = offer
 	}
-	sr, err := agentproto.SignRepair(s.key, p)
+	// The key the device trusts, recorded as issued in its own transaction
+	// (ADR-0057): the instruction is not sent unless it is recorded.
+	var key ed25519.PrivateKey
+	if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		k, _, err := s.key.Issue(ctx, tx, deviceID, agentproto.InstructionRepair, cur.stepID)
+		key = k
+		return err
+	}); err != nil {
+		s.log.Error("recovery: choosing the key to sign a repair step failed", "error", err, "device_id", deviceID)
+		return nil
+	}
+	sr, err := agentproto.SignRepair(key, p)
 	if err != nil {
 		s.log.Error("recovery: signing a repair step failed", "error", err, "device_id", deviceID)
 		return nil
 	}
 	// What the agent would refuse is refused here, with its reason.
-	if pub, ok := s.key.Public().(ed25519.PublicKey); ok {
+	if pub, ok := key.Public().(ed25519.PublicKey); ok {
 		if _, err := agentproto.VerifyRepair(pub, sr, deviceID.String(), cur.now); err != nil {
 			s.failStep(ctx, deviceID, cur.stepID, "The patching engine's address or packages are not in a form the agent accepts: "+
 				strings.TrimPrefix(err.Error(), "agentproto: ")+".")

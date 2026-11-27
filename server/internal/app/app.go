@@ -84,6 +84,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlstrustapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
@@ -145,6 +146,8 @@ type Deps struct {
 	Setup   *usersapi.Setup
 	Devices *devices.Service
 	Agents  *agents.Service
+	// JobKeys is the ring of job keys (ADR-0057).
+	JobKeys *jobkeys.Ring
 	// AgentFiles is the hash list of everything installed (ADR-0070).
 	AgentFiles *agentfiles.Service
 	// Jobs is the script library and job delivery (ADR-0017).
@@ -293,12 +296,16 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d.Agents = agents.New(db, auditLog, mesh, log)
 	d.Agents.SetSealer(sealer)
-	jobKey, err := jobs.LoadKey(ctx, db, sealer)
+	// The ring of job keys (ADR-0057): the first start with it moves the key
+	// out of settings; every service asks it for the key that signs each
+	// device's instruction.
+	ring, err := jobkeys.Open(ctx, db, sealer, log, jobkeys.Options{Version: Version, Audit: auditLog})
 	if err != nil {
 		return nil, err
 	}
-	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, cfg.JobOutputRetention, log)
-	d.Agents.SetJobKey(d.Jobs.PublicKey())
+	d.JobKeys = ring
+	d.Jobs = jobs.New(db, auditLog, ring, cfg.JobRetention, cfg.JobOutputRetention, log)
+	d.Agents.SetKeys(ring)
 	d.Compliance = engine.New(db, d.Jobs, auditLog, log)
 	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
 	d.Jobs.SetStepUp(sessions)
@@ -310,11 +317,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.ComplianceAssess.SetStepUp(sessions)
 	d.ComplianceAlerts = calerts.New(db, log)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
-		Enabled: cfg.AgentChannel, Key: jobKey, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
+		Enabled: cfg.AgentChannel, Key: ring.Newest().Private, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
 	})
 	d.Agents.OnDeviceGone(func(id uuid.UUID) { d.AgentChannel.Close(id, agentproto.ClosingRemoved) })
-	d.QuickAssist = quickassist.New(db, auditLog, jobKey, strings.TrimSuffix(cfg.PublicURL.String(), "/"))
+	d.QuickAssist = quickassist.New(db, auditLog, ring.Newest().Private, strings.TrimSuffix(cfg.PublicURL.String(), "/"))
 	d.QuickAssist.OnThrottled(quickAssistFlood(db, mailSvc, log))
 	if d.Mesh != nil {
 		d.QuickAssist.SetNodeRemover(d.Mesh.RemoveDevice)
@@ -376,8 +383,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	if err := useAuthentik(ctx, cfg, d.SSO, d.PKI); err != nil {
 		return nil, fmt.Errorf("authentik: %w", err)
 	}
-	d.EasyPatch.SetSigner(jobKey)
-	d.Recovery.SetKey(jobKey)
+	d.EasyPatch.SetSigner(ring)
+	d.Recovery.SetKey(ring)
 	// The EasyPatch agent is repaired with packages from the engine, and
 	// judged by what the engine reports of it (ADR-0069).
 	d.Recovery.UsePatching(d.EasyPatch)
@@ -392,7 +399,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	if len(builds.List()) > 0 && builds.Version() == "" {
 		log.Warn("the agent builds have no "+agents.VersionFile+" file; agent updates still work, but the console cannot show versions", "dir", cfg.AgentDir)
 	}
-	d.Agents.SetUpdates(builds, jobKey)
+	d.Agents.SetUpdates(builds, ring)
 	// The dev scope (development only): organizations outside it keep the
 	// stable builds. A server that cannot offer them does not start.
 	devscope.Set(cfg.DevScopeOrg)
@@ -420,9 +427,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	if cfg.KeystoreSocket != "" {
 		ks = &keystore.Client{Path: cfg.KeystoreSocket}
 	}
-	d.Keystore = keystore.New(db, auditLog, ks, jobKey, log)
+	d.Keystore = keystore.New(db, auditLog, ks, ring, log)
 	d.AgentSettings = agentsettings.New(db, auditLog, log)
-	d.TLSTrust = tlstrust.New(db, auditLog, jobKey, log)
+	d.TLSTrust = tlstrust.New(db, auditLog, ring, log)
 	d.TLSTrust.SetEasyPatchHost(easyPatchHost(db, cfg.PublicURL))
 	// Reading a key needs the session stepped up (ADR-0055) and mails the
 	// organization's administrators (ADR-0053).
@@ -542,7 +549,7 @@ func MailCheck(ctx context.Context, cfg *config.Config, log *slog.Logger, out io
 	if err != nil {
 		return err
 	}
-	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 2})
+	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 2, Version: Version})
 	if err != nil {
 		return err
 	}
@@ -829,7 +836,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}); err != nil {
 		return err
 	}
-	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: cfg.DatabaseMaxConns})
+	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: cfg.DatabaseMaxConns, Version: Version})
 	if err != nil {
 		return err
 	}
@@ -884,6 +891,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.QuickAssist.Run(ctx) })
 	wg.Go(func() { deps.AgentFiles.Run(ctx, 30*time.Minute) })
+	deps.JobKeys.SetHeld(hold.Held)
+	wg.Go(func() { deps.JobKeys.Run(ctx) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Compliance.Run(ctx) })
 	wg.Go(func() { deps.ComplianceFix.Run(ctx) })

@@ -135,7 +135,7 @@ func TestAgentTrustEndToEnd(t *testing.T) {
 	rt := &noRetrust{}
 	pool := x509.NewCertPool()
 	pool.AddCert(public.ca)
-	agent := &trust.Agent{DeviceID: enr.DeviceID, Config: cfg, Key: func() ed25519.PublicKey { return jobKey }, Store: store, Client: rt,
+	agent := &trust.Agent{DeviceID: enr.DeviceID, Config: cfg, Keys: func() agentproto.Keys { return agentproto.Keys{jobKey} }, Store: store, Client: rt,
 		Verifier: trust.Verifier{SystemRoots: pool}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	beat := func() *agentproto.HeartbeatResponse {

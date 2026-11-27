@@ -102,6 +102,9 @@ type EnrollResponse struct {
 	// JobKey is the server's job-signing public key (EncodeKey), which the
 	// agent pins (ADR-0017).
 	JobKey string `json:"jobKey,omitempty"`
+	// JobKeyGeneration is JobKey's generation (ADR-0057); older servers
+	// send none, and an agent then keeps the key with its generation unknown.
+	JobKeyGeneration int64 `json:"jobKeyGeneration,omitempty"`
 	// Pending is set, with the server answering 202 Accepted, when the
 	// token was an approval token and nobody has approved the device yet
 	// (ADR-0024). The agent asks again with the same token and key.
@@ -180,6 +183,17 @@ type HeartbeatRequest struct {
 	// (ADR-0055); sent only to servers of level 2 or higher, and only until
 	// an answer no longer carries that instruction.
 	Trust *TrustReport `json:"trust,omitempty"`
+	// JobKeys are the server keys the agent trusts, each with its generation
+	// (ADR-0057), and Authorities the SHA-256 fingerprints, in hex, of the
+	// certificates in the ca.pem it loaded (none when it uses the system's
+	// roots). KeyRefused is a statement it refused. InstructionLog is the
+	// log of the instructions it accepted. All are covered by the device's
+	// signature, and sent only to servers of level 2 or higher (ADR-0009);
+	// InstructionLog only to one that lists FeatureInstructionLog.
+	JobKeys        []TrustedKey          `json:"jobKeys,omitempty"`
+	Authorities    []string              `json:"authorities,omitempty"`
+	KeyRefused     *KeyRefusal           `json:"keyRefused,omitempty"`
+	InstructionLog *InstructionLogReport `json:"instructionLog,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -209,6 +223,9 @@ type HeartbeatResponse struct {
 	MeshAgent        MeshAgentInfo `json:"meshAgent"`
 	// JobKey is the server's job-signing public key, as in EnrollResponse.
 	JobKey string `json:"jobKey,omitempty"`
+	// JobKeyGeneration is JobKey's generation (ADR-0057). JobKey is the key
+	// the server signs with for this device.
+	JobKeyGeneration int64 `json:"jobKeyGeneration,omitempty"`
 	// InventoryHash is the hash of the inventory the server holds for the
 	// device, empty when it holds none. The agent uploads its inventory
 	// when its own hash differs (ADR-0018).
@@ -249,6 +266,16 @@ type HeartbeatResponse struct {
 	// Trust asks the agent to verify certificate chains and, for a move, to
 	// widen its trust (ADR-0055), only to an agent that announced CapTrust.
 	Trust *SignedTrust `json:"trust,omitempty"`
+	// KeyHandover and KeyCutover are the statements that move an agent to
+	// another job key (ADR-0057), only to an agent that announced
+	// CapJobKeys. The agent handles the hand-over, then the cut-over, before
+	// anything else in the answer.
+	KeyHandover *SignedKeyStatement `json:"keyHandover,omitempty"`
+	KeyCutover  *SignedKeyStatement `json:"keyCutover,omitempty"`
+	// InstructionAck is the sequence of the last entry of the agent's
+	// instruction log this server took, read only when Features lists
+	// FeatureInstructionLog.
+	InstructionAck uint64 `json:"instructionAck,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

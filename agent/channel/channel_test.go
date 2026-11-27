@@ -135,7 +135,7 @@ func newRig(t *testing.T, f *fake, tm Timing, off bool) *rig {
 	}
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	c.SetIdentity(dev, key)
-	ch := New(Config{Dialer: c, DeviceID: dev, Key: func() ed25519.PublicKey { return f.pub }, Off: off, Timing: tm,
+	ch := New(Config{Dialer: c, DeviceID: dev, Keys: func() agentproto.Keys { return agentproto.Keys{f.pub} }, Off: off, Timing: tm,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -400,7 +400,7 @@ func TestUnlistedMessageClosesTheConnection(t *testing.T) {
 }
 
 func TestUnlistedStopAndRecovery(t *testing.T) {
-	c := New(Config{Key: func() ed25519.PublicKey { return nil }})
+	c := New(Config{Keys: func() agentproto.Keys { return nil }})
 	for range stopAfter {
 		c.unlistedMessage("inst-1", agentproto.ChannelMessage{Type: "x"})
 	}
@@ -489,7 +489,7 @@ func TestSleepIsNoticed(t *testing.T) {
 func TestNoKeyNoTrust(t *testing.T) {
 	f := newFake(t)
 	r := newRig(t, f, fast, false)
-	r.ch.cfg.Key = func() ed25519.PublicKey { return nil }
+	r.ch.cfg.Keys = func() agentproto.Keys { return nil }
 	r.ch.Answered(listed("inst-1"), true)
 	eventually(t, "tried", func() bool { return f.dials.Load() >= 1 })
 	r.never("trusted a frame with no pinned key", r.ch.Live)

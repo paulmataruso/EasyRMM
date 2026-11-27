@@ -9,7 +9,6 @@ package escrow
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -72,7 +71,7 @@ const (
 type Agent struct {
 	DeviceID string
 	// Key returns the pinned job key, nil while none is pinned.
-	Key    func() ed25519.PublicKey
+	Keys   func() agentproto.Keys
 	Reader Reader
 	// Manager turns BitLocker on and rotates recovery passwords (ADR-0081
 	// section 5); nil where the agent only reads.
@@ -128,7 +127,7 @@ func (a *Agent) Answered(s *agentproto.SignedEscrowKey) {
 		a.mu.Unlock()
 		return
 	}
-	pinned := a.Key()
+	pinned := a.Keys()
 	if len(pinned) == 0 {
 		return // no job key is pinned yet: nothing is trusted
 	}

@@ -128,13 +128,13 @@ func SignEscrowKey(key ed25519.PrivateKey, p EscrowKeyPayload) (SignedEscrowKey,
 // VerifyEscrowKey checks a signed escrow key with the pinned server key and
 // returns its payload and the decoded public key. It refuses another
 // device's and an expired instruction.
-func VerifyEscrowKey(key ed25519.PublicKey, s SignedEscrowKey, deviceID string, now time.Time) (EscrowKeyPayload, []byte, error) {
+func VerifyEscrowKey[K KeyArg](key K, s SignedEscrowKey, deviceID string, now time.Time) (EscrowKeyPayload, []byte, error) {
 	b, err := base64.StdEncoding.DecodeString(s.Payload)
 	if err != nil {
 		return EscrowKeyPayload{}, nil, ErrEscrowKeyMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(escrowKeySigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(escrowKeySigContext), b...), sig) {
 		return EscrowKeyPayload{}, nil, ErrEscrowKeySignature
 	}
 	var p EscrowKeyPayload

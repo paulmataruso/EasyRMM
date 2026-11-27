@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"sync"
@@ -65,7 +66,7 @@ func (p *repairs) finish(rep agentproto.RepairReport, now time.Time) {
 // that a download or a service that takes a while does not hold the
 // heartbeats back. The outcome goes out with the next heartbeats.
 func (r *Runner) startRepair(ctx context.Context, s *agentproto.SignedRepair) {
-	key := r.Key()
+	key := r.Keys()
 	p, err := agentproto.VerifyRepair(key, *s, r.DeviceID, time.Now())
 	if err != nil {
 		if errors.Is(err, agentproto.ErrRepairExpired) {
@@ -76,6 +77,12 @@ func (r *Runner) startRepair(ctx context.Context, s *agentproto.SignedRepair) {
 	}
 	if !r.repair.begin(p.ID) {
 		return
+	}
+	if r.Record != nil {
+		r.Record(agentproto.InstructionRepair, p.ID, key.SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyRepair(k, *s, r.DeviceID, time.Now())
+			return err == nil
+		}))
 	}
 	r.Log.Info("repairing", "target", p.Target, "step", p.Step)
 	r.repair.wg.Go(func() {

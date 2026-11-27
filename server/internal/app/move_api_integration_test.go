@@ -340,6 +340,9 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"retired_agent_nonces": follows,
 		// what the computer's agent trusts (ADR-0055 5b1) is the computer's own fact
 		"device_tls_state": follows, "device_tls_trust": follows,
+		// the job key ring's per-device facts (ADR-0057): what the computer's agent trusts and logged is the computer's own. issued_instructions
+		// keeps what the server signed for a device id (no foreign key, 90 days) and follows it
+		"device_unknown_keys": follows, "issued_instructions": follows, "device_instruction_log": follows, "device_instruction_flags": follows,
 		// Group Policy (ADR-0083): backups and requests are records of the organization whose domain they are; its setting is its own
 		"gpo_backups": stays, "gpo_change_requests": stays, "gpo_org_settings": owned,
 		// recovery (R1-R3): the machine's own state and repair history

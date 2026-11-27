@@ -68,7 +68,7 @@ func newPushRig(t *testing.T, f *fake, h Handlers) (*Channel, ed25519.PublicKey)
 	}
 	pub, key, _ := ed25519.GenerateKey(rand.Reader)
 	c.SetIdentity(dev, key)
-	ch := New(Config{Dialer: c, DeviceID: dev, Key: func() ed25519.PublicKey { return f.pub }, Timing: fast, Device: key, Handlers: h,
+	ch := New(Config{Dialer: c, DeviceID: dev, Keys: func() agentproto.Keys { return agentproto.Keys{f.pub} }, Timing: fast, Device: key, Handlers: h,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup

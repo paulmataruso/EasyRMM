@@ -312,7 +312,7 @@ func (d *device) poll(ctx context.Context) {
 		start := time.Now()
 		// What a Linux agent's poll accepts: no job capabilities (ADR-0064);
 		// the client sends the list once a server of level 2 answers.
-		resp, err := d.c.Poll(ctx, []string{})
+		resp, err := d.c.Poll(ctx, []string{}, nil)
 		d.st.polling.Add(-1)
 		if ctx.Err() != nil {
 			return

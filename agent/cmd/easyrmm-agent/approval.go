@@ -56,7 +56,8 @@ func (e *env) awaitApproval(ctx context.Context) (*state.Config, ed25519.Private
 			return nil, nil, ctx.Err()
 		case err == nil && resp.Pending == nil && resp.DeviceID != "":
 			cfg := &state.Config{Server: p.Server, CAFile: p.CAFile, DeviceID: resp.DeviceID, EnrolledAt: time.Now().UTC(),
-				MeshAgentMode: p.MeshAgentMode, JobKey: resp.JobKey}
+				MeshAgentMode: p.MeshAgentMode}
+			cfg.PinFirstKey(resp.JobKey, resp.JobKeyGeneration)
 			if err := e.store.Approved(cfg); err != nil {
 				return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 			}

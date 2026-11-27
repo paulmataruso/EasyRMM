@@ -223,6 +223,8 @@ floors=(
   # widening on the agent, and the server's questions, answers and console view.
   "agent/trust                             90"
   "server/internal/tlstrust                85"
+  # The job key ring (ADR-0057): the move from settings, the key chosen for each device, the reports and the instruction log.
+  "server/internal/jobkeys                 90"
   "server/internal/httpapi/tlstrustapi     75"
 )
 

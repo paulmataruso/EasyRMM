@@ -306,11 +306,27 @@ $ sudo easyrmm-agent status
 Server:     https://rmm.example.com
 Device:     6f1c…
 Enrolled:   Sun, 15 Nov 2026 10:02:11 UTC
+Job key:    1a2b 3c4d 5e6f 7a8b 9c0d 1e2f 3a4b 5c6d generation 1
+Accepted:   job 5d1c… signed by 1a2b 3c4d 5e6f 7a8b 9c0d 1e2f 3a4b 5c6d at Sun, 15 Nov 2026 10:20:03 UTC
 Service:    active
 Heartbeat:  Sun, 15 Nov 2026 10:41:12 UTC
 MeshAgent:  installed
 Inventory:  sent Sun, 15 Nov 2026 10:02:14 UTC
 ```
+
+**Job key** is the server key the agent trusts for everything the server asks
+it to do, with its generation (*unknown* for an agent enrolled before
+generations, until the server's next answer names it). A line **Dropped** names
+a key it no longer trusts, and **Key change** says a key change is under way
+(ADR-0057). **Accepted** lists the latest instructions it ran, with the key that
+signed each: the agent sends this log to the server, which flags an instruction
+it never issued.
+
+`easyrmm-agent trust-key <generation>:<key>`, run as root or administrator,
+makes the agent trust only that server key and restarts its service. It
+refuses a key of a lower generation than the agent trusts unless `--force`
+is added, so a command that a policy runs again never moves a computer back to
+an older key. The console prints the key in that form.
 
 A computer that waits for approval shows its device code instead:
 

@@ -40,7 +40,7 @@ func TestPowerShell7API(t *testing.T) {
 	}
 	poll := func(accepts []string) *agentproto.PollResponse {
 		t.Helper()
-		resp, err := pc.ac.Poll(ctx, accepts)
+		resp, err := pc.ac.Poll(ctx, accepts, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,7 +52,7 @@ func TestPowerShell7API(t *testing.T) {
 		t.Helper()
 		short, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
-		if resp, err := pc.ac.Poll(short, accepts); err == nil && len(resp.Jobs) > 0 {
+		if resp, err := pc.ac.Poll(short, accepts, nil); err == nil && len(resp.Jobs) > 0 {
 			t.Fatalf("a poll got %+v", resp)
 		} else if err != nil && short.Err() == nil {
 			// Once the second is up, cutting the poll off can surface as

@@ -134,7 +134,7 @@ func newFixture(t *testing.T) *fixture {
 // the same folder.
 func (f *fixture) build() *Agent {
 	return &Agent{
-		DeviceID: testDevice, Config: f.cfg, Key: func() ed25519.PublicKey { return f.pub }, Store: f.store, Client: f.client,
+		DeviceID: testDevice, Config: f.cfg, Keys: func() agentproto.Keys { return agentproto.Keys{f.pub} }, Store: f.store, Client: f.client,
 		Verifier: Verifier{SystemRoots: f.public.pool(), Now: func() time.Time { return f.now }},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return f.now },
 	}
@@ -415,7 +415,7 @@ func TestRefusals(t *testing.T) {
 
 func TestNoPinnedKeyRefusesEverything(t *testing.T) {
 	f := newFixture(t)
-	f.agent.Key = func() ed25519.PublicKey { return nil }
+	f.agent.Keys = func() agentproto.Keys { return nil }
 	rep := f.answer(f.sign(f.payload("m1", chainOf("t", agentproto.TrustTarget, f.public.leaf(t, testHost)))))
 	if rep != nil {
 		t.Fatalf("report = %+v", rep)

@@ -2,7 +2,6 @@ package easypatch
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // Service is EasyRMM's side of the patching engine in this deployment
@@ -28,8 +28,9 @@ type Service struct {
 
 	fleet fleetCache
 
-	// signer signs install instructions (ADR-0031); nil sends none.
-	signer ed25519.PrivateKey
+	// signer picks the job key that signs each device's install instruction
+	// (ADR-0031, ADR-0057); nil sends none.
+	signer jobkeys.Source
 	// engine is the patching engine (UseEngine); nil until then, when
 	// patching is not set up.
 	engine *engine

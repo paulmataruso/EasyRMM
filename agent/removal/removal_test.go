@@ -32,7 +32,7 @@ func newRig(t *testing.T) *rig {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	g := &rig{priv: priv, now: time.Now()}
 	g.r = &Remover{
-		DeviceID: "dev-1", Key: func() ed25519.PublicKey { return pub }, Dir: t.TempDir(),
+		DeviceID: "dev-1", Keys: func() agentproto.Keys { return agentproto.Keys{pub} }, Dir: t.TempDir(),
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Launch: func(_ context.Context, file string) (bool, error) {
 			g.launches = append(g.launches, file)

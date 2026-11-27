@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -480,7 +481,7 @@ func TestRepairInstallOnWindowsLayout(t *testing.T) {
 	if len(svcs.installed) != 1 || svcs.installed[0].Name != host.AgentWindowsService {
 		t.Errorf("services registered: %+v", svcs.installed)
 	}
-	if after, _, err := h.e.store.Load(); err != nil || *after != *cfg {
+	if after, _, err := h.e.store.Load(); err != nil || !reflect.DeepEqual(*after, *cfg) {
 		t.Errorf("the enrollment changed: %v", err)
 	}
 }

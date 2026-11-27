@@ -29,6 +29,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
@@ -75,7 +76,7 @@ func newFixture(t *testing.T) *fixture {
 	inst := testdb.New(t)
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, pub: pub, src: &source{}}
-	f.svc = tlstrust.New(inst.DB, audit.New(inst.DB, nil), priv, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.svc = tlstrust.New(inst.DB, audit.New(inst.DB, nil), jobkeys.Static(priv), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	f.svc.SetSource(f.src)
 	f.org = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.site = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.org)

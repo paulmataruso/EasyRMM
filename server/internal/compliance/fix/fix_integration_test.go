@@ -28,6 +28,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
@@ -67,7 +68,7 @@ func newFixture(t *testing.T) *fixture {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	al := audit.New(inst.DB, time.Now)
-	f.jobs = jobs.New(inst.DB, al, priv, 90*24*time.Hour, 30*24*time.Hour, log)
+	f.jobs = jobs.New(inst.DB, al, jobkeys.Static(priv), 90*24*time.Hour, 30*24*time.Hour, log)
 	f.jobs.SetStepUp(f.step)
 	f.eng = engine.New(inst.DB, f.jobs, al, log)
 	var err error
