@@ -20,6 +20,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
+	"github.com/paulmataruso/easyrmm/server/internal/tlsmove"
 	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 )
@@ -41,8 +42,12 @@ type edge struct {
 	tls *tlscert.Service
 	// trust learns from it what each host is served with, for the agents
 	// that verify it (ADR-0055, slice 5b1).
-	trust   *tlstrust.Service
-	servers []*http.Server
+	trust *tlstrust.Service
+	// moves routes each name to the source the console chose for it (5b2);
+	// nil leaves every name to .env's mode.
+	moves     *tlsmove.Service
+	moveCerts *moveCerts
+	servers   []*http.Server
 }
 
 // listen opens every listener the server serves on: the edge's and the
@@ -148,6 +153,9 @@ func (e *edge) run(ctx context.Context) error {
 		plain = redirect
 	default:
 		return fmt.Errorf("unsupported TLS mode %q", e.cfg.TLSMode)
+	}
+	if primary != nil && e.moves != nil && e.moveCerts != nil {
+		primary = e.moveCerts.route(e.moves, primary)
 	}
 	if primary != nil {
 		get := e.certificates(primary)

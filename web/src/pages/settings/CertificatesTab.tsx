@@ -6,6 +6,7 @@ import type { TlsCheck, TlsNameStatus, TlsOverview } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, Card, ErrorState, InlineError, Spinner, TableWrap } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { CertificateSources } from "./CertificateMove";
 
 const STATE_LABEL: Record<TlsNameStatus["state"], string> = {
   valid: "Valid",
@@ -40,14 +41,18 @@ export function CertificatesTab() {
   if (q.isPending) return <Spinner />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const { mode, managed, status } = q.data;
+  const names = q.data.names ?? [];
   if (!managed || !status) {
     return (
-      <Card title="Certificates">
-        <p className="text-sm">
-          TLS mode: <strong>{mode}</strong>
-        </p>
-        <p className="mt-2 text-sm text-muted">{MODE_TEXT[mode] ?? "This server does not obtain certificates."}</p>
-      </Card>
+      <div className="flex flex-col gap-4">
+        <Card title="Certificates">
+          <p className="text-sm">
+            TLS mode: <strong>{mode}</strong>
+          </p>
+          <p className="mt-2 text-sm text-muted">{MODE_TEXT[mode] ?? "This server does not obtain certificates."}</p>
+        </Card>
+        {names.length > 0 && <CertificateSources names={names} canAcme={q.data.canAcme ?? false} />}
+      </div>
     );
   }
   return (
@@ -72,6 +77,7 @@ export function CertificatesTab() {
       ) : (
         status.names.map((n) => <NameCard key={n.name} n={n} />)
       )}
+      {names.length > 0 && <CertificateSources names={names} canAcme />}
     </div>
   );
 }

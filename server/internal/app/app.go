@@ -81,6 +81,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsmoveapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlstrustapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -105,6 +106,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
+	"github.com/paulmataruso/easyrmm/server/internal/tlsmove"
 	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
@@ -223,6 +225,10 @@ type Deps struct {
 	// TLS obtains and renews the certificates of the DNS names in acme mode
 	// (ADR-0055); nil in the other modes.
 	TLS *tlscert.Service
+	// TLSMove records which source each name is served from and moves names
+	// between sources (ADR-0055, slice 5b2); the edge routes by it.
+	TLSMove   *tlsmove.Service
+	moveCerts *moveCerts
 }
 
 // Build constructs the services over an open database.
@@ -438,6 +444,12 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Notify = newNotify(cfg, db, auditLog, sealer, mailSvc, log)
 	if cfg.TLSMode == config.TLSAcme {
 		d.TLS = newTLS(cfg, db, auditLog, sealer, d.Notify, log)
+	}
+	d.moveCerts = &moveCerts{tls: d.TLS, pki: d.PKI}
+	d.TLSMove = tlsmove.New(tlsmove.Deps{DB: db, Audit: auditLog, Certs: d.moveCerts, Trust: d.TLSTrust,
+		EasyPatchHost: easyPatchHost(db, cfg.PublicURL), Log: log})
+	if err := d.TLSMove.Load(ctx); err != nil {
+		return nil, fmt.Errorf("reading the names' sources: %w", err)
 	}
 	// BitLocker's enable action asks the keystore's gate before it makes a job.
 	d.Jobs.SetEscrowGate(d.Keystore)
@@ -720,7 +732,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	mailserverapi.New(d.Mail).Register(mux)
-	tlsapi.New(d.TLS, string(cfg.TLSMode)).Register(mux)
+	tlsapi.New(d.TLS, string(cfg.TLSMode)).WithNames(moveNames(cfg)).Register(mux)
+	tlsmoveapi.New(d.TLSMove, d.Sessions).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
@@ -933,7 +946,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.ListenHealth != "" {
 		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, hold, log) })
 	}
-	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS, trust: deps.TLSTrust}
+	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS, trust: deps.TLSTrust, moves: deps.TLSMove, moveCerts: deps.moveCerts}
+	wg.Go(func() { deps.TLSMove.Run(ctx, 0) })
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()
