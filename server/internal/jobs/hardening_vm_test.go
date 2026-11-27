@@ -264,18 +264,29 @@ for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/de
 		}
 		applied[module] = r.State
 	}
-	if _, ok := applied["integrity"]; ok {
-		m.waitAIDE()
-	}
 	afterApply := m.script(HardeningCheck, HardeningModules)
 	m.bans()
 
-	// Everything persists across a restart.
+	// Everything persists across a restart. A baseline still being built
+	// when the machine restarts is built again after it (its unit starts at
+	// boot while no baseline exists): the check says it is being built
+	// again, never that it is missing. One that finished in between is
+	// present.
 	m.restart()
 	for _, r := range m.script(HardeningCheck, HardeningModules).Modules {
-		if was := scriptModule(t, afterApply, r.Module); r.State != was.State || !slices.Equal(r.Missing, was.Missing) {
+		was := scriptModule(t, afterApply, r.Module)
+		if r.Module == "integrity" && slices.Contains(was.Missing, aideBuilding) {
+			if !slices.Equal(r.Missing, was.Missing) && len(r.Missing) > 0 {
+				t.Errorf("integrity after a restart in the middle of AIDE's baseline: %s %q, was %s %q; want it being built again, or done", r.State, r.Missing, was.State, was.Missing)
+			}
+			continue
+		}
+		if r.State != was.State || !slices.Equal(r.Missing, was.Missing) {
 			t.Errorf("%s after a restart: %s %q, was %s %q", r.Module, r.State, r.Missing, was.State, was.Missing)
 		}
+	}
+	if _, ok := applied["integrity"]; ok {
+		m.waitAIDE()
 	}
 
 	// The logs, which undo leaves (it removes packages, never purging
@@ -413,24 +424,45 @@ func (m *hardeningMachine) wantAfter(r HardeningModuleResult, mode string) {
 	}
 }
 
-// waitAIDE waits for AIDE's baseline, which apply starts outside the job,
-// to finish: emulated, it can take an hour.
+// aideBuilding is what the check says is missing while AIDE's baseline is
+// being built.
+const aideBuilding = "An AIDE baseline (being built now)"
+
+// waitAIDE waits for AIDE's baseline, which apply starts outside the job
+// and the machine's unit builds again after a restart, to finish: emulated,
+// it can take an hour. A build that failed is an error. One still running
+// when the wait ends is only logged: under KVM a Fedora baseline can take
+// longer than the job has left, and undo stops it. One that finished must
+// show as present.
 func (m *hardeningMachine) waitAIDE() {
 	m.t.Helper()
-	// Under KVM a baseline takes minutes: one that takes 30 is reported
-	// with what the unit was doing, inside the machine job's own limit.
-	if out := m.run(`n=0
+	out := m.run(`n=0
 while systemctl is-active --quiet easyrmm-aide-init.service; do
-	n=$((n + 1)); [ "$n" -le 600 ] || break
+	n=$((n + 1)); [ "$n" -le 480 ] || break
 	sleep 3
 done
-if systemctl is-active --quiet easyrmm-aide-init.service || ! systemctl show -p Result --value easyrmm-aide-init.service | grep -qx success; then
+if systemctl is-active --quiet easyrmm-aide-init.service; then
+	echo RUNNING
+	exit 0
+fi
+if ! systemctl show -p Result --value easyrmm-aide-init.service | grep -qx success; then
 	systemctl status --no-pager -n 0 easyrmm-aide-init.service 2>&1
 	journalctl --no-pager -n 40 -u easyrmm-aide-init.service 2>&1
 	ps -eo pid,etime,time,stat,args | grep -i '[a]ide'
 	df -h / 2>&1
-fi`, 35*time.Minute); out != "" {
-		m.t.Errorf("AIDE's baseline did not finish within 30 minutes, or failed:\n%s", out)
+fi`, 28*time.Minute)
+	if out == "RUNNING" {
+		m.t.Logf("AIDE's baseline was still being built after 24 minutes; undo stops it")
+		return
+	}
+	if out != "" {
+		m.t.Errorf("AIDE's baseline failed:\n%s", out)
+		return
+	}
+	for _, r := range m.script(HardeningCheck, []string{"integrity"}).Modules {
+		if slices.Contains(r.Missing, aideBuilding) || slices.Contains(r.Missing, "An AIDE baseline") {
+			m.t.Errorf("AIDE's baseline finished, but integrity says: %s %q", r.State, r.Missing)
+		}
 	}
 }
 

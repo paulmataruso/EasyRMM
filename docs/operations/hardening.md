@@ -143,7 +143,7 @@ audit-rules, which holds `auditctl` and `augenrules`; on Ubuntu
 22.04, AIDE comes with mailutils, which its configuration package needs in
 place of a mail server. An installation never removes a package: one that
 would (a conflict) fails, and the module is put back. AIDE's first
-database is built after the job ends, in `easyrmm-aide-init.service`; the
+database is built after the job ends, in `easyrmm-aide-init.service`, which starts again after a restart until it is done; the
 next check says whether it finished. fail2ban bans for an hour, longer for
 repeat offenders, up to a day. A file apply changes that is a symbolic link
 stays one, and where SELinux labels files, each keeps its label, through
