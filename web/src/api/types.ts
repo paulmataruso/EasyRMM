@@ -5038,3 +5038,76 @@ export interface TlsTrust {
   platform: string;
   siteId: string;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Scheduled tasks (feature 11)
+// ---------------------------------------------------------------------------------------------
+
+export type ScheduleKind = "once" | "daily" | "weekly" | "monthly" | "interval";
+export type ScheduledTaskState = "active" | "paused" | "cancelled" | "completed";
+export type MissedRunRule = "skip" | "run_asap";
+export type ScheduledRunState = "pending" | "running" | "succeeded" | "failed" | "skipped";
+
+export interface TaskSchedule {
+  kind: ScheduleKind;
+  /** A one-time schedule's day, year-month-day. */
+  date?: string;
+  /** Hours and minutes, 15:04, in the zone of the site or organization. */
+  at?: string;
+  /** Weekly: 0 (Sunday) to 6. */
+  days?: number[];
+  dayOfMonth?: number;
+  everyMinutes?: number;
+}
+
+export interface ScheduledTask {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string | null;
+  siteName: string;
+  name: string;
+  schedule: TaskSchedule;
+  scriptId: string;
+  scriptName: string;
+  scriptSha256: string;
+  /** The library's script is no longer the pinned one; runs fail until the task is saved with the new one. */
+  scriptChanged: boolean;
+  scriptArgs: string[];
+  targets: { deviceIds: string[] };
+  timezone: string;
+  missedRunRule: MissedRunRule;
+  waitHours: number;
+  ownerId: string;
+  ownerEmail: string;
+  state: ScheduledTaskState;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+}
+
+export interface ScheduledTaskInput {
+  name: string;
+  organizationId: string;
+  siteId: string | null;
+  scriptId: string;
+  scriptArgs: string[];
+  deviceIds: string[];
+  schedule: TaskSchedule;
+  missedRunRule: MissedRunRule;
+  waitHours: number;
+}
+
+export interface ScheduledTaskRun {
+  id: string;
+  taskId: string;
+  occurrenceKey: string;
+  scheduledFor: string;
+  state: ScheduledRunState;
+  detail: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  jobIds: string[];
+}

@@ -23,7 +23,7 @@ export function sectionFor(pathname: string): SectionId | null {
   if (under("/organizations") || under("/sites") || under("/groups")) return "organizations";
   if (under("/devices")) return "devices";
   if (under("/alerts")) return "alerts";
-  if (under("/scripts")) return "scripts";
+  if (under("/scripts") || under("/scheduled")) return "scripts";
   if (under("/jobs")) return "jobs";
   if (under("/patching")) return "patching";
   if (under("/quickassist")) return "quickassist";

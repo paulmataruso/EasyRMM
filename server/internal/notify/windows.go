@@ -372,3 +372,10 @@ func (s *Service) DeleteWindow(ctx context.Context, c access.Caller, id uuid.UUI
 			TargetType: "maintenance_window", TargetID: id.String(), Outcome: audit.Success, Details: map[string]any{"name": cur.Name}})
 	})
 }
+
+// WallInstant is the instant a wall clock reads in loc, with ADR-0053's
+// daylight-saving rules: a time in a skipped hour is the moment the gap ends,
+// one in a repeated hour is its first occurrence. Scheduled tasks use it.
+func WallInstant(loc *time.Location, y int, mo time.Month, d, h, mi int) time.Time {
+	return wallInstant(loc, y, mo, d, h, mi)
+}
