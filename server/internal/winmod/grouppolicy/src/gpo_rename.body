@@ -8,7 +8,7 @@ try {
     $vb = Get-Versions $g
     $backup = Save-GpoBackup $g 'gpo_rename' $c
     $old = [string]$g.DisplayName
-    $new = Rename-GPO -Guid ([string]$p.id) -TargetName ([string]$p.newName) -PassThru @common
+    $new = Rename-GPO -Guid ([string]$p.id) -TargetName ([string]$p.newName) @common
     Write-Changed (Format-Text 'Renamed the GPO {0} to {1}.' $old ([string]$new.DisplayName)) ([ordered]@{ name = $old }) ([ordered]@{ name = [string]$new.DisplayName }) $new $backup $vb (Get-Versions $new)
 } catch {
     Stop-ForError $_

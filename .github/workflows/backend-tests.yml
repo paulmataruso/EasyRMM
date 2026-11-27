@@ -106,6 +106,33 @@ jobs:
       - name: Windows module scripts (AST check)
         shell: pwsh
         run: ./scripts/ci/check-winmod-ast.ps1
+      # ADR-0083: the command-parameter check. The Group Policy tools (GPMC) and the Active Directory module (RSAT) are
+      # installed so their commands have metadata; the DNS, DHCP and certificate tools are tried too, and a command whose
+      # module is missing is listed as not checked. No domain is needed.
+      - name: Install the Group Policy and Active Directory tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $r = Install-WindowsFeature -Name GPMC, RSAT-AD-PowerShell
+          $r | Format-List Success, RestartNeeded, ExitCode, FeatureResult | Out-String | Write-Host
+          if (-not $r.Success) { throw 'GPMC or RSAT-AD-PowerShell did not install' }
+          foreach ($f in 'RSAT-DNS-Server', 'RSAT-DHCP', 'RSAT-ADCS-Mgmt', 'Windows-Server-Backup') {
+            $x = Install-WindowsFeature -Name $f
+            Write-Host "$f : success=$($x.Success)"
+          }
+      - name: Windows module scripts (command parameters, Windows PowerShell 5.1)
+        shell: powershell
+        run: ./scripts/ci/check-winmod-commands.ps1 -RequireModules GroupPolicy,ActiveDirectory
+      - name: Windows module scripts (command parameters, PowerShell 7)
+        shell: pwsh
+        run: ./scripts/ci/check-winmod-commands.ps1 -RequireModules GroupPolicy,ActiveDirectory
+      # The Group Policy scripts' shared helpers on sample data, in Windows PowerShell 5.1 and in 7 (no domain).
+      - name: Group Policy helpers on sample data (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./scripts/ci/test-gpo-helpers.ps1
+      - name: Group Policy helpers on sample data (PowerShell 7)
+        shell: pwsh
+        run: ./scripts/ci/test-gpo-helpers.ps1
       # ADR-0065: the disk reader on the runner's disks, through the same
       # IOCTLs the agent sends. They are Azure virtual disks: NVMe ones,
       # which the NVMe path reads, or, on some runners, Hyper-V's virtual
