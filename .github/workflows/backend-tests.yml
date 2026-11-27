@@ -130,6 +130,9 @@ jobs:
       - name: Group Policy helpers on sample data (Windows PowerShell 5.1)
         shell: powershell
         run: ./scripts/ci/test-gpo-helpers.ps1
+      - name: Timings (throwaway)
+        shell: powershell
+        run: ./scripts/ci/zz-measure.ps1
       - name: Group Policy helpers on sample data (PowerShell 7)
         shell: pwsh
         run: ./scripts/ci/test-gpo-helpers.ps1
