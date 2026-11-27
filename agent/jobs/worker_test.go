@@ -127,6 +127,30 @@ func newHarnessWithKey(t *testing.T, dir string, pub ed25519.PublicKey, priv ed2
 	return h
 }
 
+// newHarnessLate builds the worker but does not start it, so the caller can
+// set function fields (Keys, Report) before Run reads them. Call h.start().
+func newHarnessLate(t *testing.T, dir string, pub ed25519.PublicKey, priv ed25519.PrivateKey, exec func(context.Context, agentproto.JobPayload, string) agentproto.ResultRequest) *harness {
+	h := &harness{t: t, srv: newFakeServer(), priv: priv, done: make(chan struct{})}
+	h.w = &Worker{
+		Client: h.srv, DeviceID: device, Dir: dir, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		MinRetry: 10 * time.Millisecond, MaxRetry: 50 * time.Millisecond, Execute: exec,
+	}
+	if err := h.w.SetKey(agentproto.EncodeKey(pub)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.stop)
+	return h
+}
+
+func (h *harness) start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	h.cancel = cancel
+	go func() {
+		_ = h.w.Run(ctx)
+		close(h.done)
+	}()
+}
+
 func (h *harness) stop() {
 	h.cancel()
 	<-h.done

@@ -95,11 +95,12 @@ func TestWorkerReadsTheKeysItTrustsNow(t *testing.T) {
 	bPub, bPriv, _ := ed25519.GenerateKey(rand.Reader)
 	var mu sync.Mutex
 	keys := agentproto.Keys{aPub}
-	h := newHarnessWithKey(t, t.TempDir(), aPub, aPriv, echoExec)
+	h := newHarnessLate(t, t.TempDir(), aPub, aPriv, echoExec)
 	h.w.Keys = func() agentproto.Keys { mu.Lock(); defer mu.Unlock(); return keys }
 	h.w.Report = func() []agentproto.TrustedKey {
 		return []agentproto.TrustedKey{{Key: agentproto.EncodeKey(aPub), Generation: 1}}
 	}
+	h.start()
 	h.priv = bPriv
 	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run1, "echo b")}}
 	if _, res := h.srv.result(t); res.Status != agentproto.RunFailed {
