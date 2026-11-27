@@ -740,15 +740,23 @@ func (e *env) run(ctx context.Context) error {
 }
 
 // keepRecovery writes the recovery copy of the running build once it has
-// reached the server (ADR-0069). It returns true when there is nothing more
-// to try in this run: the copy is made, or making it failed and was logged.
-// A build on probation has none made, and tries again at its next heartbeat.
+// reached the server (ADR-0069), and reconciles the service configuration
+// so that an auto-update picks up changes like the SCM recovery command
+// (ADR-0084). It returns true when there is nothing more to try in this
+// run: the copy is made, or making it failed and was logged. A build on
+// probation has none made, and tries again at its next heartbeat.
 func (e *env) keepRecovery(up *update.Updater) bool {
 	if up.OnProbation() {
 		return false
 	}
 	if err := e.store.KeepRecovery(up.Exe); err != nil {
 		e.log.Warn("keeping the recovery copy failed; the EasyPatch agent cannot restore this agent until the next start", "error", err)
+	}
+	if supported() {
+		svc := e.paths.AgentService()
+		if err := e.sd.Install(context.Background(), svc); err != nil {
+			e.log.Warn("reconciling the service configuration failed", "error", err)
+		}
 	}
 	return true
 }
