@@ -136,18 +136,18 @@ $wmiIds = ConvertTo-IdSet @(5861)
 # One entry per source of ADR-0060. Each Keep takes (event, channel).
 $sources = @(
     @{ Name = 'windows.security'; Channels = @('Security'); Subcategories = $true
-        Keep = { param($e, $c) Test-SecurityKept $e } },
+        Keep = { param($e, $_c) Test-SecurityKept $e } },
     @{ Name = 'windows.system'; Channels = @('System'); Subcategories = $false
-        Keep = { param($e, $c) (Test-LevelError $e) -or $systemIds.ContainsKey([int]$e.Id) } },
+        Keep = { param($e, $_c) (Test-LevelError $e) -or $systemIds.ContainsKey([int]$e.Id) } },
     @{ Name = 'windows.application'; Channels = @('Application'); Subcategories = $false
-        Keep = { param($e, $c) (Test-LevelError $e) -or $applicationIds.ContainsKey([int]$e.Id) } },
+        Keep = { param($e, $_c) (Test-LevelError $e) -or $applicationIds.ContainsKey([int]$e.Id) } },
     @{ Name = 'windows.defender'; Channels = @('Microsoft-Windows-Windows Defender/Operational'); Subcategories = $false
-        Keep = { param($e, $c) $defenderIds.ContainsKey([int]$e.Id) } },
+        Keep = { param($e, $_c) $defenderIds.ContainsKey([int]$e.Id) } },
     @{ Name = 'windows.powershell'; Subcategories = $false
         Channels = @('Microsoft-Windows-PowerShell/Operational', 'PowerShellCore/Operational')
-        Keep = { param($e, $c) $powershellIds.ContainsKey([int]$e.Id) } },
+        Keep = { param($e, $_c) $powershellIds.ContainsKey([int]$e.Id) } },
     @{ Name = 'windows.sysmon'; Channels = @('Microsoft-Windows-Sysmon/Operational'); Subcategories = $false
-        Keep = { param($e, $c) -not $sysmonLeftOut.ContainsKey([int]$e.Id) } },
+        Keep = { param($e, $_c) -not $sysmonLeftOut.ContainsKey([int]$e.Id) } },
     @{ Name = 'windows.rdp'; Subcategories = $false
         Channels = @('Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
             'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational')
@@ -157,7 +157,7 @@ $sources = @(
             return $rdpSessionIds.ContainsKey([int]$e.Id)
         } },
     @{ Name = 'windows.wmi'; Channels = @('Microsoft-Windows-WMI-Activity/Operational'); Subcategories = $false
-        Keep = { param($e, $c) $wmiIds.ContainsKey([int]$e.Id) } }
+        Keep = { param($e, $_c) $wmiIds.ContainsKey([int]$e.Id) } }
 )
 
 function Add-Count {
