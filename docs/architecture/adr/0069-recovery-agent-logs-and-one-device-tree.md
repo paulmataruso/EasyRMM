@@ -775,7 +775,7 @@ both as "follows the device".
 
 ### Amended 2026-11-26 (decided in review), agent settings
 
-`agent_settings` (migration `90511`, ADR-0058 slice 1) holds the settings
+`agent_settings` (migration `00084`, ADR-0058 slice 1) holds the settings
 operators set for agents at the platform, an organization, a site or one
 device. The platform's, an organization's and a site's rows are owned by that
 level, so a device move leaves them alone. A row set for one device names the

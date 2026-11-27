@@ -1,6 +1,6 @@
 # set1: ADR-0058 slice 1 (settings on the server, and the interval for every agent)
 
-Branch `ws/set1`, migration `90511_agent_settings.sql` (renumber at merge).
+Branch `ws/set1`, migration `00084_agent_settings.sql` (renumber at merge).
 
 ## What it is
 
