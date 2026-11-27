@@ -190,17 +190,14 @@ func TestARunIsRefusedWhenTheJobObjectCannotBeMadeOrAttached(t *testing.T) {
 func TestARunIsRefusedAndItsProcessStoppedWhenItCannotBeAssigned(t *testing.T) {
 	boom := errors.New("injected")
 	marker := filepath.Join(t.TempDir(), "ran")
-	var pid uint32
-	swap(t, &assignToJob, func(_, process windows.Handle) error {
-		pid, _ = windows.GetProcessId(process)
-		return boom
-	})
+	swap(t, &assignToJob, func(_, _ windows.Handle) error { return boom })
 	cmd := exec.Command(cmdExe(), "/D", "/C", "echo x>"+marker) //nolint:gosec,noctx // a test
 	g, err := start(cmd)
 	if g != nil || !errors.Is(err, boom) || !strings.Contains(err.Error(), "put the process in the job object") {
 		t.Fatalf("group %v, error %v", g, err)
 	}
-	if pid == 0 || cmd.ProcessState == nil || alive(pid) {
+	pid := uint32(cmd.Process.Pid) //nolint:gosec // a process id
+	if cmd.ProcessState == nil || alive(pid) {
 		t.Errorf("the suspended process %d was not stopped (state %v)", pid, cmd.ProcessState)
 	}
 	time.Sleep(time.Second)
