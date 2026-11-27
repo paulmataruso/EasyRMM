@@ -17,7 +17,7 @@ if (-not $Root) { $Root = Join-Path $repo 'server/internal/winmod' }
 . (Join-Path $PSScriptRoot 'winmod-ast/WinmodCommands.ps1')
 
 Write-Host "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
-$missing = @($RequireModules | Where-Object { -not (Get-Module -ListAvailable -Name $_) })
+$missing = @($RequireModules | Where-Object { -not (Test-WinmodModuleAvailable $_) })
 if ($missing.Count -gt 0) { Write-Host "required module(s) not installed: $($missing -join ', ')"; exit 1 }
 Import-WinmodCheckModules (@('GroupPolicy', 'ActiveDirectory', 'DnsServer', 'DhcpServer', 'ADCSAdministration', 'PrintManagement', 'Defender', 'BitLocker', 'SmbShare', 'NetSecurity', 'ScheduledTasks') + $RequireModules)
 foreach ($m in $RequireModules) {
