@@ -155,18 +155,44 @@ function Get-TargetLinks($t, [hashtable]$c) {
 }
 function Get-SiteLinks($t, [hashtable]$c) {
     $links = @()
-    try {
-        $gd = Get-GpmDomain $c
-        $som = $gd.Domain.GetSOM([string]$t.dn)
-        foreach ($l in @($som.GetGPOLinks())) {
-            $links += [ordered]@{
-                gpoId = ([string]$l.GPOID).ToLowerInvariant(); gpoName = [string]$l.GPODomain + '\' + [string]$l.GPOID
-                target = [string]$t.dn; targetName = [string]$t.name
-                kind = 'site'; enabled = ($l.Enabled -eq $true); enforced = ($l.Enforced -eq $true); order = [int]$l.SOMLinkOrder
-            }
+    $gd = Get-GpmDomain $c
+    $som = $gd.Domain.GetSOM([string]$t.dn)
+    $common = $c.Common
+    foreach ($l in @($som.GetGPOLinks())) {
+        $id = ([string]$l.GPOID).ToLowerInvariant()
+        $name = $id
+        try { $name = [string](Get-GPO -Guid $id @common).DisplayName } catch {}
+        $links += [ordered]@{
+            gpoId = $id; gpoName = $name
+            target = [string]$t.dn; targetName = [string]$t.name
+            kind = 'site'; enabled = ($l.Enabled -eq $true); enforced = ($l.Enforced -eq $true); order = [int]$l.SOMLinkOrder
         }
-    } catch {}
+    }
     return @{ links = $links; blocked = $false }
+}
+# Find an existing link on a site target via GPMC COM; returns the link object or $null.
+function Find-SiteLinkByGpo([string]$Dn, [string]$GpoId, [hashtable]$c) {
+    $gd = Get-GpmDomain $c
+    $som = $gd.Domain.GetSOM($Dn)
+    foreach ($l in @($som.GetGPOLinks())) {
+        if (([string]$l.GPOID).ToLowerInvariant() -eq $GpoId) { return $l }
+    }
+    return $null
+}
+# Get the current state of a link; works for domains, OUs and sites.
+function Get-CurrentLink([string]$Target, [string]$GpoId, [hashtable]$c) {
+    $kind = Get-TargetKind $Target $c
+    if ($kind -eq 'site') {
+        $l = Find-SiteLinkByGpo $Target $GpoId $c
+        if ($null -eq $l) { Stop-With 'not_found' 'That GPO is not linked there.' }
+        return [ordered]@{ Enabled = ($l.Enabled -eq $true); Enforced = ($l.Enforced -eq $true); Order = [int]$l.SOMLinkOrder }
+    }
+    $common = $c.Common
+    $inh = Get-GPInheritance -Target $Target @common
+    foreach ($lnk in @($inh.GpoLinks)) {
+        if (([string]$lnk.GpoId).ToLowerInvariant() -eq $GpoId) { return $lnk }
+    }
+    Stop-With 'not_found' 'That GPO is not linked there.'
 }
 # The staging folder lives in the agent's own protected folder under ProgramData; a folder older than two hours is a leftover.
 function Get-StagingBase {

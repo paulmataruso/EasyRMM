@@ -5,10 +5,7 @@ try {
     Assert-InDomain ([string]$p.target) $c
     $g = Get-GPO -Guid ([string]$p.id) @common
     Assert-Versions $g
-    $inh = Get-GPInheritance -Target ([string]$p.target) @common
-    $cur = $null
-    foreach ($l in @($inh.GpoLinks)) { if (([string]$l.GpoId).ToLowerInvariant() -eq ([string]$p.id)) { $cur = $l } }
-    if ($null -eq $cur) { Stop-With 'not_found' 'That GPO is not linked there.' }
+    $cur = Get-CurrentLink ([string]$p.target) ([string]$p.id) $c
     $vb = Get-Versions $g
     $backup = Save-GpoBackup $g 'link_enforced' $c
     $args2 = @{ Guid = [string]$p.id; Target = [string]$p.target }
