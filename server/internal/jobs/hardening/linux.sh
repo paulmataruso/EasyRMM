@@ -2643,7 +2643,7 @@ check_integrity() {
 			change "Leave $ci_d out of AIDE's checks"
 			todo "exclude $ci_d"
 		done
-		change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit; the next check reports whether it finished"
+		change "Build the baseline in a unit of its own (it starts again after a restart), outside the job's time limit; the next check reports whether it finished"
 		change "Check daily, with the distribution's timer where it has one"
 		todo baseline
 		todo daily
@@ -2670,17 +2670,25 @@ check_integrity() {
 		[ -s "$ci_f" ] && ci_db=yes
 	done
 	if [ "$ci_db" = yes ]; then set_ok integrity-aide-baseline present 'a baseline'; else
-		case $(unit_states "$AIDE_INIT_UNIT.service") in
+		ci_us=$(unit_states "$AIDE_INIT_UNIT.service")
+		# Queued at boot: enabled, and not started since this boot began.
+		ci_queued=no
+		case $ci_us in
+		enabled*) [ "$SYSTEMD_UP" = yes ] && [ "$(t 20 systemctl show -p InactiveExitTimestampMonotonic --value "$AIDE_INIT_UNIT.service" 2>/dev/null)" = 0 ] && ci_queued=yes ;;
+		esac
+		case $ci_us in
 		*' active')
 			set_bad integrity-aide-baseline 'being built' 'a baseline' 'An AIDE baseline (being built now)'
 			;;
 		*)
-			if [ "$SYSTEMD_UP" = yes ] && t 20 systemctl is-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1; then
+			if [ "$ci_queued" = yes ]; then
+				set_bad integrity-aide-baseline 'being built' 'a baseline' 'An AIDE baseline (being built now)'
+			elif [ "$SYSTEMD_UP" = yes ] && t 20 systemctl is-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1; then
 				set_bad integrity-aide-baseline 'last build failed' 'a baseline' "An AIDE baseline (the last build failed: journalctl -u $AIDE_INIT_UNIT)"
 			else
 				set_bad integrity-aide-baseline none 'a baseline' 'An AIDE baseline'
 			fi
-			change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit; the next check reports whether it finished"
+			change "Build the baseline in a unit of its own (it starts again after a restart), outside the job's time limit; the next check reports whether it finished"
 			todo baseline
 			;;
 		esac
@@ -5158,21 +5166,37 @@ apply_integrity() {
 		return
 	}
 	ai_sums=$MD/files/gen-sums
-	ai_cmd="$ai_cmd && for f in $ai_dbs; do [ ! -f \"\$f\" ] || printf '%s %s\\n' \"\$(sha256sum <\"\$f\" | cut -c1-64)\" \"\$f\"; done >$ai_sums.new && mv -f $ai_sums.new $ai_sums"
+	# A unit and the script it runs, which apply installs: a restart before
+	# the baseline is done starts it again (the unit runs only while no
+	# baseline exists). The database is renamed into place last (a rename is
+	# atomic), so that a half-written one is never taken for a baseline.
+	ai_sh=/usr/local/sbin/$AIDE_INIT_UNIT
+	ai_body="#!/bin/sh${nl}# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.${nl}set -e${nl}$ai_cmd${nl}for f in $ai_dbs; do [ ! -f \"\$f\" ] || printf '%s %s\\n' \"\$(sha256sum <\"\$f\" | cut -c1-64)\" \"\$f\"; done >$ai_sums.new${nl}mv -f $ai_sums.new $ai_sums$nl"
+	ai_unit="# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.${nl}[Unit]${nl}Description=EasyRMM hardening: the AIDE baseline${nl}ConditionPathExists=!/var/lib/aide/aide.db${nl}ConditionPathExists=!/var/lib/aide/aide.db.gz${nl}${nl}[Service]${nl}Type=oneshot${nl}TimeoutStartSec=infinity${nl}Nice=19${nl}IOSchedulingClass=idle${nl}ExecStart=$ai_sh${nl}${nl}[Install]${nl}WantedBy=multi-user.target$nl"
+	tx_push daemon_reload
+	if ! write_own "$ai_sh" 0755 "$ai_body" || ! write_own "/etc/systemd/system/$AIDE_INIT_UNIT.service" 0644 "$ai_unit"; then
+		abort 'the baseline could not be started (its unit could not be written)'
+		return
+	fi
+	daemon_reload
 	t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1
-	if ! t 60 systemd-run --unit="$AIDE_INIT_UNIT" --description='EasyRMM hardening: the AIDE baseline' \
-		--property=Nice=19 --property=IOSchedulingClass=idle sh -c "$ai_cmd" >/dev/null 2>&1; then
-		abort 'the baseline could not be started (systemd-run)'
+	# Not waited for: a oneshot unit's start returns when it is done.
+	if ! t 60 systemctl enable "$AIDE_INIT_UNIT.service" >/dev/null 2>&1 || ! t 60 systemctl start --no-block "$AIDE_INIT_UNIT.service" >/dev/null 2>&1; then
+		abort 'the baseline could not be started (systemctl)'
 		return
 	fi
 	did "Started building AIDE's baseline in $AIDE_INIT_UNIT, outside the job's time limit; the next check reports whether it finished"
 }
-# A baseline still being built is stopped: what it made so far is apply's
+# A baseline still being built is stopped (its unit is disabled, so that a
+# restart does not start it again): what it made so far is apply's
 # (GEN_STOPPED), and goes.
 undo_integrity_before() {
 	[ "$SYSTEMD_UP" = no ] && return 0
 	! unit_active "$AIDE_INIT_UNIT.service" || GEN_STOPPED=yes
 	{
+		# Disabled first, while its unit file is there; the file goes with
+		# the record.
+		[ ! -f "/etc/systemd/system/$AIDE_INIT_UNIT.service" ] || t 60 systemctl disable "$AIDE_INIT_UNIT.service"
 		t 120 systemctl stop "$AIDE_INIT_UNIT.service"
 		t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service"
 	} >/dev/null 2>&1
