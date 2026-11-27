@@ -78,6 +78,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/repairsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/scheduleapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
@@ -101,6 +102,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/recovery"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
+	"github.com/paulmataruso/easyrmm/server/internal/schedule"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
@@ -152,6 +154,8 @@ type Deps struct {
 	AgentFiles *agentfiles.Service
 	// Jobs is the script library and job delivery (ADR-0017).
 	Jobs *jobs.Service
+	// Schedule is scheduled script jobs (feature 11).
+	Schedule *schedule.Service
 	// Inventory stores devices' inventory and metrics (ADR-0018).
 	Inventory *inventory.Service
 	// Hardware stores devices' disk health (ADR-0065).
@@ -309,6 +313,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Compliance = engine.New(db, d.Jobs, auditLog, log)
 	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
 	d.Jobs.SetStepUp(sessions)
+	d.Schedule = schedule.New(db, auditLog, d.Jobs, authSvc, auth.DataScope, log)
 	if d.ComplianceFix, err = fix.New(db, d.Jobs, d.Compliance, auditLog, log); err != nil {
 		return nil, err
 	}
@@ -704,6 +709,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)
 	jobsapi.New(d.Jobs).Register(mux)
+	scheduleapi.New(d.Schedule, d.Sessions).Register(mux)
 	modreadapi.New(d.ModSnap).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	hardwareapi.New(d.Hardware).Register(mux)
@@ -894,6 +900,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	deps.JobKeys.SetHeld(hold.Held)
 	wg.Go(func() { deps.JobKeys.Run(ctx) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
+	wg.Go(func() { deps.Schedule.Run(ctx) })
 	wg.Go(func() { deps.Compliance.Run(ctx) })
 	wg.Go(func() { deps.ComplianceFix.Run(ctx) })
 	wg.Go(func() { deps.ComplianceAlerts.Run(ctx) })
