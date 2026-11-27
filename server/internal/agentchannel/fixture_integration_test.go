@@ -62,6 +62,7 @@ type fixtureOpts struct {
 	perSec   int
 	timing   agentchannel.Timing
 	held     func() bool
+	keyFor   func(ctx context.Context, device uuid.UUID, def ed25519.PrivateKey) (ed25519.PrivateKey, error)
 	fds      func() (uint64, uint64, bool)
 	claim    func(ctx context.Context, f *fixture, dev uuid.UUID, max int) (*agentproto.PollResponse, error)
 }
@@ -92,6 +93,11 @@ func newFixture(t *testing.T, o fixtureOpts) *fixture {
 			f.mu.Unlock()
 			return &agentproto.LogAck{Seq: int64(len(b.Records))}, nil
 		},
+	}
+	if o.keyFor != nil {
+		opt.KeyFor = func(ctx context.Context, device uuid.UUID) (ed25519.PrivateKey, error) {
+			return o.keyFor(ctx, device, priv)
+		}
 	}
 	f.hub = agentchannel.New(opt)
 	f.svc.OnDeviceGone(func(id uuid.UUID) { f.hub.Close(id, agentproto.ClosingRemoved) })

@@ -111,6 +111,12 @@ type Ring struct {
 	version string
 	started time.Time
 	held    func() bool
+	// host is a ring made for a host command: nothing loaded, nothing recorded.
+	host bool
+	// guard says whether the updater holds the server or an upgrade is under
+	// way; changes to the ring check it inside the ring's lock.
+	guard   func() error
+	onFloor func(from, to int64)
 
 	mu         sync.RWMutex
 	keys       []Key // ascending by generation
@@ -311,10 +317,40 @@ func (r *Ring) Reload(ctx context.Context) error {
 		return err
 	}
 	r.mu.Lock()
+	before, had := int64(0), len(r.keys) > 0
+	if had {
+		before = floorOf(r.keys).Generation
+	}
 	r.keys, r.loadedAt, r.lastReload = keys, r.now(), r.now()
 	r.unknown = map[string]time.Time{}
+	after := floorOf(keys).Generation
+	f := r.onFloor
 	r.mu.Unlock()
+	// The floor moved: every server sees it, the one that moved it at once and
+	// the others with their next reload (ADR-0057, ADR-0059 "closing").
+	if had && before != after && f != nil {
+		f(before, after)
+	}
 	return nil
+}
+
+// floorOf is the newest key that has been cut over to, or the oldest.
+func floorOf(keys []Key) Key {
+	for i := len(keys) - 1; i >= 0; i-- {
+		if keys[i].CutOverAt != nil {
+			return keys[i]
+		}
+	}
+	return keys[0]
+}
+
+// OnFloorChange sets what is told, with the old and the new floor generation,
+// when a reload finds the floor changed. The agent channel closes its
+// connections with "refresh" on it. f must not block.
+func (r *Ring) OnFloorChange(f func(from, to int64)) {
+	r.mu.Lock()
+	r.onFloor = f
+	r.mu.Unlock()
 }
 
 // recordInstance writes this server's row in server_instances.
@@ -376,6 +412,11 @@ func (r *Ring) Run(ctx context.Context) {
 			if err := r.Purge(ctx); err != nil && ctx.Err() == nil {
 				r.log.Error("jobkeys: purging failed", "error", err)
 			}
+			// A seed no device may still trust is deleted (ADR-0057); refused
+			// while the updater holds the server, and tried again next hour.
+			if _, err := r.SweepSeeds(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ErrHeld) && !errors.Is(err, ErrUpgrading) {
+				r.log.Error("jobkeys: deleting unneeded seeds failed", "error", err)
+			}
 		}
 	}
 }
@@ -425,12 +466,7 @@ func (r *Ring) Newest() Key {
 func (r *Ring) Floor() Key {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for i := len(r.keys) - 1; i >= 0; i-- {
-		if r.keys[i].CutOverAt != nil {
-			return r.keys[i]
-		}
-	}
-	return r.keys[0]
+	return floorOf(r.keys)
 }
 
 // ByPublic finds a key by its public key.

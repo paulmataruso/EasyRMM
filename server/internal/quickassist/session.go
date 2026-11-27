@@ -122,7 +122,13 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req EnrollRequest) 
 	if err != nil {
 		return nil, ErrTicket
 	}
-	tk, err := qaticket.Parse(bytes.NewReader(raw), int64(len(raw)), s.PublicKey(), s.now())
+	var tk qaticket.Ticket
+	err = qaticket.ErrNoTrailer
+	for _, pub := range s.verifyKeys() {
+		if tk, err = qaticket.Parse(bytes.NewReader(raw), int64(len(raw)), pub, s.now()); err == nil {
+			break
+		}
+	}
 	if err != nil || tk.Server != s.publicURL {
 		return nil, ErrTicket
 	}
@@ -203,7 +209,13 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req EnrollRequest) 
 			sid, l.ID, l.OrganizationID, did, codeHash(sid, req.Code), f.Elevated, now, ip.String(), now.Add(MaxSessionLife)); err != nil {
 			return err
 		}
-		res = &EnrollResult{JobKey: agentproto.EncodeKey(s.PublicKey()), DeviceID: did.String(), SessionID: sid.String(), HeartbeatSeconds: HeartbeatSeconds, Organization: l.orgName}
+		// The runner is given the newest key, and that is the key it is
+		// signed for until it reports what it trusts (ADR-0057).
+		_, givenPub, givenGen := s.signing()
+		if _, err := tx.Exec(ctx, `UPDATE devices SET job_key_given_generation = $2 WHERE id = $1`, did, givenGen); err != nil {
+			return err
+		}
+		res = &EnrollResult{JobKey: agentproto.EncodeKey(givenPub), DeviceID: did.String(), SessionID: sid.String(), HeartbeatSeconds: HeartbeatSeconds, Organization: l.orgName}
 		return s.audit.Write(ctx, tx, audit.Event{
 			Actor:  audit.Actor{Type: audit.ActorAgent, ID: did, Label: f.Hostname, SourceIP: ip},
 			Action: ActionRequest, OrganizationID: l.OrganizationID, SiteID: siteID, DeviceID: did,

@@ -81,6 +81,11 @@ type Options struct {
 	Enabled bool
 	// Key signs every frame the server sends: the job key.
 	Key ed25519.PrivateKey
+	// KeyFor, when set, looks up the key that signs each message for a
+	// device, instead of Key (ADR-0057, ADR-0059 "What depends on this"): the
+	// key its device is signed for changes with a rotation, and a connection
+	// outlives it. A failure drops the message and closes the connection.
+	KeyFor func(ctx context.Context, device uuid.UUID) (ed25519.PrivateKey, error)
 	// Instance is the ID this server process drew at its start.
 	Instance string
 	// MaxConns is the most connections at once; 0 means the default.
@@ -367,6 +372,16 @@ func (h *Hub) Close(device uuid.UUID, reason string) {
 	for _, c := range cs {
 		c.closeWith(reason)
 	}
+}
+
+// Refresh closes every connection with a closing message of reason refresh,
+// so that each agent reconnects, which the floor's change makes it do
+// (ADR-0057): the new connection is signed for the key the device now trusts.
+func (h *Hub) Refresh() {
+	if !h.Enabled() {
+		return
+	}
+	h.closeAll(agentproto.ClosingRefresh)
 }
 
 // closeAll closes every connection with reason.

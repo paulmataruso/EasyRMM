@@ -25,6 +25,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/trust"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // The real agent's key store and instruction log (agent/trust) against the
@@ -157,5 +158,73 @@ func TestAgentFollowsTheRingAndTheTripwiresShow(t *testing.T) {
 	f.runJob("after")
 	if f.count(`SELECT count(*) FROM device_instruction_flags WHERE device_id = $1`, f.deviceID) != 0 {
 		t.Error("a job after the key came back was flagged")
+	}
+}
+
+// The real agent follows a planned rotation (ADR-0057 slice 2): the hand-over
+// in a heartbeat answer, the new key signing what it runs, the cut-over once
+// the rotation is finished, and the old key dropped.
+func TestAgentFollowsAPlannedRotationAndACompromise(t *testing.T) {
+	f := newChanFixture(t, false)
+	a := f.startKeyAgent()
+	ring := f.h.deps.JobKeys
+	first := ring.Newest()
+	eventuallyT(t, 20*time.Second, "the agent's report is stored", func() bool {
+		return f.count(`SELECT count(*) FROM devices WHERE id = $1 AND job_keys_report IS NOT NULL`, f.deviceID) == 1
+	})
+
+	started, err := ring.Start(context.Background(), jobkeys.ReasonPlanned, jobkeys.HostBy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := started.Key
+	eventuallyT(t, 30*time.Second, "the agent trusts both keys", func() bool { return len(a.ks.Report()) == 2 })
+	// Both are trusted and, once the server has the report, it signs with the newest.
+	eventuallyT(t, 30*time.Second, "the server has the report of both keys", func() bool {
+		return f.count(`SELECT count(*) FROM devices WHERE id = $1 AND jsonb_array_length(job_keys_report) = 2`, f.deviceID) == 1
+	})
+	f.runJob("during the overlap")
+	if latest := a.il.Latest(5); len(latest) == 0 || latest[len(latest)-1].Signer != second.Fingerprint() {
+		t.Errorf("the job was not signed with the new key: %+v", latest)
+	}
+	if f.count(`SELECT count(*) FROM issued_instructions WHERE device_id = $1 AND kind = 'handover' AND generation = $2`, f.deviceID, first.Generation) == 0 {
+		t.Error("the hand-over was not recorded")
+	}
+
+	if _, err := ring.Finish(context.Background(), jobkeys.FinishInput{BackupTaken: true, Now: true, By: jobkeys.HostBy()}); err != nil {
+		t.Fatal(err)
+	}
+	eventuallyT(t, 30*time.Second, "the agent dropped the old key", func() bool {
+		r := a.ks.Report()
+		return len(r) == 1 && r[0].Key == second.Encoded()
+	})
+	eventuallyT(t, 30*time.Second, "the server has the report of one key", func() bool {
+		return f.count(`SELECT count(*) FROM devices WHERE id = $1 AND jsonb_array_length(job_keys_report) = 1`, f.deviceID) == 1
+	})
+	f.runJob("after the cut-over")
+	if f.count(`SELECT count(*) FROM device_instruction_flags WHERE device_id = $1`, f.deviceID) != 0 {
+		t.Error("a job after the rotation was flagged")
+	}
+	// Nothing needs the first key any more: its seed goes.
+	eventuallyT(t, 30*time.Second, "the first key's seed is deleted", func() bool {
+		n, err := ring.SweepSeeds(context.Background())
+		return err == nil && (n == 1 || !ring.Keys()[0].Held())
+	})
+
+	// A compromise: handed over and cut over to at once.
+	comp, err := ring.Start(context.Background(), jobkeys.ReasonCompromised, jobkeys.HostBy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventuallyT(t, 40*time.Second, "the agent trusts only the new key", func() bool {
+		r := a.ks.Report()
+		return len(r) == 1 && r[0].Key == comp.Key.Encoded()
+	})
+	eventuallyT(t, 30*time.Second, "the server has the report of the new key", func() bool {
+		return f.count(`SELECT count(*) FROM devices WHERE id = $1 AND jsonb_array_length(job_keys_report) = 1`, f.deviceID) == 1
+	})
+	f.runJob("after the compromise")
+	if f.count(`SELECT count(*) FROM device_instruction_flags WHERE device_id = $1`, f.deviceID) != 0 {
+		t.Error("a job after the compromise was flagged")
 	}
 }

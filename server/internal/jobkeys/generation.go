@@ -23,8 +23,14 @@ import (
 // under the ring's lock.
 func (r *Ring) NextGeneration(ctx context.Context, tx pgx.Tx, now time.Time) (int64, error) {
 	next := now.UnixMilli()
-	if highest := r.Newest().Generation + 1; highest > next {
-		next = highest
+	// The table's highest, read inside the lock: another server may have made
+	// a key this server has not loaded yet.
+	var top *int64
+	if err := tx.QueryRow(ctx, `SELECT max(generation) FROM job_keys`).Scan(&top); err != nil {
+		return 0, err
+	}
+	if top != nil && *top+1 > next {
+		next = *top + 1
 	}
 	bound := now.Add(agentproto.MaxSkew).UnixMilli()
 	var reported *int64

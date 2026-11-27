@@ -54,8 +54,10 @@ func run(args []string) int {
 		return tlsCommand(args[1:], os.Stdout, os.Stderr)
 	case "incident":
 		return incidentCommand(args[1:], os.Stdout, os.Stderr)
+	case "job-key":
+		return jobKeyCommand(args[1:], os.Stdout, os.Stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, tls, incident, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, tls, incident, job-key, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -263,6 +265,31 @@ func healthcheck() int {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintln(os.Stderr, "not ready:", resp.Status)
+		return 1
+	}
+	return 0
+}
+
+// jobKeyCommand rotates the server's job key from the host (ADR-0057):
+//
+//	docker compose exec server easyrmm-server job-key rotate --reason planned
+func jobKeyCommand(args []string, stdout, stderr io.Writer) int {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error:\n%v\n", err)
+		return 1
+	}
+	log := app.NewLogger(cfg.LogFormat, "warn")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := app.JobKey(ctx, cfg, log, args, stdout); err != nil {
+		if errors.Is(err, app.ErrJobKeyUsage) {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		fmt.Fprintf(stderr, "job-key: %v\n", err)
 		return 1
 	}
 	return 0
