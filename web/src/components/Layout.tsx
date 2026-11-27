@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { lazyPage, PageFrame } from "../lib/lazyPage";
-import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, LifeBuoy, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, CalendarClock, FileBarChart, FileCode2, LayoutDashboard, LifeBuoy, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -160,6 +160,9 @@ export function AppLayout() {
   }
   if (can("script.view")) {
     nav.push({ to: "/scripts", label: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> });
+  }
+  if (can("script.run")) {
+    nav.push({ to: "/scheduled", label: "Scheduled", icon: <CalendarClock className="size-4" aria-hidden /> });
   }
   if (can("job.view")) {
     nav.push({ to: "/jobs", label: "Jobs", icon: <ListChecks className="size-4" aria-hidden /> });

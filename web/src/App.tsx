@@ -47,6 +47,7 @@ const RemoteSessionPage = page(() => import("./pages/devices/RemoteSessionPage")
 const ScriptsPage = page(() => import("./pages/scripts/ScriptsPage").then((m) => m.ScriptsPage));
 const ScriptDetailPage = page(() => import("./pages/scripts/ScriptDetailPage").then((m) => m.ScriptDetailPage));
 const ScriptFormPage = page(() => import("./pages/scripts/ScriptFormPage").then((m) => m.ScriptFormPage));
+const ScheduledTasksPage = page(() => import("./pages/scheduled/ScheduledTasksPage").then((m) => m.ScheduledTasksPage));
 const JobsPage = page(() => import("./pages/jobs/JobsPage").then((m) => m.JobsPage));
 const AlertsPage = page(() => import("./pages/alerts/AlertsPage").then((m) => m.AlertsPage));
 const FromEasyPatchPage = page(() => import("./pages/patching/FromEasyPatch").then((m) => m.FromEasyPatchPage));
@@ -173,6 +174,7 @@ export function App() {
         <Route path="devices/approvals" element={<ApprovalsPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />
+        <Route path="scheduled" element={<ScheduledTasksPage />} />
         <Route path="scripts" element={<ScriptsPage />} />
         <Route path="scripts/new" element={<ScriptFormPage />} />
         <Route path="scripts/:id" element={<ScriptDetailPage />} />
