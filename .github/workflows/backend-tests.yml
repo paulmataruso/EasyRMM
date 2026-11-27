@@ -37,7 +37,7 @@ jobs:
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
           koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
-          -s sh internal/vmtest/runner.sh server/internal/jobs/hardening/linux.sh
+          -s sh internal/vmtest/runner.sh server/internal/jobs/hardening/linux.sh server/internal/jobs/logmeasure/measure_logs.sh
       - name: shellcheck setup.sh and its mail options
         run: shellcheck -x deploy/scripts/setup.sh deploy/scripts/setup-mail.sh deploy/scripts/setup-mail_test.sh
       # Workflow files are code too: actionlint (with shellcheck) catches
@@ -86,7 +86,7 @@ jobs:
       # The software and hardening scripts' functions, and the ownership
       # reader's (ADR-0054), as the runner's administrator.
       - name: Windows software and hardening scripts
-        run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/ ./internal/winpolicy/
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/ ./server/internal/jobs/logmeasure/ ./internal/winpolicy/
       # ADR-0073: defender.status's pinned script runs in Windows PowerShell on
       # stdin params, and its output is decoded by the catalogue's schema.
       # The runner's Defender may be in any state: the test logs what it says
