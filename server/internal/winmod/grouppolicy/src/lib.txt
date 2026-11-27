@@ -37,10 +37,11 @@ function Assert-NotDefault([string]$Id, [string]$What) {
     if (Test-DefaultPolicy $Id) { Stop-With 'protected_policy' (Format-Text 'A Default policy is never {0} here.' $What '') }
 }
 function Import-GroupPolicyModule {
-    if (-not (Get-Module -ListAvailable -Name GroupPolicy)) {
+    # Import by name and nothing else: Get-Module -ListAvailable scans every module folder on the computer first (seconds).
+    Import-Module -Name GroupPolicy -ErrorAction SilentlyContinue
+    if ($null -eq (Get-Module -Name GroupPolicy)) {
         Stop-With 'module_missing' 'The GroupPolicy PowerShell module is not installed on this computer. Install the Group Policy Management feature (GPMC).'
     }
-    Import-Module GroupPolicy
 }
 # The controller this script runs on: every cmdlet addresses it and its domain by name, so a change never lands on another one.
 function Get-Context {
@@ -105,28 +106,35 @@ function Get-DirSearcher([string]$Base, [hashtable]$c) {
     return $s
 }
 # Every container a GPO can be linked to: the domain, its OUs and the forest's sites, by name, in a fixed order.
-function Get-LinkTargets([hashtable]$c) {
+# The list is built from plain rows (no directory needed) so it runs the same on a runner. The result is an array made by
+# ToArray(): in Windows PowerShell 5.1, @(<List[object]>) of hashtables throws "Argument types do not match".
+function Build-LinkTargetList([hashtable]$c, $ouRows, $siteNames, [string]$ConfigDn) {
     $list = New-Object System.Collections.Generic.List[object]
     $list.Add(@{ dn = [string]$c.DomainDn; name = [string]$c.Domain; kind = 'domain' })
+    foreach ($o in ($ouRows | Sort-Object { $_.dn })) {
+        $list.Add(@{ dn = [string]$o.dn; name = [string]$o.name; kind = (Get-TargetKind ([string]$o.dn) $c) })
+    }
+    foreach ($site in @($siteNames | Sort-Object)) {
+        $list.Add(@{ dn = (Join-Text (Join-Text 'CN=' ([string]$site)) (Join-Text ',CN=Sites,' $ConfigDn)); name = [string]$site; kind = 'site' })
+    }
+    return $list.ToArray()
+}
+function Get-LinkTargets([hashtable]$c) {
     $s = Get-DirSearcher ([string]$c.DomainDn) $c
     $s.Filter = '(objectCategory=organizationalUnit)'
     [void]$s.PropertiesToLoad.Add('distinguishedName')
     [void]$s.PropertiesToLoad.Add('name')
-    $ous = New-Object System.Collections.Generic.List[object]
+    $rows = New-Object System.Collections.Generic.List[object]
     $found = $s.FindAll()
     try {
         foreach ($r in $found) {
-            $ous.Add(@{ dn = [string]$r.Properties['distinguishedname'][0]; name = [string]$r.Properties['name'][0]; kind = (Get-TargetKind ([string]$r.Properties['distinguishedname'][0]) $c) })
+            $rows.Add(@{ dn = [string]$r.Properties['distinguishedname'][0]; name = [string]$r.Properties['name'][0] })
         }
     } finally { $found.Dispose() }
-    foreach ($o in ($ous | Sort-Object { $_.dn })) { $list.Add($o) }
     $rootDse = New-Object System.DirectoryServices.DirectoryEntry((Join-Text (Join-Text 'LDAP://' ([string]$c.Server)) '/RootDSE'))
     $config = [string]$rootDse.Properties['configurationNamingContext'][0]
-    $sites = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name } | Sort-Object)
-    foreach ($site in $sites) {
-        $list.Add(@{ dn = (Join-Text (Join-Text 'CN=' $site) (Join-Text ',CN=Sites,' $config)); name = $site; kind = 'site' })
-    }
-    return @($list)
+    $sites = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name })
+    return (Build-LinkTargetList $c $rows.ToArray() $sites $config)
 }
 function Get-TargetLinks($t, [hashtable]$c) {
     $common = $c.Common
@@ -185,6 +193,11 @@ function Write-Changed([string]$Summary, $Before, $After, $G, $Backup, $Vb, $Va)
 function Stop-ForError($err) {
     $t = $err.Exception.GetType().Name
     $m = [string]$err.Exception.Message
+    # A command called with a parameter it does not have, or a value it refuses, is a script error, not a missing GPO: its
+    # message ("A parameter cannot be found ...") must not be read as not_found.
+    if ($t -match 'ParameterBinding' -or [string]$err.FullyQualifiedErrorId -match 'NamedParameterNotFound|AmbiguousParameter|ParameterArgumentValidation') {
+        Stop-With 'command_failed' (Join-Text 'The action failed: a command in the script was called with a parameter or value it does not accept: ' $t)
+    }
     if ($m -match 'already exists|already linked') { Stop-With 'conflict' 'A GPO or a link with that name or target already exists.' }
     if ($m -match 'cannot be found|was not found|does not exist|No GPO|not found') { Stop-With 'not_found' 'The domain has no such GPO or container.' }
     if ($m -match 'denied|not authorized|authoriz|Access is denied|0x80070005') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }

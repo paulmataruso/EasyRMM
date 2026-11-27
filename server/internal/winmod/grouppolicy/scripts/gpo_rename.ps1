@@ -42,10 +42,11 @@ function Assert-NotDefault([string]$fn_Id, [string]$fn_What) {
     if (Test-DefaultPolicy $fn_Id) { Stop-With 'protected_policy' (Format-Text 'A Default policy is never {0} here.' $fn_What '') }
 }
 function Import-GroupPolicyModule {
-    if (-not (Get-Module -ListAvailable -Name GroupPolicy)) {
+    # Import by name and nothing else: Get-Module -ListAvailable scans every module folder on the computer first (seconds).
+    Import-Module -Name GroupPolicy -ErrorAction SilentlyContinue
+    if ($null -eq (Get-Module -Name GroupPolicy)) {
         Stop-With 'module_missing' 'The GroupPolicy PowerShell module is not installed on this computer. Install the Group Policy Management feature (GPMC).'
     }
-    Import-Module GroupPolicy
 }
 # The controller this script runs on: every cmdlet addresses it and its domain by name, so a change never lands on another one.
 function Get-Context {
@@ -110,28 +111,35 @@ function Get-DirSearcher([string]$fn_Base, [hashtable]$fn_c) {
     return $fn_s
 }
 # Every container a GPO can be linked to: the domain, its OUs and the forest's sites, by name, in a fixed order.
-function Get-LinkTargets([hashtable]$fn_c) {
+# The list is built from plain rows (no directory needed) so it runs the same on a runner. The result is an array made by
+# ToArray(): in Windows PowerShell 5.1, @(<List[object]>) of hashtables throws "Argument types do not match".
+function Build-LinkTargetList([hashtable]$fn_c, $fn_ouRows, $fn_siteNames, [string]$fn_ConfigDn) {
     $fn_list = New-Object System.Collections.Generic.List[object]
     $fn_list.Add(@{ dn = [string]$fn_c.DomainDn; name = [string]$fn_c.Domain; kind = 'domain' })
+    foreach ($fn_o in ($fn_ouRows | Sort-Object { $_.dn })) {
+        $fn_list.Add(@{ dn = [string]$fn_o.dn; name = [string]$fn_o.name; kind = (Get-TargetKind ([string]$fn_o.dn) $fn_c) })
+    }
+    foreach ($fn_site in @($fn_siteNames | Sort-Object)) {
+        $fn_list.Add(@{ dn = (Join-Text (Join-Text 'CN=' ([string]$fn_site)) (Join-Text ',CN=Sites,' $fn_ConfigDn)); name = [string]$fn_site; kind = 'site' })
+    }
+    return $fn_list.ToArray()
+}
+function Get-LinkTargets([hashtable]$fn_c) {
     $fn_s = Get-DirSearcher ([string]$fn_c.DomainDn) $fn_c
     $fn_s.Filter = '(objectCategory=organizationalUnit)'
     [void]$fn_s.PropertiesToLoad.Add('distinguishedName')
     [void]$fn_s.PropertiesToLoad.Add('name')
-    $fn_ous = New-Object System.Collections.Generic.List[object]
+    $fn_rows = New-Object System.Collections.Generic.List[object]
     $fn_found = $fn_s.FindAll()
     try {
         foreach ($fn_r in $fn_found) {
-            $fn_ous.Add(@{ dn = [string]$fn_r.Properties['distinguishedname'][0]; name = [string]$fn_r.Properties['name'][0]; kind = (Get-TargetKind ([string]$fn_r.Properties['distinguishedname'][0]) $fn_c) })
+            $fn_rows.Add(@{ dn = [string]$fn_r.Properties['distinguishedname'][0]; name = [string]$fn_r.Properties['name'][0] })
         }
     } finally { $fn_found.Dispose() }
-    foreach ($fn_o in ($fn_ous | Sort-Object { $_.dn })) { $fn_list.Add($fn_o) }
     $fn_rootDse = New-Object System.DirectoryServices.DirectoryEntry((Join-Text (Join-Text 'LDAP://' ([string]$fn_c.Server)) '/RootDSE'))
     $fn_config = [string]$fn_rootDse.Properties['configurationNamingContext'][0]
-    $fn_sites = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name } | Sort-Object)
-    foreach ($fn_site in $fn_sites) {
-        $fn_list.Add(@{ dn = (Join-Text (Join-Text 'CN=' $fn_site) (Join-Text ',CN=Sites,' $fn_config)); name = $fn_site; kind = 'site' })
-    }
-    return @($fn_list)
+    $fn_sites = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name })
+    return (Build-LinkTargetList $fn_c $fn_rows.ToArray() $fn_sites $fn_config)
 }
 function Get-TargetLinks($fn_t, [hashtable]$fn_c) {
     $fn_common = $fn_c.Common
@@ -190,6 +198,11 @@ function Write-Changed([string]$fn_Summary, $fn_Before, $fn_After, $fn_G, $fn_Ba
 function Stop-ForError($fn_err) {
     $fn_t = $fn_err.Exception.GetType().Name
     $fn_m = [string]$fn_err.Exception.Message
+    # A command called with a parameter it does not have, or a value it refuses, is a script error, not a missing GPO: its
+    # message ("A parameter cannot be found ...") must not be read as not_found.
+    if ($fn_t -match 'ParameterBinding' -or [string]$fn_err.FullyQualifiedErrorId -match 'NamedParameterNotFound|AmbiguousParameter|ParameterArgumentValidation') {
+        Stop-With 'command_failed' (Join-Text 'The action failed: a command in the script was called with a parameter or value it does not accept: ' $fn_t)
+    }
     if ($fn_m -match 'already exists|already linked') { Stop-With 'conflict' 'A GPO or a link with that name or target already exists.' }
     if ($fn_m -match 'cannot be found|was not found|does not exist|No GPO|not found') { Stop-With 'not_found' 'The domain has no such GPO or container.' }
     if ($fn_m -match 'denied|not authorized|authoriz|Access is denied|0x80070005') { Stop-With 'access_denied' 'The domain refused the change: this computer is not allowed to make it (ADR-0083 section 1).' }
@@ -257,7 +270,7 @@ try {
     $vb = Get-Versions $g
     $backup = Save-GpoBackup $g 'gpo_rename' $c
     $old = [string]$g.DisplayName
-    $new = Rename-GPO -Guid ([string]$p.id) -TargetName ([string]$p.newName) -PassThru @common
+    $new = Rename-GPO -Guid ([string]$p.id) -TargetName ([string]$p.newName) @common
     Write-Changed (Format-Text 'Renamed the GPO {0} to {1}.' $old ([string]$new.DisplayName)) ([ordered]@{ name = $old }) ([ordered]@{ name = [string]$new.DisplayName }) $new $backup $vb (Get-Versions $new)
 } catch {
     Stop-ForError $_
