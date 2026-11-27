@@ -29,6 +29,17 @@ A policy watches one condition on the devices it covers:
   sent once a minute (see [Inventory and health](inventory.md)). A policy
   needs at least half its minutes measured before it raises an alert, so a
   device that has just come back does not trip on one reading.
+* **A device's heartbeat interval** (30 seconds to 5 minutes, 60 by default;
+  set at the platform, an organization, a site or a device, ADR-0058) sets
+  the pace of all of this. A device counts as checking in for three of its own
+  intervals, so at 5 minutes it counts as offline only after 15, and a shorter
+  Offline policy waits that long. It sends one measurement per interval: a
+  window is never shorter than 1.2 intervals, and a policy opens with at least
+  half the measurements its window expects at that interval, so at 5 minutes a
+  15-minute processor policy judges 3 measurements, and needs 2. An alert
+  policy's page lists the devices that wait longer than its minutes because of
+  their interval, with how long. At 60 seconds nothing changes, except that a
+  one-minute window judges 72 seconds.
 * A device that stops sending measurements keeps its processor, memory and
   disk alerts as they are. Whether it is offline is the offline policy's
   business.

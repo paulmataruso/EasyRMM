@@ -240,3 +240,40 @@ func TestMoveEndsDeviceSettings(t *testing.T) {
 		t.Fatalf("a move to another site left %d rows", n)
 	}
 }
+
+// An alert policy's page lists the devices whose interval makes it wait
+// longer (ADR-0058).
+func TestPolicySlowDevicesAPI(t *testing.T) {
+	f := newMoveFixture(t)
+	slow := f.device(t, "slow-01", f.acme, f.hq, &f.servers)
+	f.device(t, "quick-01", f.acme, f.hq, &f.servers)
+	f.admin.expect(http.StatusOK, "PUT", "/api/v1/devices/"+slow+"/agent-settings"+settingKey, map[string]any{"value": 300}, nil)
+	if err := f.h.db.DB.InTx(context.Background(), database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `UPDATE devices SET agent_heartbeat_seconds = 300 WHERE id = $1`, slow)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var p idObj
+	f.admin.expect(http.StatusCreated, "POST", "/api/v1/alert-policies", map[string]any{
+		"name": "Gone quiet", "kind": "offline", "minutes": 10, "severity": "warning", "enabled": true}, &p)
+	var out struct {
+		Items []struct {
+			DeviceID         string `json:"deviceId"`
+			Name             string `json:"name"`
+			HeartbeatSeconds int    `json:"heartbeatSeconds"`
+			WaitMinutes      int    `json:"waitMinutes"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	f.admin.expect(http.StatusOK, "GET", "/api/v1/alert-policies/"+p.ID+"/slow-devices", nil, &out)
+	if out.Total != 1 || len(out.Items) != 1 || out.Items[0].DeviceID != slow || out.Items[0].WaitMinutes != 15 || out.Items[0].HeartbeatSeconds != 300 {
+		t.Fatalf("slow devices: %+v", out)
+	}
+	wantStatus(t, f.admin.do("GET", "/api/v1/alert-policies/00000000-0000-0000-0000-000000000001/slow-devices", nil), http.StatusNotFound, "not_found")
+	other := f.user(t, "gina@globex.example", "org_admin", map[string]any{"organizationId": f.globex})
+	other.expect(http.StatusOK, "GET", "/api/v1/alert-policies/"+p.ID+"/slow-devices", nil, &out)
+	if out.Total != 0 {
+		t.Fatalf("another organization sees %d of Acme's devices", out.Total)
+	}
+}

@@ -89,7 +89,7 @@ test("an Offline policy's page lists the device that waits longer, loading by it
   await page.getByRole("button", { name: "Edit Interval offline" }).click();
   const dialog = page.getByRole("dialog", { name: "Edit Interval offline" });
   const section = dialog.getByRole("region", { name: "Devices that wait longer" });
-  await expect(section).toContainText("wait longer than 10 minutes");
+  await expect(section).toContainText(/waits? longer than 10 minutes/);
   await expect(section.getByRole("link", { name })).toBeVisible();
   await expect(section).toContainText("checks in every 5 minutes, waits 15 minutes");
   await expect(dialog.getByRole("button", { name: /refresh|read now/i })).toHaveCount(0);
