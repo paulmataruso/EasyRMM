@@ -138,6 +138,11 @@ function Get-LinkTargets([hashtable]$c) {
 }
 function Get-TargetLinks($t, [hashtable]$c) {
     $common = $c.Common
+    # Get-GPInheritance accepts domains and OUs but not sites; use the GPMC
+    # COM SOM object for site targets.
+    if ([string]$t.kind -eq 'site') {
+        return (Get-SiteLinks $t $c)
+    }
     $inh = Get-GPInheritance -Target ([string]$t.dn) @common
     $links = @()
     foreach ($l in @($inh.GpoLinks)) {
@@ -147,6 +152,21 @@ function Get-TargetLinks($t, [hashtable]$c) {
         }
     }
     return @{ links = $links; blocked = ($inh.GpoInheritanceBlocked -eq $true) }
+}
+function Get-SiteLinks($t, [hashtable]$c) {
+    $links = @()
+    try {
+        $gd = Get-GpmDomain $c
+        $som = $gd.Domain.GetSOM([string]$t.dn)
+        foreach ($l in @($som.GetGPOLinks())) {
+            $links += [ordered]@{
+                gpoId = ([string]$l.GPOID).ToLowerInvariant(); gpoName = [string]$l.GPODomain + '\' + [string]$l.GPOID
+                target = [string]$t.dn; targetName = [string]$t.name
+                kind = 'site'; enabled = ($l.Enabled -eq $true); enforced = ($l.Enforced -eq $true); order = [int]$l.SOMLinkOrder
+            }
+        }
+    } catch {}
+    return @{ links = $links; blocked = $false }
 }
 # The staging folder lives in the agent's own protected folder under ProgramData; a folder older than two hours is a leftover.
 function Get-StagingBase {

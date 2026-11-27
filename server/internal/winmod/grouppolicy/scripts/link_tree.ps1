@@ -143,6 +143,11 @@ function Get-LinkTargets([hashtable]$fn_c) {
 }
 function Get-TargetLinks($fn_t, [hashtable]$fn_c) {
     $fn_common = $fn_c.Common
+    # Get-GPInheritance accepts domains and OUs but not sites; use the GPMC
+    # COM SOM object for site targets.
+    if ([string]$fn_t.kind -eq 'site') {
+        return (Get-SiteLinks $fn_t $fn_c)
+    }
     $fn_inh = Get-GPInheritance -Target ([string]$fn_t.dn) @fn_common
     $fn_links = @()
     foreach ($fn_l in @($fn_inh.GpoLinks)) {
@@ -152,6 +157,21 @@ function Get-TargetLinks($fn_t, [hashtable]$fn_c) {
         }
     }
     return @{ links = $fn_links; blocked = ($fn_inh.GpoInheritanceBlocked -eq $true) }
+}
+function Get-SiteLinks($fn_t, [hashtable]$fn_c) {
+    $fn_links = @()
+    try {
+        $fn_gd = Get-GpmDomain $fn_c
+        $fn_som = $fn_gd.Domain.GetSOM([string]$fn_t.dn)
+        foreach ($fn_l in @($fn_som.GetGPOLinks())) {
+            $fn_links += [ordered]@{
+                gpoId = ([string]$fn_l.GPOID).ToLowerInvariant(); gpoName = [string]$fn_l.GPODomain + '\' + [string]$fn_l.GPOID
+                target = [string]$fn_t.dn; targetName = [string]$fn_t.name
+                kind = 'site'; enabled = ($fn_l.Enabled -eq $true); enforced = ($fn_l.Enforced -eq $true); order = [int]$fn_l.SOMLinkOrder
+            }
+        }
+    } catch {}
+    return @{ links = $fn_links; blocked = $false }
 }
 # The staging folder lives in the agent's own protected folder under ProgramData; a folder older than two hours is a leftover.
 function Get-StagingBase {
