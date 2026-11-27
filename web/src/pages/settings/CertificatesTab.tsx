@@ -6,6 +6,7 @@ import type { TlsCheck, TlsNameStatus, TlsOverview } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, Card, ErrorState, InlineError, Spinner, TableWrap } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { AddedName } from "./AddedName";
 import { CertificateSources } from "./CertificateMove";
 
 const STATE_LABEL: Record<TlsNameStatus["state"], string> = {
@@ -52,6 +53,7 @@ export function CertificatesTab() {
           <p className="mt-2 text-sm text-muted">{MODE_TEXT[mode] ?? "This server does not obtain certificates."}</p>
         </Card>
         {names.length > 0 && <CertificateSources names={names} canAcme={q.data.canAcme ?? false} />}
+        <AddedName />
       </div>
     );
   }

@@ -4616,6 +4616,33 @@ export interface TlsOverview {
 /** ADR-0055, slice 5b2: where a DNS name's certificate comes from, and a move between sources. */
 export type TlsSource = "env" | "acme" | "authority";
 
+export type TlsAddedNameState = "pending" | "trusted" | "untrusted";
+
+/** One name checked before it is added (ADR-0055, 5b3). */
+export interface TlsNameCheck {
+  name: string;
+  addresses: string[];
+  points: boolean;
+  error?: string;
+}
+
+/** The name pair added to an IP install (ADR-0055, 5b3). */
+export interface TlsAddedName {
+  console: string;
+  mesh: string;
+  state: TlsAddedNameState;
+  addedAt: string;
+  trustedAt?: string;
+  held: Record<string, boolean>;
+  reachable: boolean;
+  lastFetchAt?: string;
+  lastFetchOkAt?: string;
+  lastFetchError?: string;
+  lastBrowserOkAt?: string;
+  agentsAsked: number;
+  agentsPassed: number;
+}
+
 export interface TlsSourceName {
   name: string;
   source: TlsSource;
