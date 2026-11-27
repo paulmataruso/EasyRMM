@@ -57,7 +57,7 @@ func TestEventlogAPI(t *testing.T) {
 	tech.expect(http.StatusAccepted, "POST", "/api/v1/devices/"+pc.id+"/eventlog", body, &run)
 	wantStatus(t, tech.do("GET", "/api/v1/job-runs/"+run.RunID+"/eventlog", nil), http.StatusConflict, "run_open")
 
-	poll, err := pc.ac.Poll(ctx, accepts)
+	poll, err := pc.ac.Poll(ctx, accepts, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

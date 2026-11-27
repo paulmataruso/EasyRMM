@@ -59,7 +59,7 @@ func (s *Service) RequestRemoval(ctx context.Context, c access.Caller, deviceID 
 	if d.Agent == nil {
 		return RemovalDone, s.retire(ctx, c, d.ID, false)
 	}
-	if s.updateKey == nil {
+	if s.keys == nil {
 		return "", apperr.Conflict("no_job_key", "The server cannot sign instructions to agents.")
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
@@ -200,8 +200,16 @@ func (r *doomed) remember(ctx context.Context, tx pgx.Tx, key []byte, mayRemain 
 	if r.node != "" {
 		node = &r.node
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO retired_devices (device_id, organization_id, site_id, name, agent_public_key, mesh_node_id, expires_at, platform, mesh_may_remain)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+	// A removed device keeps its last report of the keys it trusts, so that
+	// its uninstall instruction is signed by the same rule (ADR-0057). It is
+	// written by this insert: the table's rows are changed only with the system
+	// scope, and a person removes the device.
+	_, err := tx.Exec(ctx, `INSERT INTO retired_devices (device_id, organization_id, site_id, name, agent_public_key, mesh_node_id, expires_at, platform, mesh_may_remain,
+			job_keys_report, job_keys_report_at, job_keys_report_sha, job_keys_first_reported_at, job_key_cutover_generation, job_key_cutover_at, job_key_given_generation)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9,
+			d.job_keys_report, d.job_keys_report_at, coalesce(d.job_keys_report_sha, d.agent_sha256), d.job_keys_first_reported_at,
+			d.job_key_cutover_generation, d.job_key_cutover_at, d.job_key_given_generation
+		FROM (SELECT 1) one LEFT JOIN devices d ON d.id = $1`,
 		r.id, r.org, r.site, r.name, key, node, now.Add(RetiredFor), r.platform, mayRemain && r.platform == "windows" && node != nil)
 	return err
 }
@@ -224,7 +232,7 @@ func (s *Service) deleted(id uuid.UUID) {
 // removal waits for its agent, or nil. It records when the instruction was
 // first sent. Called within the heartbeat's transaction.
 func (s *Service) uninstallFor(ctx context.Context, tx pgx.Tx, d *Device) (*agentproto.SignedUninstall, error) {
-	if s.updateKey == nil {
+	if s.keys == nil {
 		return nil, nil
 	}
 	var id uuid.UUID
@@ -236,12 +244,16 @@ func (s *Service) uninstallFor(ctx context.Context, tx pgx.Tx, d *Device) (*agen
 	if err != nil {
 		return nil, err
 	}
-	return s.signUninstall(id, d.ID)
+	return s.signUninstall(ctx, tx, id, d.ID)
 }
 
-func (s *Service) signUninstall(id, deviceID uuid.UUID) (*agentproto.SignedUninstall, error) {
+func (s *Service) signUninstall(ctx context.Context, tx pgx.Tx, id, deviceID uuid.UUID) (*agentproto.SignedUninstall, error) {
 	now := s.now().UTC()
-	u, err := agentproto.SignUninstall(s.updateKey, agentproto.UninstallPayload{
+	key, _, err := s.keys.Issue(ctx, tx, deviceID, agentproto.InstructionUninstall, id.String())
+	if err != nil {
+		return nil, fmt.Errorf("agents: signing the uninstall instruction: %w", err)
+	}
+	u, err := agentproto.SignUninstall(key, agentproto.UninstallPayload{
 		V: agentproto.UninstallPayloadVersion, ID: id.String(), DeviceID: deviceID.String(),
 		IssuedAt: now, ExpiresAt: now.Add(UninstallValid),
 	})
@@ -258,22 +270,33 @@ func (s *Service) RetiredHeartbeat(ctx context.Context, d *Device) (*agentproto.
 	out := &agentproto.HeartbeatResponse{
 		Protocol:         agentproto.Protocol,
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
-		JobKey:           s.jobKey,
 	}
-	var reported *time.Time
-	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT agent_reported_at FROM retired_devices WHERE device_id = $1`, d.ID).Scan(&reported)
+	// A removed device is signed for by the report it left (ADR-0057), and is
+	// offered no statement: it gets nothing but its uninstall instruction.
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var reported *time.Time
+		err := tx.QueryRow(ctx, `SELECT agent_reported_at FROM retired_devices WHERE device_id = $1`, d.ID).Scan(&reported)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUnknownDevice
+		}
+		if err != nil {
+			return err
+		}
+		if s.keys == nil {
+			return nil
+		}
+		c, err := s.keys.For(ctx, tx, d.ID)
+		if err != nil {
+			return err
+		}
+		out.JobKey, out.JobKeyGeneration = c.Key.Encoded(), c.Key.Generation
+		if reported != nil && s.now().Before(reported.Add(RetiredRetry)) {
+			return nil
+		}
+		out.Uninstall, err = s.signUninstall(ctx, tx, d.ID, d.ID)
+		return err
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrUnknownDevice
-	}
 	if err != nil {
-		return nil, err
-	}
-	if s.updateKey == nil || (reported != nil && s.now().Before(reported.Add(RetiredRetry))) {
-		return out, nil
-	}
-	if out.Uninstall, err = s.signUninstall(d.ID, d.ID); err != nil {
 		return nil, err
 	}
 	return out, nil

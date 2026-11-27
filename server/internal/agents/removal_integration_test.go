@@ -279,7 +279,7 @@ func TestForcedRemoval(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.JobKey != f.svc.jobKey || resp.MeshAgent.Available || resp.Update != nil {
+		if resp.JobKey != agentproto.EncodeKey(f.pub) || resp.MeshAgent.Available || resp.Update != nil {
 			t.Errorf("answer %+v", resp)
 		}
 		if resp.Uninstall == nil {

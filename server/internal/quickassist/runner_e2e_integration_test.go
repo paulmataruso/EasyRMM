@@ -34,6 +34,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/quickassistapi"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	qa "github.com/paulmataruso/easyrmm/server/internal/quickassist"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
@@ -58,7 +59,7 @@ func newE2E(t *testing.T) *e2e {
 	t.Helper()
 	inst := testdb.New(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	jobPub, key, _ := ed25519.GenerateKey(rand.Reader)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
 
 	var handler atomic.Pointer[http.Handler]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { (*handler.Load()).ServeHTTP(w, r) }))
@@ -81,7 +82,7 @@ func newE2E(t *testing.T) *e2e {
 	}
 
 	asvc := agents.New(inst.DB, audit.New(inst.DB, time.Now), nil, log)
-	asvc.SetJobKey(agentproto.EncodeKey(jobPub))
+	asvc.SetKeys(jobkeys.Static(key))
 	api, err := agentapi.New(asvc, builds, []agentapi.Address{{URL: srv.URL}}, nil, log)
 	if err != nil {
 		t.Fatal(err)

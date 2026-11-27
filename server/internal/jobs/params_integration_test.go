@@ -109,7 +109,7 @@ type agentClient struct {
 	dev uuid.UUID
 }
 
-func (a agentClient) Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error) {
+func (a agentClient) Poll(ctx context.Context, accepts []string, _ []agentproto.TrustedKey) (*agentproto.PollResponse, error) {
 	return a.s.Poll(ctx, a.dev, accepts)
 }
 

@@ -27,7 +27,7 @@ func Recover(ctx context.Context, cfg *config.Config, log *slog.Logger, email st
 	if err := database.MigrateWithConfig(ctx, migCfg, log); err != nil {
 		return err
 	}
-	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 2})
+	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 2, Version: Version})
 	if err != nil {
 		return err
 	}

@@ -61,7 +61,7 @@ type Worker struct {
 
 	// Keys returns the server keys the agent trusts (ADR-0057), nil while
 	// none is pinned: the worker then does not ask for jobs. Dropped returns
-	// the keys a cut-over took away, to recognise a job signed with one; and
+	// the keys a cut-over took away, to recognize a job signed with one; and
 	// Report the keys a poll reports. All three are optional: SetKey gives a
 	// worker one fixed key.
 	Keys    func() agentproto.Keys

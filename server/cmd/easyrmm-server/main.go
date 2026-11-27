@@ -4,6 +4,7 @@
 //	easyrmm-server migrate           apply database migrations and exit
 //	easyrmm-server recover [--email] print a one-time sign-in link for a super administrator
 //	easyrmm-server mail check        sign in to the mail server in force, sending nothing
+//	easyrmm-server incident restored record that the server was restored from a backup (ADR-0057)
 //	easyrmm-server healthcheck       exit 0 when the local server is ready
 //	easyrmm-server version           print the version
 package main
@@ -51,8 +52,10 @@ func run(args []string) int {
 		return mailCommand(args[1:], os.Stdout, os.Stderr)
 	case "tls":
 		return tlsCommand(args[1:], os.Stdout, os.Stderr)
+	case "incident":
+		return incidentCommand(args[1:], os.Stdout, os.Stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, tls, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, tls, incident, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -123,6 +126,53 @@ func recoverCommand(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	if err := app.Recover(ctx, cfg, log, *email, stdout); err != nil {
 		fmt.Fprintf(stderr, "recover: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// incidentCommand records what happened to the server for the job key's
+// tripwires (ADR-0057):
+//
+//	docker compose exec server easyrmm-server incident restored [--at TIME]
+//
+// restored is for after pg_restore: the instruction logs the agents send are
+// no longer compared with what the restored database could not have kept.
+func incidentCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "restored" {
+		fmt.Fprintln(stderr, "usage: easyrmm-server incident restored [--at RFC3339-TIME]")
+		return 2
+	}
+	fs := flag.NewFlagSet("incident restored", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	at := fs.String("at", "", "when the restore happened (default: now)")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	when := time.Now()
+	if *at != "" {
+		t, err := time.Parse(time.RFC3339, *at)
+		if err != nil {
+			fmt.Fprintf(stderr, "incident restored: --at must be an RFC 3339 time, such as 2026-11-27T12:00:00Z\n")
+			return 2
+		}
+		when = t
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error:\n%v\n", err)
+		return 1
+	}
+	log := app.NewLogger(cfg.LogFormat, "warn")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := app.IncidentRestored(ctx, cfg, log, when, stdout); err != nil {
+		fmt.Fprintf(stderr, "incident restored: %v\n", err)
 		return 1
 	}
 	return 0

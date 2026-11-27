@@ -131,13 +131,6 @@ func (k *KeyStore) Report() []agentproto.TrustedKey {
 	return out
 }
 
-// Held is a copy of the trusted keys, oldest first, and of the dropped ones.
-func (k *KeyStore) Held() (trusted, dropped []state.JobKey) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return slices.Clone(held(k.Config)), slices.Clone(k.Config.DroppedJobKeys)
-}
-
 // InTransition reports whether the agent is within the declared key
 // transition: from the cut-over it accepted until ten minutes after. It is
 // recorded in agent.json, so it holds across a restart.
@@ -229,7 +222,8 @@ func (k *KeyStore) commit(keys, dropped []state.JobKey, until time.Time) error {
 	if err := k.Store.SaveConfig(&next); err != nil {
 		return err
 	}
-	*k.Config = next
+	// Field by field: other goroutines read the enrollment's other fields.
+	k.Config.JobKeys, k.Config.DroppedJobKeys, k.Config.KeyTransitionUntil, k.Config.JobKey = next.JobKeys, next.DroppedJobKeys, next.KeyTransitionUntil, next.JobKey
 	return nil
 }
 
@@ -305,10 +299,10 @@ func (k *KeyStore) handleHandover(s agentproto.SignedKeyStatement) {
 		if derr != nil || !have.Equal(pub) {
 			continue
 		}
-		switch {
-		case j.Generation == p.Generation:
+		switch j.Generation {
+		case p.Generation:
 			return
-		case j.Generation == 0:
+		case 0:
 			next := slices.Clone(list)
 			next[i].Generation = p.Generation
 			if err := k.commit(next, k.Config.DroppedJobKeys, k.Config.KeyTransitionUntil); err != nil {

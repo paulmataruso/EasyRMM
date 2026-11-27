@@ -153,14 +153,14 @@ func startAgent(t *testing.T, f *fixture, d *device, serverURL string, o agentOp
 		pub = f.jobPub
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	ch := channel.New(channel.Config{Dialer: c, DeviceID: d.id.String(), Key: func() ed25519.PublicKey { return pub }, Off: o.off, Log: log,
+	ch := channel.New(channel.Config{Dialer: c, DeviceID: d.id.String(), Keys: func() agentproto.Keys { return agentproto.Keys{pub} }, Off: o.off, Log: log,
 		Timing: channel.Timing{FirstWait: 50 * time.Millisecond, MinRetry: 50 * time.Millisecond, MaxRetry: 200 * time.Millisecond}})
 	r := &runner.Runner{
 		Client: c, Store: store, DeviceID: d.id.String(), Log: log, Channel: ch,
 		Facts: func() agentproto.Facts {
 			return agentproto.Facts{Hostname: "h", Platform: "linux", Arch: "amd64", AgentVersion: "1"}
 		},
-		Key:     func() ed25519.PublicKey { return pub },
+		Keys:    func() agentproto.Keys { return agentproto.Keys{pub} },
 		Every:   o.every,
 		MinWake: 20 * time.Millisecond,
 	}

@@ -334,7 +334,13 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 					return err
 				}
 			}
-			signed, err := agentproto.SignJob(s.key, p)
+			// The key this device trusts, recorded as issued in this transaction
+			// (ADR-0057): a redelivery signed with another key adds a row.
+			key, _, err := s.keys.Issue(ctx, tx, device, agentproto.InstructionJob, p.RunID)
+			if err != nil {
+				return err
+			}
+			signed, err := agentproto.SignJob(key, p)
 			if err != nil {
 				return err
 			}

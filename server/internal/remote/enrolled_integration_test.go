@@ -28,6 +28,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -109,12 +110,11 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	}
 	svc := agents.New(r.db, r.audit, NewMeshAgents(r.svc, files), r.log)
 	_, jobKey, _ := ed25519.GenerateKey(rand.Reader)
-	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, 24*time.Hour, r.log)
+	js := jobs.New(r.db, r.audit, jobkeys.Static(jobKey), 24*time.Hour, 24*time.Hour, r.log)
 	t.Cleanup(js.Close)
-	svc.SetJobKey(js.PublicKey())
 	// The job key also signs uninstall instructions (ADR-0050); no builds
 	// to update to.
-	svc.SetUpdates(&agents.Builds{}, jobKey)
+	svc.SetUpdates(&agents.Builds{}, jobkeys.Static(jobKey))
 	invs := inventory.New(r.db, 24*time.Hour, r.log)
 	server := r.serveAgentAPI(svc, js, invs)
 	tok, err := svc.CreateToken(r.ctx, r.sys, hq.ID, agents.TokenInput{Name: "End to end", ExpiresInDays: 1})
@@ -188,8 +188,8 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	}
 	// Read as the agent's user: its settings are private to it (mode 0600).
 	b := docker(t, "exec", name, "cat", "/agent/root/var/lib/easyrmm-agent/agent.json")
-	if err := json.Unmarshal([]byte(b), &cfg); err != nil || cfg.JobKey != js.PublicKey() {
-		t.Errorf("pinned job key %q, server's %q (%v)", cfg.JobKey, js.PublicKey(), err)
+	if err := json.Unmarshal([]byte(b), &cfg); err != nil || cfg.JobKey != agentproto.EncodeKey(jobKey.Public().(ed25519.PublicKey)) {
+		t.Errorf("pinned job key %q, server's %q (%v)", cfg.JobKey, agentproto.EncodeKey(jobKey.Public().(ed25519.PublicKey)), err)
 	}
 
 	// The agent reports the container's inventory and metrics (ADR-0018).

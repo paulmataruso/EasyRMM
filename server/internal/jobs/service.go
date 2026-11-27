@@ -5,7 +5,6 @@ package jobs
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod"
 )
@@ -85,7 +85,7 @@ var (
 type Service struct {
 	db        *database.DB
 	audit     *audit.Logger
-	key       ed25519.PrivateKey
+	keys      jobkeys.Source
 	retention time.Duration
 	// outputRetention is how long a run's output is kept after it arrived
 	// (ADR-0063); the run stays for retention.
@@ -111,16 +111,12 @@ type Service struct {
 	escrow EscrowGate
 }
 
-// New returns a Service. key signs jobs; retention is how long finished jobs
-// are kept, outputRetention how long their runs' output is.
-func New(db *database.DB, auditLog *audit.Logger, key ed25519.PrivateKey, retention, outputRetention time.Duration, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, key: key, retention: retention, outputRetention: outputRetention, log: log,
+// New returns a Service. keys picks the job key that signs each device's job
+// (ADR-0057); retention is how long finished jobs are kept, outputRetention
+// how long their runs' output is.
+func New(db *database.DB, auditLog *audit.Logger, keys jobkeys.Source, retention, outputRetention time.Duration, log *slog.Logger) *Service {
+	return &Service{db: db, audit: auditLog, keys: keys, retention: retention, outputRetention: outputRetention, log: log,
 		now: time.Now, hub: newHub(), pollWait: agentproto.PollWait}
-}
-
-// PublicKey is the job-signing public key in the form agents pin.
-func (s *Service) PublicKey() string {
-	return agentproto.EncodeKey(s.key.Public().(ed25519.PublicKey))
 }
 
 // Close releases every waiting poll, so the server can shut down without

@@ -128,7 +128,7 @@ func TestRecoveryKeyEscrowEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	vol, prot := `\\?\Volume{33333333-3333-3333-3333-333333333333}\`, "{CCCCCCCC-0000-0000-0000-000000000003}"
-	agent := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubBitLocker{vol, prot},
+	agent := &escrow.Agent{DeviceID: enr.DeviceID, Keys: func() agentproto.Keys { return agentproto.Keys{jobKey} }, Reader: stubBitLocker{vol, prot},
 		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	agent.Answered(resp.Escrow)
 
@@ -479,7 +479,7 @@ func TestLUKSEscrowEndToEnd(t *testing.T) {
 	luksVol := "6c4a9e2a-1111-4222-8333-444455556666"
 	l := &stubLUKS{vol: luksVol}
 	// Opt-in: with the switch off the agent reports the volume and adds nothing.
-	agentOff := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
+	agentOff := &escrow.Agent{DeviceID: enr.DeviceID, Keys: func() agentproto.Keys { return agentproto.Keys{jobKey} }, Reader: stubNoBitLocker{}, LUKS: l,
 		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	agentOff.Answered(resp.Escrow)
 	agentOff.Sync(ctx)
@@ -488,7 +488,7 @@ func TestLUKSEscrowEndToEnd(t *testing.T) {
 	}
 	admin.expect(http.StatusOK, "POST", "/api/v1/auth/step-up/totp", map[string]string{"code": code(t, adminTOTP, time.Now().Add(30*time.Second))}, nil)
 	admin.expect(http.StatusOK, "PUT", "/api/v1/organizations/"+acme+"/keystore-settings", map[string]any{"luksEscrow": true}, nil)
-	agent := &escrow.Agent{DeviceID: enr.DeviceID, Key: func() ed25519.PublicKey { return jobKey }, Reader: stubNoBitLocker{}, LUKS: l,
+	agent := &escrow.Agent{DeviceID: enr.DeviceID, Keys: func() agentproto.Keys { return agentproto.Keys{jobKey} }, Reader: stubNoBitLocker{}, LUKS: l,
 		Server: ac, Store: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	agent.Answered(resp.Escrow)
 	agent.Sync(ctx) // reports the volume, learns it needs a key, makes the slot and escrows

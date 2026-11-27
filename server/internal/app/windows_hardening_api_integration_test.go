@@ -124,7 +124,7 @@ func TestWindowsHardeningAPI(t *testing.T) {
 	if !slices.Equal(args.Args, []string{"check", "accounts,laps", "lockout-exposed"}) {
 		t.Errorf("arguments %+v", args)
 	}
-	poll, err := ac.Poll(ctx, nil)
+	poll, err := ac.Poll(ctx, nil, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}
@@ -157,7 +157,7 @@ func TestWindowsHardeningAPI(t *testing.T) {
 	if job.ScriptName != "Check Windows hardening (every module)" {
 		t.Errorf("job %+v", job)
 	}
-	poll, err = ac.Poll(ctx, nil)
+	poll, err = ac.Poll(ctx, nil, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

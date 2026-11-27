@@ -104,7 +104,7 @@ func TestRegistryAPI(t *testing.T) {
 	wantStatus(t, tech.do("GET", "/api/v1/job-runs/"+run.RunID+"/result", nil), http.StatusConflict, "run_open")
 
 	// The real agent client takes the signed job, which carries the input.
-	poll, err := pc.ac.Poll(ctx, accepts)
+	poll, err := pc.ac.Poll(ctx, accepts, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}
@@ -188,7 +188,7 @@ func TestRegistryAPI(t *testing.T) {
 		RunID string `json:"runId"`
 	}
 	tech.expect(http.StatusAccepted, "POST", "/api/v1/devices/"+pc.id+"/registry/query", map[string]any{"op": "export", "hive": "HKLM", "path": []string{"SOFTWARE", "Vendor"}}, &ex)
-	poll, _ = pc.ac.Poll(ctx, accepts)
+	poll, _ = pc.ac.Poll(ctx, accepts, nil)
 	if len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v", poll)
 	}

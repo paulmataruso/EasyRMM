@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,17 +34,16 @@ func newServerKey(gen int64) serverKey {
 type recorded struct{ kind, id, signer string }
 
 type keyFixture struct {
-	t        *testing.T
-	store    state.Store
-	cfg      *state.Config
-	ks       *KeyStore
-	devPub   ed25519.PublicKey
-	install  string
-	now      time.Time
-	log      []recorded
-	k1, k2   serverKey
-	stmtN    int
-	statuses []string
+	t       *testing.T
+	store   state.Store
+	cfg     *state.Config
+	ks      *KeyStore
+	devPub  ed25519.PublicKey
+	install string
+	now     time.Time
+	log     []recorded
+	k1, k2  serverKey
+	stmtN   int
 }
 
 // newKeyFixture is an agent that trusts k1 (generation 1) alone, as an agent
@@ -528,3 +528,123 @@ type failingStore struct{}
 func (failingStore) SaveConfig(*state.Config) error { return errors.New("disk full") }
 func (failingStore) LoadKeyLog() state.KeyLog       { return state.KeyLog{} }
 func (failingStore) SaveKeyLog(state.KeyLog) error  { return nil }
+
+func TestHandoverOfAKeyTrustedAtAnotherGenerationAndOfAKeyWithoutAGeneration(t *testing.T) {
+	f := newKeyFixture(t)
+	f.ks.Answered(2, f.handover(f.k1, f.k2, nil), nil)
+	// The same key at another generation is refused.
+	again := f.k2
+	again.gen = f.k2.gen + 5
+	f.ks.Answered(2, f.handover(f.k1, again, nil), nil)
+	if !strings.Contains(f.refusal(), "trusted at generation") {
+		t.Fatalf("a key at two generations: %q", f.refusal())
+	}
+	// A key pinned before generations learns its generation from a hand-over of it.
+	g := newKeyFixture(t)
+	g.cfg.JobKeys, g.cfg.JobKey = nil, agentproto.EncodeKey(g.k1.pub)
+	g.ks = g.build()
+	g.ks.Answered(2, g.handover(g.k1, serverKey{pub: g.k1.pub, priv: g.k1.priv, gen: 1}, nil), nil)
+	if got := g.trusts(); !reflect.DeepEqual(got, []int64{1}) || g.ks.Refusal() != nil {
+		t.Fatalf("learning the generation: %v %q", got, g.refusal())
+	}
+	// The statement log is bounded.
+	h := newKeyFixture(t)
+	for i := 0; i < keepHandledKeys+4; i++ {
+		h.now = h.now.Add(time.Second)
+		h.ks.remember(h.store.LoadKeyLog(), h.stmt(h.k2, h.k2.gen, nil))
+	}
+	if n := len(h.store.LoadKeyLog().Handled); n != keepHandledKeys {
+		t.Errorf("kept %d statement IDs", n)
+	}
+}
+
+func TestCutoverRefusalsAndKeysWithoutGenerations(t *testing.T) {
+	// A cut-over to a key at another generation than the agent holds.
+	f := newKeyFixture(t)
+	f.ks.Answered(2, f.handover(f.k1, f.k2, nil), nil)
+	wrong := f.k2
+	wrong.gen = f.k2.gen + 9
+	f.ks.Answered(2, nil, f.cutover(wrong, nil))
+	if !strings.Contains(f.refusal(), "trusted at generation") || len(f.trusts()) != 2 {
+		t.Fatalf("a cut-over at another generation: %q %v", f.refusal(), f.trusts())
+	}
+	// A cut-over issued before a statement already handled is a replay.
+	old := f.cutover(f.k2, func(p *agentproto.KeyStatement) {
+		p.IssuedAt, p.ExpiresAt = f.now.Add(-time.Minute), f.now.Add(-time.Minute).Add(agentproto.KeyStatementValid)
+	})
+	f.now = f.now.Add(time.Second)
+	f.ks.Answered(2, nil, old)
+	if !strings.Contains(f.refusal(), "issued before") || len(f.trusts()) != 2 {
+		t.Fatalf("an older cut-over: %q %v", f.refusal(), f.trusts())
+	}
+	// A key without a generation, alone: a cut-over names it and teaches the generation.
+	g := newKeyFixture(t)
+	g.cfg.JobKeys, g.cfg.JobKey = nil, agentproto.EncodeKey(g.k1.pub)
+	g.ks = g.build()
+	g.ks.Answered(2, nil, g.cutover(serverKey{pub: g.k1.pub, priv: g.k1.priv, gen: 1}, nil))
+	if got := g.trusts(); !reflect.DeepEqual(got, []int64{1}) {
+		t.Fatalf("learning from a cut-over: %v", got)
+	}
+	// More than eight dropped keys are not kept.
+	h := newKeyFixture(t)
+	signer := h.k1
+	for i := 0; i < agentproto.MaxDroppedKeys+3; i++ {
+		next := newServerKey(h.k2.gen + int64(i)*1000)
+		h.now = h.now.Add(time.Second)
+		h.ks.Answered(2, h.handover(signer, next, nil), nil)
+		h.now = h.now.Add(time.Second)
+		h.ks.Answered(2, nil, h.cutover(next, nil))
+		signer = next
+	}
+	if len(h.ks.Dropped()) != agentproto.MaxDroppedKeys || len(h.trusts()) != 1 {
+		t.Errorf("dropped %d, trusted %v", len(h.ks.Dropped()), h.trusts())
+	}
+}
+
+func TestStoreFailuresRefuseTheStatementAndKeepTheKeys(t *testing.T) {
+	f := newKeyFixture(t)
+	f.ks.Answered(2, f.handover(f.k1, f.k2, nil), nil)
+	f.ks.Store = failingStore{}
+	f.ks.Answered(2, nil, f.cutover(f.k2, nil))
+	if len(f.trusts()) != 2 || !strings.Contains(f.refusal(), "saving") {
+		t.Fatalf("a failed cut-over write: %v %q", f.trusts(), f.refusal())
+	}
+	if err := f.ks.Replace(9, agentproto.EncodeKey(f.k2.pub), true); err == nil {
+		t.Error("a failed trust-key write was no error")
+	}
+	if _, err := f.ks.Pin(agentproto.EncodeKey(f.k1.pub), 7); err != nil && len(f.trusts()) != 2 {
+		t.Error("the keys changed")
+	}
+	// A key pinned before generations learns its generation from a hand-over
+	// that the store cannot write.
+	g := newKeyFixture(t)
+	g.cfg.JobKeys, g.cfg.JobKey = nil, agentproto.EncodeKey(g.k1.pub)
+	g.ks = g.build()
+	g.ks.Store = failingStore{}
+	g.ks.Answered(2, g.handover(g.k1, serverKey{pub: g.k1.pub, priv: g.k1.priv, gen: 1}, nil), nil)
+	if !strings.Contains(g.refusal(), "saving") {
+		t.Errorf("%q", g.refusal())
+	}
+	g.ks.Answered(2, nil, g.cutover(serverKey{pub: g.k1.pub, priv: g.k1.priv, gen: 1}, nil))
+	if !strings.Contains(g.refusal(), "saving") {
+		t.Errorf("%q", g.refusal())
+	}
+}
+
+// The ADR-0055 trust instruction is logged too: carried out once, by the key
+// that signed it.
+func TestTrustInstructionIsLogged(t *testing.T) {
+	f := newFixture(t)
+	if err := os.MkdirAll(f.store.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	f.agent.Record = func(kind, id, signer string) { got = append(got, kind+"|"+id+"|"+signer) }
+	leaf := f.public.leaf(t, testHost)
+	f.answer(f.sign(f.payload("m1", chainOf("t", agentproto.TrustTarget, leaf))))
+	f.answer(f.sign(f.payload("m1", chainOf("t", agentproto.TrustTarget, leaf)))) // sent again: not again
+	want := agentproto.InstructionTrust + "|m1|" + agentproto.Fingerprint(f.pub)
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("logged %v, want %q", got, want)
+	}
+}

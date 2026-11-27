@@ -108,7 +108,7 @@ func New(t testing.TB) *Instance {
 		t.Fatalf("testdb: migrating: %v", err)
 	}
 
-	db, err := database.Open(ctx, dsn, database.PoolOptions{MaxConns: 8, AfterConnectSQL: "SET ROLE easyrmm_app"})
+	db, err := database.Open(ctx, dsn, database.PoolOptions{MaxConns: 8, AfterConnectSQL: "SET ROLE easyrmm_app", Version: "test"})
 	if err != nil {
 		t.Fatalf("testdb: opening runtime pool: %v", err)
 	}

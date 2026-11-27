@@ -31,6 +31,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/keystored"
 	"github.com/paulmataruso/easyrmm/server/internal/modules"
@@ -211,7 +212,7 @@ func (k *ksAgentServer) EscrowUpload(ctx context.Context, rec agentproto.EscrowR
 // build running these tests (Linux) does not.
 type nativeClient struct{ agentClient }
 
-func (n nativeClient) Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error) {
+func (n nativeClient) Poll(ctx context.Context, accepts []string, _ []agentproto.TrustedKey) (*agentproto.PollResponse, error) {
 	return n.s.Poll(ctx, n.dev, append(append([]string{}, accepts...), agentproto.CapJobNative))
 }
 
@@ -264,7 +265,7 @@ func bitlockerFx(t *testing.T) *bitlockerFixture {
 	t.Cleanup(func() { stop(); <-done })
 
 	signPub, signKey, _ := ed25519.GenerateKey(rand.Reader)
-	ks := keystore.New(f.db, audit.New(f.db, nil), &keystore.Client{Path: sock, Timeout: 10 * time.Second}, signKey, log)
+	ks := keystore.New(f.db, audit.New(f.db, nil), &keystore.Client{Path: sock, Timeout: 10 * time.Second}, jobkeys.Static(signKey), log)
 	f.svc.SetEscrowGate(ks)
 
 	dev := f.winmodDevice("HQ-PC", "windows")
@@ -287,7 +288,7 @@ func bitlockerFx(t *testing.T) *bitlockerFixture {
 	if err := os.MkdirAll(store.Dir(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	a := &escrow.Agent{DeviceID: dev.String(), Key: func() ed25519.PublicKey { return signPub }, Reader: sim, Manager: sim, Server: srvAgent, Store: store, Log: log}
+	a := &escrow.Agent{DeviceID: dev.String(), Keys: func() agentproto.Keys { return agentproto.Keys{signPub} }, Reader: sim, Manager: sim, Server: srvAgent, Store: store, Log: log}
 	if s := ks.Instruction(f.ctx, d, "windows", []string{agentproto.CapEscrow}); s != nil {
 		a.Answered(s)
 	} else {

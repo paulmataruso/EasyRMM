@@ -32,7 +32,7 @@ func ImportEasyPatch(ctx context.Context, cfg *config.Config, log *slog.Logger, 
 	}); err != nil {
 		return err
 	}
-	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 4})
+	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 4, Version: Version})
 	if err != nil {
 		return err
 	}

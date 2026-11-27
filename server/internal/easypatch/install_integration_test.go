@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // installFixture adds devices with EasyRMM agents to the patching fixture.
@@ -55,7 +56,7 @@ func newInstall(t *testing.T) *installFixture {
 	f := &installFixture{patchingFixture: newPatching(t)}
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	f.pub = pub
-	f.svc.SetSigner(priv)
+	f.svc.SetSigner(jobkeys.Static(priv))
 	f.epHQ = f.ep.Site(f.epAcme, "hq") // matched to HQ whatever the case
 	f.ep.Site(f.epAcme, "Warehouse")
 	f.lin = f.agentDevice(f.acme, f.hq, "lin-01", "linux", "amd64")
@@ -532,7 +533,7 @@ func TestBundledInstall(t *testing.T) {
 			t.Fatal(err)
 		}
 		pub, priv, _ := ed25519.GenerateKey(nil)
-		f.svc.SetSigner(priv)
+		f.svc.SetSigner(jobkeys.Static(priv))
 		return pub
 	}
 	instruction := func(pub ed25519.PublicKey, device uuid.UUID) agentproto.EasyPatchInstallPayload {

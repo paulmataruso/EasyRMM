@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // Enroll exchanges a deployment token for a device identity. With a site's
@@ -164,9 +165,23 @@ func (s *Service) enrollSite(ctx context.Context, tx pgx.Tx, ip netip.Addr, hash
 // enrolled is the answer to an enrolled device: its identity and whether
 // it should install MeshAgent now.
 func (s *Service) enrolled(ctx context.Context, deviceID string) (*agentproto.EnrollResponse, error) {
-	var siteID uuid.UUID
-	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT site_id FROM devices WHERE id = $1`, deviceID).Scan(&siteID)
+	var (
+		siteID uuid.UUID
+		key    jobkeys.Key
+	)
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT site_id FROM devices WHERE id = $1`, deviceID).Scan(&siteID); err != nil {
+			return err
+		}
+		if s.keys == nil {
+			return nil
+		}
+		// Enrollment gives the ring's newest key (ADR-0057); it is the key the
+		// device is signed for until it reports what it trusts.
+		key = s.keys.Newest()
+		_, err := tx.Exec(ctx, `UPDATE devices SET job_key_given_generation = $2
+			WHERE id = $1 AND job_keys_report IS NULL AND job_key_given_generation IS DISTINCT FROM $2`, deviceID, key.Generation)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agents: reading the new device: %w", err)
@@ -179,7 +194,8 @@ func (s *Service) enrolled(ctx context.Context, deviceID string) (*agentproto.En
 		DeviceID:         deviceID,
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
-		JobKey:           s.jobKey,
+		JobKey:           encodedOrEmpty(key),
+		JobKeyGeneration: key.Generation,
 	}, nil
 }
 
@@ -193,4 +209,12 @@ func (s *Service) meshAvailable(ctx context.Context, siteID uuid.UUID) (bool, er
 		return false, err
 	}
 	return g != "", nil
+}
+
+// encodedOrEmpty is a key as agents pin it, "" for no key.
+func encodedOrEmpty(k jobkeys.Key) string {
+	if len(k.Public) == 0 {
+		return ""
+	}
+	return k.Encoded()
 }

@@ -4,7 +4,6 @@ package agents
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
@@ -55,14 +55,16 @@ type Service struct {
 	enroll, lookups, polls *auth.KeyedLimiter
 	waits                  *waitHub
 	approvalWait           time.Duration
-	jobKey                 string
-	// Agent updates (ADR-0027); nil without builds. updateKey is the job
-	// key, which also signs uninstall instructions (ADR-0050).
+	// keys picks the job key that signs for each device and records what is
+	// signed (ADR-0057); nil signs nothing. It signs updates (ADR-0027),
+	// uninstall instructions (ADR-0050) and MeshAgent's downloads, and hears
+	// what each device's heartbeat says it trusts.
+	keys jobkeys.Source
+	// Agent updates (ADR-0027); nil without builds.
 	builds *Builds
 	// stable is what organizations outside the dev scope are offered
 	// (SetStable).
-	stable    *Builds
-	updateKey ed25519.PrivateKey
+	stable *Builds
 	// tokens seals the secrets of new deployment and approval tokens, so
 	// they can be shown again (ADR-0047); nil keeps only their hashes.
 	tokens *secrets.Sealer
@@ -134,9 +136,10 @@ func New(db *database.DB, auditLog *audit.Logger, mesh MeshAgents, log *slog.Log
 	}
 }
 
-// SetJobKey sets the job-signing public key (agentproto.EncodeKey) that
-// enrollment and heartbeat answers carry for agents to pin (ADR-0017).
-func (s *Service) SetJobKey(key string) { s.jobKey = key }
+// SetKeys gives the service the job keys (ADR-0057): enrollment and heartbeat
+// answers carry the key each device is signed for, for agents to pin
+// (ADR-0017), and instructions are signed with it.
+func (s *Service) SetKeys(keys jobkeys.Source) { s.keys = keys }
 
 // Errors the agent API maps to responses.
 var (

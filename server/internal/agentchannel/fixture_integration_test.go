@@ -32,6 +32,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
 
@@ -72,7 +73,7 @@ func newFixture(t *testing.T, o fixtureOpts) *fixture {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f := &fixture{t: t, inst: inst, jobPub: pub, claims: map[uuid.UUID]int{}, logs: map[uuid.UUID]int{}}
 	f.svc = agents.New(inst.DB, audit.New(inst.DB, time.Now), nil, log)
-	f.svc.SetJobKey(agentproto.EncodeKey(pub))
+	f.svc.SetKeys(jobkeys.Static(priv))
 	opt := agentchannel.Options{
 		Enabled: !o.off, Key: priv, Instance: "test-instance", MaxConns: o.maxConns, UpgradesPerSecond: o.perSec,
 		Timing: o.timing, Held: o.held, Descriptors: o.fds, Log: log,

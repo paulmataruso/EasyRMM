@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
 // Audit actions (ADR-0007, ADR-0081 section 6). None carries a key.
@@ -72,11 +73,13 @@ type Service struct {
 	db    *database.DB
 	audit *audit.Logger
 	ks    Verifier
-	// signKey is the job key (ADR-0057) that signs the escrow-key
-	// instruction.
-	signKey ed25519.PrivateKey
-	log     *slog.Logger
-	now     func() time.Time
+	// signKeys picks the job key (ADR-0057) that signs the escrow-key
+	// instruction for each device. The instruction hands the agent a public
+	// key and runs nothing, so it is not recorded as issued, and the agent
+	// does not log it.
+	signKeys jobkeys.Source
+	log      *slog.Logger
+	now      func() time.Time
 
 	stepUp   StepUpVerifier
 	notifier Notifier
@@ -101,8 +104,8 @@ type cachedKey struct {
 
 // New builds a Service. ks may be nil when no keystore is configured; the
 // service then reports it unavailable and starts nothing.
-func New(db *database.DB, auditLog *audit.Logger, ks Verifier, signKey ed25519.PrivateKey, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, ks: ks, signKey: signKey, log: log, now: time.Now, keys: map[uuid.UUID]cachedKey{}, limits: DefaultReadLimits}
+func New(db *database.DB, auditLog *audit.Logger, ks Verifier, signKeys jobkeys.Source, log *slog.Logger) *Service {
+	return &Service{db: db, audit: auditLog, ks: ks, signKeys: signKeys, log: log, now: time.Now, keys: map[uuid.UUID]cachedKey{}, limits: DefaultReadLimits}
 }
 
 // Errors the service reports.
@@ -290,7 +293,7 @@ func (s *Service) EnsureEscrowKey(ctx context.Context, org uuid.UUID) (*EscrowKe
 // keystore can wrap. It is nil in every other case and never an error: the
 // heartbeat does not depend on the keystore.
 func (s *Service) Instruction(ctx context.Context, d Device, platform string, caps []string) *agentproto.SignedEscrowKey {
-	if (platform != "windows" && platform != "linux") || !hasCap(caps) || !devscope.Allowed(d.Org) || s.ks == nil || len(s.signKey) == 0 {
+	if (platform != "windows" && platform != "linux") || !hasCap(caps) || !devscope.Allowed(d.Org) || s.ks == nil || s.signKeys == nil {
 		return nil
 	}
 	key := s.cachedKey(d.Org)
@@ -307,8 +310,17 @@ func (s *Service) Instruction(ctx context.Context, d Device, platform string, ca
 		s.keys[d.Org] = *key
 		s.mu.Unlock()
 	}
+	var signKey ed25519.PrivateKey
+	if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		c, err := s.signKeys.For(ctx, tx, d.ID)
+		signKey = c.Key.Private
+		return err
+	}); err != nil || len(signKey) == 0 {
+		s.log.Error("keystore: choosing the key to sign the escrow key failed", "error", err)
+		return nil
+	}
 	now := s.now().UTC()
-	signed, err := agentproto.SignEscrowKey(s.signKey, agentproto.EscrowKeyPayload{
+	signed, err := agentproto.SignEscrowKey(signKey, agentproto.EscrowKeyPayload{
 		V: agentproto.EscrowKeyPayloadVersion, DeviceID: d.ID.String(), OrgID: d.Org.String(),
 		KeyID: key.id.String(), KeyVersion: key.version, PublicKey: base64.StdEncoding.EncodeToString(key.pub),
 		IssuedAt: now, ExpiresAt: now.Add(agentproto.EscrowKeyValid),

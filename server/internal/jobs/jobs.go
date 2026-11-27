@@ -491,7 +491,9 @@ func (s *Service) signedSize(sp *spec, params []byte, now, expires time.Time) (i
 	if sp.executor == ExecBuiltin {
 		p.Executor, p.Builtin, p.Lane = sp.executor, sp.builtin, sp.lane
 	}
-	signed, err := agentproto.SignJob(s.key, p)
+	// Only the size matters here: the real signature is made at delivery, with
+	// the key the device trusts (ADR-0057).
+	signed, err := agentproto.SignJob(s.keys.Newest().Private, p)
 	if err != nil {
 		return 0, apperr.Invalid("params", "The job's parameters cannot be signed.")
 	}

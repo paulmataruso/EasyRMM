@@ -56,6 +56,22 @@ type PoolOptions struct {
 	// AfterConnectSQL runs on every new connection. Tests use it to assume
 	// the runtime role on a superuser connection.
 	AfterConnectSQL string
+	// Version names the server's version in the connections' application
+	// name, "easyrmm-server/<version>" (ADR-0057): a connection named plain
+	// "easyrmm-server" belongs to a build from before the ring of job keys,
+	// which is how a rotation tells that one is running. Empty is "dev".
+	Version string
+}
+
+// AppName is the application name of a server's database connections.
+func AppName(version string) string {
+	if version == "" {
+		version = "dev"
+	}
+	if len(version) > 40 {
+		version = version[:40]
+	}
+	return "easyrmm-server/" + version
 }
 
 // Open connects the runtime pool and verifies connectivity.
@@ -69,7 +85,7 @@ func Open(ctx context.Context, dsn string, opts PoolOptions) (*DB, error) {
 	}
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
-	cfg.ConnConfig.RuntimeParams["application_name"] = "easyrmm-server"
+	cfg.ConnConfig.RuntimeParams["application_name"] = AppName(opts.Version)
 	// Fail fast on runaway statements instead of holding locks forever.
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "30000"
 	cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "60000"

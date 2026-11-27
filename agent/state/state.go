@@ -47,7 +47,7 @@ type Config struct {
 	// server never held, at most four.
 	JobKeys []JobKey `json:"jobKeys,omitempty"`
 	// DroppedJobKeys are keys a cut-over (or trust-key) took away, kept to
-	// recognise a job signed with one and to name them in errors. They are
+	// recognize a job signed with one and to name them in errors. They are
 	// public keys and are never trusted.
 	DroppedJobKeys []JobKey `json:"droppedJobKeys,omitempty"`
 	// KeyTransitionUntil is the end of the declared key transition: ten

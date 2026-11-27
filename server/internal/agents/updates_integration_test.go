@@ -24,6 +24,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -68,7 +69,7 @@ func (f *updates) serve(body, version string) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.svc.SetUpdates(b, f.priv)
+	f.svc.SetUpdates(b, jobkeys.Static(f.priv))
 	f.build, _ = b.For("linux", "amd64")
 }
 
@@ -400,7 +401,7 @@ func TestAgentUpdateSettingsAndAccess(t *testing.T) {
 	// Without builds, nothing is offered; without the key, no download is
 	// signed.
 	f.svc.SetUpdates(nil, nil)
-	if sig := f.svc.SignDownload(&SignedRequest{}, agentproto.PathMeshSettings, []byte("MeshID=0x1")); sig != "" {
+	if sig := f.svc.SignDownload(f.ctx, &SignedRequest{}, agentproto.PathMeshSettings, []byte("MeshID=0x1")); sig != "" {
 		t.Errorf("signed without a key: %q", sig)
 	}
 	var ae *apperr.Error

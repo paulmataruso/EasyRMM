@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
 	"github.com/paulmataruso/easyrmm/server/internal/quickassist"
@@ -51,7 +52,7 @@ func TestAgentEndpointRefusals(t *testing.T) {
 	_, ksKey, _ := ed25519.GenerateKey(rand.Reader)
 
 	svc := agents.New(inst.DB, au, nil, log)
-	jobSvc := jobs.New(inst.DB, au, jobKey, time.Hour, time.Hour, log)
+	jobSvc := jobs.New(inst.DB, au, jobkeys.Static(jobKey), time.Hour, time.Hour, log)
 	api, err := agentapi.New(svc, nil, []agentapi.Address{{URL: "https://rmm.example.com"}}, nil, log)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +61,7 @@ func TestAgentEndpointRefusals(t *testing.T) {
 		WithInventory(inventory.New(inst.DB, time.Hour, log)).
 		WithHardware(hardware.New(inst.DB, time.Hour, time.Hour, log)).
 		WithAgentLogs(agentlogs.New(inst.DB, au, 1, log)).
-		WithEscrow(keystore.New(inst.DB, au, nil, ksKey, log)).
+		WithEscrow(keystore.New(inst.DB, au, nil, jobkeys.Static(ksKey), log)).
 		WithQuickAssist(quickassist.New(inst.DB, au, qaKey, "https://rmm.example.com"))
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)

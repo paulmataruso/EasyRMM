@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/compliance/rollup"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
@@ -55,7 +56,7 @@ func newFixture(t *testing.T) *fixture {
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	al := audit.New(inst.DB, time.Now)
-	f.jobs = jobs.New(inst.DB, al, priv, 90*24*time.Hour, 30*24*time.Hour, log)
+	f.jobs = jobs.New(inst.DB, al, jobkeys.Static(priv), 90*24*time.Hour, 30*24*time.Hour, log)
 	f.svc = engine.New(inst.DB, f.jobs, al, log)
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)

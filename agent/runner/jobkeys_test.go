@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -16,7 +17,6 @@ type fakeKeys struct {
 	answered  [][2]*agentproto.SignedKeyStatement
 	levels    []int
 	onAnswer  func()
-	cleared   int
 	callOrder *[]string
 }
 
@@ -129,7 +129,7 @@ func TestStatementsAreHandledBeforeTheInstructions(t *testing.T) {
 	s.update = `{"payload":"x","signature":"y"}`
 	s.extra = `,"keyHandover":{"payload":"h","signature":"s"},"keyCutover":{"payload":"c","signature":"s"}`
 	ctx := context.Background()
-	if _, err := r.beat(ctx); err != nil && err != ErrRestart {
+	if _, err := r.beat(ctx); err != nil && !errors.Is(err, ErrRestart) {
 		t.Fatal(err)
 	}
 	if len(fk.answered) != 1 || fk.answered[0][0] == nil || fk.answered[0][1] == nil {
