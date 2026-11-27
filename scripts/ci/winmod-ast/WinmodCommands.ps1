@@ -24,10 +24,17 @@ $script:WmcDynamic = @{
 }
 $script:WmcCache = @{}
 
+# PowerShell 7 hides a Windows-PowerShell-only module (GroupPolicy, ActiveDirectory) from -ListAvailable unless the edition
+# check is skipped; it then loads through the Windows PowerShell compatibility session.
+function Test-WinmodModuleAvailable([string]$Name) {
+    if ($PSVersionTable.PSEdition -eq 'Core') { return [bool](Get-Module -ListAvailable -Name $Name -SkipEditionCheck) }
+    return [bool](Get-Module -ListAvailable -Name $Name)
+}
+
 function Import-WinmodCheckModules([string[]]$Names) {
     foreach ($n in $Names) {
         if (Get-Module -Name $n) { continue }
-        if (-not (Get-Module -ListAvailable -Name $n)) { continue }
+        if (-not (Test-WinmodModuleAvailable $n)) { continue }
         try { Import-Module -Name $n -ErrorAction Stop -WarningAction SilentlyContinue; continue } catch { Write-Verbose "import $n failed: $($_.Exception.Message)" }
         if ($PSVersionTable.PSEdition -eq 'Core') {
             try { Import-Module -Name $n -UseWindowsPowerShell -ErrorAction Stop -WarningAction SilentlyContinue } catch { Write-Verbose "import $n (compat) failed: $($_.Exception.Message)" }
