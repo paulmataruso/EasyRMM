@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/tlsaddname"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 	"github.com/paulmataruso/easyrmm/server/internal/tlsmove"
 )
@@ -21,6 +22,9 @@ import (
 type moveCerts struct {
 	tls *tlscert.Service // nil unless the server obtains certificates itself
 	pki *pki.Authority   // nil without an internal authority
+
+	// added is the name pair of an IP install (5b3), nil until wired.
+	added *tlsaddname.Service
 
 	mu  sync.RWMutex
 	env getCertificate // what .env gives names, set once the edge runs
@@ -98,6 +102,9 @@ func (m *moveCerts) route(moves *tlsmove.Service, base getCertificate) getCertif
 				return base(hello)
 			}
 		}
+		if m.added != nil && m.added.IsAdded(hello.ServerName) {
+			return m.addedCertificate(hello, moves)
+		}
 		switch moves.Served(hello.ServerName) {
 		case tlsmove.SourceAuthority:
 			if m.pki != nil {
@@ -119,4 +126,17 @@ func moveNames(cfg *config.Config) []string {
 		return nil
 	}
 	return tlsSettings(cfg).Names
+}
+
+// addedCertificate serves a name added to an IP install: its Let's Encrypt
+// certificate while the pair is trusted and the certificate is valid, and the
+// authority's second certificate otherwise, which is what agents enrolled
+// through the name trust (ADR-0055, 5b3).
+func (m *moveCerts) addedCertificate(hello *tls.ClientHelloInfo, moves *tlsmove.Service) (*tls.Certificate, error) {
+	if m.tls != nil && m.added.Trusted(hello.ServerName) && moves.Served(hello.ServerName) == tlsmove.SourceACME {
+		if c, err := m.tls.GetCertificate(hello); err == nil && c != nil {
+			return c, nil
+		}
+	}
+	return m.added.SecondCertificate()
 }

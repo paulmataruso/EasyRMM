@@ -83,6 +83,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/scheduleapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsaddnameapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsmoveapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlstrustapi"
@@ -109,6 +110,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
+	"github.com/paulmataruso/easyrmm/server/internal/tlsaddname"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 	"github.com/paulmataruso/easyrmm/server/internal/tlsmove"
 	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
@@ -235,7 +237,9 @@ type Deps struct {
 	TLS *tlscert.Service
 	// TLSMove records which source each name is served from and moves names
 	// between sources (ADR-0055, slice 5b2); the edge routes by it.
-	TLSMove   *tlsmove.Service
+	TLSMove *tlsmove.Service
+	// TLSAdd adds a name pair to an IP install (ADR-0055, 5b3).
+	TLSAdd    *tlsaddname.Service
 	moveCerts *moveCerts
 }
 
@@ -464,6 +468,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	if err := d.TLSMove.Load(ctx); err != nil {
 		return nil, fmt.Errorf("reading the names' sources: %w", err)
 	}
+	d.TLSAdd = newTLSAdd(cfg, db, auditLog, d, log)
+	if err := d.TLSAdd.Load(ctx); err != nil {
+		return nil, fmt.Errorf("reading the added name: %w", err)
+	}
+	d.moveCerts.added = d.TLSAdd
 	// BitLocker's enable action asks the keystore's gate before it makes a job.
 	d.Jobs.SetEscrowGate(d.Keystore)
 	var files agentfiles.Mesh
@@ -749,6 +758,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	mailserverapi.New(d.Mail).Register(mux)
 	tlsapi.New(d.TLS, string(cfg.TLSMode)).WithNames(moveNames(cfg)).Register(mux)
 	tlsmoveapi.New(d.TLSMove, d.Sessions).Register(mux)
+	tlsaddnameapi.New(d.TLSAdd, d.Sessions).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
@@ -964,6 +974,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI, tls: deps.TLS, trust: deps.TLSTrust, moves: deps.TLSMove, moveCerts: deps.moveCerts}
 	wg.Go(func() { deps.TLSMove.Run(ctx, 0) })
+	wg.Go(func() { deps.TLSAdd.Run(ctx, 0) })
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()

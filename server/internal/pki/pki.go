@@ -76,10 +76,11 @@ type Authority struct {
 	// db stores the server certificate; nil for an authority kept in memory.
 	db *database.DB
 
-	mu    sync.Mutex
-	leaf  *tls.Certificate
-	names []string
-	ips   []net.IP
+	mu     sync.Mutex
+	leaf   *tls.Certificate
+	second *tls.Certificate // for added names (SecondCertificate)
+	names  []string
+	ips    []net.IP
 }
 
 // Load reads the authority from the settings table, creating it on first
@@ -487,4 +488,45 @@ func normalizeIPs(ips []net.IP) []net.IP {
 		}
 	}
 	return out
+}
+
+// SecondCertificate is the certificate the authority serves for names added to
+// an IP install (ADR-0055, 5b3): the leaf carries only those names, so the
+// certificate every agent sees on the install's IP addresses never changes, and
+// it uses the server key, so a key pin held for the server stays valid. It is
+// issued in memory, again after a restart or when it is due for renewal.
+func (a *Authority) SecondCertificate(names []string) (*tls.Certificate, error) {
+	names = normalizeNames(names)
+	if len(names) == 0 {
+		return nil, errors.New("pki: no names for the second certificate")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.now()
+	if c := a.second; c != nil && now.Before(c.Leaf.NotAfter.Add(-renewBefore)) && slices.Equal(normalizeNames(c.Leaf.DNSNames), names) {
+		return c, nil
+	}
+	notAfter := now.Add(leafLifetime)
+	if notAfter.After(a.ca.NotAfter) {
+		notAfter = a.ca.NotAfter
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial(),
+		Subject:      pkix.Name{CommonName: names[0], Organization: []string{"EasyRMM"}},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     names,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, a.ca, &a.serverKey.PublicKey, a.caKey)
+	if err != nil {
+		return nil, fmt.Errorf("pki: issuing the second certificate: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+	a.second = &tls.Certificate{Certificate: [][]byte{der, a.ca.Raw}, PrivateKey: a.serverKey, Leaf: leaf}
+	return a.second, nil
 }
