@@ -380,7 +380,8 @@ func (s *Service) evaluateKind(ctx context.Context, tx pgx.Tx, now time.Time, k 
 		LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
 		LEFT JOIN windows_module_snapshots s ON s.device_id = d.id AND s.action = $2 AND s.params_hash = ''
 		LEFT JOIN windows_module_conditions c ON c.policy_id = p.id AND c.device_id = d.id
-		WHERE p.enabled AND p.kind = $1 AND (a.id IS NOT NULL OR s.device_id IS NOT NULL)`,
+		LEFT JOIN alert_suppressions sup ON sup.device_id = d.id AND sup.kind = p.kind AND sup.subject = ''
+		WHERE p.enabled AND p.kind = $1 AND sup.id IS NULL AND (a.id IS NOT NULL OR s.device_id IS NOT NULL)`,
 		k.Name, k.Action, def.Role)
 	if err != nil {
 		return 0, 0, err

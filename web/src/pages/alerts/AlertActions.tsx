@@ -6,7 +6,7 @@ import { useToast } from "../../components/Toast";
 import { Button, cx } from "../../components/ui";
 import { risingHint } from "./alertText";
 
-type Action = "acknowledge" | "resolve";
+type Action = "acknowledge" | "resolve" | "suppress";
 
 export function useAlertAction() {
   const toast = useToast();
@@ -16,7 +16,9 @@ export function useAlertAction() {
       toast.success(
         action === "acknowledge"
           ? `Acknowledged ${a.name} on ${a.deviceName}. It resolves on its own when the condition clears.`
-          : `Resolved ${a.name} on ${a.deviceName}. If the condition still holds, a new alert opens within a minute.`,
+          : action === "suppress"
+            ? `Suppressed ${a.name} on ${a.deviceName}. This alert will not open again on this device.`
+            : `Resolved ${a.name} on ${a.deviceName}. If the condition still holds, a new alert opens within a minute.`,
       ),
   });
   return {
@@ -60,6 +62,17 @@ export function AlertActions({ alert, actions, align = "end", nowrap = false, cl
         onClick={() => actions.run(alert, "resolve")}
       >
         Resolve
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        loading={actions.pending(alert, "suppress")}
+        disabled={actions.busy}
+        aria-label={`Suppress ${alert.name} on ${alert.deviceName}`}
+        title="Permanently suppress this alert kind on this device"
+        onClick={() => actions.run(alert, "suppress")}
+      >
+        Suppress
       </Button>
     </div>
   );

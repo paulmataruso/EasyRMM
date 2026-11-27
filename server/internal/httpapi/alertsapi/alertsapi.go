@@ -30,6 +30,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/alerts/{id}/metrics", a.alertMetrics)
 	r("POST /api/v1/alerts/{id}/acknowledge", a.acknowledge)
 	r("POST /api/v1/alerts/{id}/resolve", a.resolve)
+	r("POST /api/v1/alerts/{id}/suppress", a.suppress)
+	r("GET /api/v1/alerts/suppressions", a.listSuppressions)
+	r("DELETE /api/v1/alerts/suppressions/{id}", a.unsuppress)
 	r("GET /api/v1/alert-policies", a.listPolicies)
 	r("POST /api/v1/alert-policies", a.createPolicy)
 	r("GET /api/v1/alert-policies/{id}", a.getPolicy)
@@ -230,6 +233,48 @@ func (a *API) deletePolicy(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.svc.DeletePolicy(r.Context(), httpapi.Caller(r), id); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) suppress(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in monitoring.SuppressInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	al, err := a.svc.Suppress(r.Context(), httpapi.Caller(r), id, in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, al)
+	return nil
+}
+
+func (a *API) listSuppressions(w http.ResponseWriter, r *http.Request) error {
+	device, err := httpapi.QueryID(r, "deviceId")
+	if err != nil {
+		return err
+	}
+	items, err := a.svc.ListSuppressions(r.Context(), httpapi.Caller(r), device)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[monitoring.Suppression]{Items: items})
+	return nil
+}
+
+func (a *API) unsuppress(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	if err := a.svc.Unsuppress(r.Context(), httpapi.Caller(r), id); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

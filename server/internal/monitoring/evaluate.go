@@ -50,6 +50,10 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 			return err
 		}
 		r.Resolved += n
+		if n, err = reconcileSuppressed(ctx, tx, now); err != nil {
+			return err
+		}
+		r.Resolved += n
 		if n, err = goneDisks(ctx, tx, now); err != nil {
 			return err
 		}
@@ -168,6 +172,19 @@ func reconcile(ctx context.Context, tx pgx.Tx, now time.Time, policyID uuid.UUID
 	return int(tag.RowsAffected()), nil
 }
 
+// reconcileSuppressed resolves open alerts that have a matching suppression.
+// Suppress() resolves at the time of action; this catches races and direct
+// suppression inserts.
+func reconcileSuppressed(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+	tag, err := tx.Exec(ctx, `UPDATE alerts a SET status = 'resolved', resolved_at = $1, resolution = 'suppressed'
+		FROM alert_suppressions s
+		WHERE a.status <> 'resolved' AND s.device_id = a.device_id AND s.kind = a.kind AND s.subject = a.subject`, now)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // facts is what one enabled policy sees on one device it covers.
 type facts struct {
 	policyID, deviceID uuid.UUID
@@ -222,6 +239,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 			JOIN devices d ON NOT d.quick_assist AND (p.organization_id IS NULL
 				OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id)))
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
+			LEFT JOIN alert_suppressions sup ON sup.device_id = d.id AND sup.kind = p.kind AND sup.subject = ''
 			LEFT JOIN LATERAL (
 				SELECT count(*) AS n, min(v) AS lo, (array_agg(v ORDER BY at DESC))[1] AS last,
 					count(*) FILTER (WHERE at > $1::timestamptz - make_interval(secs => greatest(least(p.minutes, $2) * 60, `+windowIntervals+` * d.agent_heartbeat_seconds))) AS n_recent,
@@ -235,6 +253,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 				) x
 			) s ON true
 			WHERE p.enabled AND p.kind IN ('offline', 'cpu', 'memory', 'disk')
+			  AND sup.id IS NULL
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)

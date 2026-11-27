@@ -130,7 +130,9 @@ func loadRemoteFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]remoteFac
 			JOIN devices d ON d.agent_public_key IS NOT NULL
 				AND (p.organization_id IS NULL OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id)))
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
+			LEFT JOIN alert_suppressions sup ON sup.device_id = d.id AND sup.kind = p.kind AND sup.subject = ''
 			WHERE p.enabled AND p.kind IN ('remote_down', 'agent_silent')
+			  AND sup.id IS NULL
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'remote_down' AND NOT remote_online AND has_group AND NOT leaving)

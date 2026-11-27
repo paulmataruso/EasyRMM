@@ -118,6 +118,7 @@ const diskFactsSQL = `SELECT * FROM (
 				OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id))
 			JOIN device_disk_health h ON h.device_id = d.id
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.subject = h.disk_key AND a.status <> 'resolved'
+			LEFT JOIN alert_suppressions sup ON sup.device_id = d.id AND sup.kind = p.kind AND (sup.subject = '' OR sup.subject = h.disk_key)
 			LEFT JOIN LATERAL (
 				SELECT jsonb_agg(x ORDER BY x.at DESC) AS readings FROM (
 					SELECT s.at,
@@ -150,6 +151,7 @@ const diskFactsSQL = `SELECT * FROM (
 				  AND s.at > $1::timestamptz - make_interval(mins => p.minutes) AND s.at <= $1
 			) w ON true
 			WHERE p.enabled AND p.kind = 'disk_health' AND h.missing_since IS NULL AND h.judged_at IS NOT NULL
+			  AND sup.id IS NULL
 		) f
 		WHERE alert_id IS NOT NULL OR CASE check_name
 			WHEN 'temperature' THEN n >= 2 AND over
