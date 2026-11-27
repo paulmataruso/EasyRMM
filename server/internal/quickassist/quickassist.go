@@ -34,6 +34,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -102,9 +103,13 @@ var (
 
 // Service is Quick Assist.
 type Service struct {
-	db        *database.DB
-	audit     *audit.Logger
-	key       ed25519.PrivateKey
+	db    *database.DB
+	audit *audit.Logger
+	key   ed25519.PrivateKey
+	// ring, when set, is where the key comes from (ADR-0057): the ring's newest
+	// key signs tickets and is the one a runner is given, and a ticket verifies
+	// under any key of the ring, since it outlives a rotation.
+	ring      *jobkeys.Ring
 	publicURL string
 	now       func() time.Time
 	// perAddr limits downloads and enrollments from one address; the
@@ -133,8 +138,39 @@ func New(db *database.DB, log *audit.Logger, key ed25519.PrivateKey, publicURL s
 	}
 }
 
-// PublicKey is the key a runner verifies tickets with.
-func (s *Service) PublicKey() ed25519.PublicKey { return s.key.Public().(ed25519.PublicKey) }
+// UseRing makes the service take its key from the ring of job keys: tickets
+// are signed with the newest key, a runner is given the key its device is
+// signed for (the newest at enrollment, recorded as the generation it was
+// given), and a ticket verifies under any key of the ring.
+func (s *Service) UseRing(r *jobkeys.Ring) { s.ring = r }
+
+// signing is the key that signs a ticket and is given to a runner.
+func (s *Service) signing() (ed25519.PrivateKey, ed25519.PublicKey, int64) {
+	if s.ring != nil {
+		if k := s.ring.Newest(); k.Held() {
+			return k.Private, k.Public, k.Generation
+		}
+	}
+	return s.key, s.key.Public().(ed25519.PublicKey), 1
+}
+
+// verifyKeys are the keys a ticket may verify under.
+func (s *Service) verifyKeys() []ed25519.PublicKey {
+	if s.ring == nil {
+		return []ed25519.PublicKey{s.PublicKey()}
+	}
+	var out []ed25519.PublicKey
+	for _, k := range s.ring.Keys() {
+		out = append(out, k.Public)
+	}
+	return out
+}
+
+// PublicKey is the key a runner verifies tickets with: the newest key.
+func (s *Service) PublicKey() ed25519.PublicKey {
+	_, pub, _ := s.signing()
+	return pub
+}
 
 func hashToken(tok string) []byte {
 	h := sha256.Sum256([]byte(tok))
@@ -617,7 +653,8 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 				return err
 			}
 		}
-		t, err := qaticketSign(s.key, r.ID, s.publicURL, now.Add(ticketLife))
+		priv, _, _ := s.signing()
+		t, err := qaticketSign(priv, r.ID, s.publicURL, now.Add(ticketLife))
 		if err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/gpoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/hardwareapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobkeyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/keystoreapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
@@ -328,6 +330,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.JobKeys = ring
 	d.Jobs = jobs.New(db, auditLog, ring, cfg.JobRetention, cfg.JobOutputRetention, log)
 	d.Agents.SetKeys(ring)
+	// Every change to the ring checks the updater's hold and status again
+	// inside the ring's lock (ADR-0057).
+	ring.SetGuard(updater.Guard(cfg.UpdaterStatusDir))
 	d.Compliance = engine.New(db, d.Jobs, auditLog, log)
 	// A hardening change of tier 3 needs the session stepped up (ADR-0055).
 	d.Jobs.SetStepUp(sessions)
@@ -340,11 +345,19 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.ComplianceAssess.SetStepUp(sessions)
 	d.ComplianceAlerts = calerts.New(db, log)
 	d.AgentChannel = agentchannel.New(agentchannel.Options{
-		Enabled: cfg.AgentChannel, Key: ring.Newest().Private, Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
+		Enabled: cfg.AgentChannel, Key: ring.Newest().Private, KeyFor: channelKey(db, ring), Instance: uuid.NewString(), MaxConns: cfg.AgentConnectionsMax,
 		Timing: agentchannel.Timing{ConfirmWithin: 2 * agents.HeartbeatInterval}, Log: log,
 	})
 	d.Agents.OnDeviceGone(func(id uuid.UUID) { d.AgentChannel.Close(id, agentproto.ClosingRemoved) })
+	// The floor moved: every server sees it (the one that moved it at once, the
+	// others with their next reload) and closes its connections with refresh,
+	// so that each agent reconnects (ADR-0057, ADR-0059).
+	ring.OnFloorChange(func(from, to int64) {
+		log.Info("job key floor changed; refreshing agent connections", "from", from, "to", to)
+		d.AgentChannel.Refresh()
+	})
 	d.QuickAssist = quickassist.New(db, auditLog, ring.Newest().Private, strings.TrimSuffix(cfg.PublicURL.String(), "/"))
+	d.QuickAssist.UseRing(ring)
 	d.QuickAssist.OnThrottled(quickAssistFlood(db, mailSvc, log))
 	if d.Mesh != nil {
 		d.QuickAssist.SetNodeRemover(d.Mesh.RemoveDevice)
@@ -759,6 +772,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	tlsapi.New(d.TLS, string(cfg.TLSMode)).WithNames(moveNames(cfg)).Register(mux)
 	tlsmoveapi.New(d.TLSMove, d.Sessions).Register(mux)
 	tlsaddnameapi.New(d.TLSAdd, d.Sessions).Register(mux)
+	jobkeyapi.New(d.JobKeys, d.Sessions).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
@@ -1110,4 +1124,25 @@ func PurgeAudit(ctx context.Context, db *database.DB, retention time.Duration) (
 		return tx.QueryRow(ctx, `SELECT easyrmm_purge_audit(make_interval(secs => $1))`, retention.Seconds()).Scan(&n)
 	})
 	return n, err
+}
+
+// channelKey looks up the key that signs each message for a device, from the
+// ring (ADR-0057): a connection outlives a rotation, so the key is not the
+// one the server started with.
+func channelKey(db *database.DB, ring *jobkeys.Ring) func(context.Context, uuid.UUID) (ed25519.PrivateKey, error) {
+	return func(ctx context.Context, device uuid.UUID) (ed25519.PrivateKey, error) {
+		var k ed25519.PrivateKey
+		err := db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+			c, err := ring.For(ctx, tx, device)
+			if err != nil {
+				return err
+			}
+			if !c.Key.Held() {
+				return errors.New("the server holds no key to sign with")
+			}
+			k = c.Key.Private
+			return nil
+		})
+		return k, err
+	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 )
 
@@ -35,6 +36,8 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	var (
 		update    *agentproto.SignedUpdate
 		uninstall *agentproto.SignedUninstall
+		handover  *agentproto.SignedKeyStatement
+		cutover   *agentproto.SignedKeyStatement
 	)
 	// What the agent may do about Defender, and what it reported of it
 	// (ADR-0070); a bad report is refused before anything is stored.
@@ -136,7 +139,11 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 			update = nil
 			return sp.Rollback(ctx)
 		}
-		return sp.Commit(ctx)
+		if err := sp.Commit(ctx); err != nil {
+			return err
+		}
+		handover, cutover = s.offerKeys(ctx, tx, d, update)
+		return nil
 	})
 	if errors.Is(err, ErrUnknownDevice) {
 		return nil, err
@@ -165,6 +172,8 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		InstructionAck:   ackFor(keyTaken, keyAck),
 		Update:           update,
 		Uninstall:        uninstall,
+		KeyHandover:      handover,
+		KeyCutover:       cutover,
 		Defender:         &agentproto.DefenderPolicy{Enabled: allowed, Events: logOn, EventsAck: logAck},
 		RescanRoles:      rescan,
 	}, nil
@@ -383,4 +392,37 @@ func ackFor(taken bool, ack uint64) uint64 {
 		return ack
 	}
 	return 0
+}
+
+// offerKeys decides the statement the answer carries to move the device
+// between job keys (ADR-0057, "What the server offers each device"), after
+// planUpdate in the same transaction, and never while an agent update is open
+// for the device (one placed in this very answer included). It is an extra
+// like the update: a failure to decide it never fails the heartbeat, and the
+// device is offered it again with its next one. Organizations outside the dev
+// scope are offered nothing.
+func (s *Service) offerKeys(ctx context.Context, tx pgx.Tx, d *Device, update *agentproto.SignedUpdate) (handover, cutover *agentproto.SignedKeyStatement) {
+	o, ok := s.keys.(jobkeys.Offerer)
+	if !ok || update != nil || !devscope.Allowed(d.OrganizationID) {
+		return nil, nil
+	}
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	var open bool
+	if err := sp.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_updates WHERE device_id = $1 AND state = 'sent')`, d.ID).Scan(&open); err != nil || open {
+		_ = sp.Rollback(ctx)
+		return nil, nil
+	}
+	st, err := o.Offer(ctx, sp, d.ID)
+	if err != nil {
+		s.log.Error("agents: deciding a job key statement failed", "error", err, "device_id", d.ID)
+		_ = sp.Rollback(ctx)
+		return nil, nil
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return nil, nil
+	}
+	return st.Handover, st.Cutover
 }

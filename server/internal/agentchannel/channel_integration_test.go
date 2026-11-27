@@ -5,6 +5,8 @@ package agentchannel_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -576,4 +578,47 @@ func TestSwitchOff(t *testing.T) {
 	f.hub.Sweep()
 	f.hub.Close(d.id, "x")
 	f.hub.Run(context.Background()) // returns at once
+}
+
+// The key that signs a frame is looked up for each message (ADR-0057), and a
+// change of the floor closes every connection with refresh.
+func TestKeyLookupPerMessageAndRefresh(t *testing.T) {
+	var lookups atomic.Int64
+	var fail atomic.Bool
+	tm := fastTiming
+	f := newFixture(t, fixtureOpts{timing: tm, keyFor: func(_ context.Context, _ uuid.UUID, def ed25519.PrivateKey) (ed25519.PrivateKey, error) {
+		lookups.Add(1)
+		if fail.Load() {
+			return nil, errors.New("no key")
+		}
+		return def, nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go f.hub.Run(ctx)
+
+	a := f.device(f.orgA)
+	ca := f.dial(a)
+	if lookups.Load() == 0 {
+		t.Error("the hello was signed without a lookup")
+	}
+	before := lookups.Load()
+	ca.next(3 * time.Second) // a tick, verified under the key the lookup gave
+	if lookups.Load() <= before {
+		t.Errorf("lookups %d, then %d", before, lookups.Load())
+	}
+
+	f.hub.Refresh()
+	if m, _ := ca.ends(3 * time.Second); m == nil || m.Reason != agentproto.ClosingRefresh {
+		t.Errorf("refresh: %+v", m)
+	}
+
+	// A lookup that fails closes the connection instead of sending an unsigned frame.
+	b := f.device(f.orgA)
+	fail.Store(true)
+	if c, err := f.dialWith(b, "", nil); err == nil {
+		if _, err := c.read(2 * time.Second); err == nil {
+			t.Error("a frame arrived although the key could not be looked up")
+		}
+	}
 }

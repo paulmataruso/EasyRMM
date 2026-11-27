@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -221,7 +222,18 @@ func (c *conn) write(m agentproto.ChannelMessage) error {
 	m.ConnID = c.id
 	m.Seq = c.seq + 1
 	m.SentAt = c.h.opt.Now().UTC()
-	frame, err := agentproto.SignChannelMessage(c.h.opt.Key, m)
+	key := c.h.opt.Key
+	if c.h.opt.KeyFor != nil {
+		// Looked up for each message: the key follows the device's report.
+		kctx, kcancel := context.WithTimeout(c.ctx, c.h.tm.Write)
+		k, err := c.h.opt.KeyFor(kctx, c.dev)
+		kcancel()
+		if err != nil {
+			return fmt.Errorf("agent channel: looking up the key to sign with: %w", err)
+		}
+		key = k
+	}
+	frame, err := agentproto.SignChannelMessage(key, m)
 	if err != nil {
 		return err
 	}
