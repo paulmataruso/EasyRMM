@@ -4608,6 +4608,41 @@ export interface TlsOverview {
   mode: string;
   managed: boolean;
   status?: TlsStatus;
+  /** DNS names whose certificate source can be moved (5b2). */
+  names?: string[];
+  canAcme?: boolean;
+}
+
+/** ADR-0055, slice 5b2: where a DNS name's certificate comes from, and a move between sources. */
+export type TlsSource = "env" | "acme" | "authority";
+
+export interface TlsSourceName {
+  name: string;
+  source: TlsSource;
+  moveTarget?: TlsSource;
+  moveStartedAt?: string;
+  moveNotes: string[];
+}
+
+export interface TlsMoveDevice {
+  deviceId: string;
+  hostname: string;
+  lastSeen?: string;
+  /** "stale" does not block; "outside_scope" blocks. */
+  state: "passed" | "failed" | "pending" | "stale" | "outside_scope";
+  error?: string;
+  scopes: string[];
+}
+
+export interface TlsMoveProgress {
+  name: string;
+  source: TlsSource;
+  target: TlsSource;
+  startedAt: string;
+  notes: string[];
+  devices: TlsMoveDevice[];
+  waiting: number;
+  swapDelaySeconds: number;
 }
 
 export interface TlsCheck {

@@ -18,8 +18,16 @@ import (
 // API serves the certificate routes. Service is nil unless the server obtains
 // its certificates itself (acme mode); Mode says where they come from.
 type API struct {
-	svc  *tlscert.Service
-	mode string
+	svc   *tlscert.Service
+	mode  string
+	names []string
+}
+
+// WithNames tells the page which DNS names have a certificate source of
+// their own to move (ADR-0055, slice 5b2), in every mode that serves TLS.
+func (a *API) WithNames(names []string) *API {
+	a.names = names
+	return a
 }
 
 // New builds the API.
@@ -47,10 +55,14 @@ type response struct {
 	Mode    string          `json:"mode"`
 	Managed bool            `json:"managed"`
 	Status  *tlscert.Status `json:"status,omitempty"`
+	// Names are the DNS names whose source can be moved; CanAcme says this
+	// server can obtain Let's Encrypt certificates for them.
+	Names   []string `json:"names"`
+	CanAcme bool     `json:"canAcme"`
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request) error {
-	out := response{Mode: a.mode, Managed: a.svc != nil}
+	out := response{Mode: a.mode, Managed: a.svc != nil, CanAcme: a.svc != nil, Names: append([]string{}, a.names...)}
 	if a.svc != nil {
 		st, err := a.svc.Status(r.Context())
 		if err != nil {

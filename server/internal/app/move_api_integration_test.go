@@ -365,7 +365,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"compliance_evidence": owned, "compliance_evidence_links": owned, "compliance_org_keys": owned, "compliance_poam_items": owned, "compliance_poam_milestones": owned,
 		"compliance_documents": owned, "compliance_document_sections": owned, "compliance_score_snapshots": owned, "compliance_scope_assets": stays,
 		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "notification_channels": owned, "notification_channel_shares": owned, "notification_quotas": owned, "notification_rules": owned, "notification_rule_orgs": owned, "notification_rule_sites": owned, "notification_rule_groups": owned, "site_maintenance_windows": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
-		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned,
+		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned, "tls_names": owned,
 		// engine
 		"easypatch_devices": engine, "easypatch_install_restarts": engine, "easypatch_installs": engine, "easypatch_opt_outs": engine,
 		"easypatch_removals": engine,
