@@ -4,7 +4,7 @@ package grouppolicy
 // script is a changed line.
 var pins = map[string]string{ //nolint:gosec // SHA-256 of scripts, not credentials
 	"gpo_backup":        "79b6b3995b32c5aac18c4a5c3ab08cf8f37887e79445112f1a6b81b50fbcaa3d",
-	"gpo_copy":          "7f63d8c34818ef40637f30115ef388206063471057b1f1f1f52297856878c4fa",
+	"gpo_copy":          "6d4b8f817a1afcca696adef22a458b68923dd37d8a24934b0d7dcf3af9fddc06",
 	"gpo_create":        "9eaa906055790a8973a2fe2bc641f151c60ae3c875a32d75171b541bc5322fd0",
 	"gpo_delete":        "8a9427aba424af30608c0371305e7a2c761239b0a2e9d89a2aae4b53722a0f63",
 	"gpo_get":           "39351c3bb64e9c0ab8c04166b0fbaa06aac2596307ec4e11fe77c41c0a06b300",

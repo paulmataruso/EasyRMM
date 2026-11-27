@@ -3,7 +3,7 @@ try {
     $c = Get-Context
     $common = $c.Common
     $src = Get-GPO -Guid ([string]$p.id) @common
-    $new = Copy-GPO -SourceGuid ([string]$p.id) -TargetName ([string]$p.newName) -SourceDomain ([string]$c.Domain) -TargetDomain ([string]$c.Domain) -Server ([string]$c.Server)
+    $new = Copy-GPO -SourceGuid ([string]$p.id) -TargetName ([string]$p.newName) -SourceDomain ([string]$c.Domain) -TargetDomain ([string]$c.Domain) -SourceDomainController ([string]$c.Server) -TargetDomainController ([string]$c.Server)
     $va = Get-Versions $new
     Write-Result $true ([ordered]@{
         summary = (Format-Text 'Copied the GPO {0} as {1}.' ([string]$src.DisplayName) ([string]$new.DisplayName))
