@@ -131,6 +131,7 @@ jobs:
         shell: powershell
         run: ./scripts/ci/test-gpo-helpers.ps1
       - name: Timings (throwaway)
+        continue-on-error: true
         shell: powershell
         run: ./scripts/ci/zz-measure.ps1
       - name: Group Policy helpers on sample data (PowerShell 7)
