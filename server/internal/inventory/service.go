@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/assets"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
@@ -91,6 +92,10 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 		if _, err := tx.Exec(ctx, `UPDATE devices SET powershell7 = $2, powershell7_blocked = $3
 			WHERE id = $1 AND (powershell7 IS DISTINCT FROM $2 OR powershell7_blocked IS DISTINCT FROM $3)`,
 			deviceID, ps7, blocked); err != nil {
+			return err
+		}
+		// The asset record's agent values follow the inventory (ADR-0066).
+		if err := assets.SyncAgent(ctx, tx, deviceID, inv.System); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM device_software WHERE device_id = $1`, deviceID); err != nil {
