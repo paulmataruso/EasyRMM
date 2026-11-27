@@ -1,6 +1,7 @@
 # ADR-0060: Collecting logs
 
-* Status: Proposed (2026-11-21). Not implemented. Revised six times the
+* Status: Proposed (2026-11-21). Slice 0 (Windows jobs inside their job
+  object) implemented on 2026-11-27; slices 1 to 10 not implemented. Revised six times the
   same day after an independent review and five checks.
 * Builds on: [ADR-0002](0002-postgresql-rls-tenant-isolation.md)
   (row-level security), [ADR-0009](0009-agent-protocol.md) (the agent
@@ -1902,6 +1903,14 @@ Each merges and is verified on its own, after F1 and F2.
      release, so ADR-0027's crash rollback to an earlier agent changes
      nothing there. The job's payload does not change, so an agent of the
      previous release still runs the new server's jobs.
+
+   *Amended 2026-11-27 (decided in review)*: the same four steps serve
+   builtins (`startLimited`, with their memory limit), so a builtin is also
+   refused without a job object. A goroutine drains the completion port and
+   keeps the ids of the processes that join (at most 4096), so that a run
+   that starts processes without end cannot fill the kernel's queue; slice 3
+   adds their creation times. A process with no thread to resume, or one
+   that cannot be resumed, is terminated and the run refused.
 
    *Verified*: the Windows runner: every process of a job, a short-lived
    one included, in its job object and reported on its completion port; a
