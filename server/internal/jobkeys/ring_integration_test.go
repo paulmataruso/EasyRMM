@@ -28,6 +28,7 @@ import (
 )
 
 type fixture struct {
+	inst   *testdb.Instance
 	t      *testing.T
 	ctx    context.Context
 	db     *database.DB
@@ -57,7 +58,7 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, sealer: newSealer(t, "k1")}
+	f := &fixture{t: t, inst: inst, ctx: context.Background(), db: inst.DB, sealer: newSealer(t, "k1")}
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	f.clock = &now
 	f.openRing()
