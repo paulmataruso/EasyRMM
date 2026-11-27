@@ -38,11 +38,13 @@ describe("visibleTabs", () => {
     expect(ids("organization", ["doc.view", "patch.configure"], true)).toEqual([
       "overview",
       "contacts",
+      "assets",
       "patching",
     ]);
     expect(ids("organization", ["doc.view"], true)).toEqual([
       "overview",
       "contacts",
+      "assets",
     ]);
     expect(ids("organization", ["patch.configure"], true)).toEqual([
       "overview",
@@ -54,6 +56,7 @@ describe("visibleTabs", () => {
     expect(ids("organization", ["user.view", "enrollment.manage", "doc.view"])).toEqual([
       "overview",
       "contacts",
+      "assets",
       "people",
       "install",
     ]);
@@ -65,7 +68,7 @@ describe("visibleTabs", () => {
   it("puts Alert policies between People and Patching, and Install last", () => {
     expect(
       ids("organization", ["doc.view", "user.view", "monitoring.view", "patch.configure", "enrollment.manage"], true),
-    ).toEqual(["overview", "contacts", "people", "alert-policies", "patching", "install"]);
+    ).toEqual(["overview", "contacts", "assets", "people", "alert-policies", "patching", "install"]);
     expect(ids("site", ["monitoring.view", "patch.configure", "enrollment.manage"], true)).toEqual([
       "overview",
       "alert-policies",
@@ -77,10 +80,12 @@ describe("visibleTabs", () => {
   it("shows Contacts at the organization only, and Patching at the site only with the engine set up", () => {
     expect(ids("site", ["doc.view", "patch.configure"], true)).toEqual([
       "overview",
+      "assets",
       "patching",
     ]);
     expect(ids("site", ["doc.view", "patch.configure"], false)).toEqual([
       "overview",
+      "assets",
     ]);
     expect(ids("organization", ["patch.configure"], false)).toEqual(["overview"]);
   });

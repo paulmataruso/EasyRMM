@@ -23,6 +23,7 @@ import { HardeningPanel } from "./DeviceHardening";
 import { PosturePanel } from "./PosturePanel";
 import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
+import { AssetPanel } from "../assets/AssetPanel";
 import { RegistryPanel } from "./registry/RegistryTab";
 import { EventLogPanel } from "./eventlog/EventLogTab";
 import { DefenderPanel } from "./DeviceDefender";
@@ -94,6 +95,8 @@ export function DeviceDetailPage() {
     { id: "overview", label: "Overview" },
     { id: "hardware", label: "Hardware", hidden: !hasAgent },
     { id: "software", label: "Software", hidden: !hasAgent || !can("software.view") },
+    // The asset record (ADR-0066, slice 2): the hardware's identity, warranty and age, for holders of doc.view here.
+    { id: "asset", label: "Asset", hidden: !hasAgent || !atDevice("doc.view") },
     { id: "patches", label: "Patches", hidden: !hasAgent || patching.data?.configured !== true },
     // Hardening covers Linux (ADR-0051) and Windows (ADR-0054); viewing its findings needs only device.view.
     { id: "hardening", label: "Hardening", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") },
@@ -192,6 +195,12 @@ export function DeviceDetailPage() {
           ) : (
             <HardwarePanel data={inventory.data} device={d} />
           )}
+        </div>
+      )}
+
+      {tab === "asset" && (
+        <div role="tabpanel" aria-labelledby="tab-asset">
+          <AssetPanel deviceId={d.id} />
         </div>
       )}
 

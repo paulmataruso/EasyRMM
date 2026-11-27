@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agentlogs"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/agentsettings"
+	"github.com/paulmataruso/easyrmm/server/internal/assets"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
@@ -52,6 +53,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentsettingsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/assetsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
@@ -141,7 +143,9 @@ type Deps struct {
 	Sessions *httpapi.Sessions
 	Tenancy  *tenancy.Service
 	// Docs keeps the customer record's contacts and places (ADR-0066).
-	Docs    *docs.Service
+	Docs *docs.Service
+	// Assets keeps the asset record (ADR-0066, slice 2).
+	Assets  *assets.Service
 	Users   *users.Service
 	Setup   *usersapi.Setup
 	Devices *devices.Service
@@ -265,7 +269,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	}
 	d := &Deps{
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
-		Tenancy: tenancy.New(db, auditLog), Docs: docs.New(db, auditLog), Users: usersSvc, Setup: setup, Mail: mailSvc,
+		Tenancy: tenancy.New(db, auditLog), Docs: docs.New(db, auditLog), Assets: assets.New(db, auditLog), Users: usersSvc, Setup: setup, Mail: mailSvc,
+	}
+	// Devices that reported an inventory before asset records existed get one.
+	if err := d.Assets.Backfill(ctx); err != nil {
+		log.Warn("assets: backfill failed", "err", err)
 	}
 	if cfg.NeedsInternalCA() {
 		ca, err := pki.Load(ctx, db, sealer)
@@ -694,6 +702,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	authapi.New(d.Auth, d.Sessions, authapi.Features{RemoteAccess: d.Remote != nil}).Register(mux)
 	tenancyapi.New(d.Tenancy).Register(mux)
 	docsapi.New(d.Docs).Register(mux)
+	assetsapi.New(d.Assets).Register(mux)
 	devicesapi.New(d.Devices).Register(mux)
 	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), addresses, caInfo).Register(mux)
 	if d.Remote != nil {

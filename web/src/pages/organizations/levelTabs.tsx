@@ -6,6 +6,7 @@ import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { ComplianceTab } from "../compliance/ComplianceTab";
 import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
+import { AssetsTab } from "./tabs/AssetsTab";
 import { ContactsTab } from "./tabs/ContactsTab";
 import { HardeningTab } from "./tabs/HardeningTab";
 import { InstallTab } from "./tabs/InstallTab";
@@ -63,6 +64,14 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "doc.view",
     levels: ["organization"],
     component: ContactsTab,
+  },
+  {
+    // The asset record (ADR-0066, slice 2): hardware with its warranty and age, at every level.
+    id: "assets",
+    label: "Assets",
+    permission: "doc.view",
+    levels: ["organization", "site", "group"],
+    component: AssetsTab,
   },
   {
     id: "people",
