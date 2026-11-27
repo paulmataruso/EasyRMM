@@ -1521,10 +1521,13 @@
   {
    "req_id": "SC.L2-3.13.6",
    "control_ids": [
+    "linux.firewall.table",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.firewall.domain-inbound",
     "win.firewall.private-inbound",
-    "win.firewall.public-inbound",
-    "linux.firewall.table"
+    "win.firewall.public-inbound"
    ],
    "relation": "satisfies_objective",
    "note": "Shows the host firewall blocks inbound traffic by default."
@@ -1557,6 +1560,7 @@
   {
    "req_id": "SC.L2-3.13.16",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "win.bitlocker.protected"
    ],
    "relation": "satisfies_objective",
@@ -1694,6 +1698,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.firewall.domain-enabled",
     "win.firewall.domain-inbound",
     "win.firewall.domain-log-dropped",
@@ -1790,6 +1797,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.audit.legacy-overridden",
     "win.firewall.domain-enabled",
     "win.firewall.domain-inbound",
@@ -1823,6 +1833,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.audit.command-lines",
     "win.audit.legacy-overridden",
     "win.audit.log-sizes",
@@ -1850,6 +1863,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.firewall.domain-enabled",
     "win.firewall.domain-inbound",
     "win.firewall.domain-log-dropped",
@@ -1893,6 +1909,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.accounts.blank-passwords",
     "win.accounts.complexity",
     "win.accounts.guest",
@@ -1955,6 +1974,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.accounts.blank-passwords",
     "win.accounts.complexity",
     "win.accounts.guest",
@@ -2017,6 +2039,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",
@@ -2211,6 +2236,7 @@
   {
    "req_id": "SC.L2-3.13.16",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "win.bitlocker.min-pin",
     "win.bitlocker.preboot-pin",
     "win.bitlocker.recovery-password"
@@ -2221,6 +2247,7 @@
   {
    "req_id": "SI.L1-3.14.1",
    "control_ids": [
+    "linux.auto-updates.enabled",
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",

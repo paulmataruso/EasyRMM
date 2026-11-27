@@ -81,6 +81,9 @@ var linuxModules = map[string]moduleInfo{
 	"shared-memory": {"medium", compliance.TierWorkflow}, "usb-storage": {"medium", compliance.TierWorkflow},
 	"mac": {"high", compliance.TierDangerous}, "integrity": {"low", compliance.TierReversible},
 	"lockout": {"medium", compliance.TierReport},
+	// ADR-0082, P2: state posture reads; each only reports.
+	"luks": {"high", compliance.TierReport}, "host-firewall": {"high", compliance.TierReport},
+	"selinux-apparmor": {"medium", compliance.TierReport}, "auto-updates": {"medium", compliance.TierReport},
 }
 
 var windowsTiers = [...]string{compliance.TierReport, compliance.TierReversible, compliance.TierWorkflow, compliance.TierDangerous}
@@ -104,7 +107,14 @@ var reportOnlyAdvice = map[string]string{ //nolint:gosec // advice texts, not cr
 	"app-control-enforced":    "Write an App Control for Business or AppLocker policy in audit mode first, review what it would block, then enforce it. EasyRMM only reports it.",
 	"lockout-faillock-active": "Turn pam_faillock on with authselect (RHEL, Fedora) or pam-auth-update (Debian, Ubuntu). A wrong change to the sign-in stack can lock everyone out, so EasyRMM only reports it.",
 	"lockout-deny-threshold":  "Set deny to a number from 1 to 10 in /etc/security/faillock.conf. EasyRMM only reports it.",
-	"office-internet-macros":  "Block macros in files from the internet for each Office application (Group Policy, Office administrative templates). EasyRMM only reports it.",
+	// ADR-0082, P2.
+	"luks-root-encrypted":        "Reinstall with disk encryption, or move the system to a LUKS volume. Encrypting a disk in place can lose data, so EasyRMM only reports it.",
+	"host-firewall-running":      "Install and start a host firewall (ufw on Debian and Ubuntu, firewalld on RHEL and Fedora), and allow the ports in use first. A wrong change can cut off remote access, so EasyRMM only reports it.",
+	"host-firewall-enabled":      "Enable the firewall's unit so that it starts at boot (systemctl enable). EasyRMM only reports it.",
+	"host-firewall-default-deny": "Set the firewall's default for incoming traffic to deny (ufw default deny incoming, or a firewalld zone with the default or DROP target), after allowing the ports in use. EasyRMM only reports it.",
+	"selinux-apparmor-enforcing": "Set SELinux to enforcing (RHEL, Fedora) or install and enable AppArmor with its profiles (Debian, Ubuntu). A mode that stops a service is found by running permissive first. EasyRMM only reports it here; the mac module applies it with guards.",
+	"auto-updates-enabled":       "Install unattended-upgrades (Debian, Ubuntu) or dnf-automatic (RHEL, Fedora), schedule it, and let it install updates. EasyRMM only reports it; the EasyPatch connector schedules updates too.",
+	"office-internet-macros":     "Block macros in files from the internet for each Office application (Group Policy, Office administrative templates). EasyRMM only reports it.",
 	// ADR-0078, C4.
 	"dc-ldap-signing":           "Set Domain controller: LDAP server signing requirements to Require signing in the Default Domain Controllers Policy. Clients that send unsigned binds stop working, so check the directory's LDAP events first. EasyRMM only reports it.",
 	"dc-ldap-channel-binding":   "Set Domain controller: LDAP server channel binding token requirements to Always in the Default Domain Controllers Policy. Older clients that cannot bind to the channel stop working. EasyRMM only reports it.",

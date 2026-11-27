@@ -80,6 +80,8 @@ var hardeningScript string
 var HardeningModules = []string{
 	"ssh", "firewall", "fail2ban", "kernel", "audit", "permissions", "services", "kernel-modules", "sudo", "time",
 	"shared-memory", "usb-storage", "mac", "integrity", "lockout",
+	// Report only, and read by posture (ADR-0082, P2).
+	"luks", "host-firewall", "selinux-apparmor", "auto-updates",
 }
 
 // Hardening is what a hardening job does.

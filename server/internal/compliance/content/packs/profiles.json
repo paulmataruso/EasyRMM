@@ -1283,6 +1283,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.auto-updates.enabled",
+     "params": {}
+    },
+    {
      "control_id": "linux.fail2ban.ban-action",
      "params": {}
     },
@@ -1336,6 +1340,18 @@
     },
     {
      "control_id": "linux.firewall.unit-enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.default-deny",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.running",
      "params": {}
     },
     {
@@ -1491,6 +1507,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.luks.root-encrypted",
+     "params": {}
+    },
+    {
      "control_id": "linux.mac.apparmor",
      "params": {}
     },
@@ -1556,6 +1576,10 @@
     },
     {
      "control_id": "linux.permissions.grub-cfg",
+     "params": {}
+    },
+    {
+     "control_id": "linux.selinux-apparmor.enforcing",
      "params": {}
     },
     {
@@ -1718,6 +1742,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.auto-updates.enabled",
+     "params": {}
+    },
+    {
      "control_id": "linux.firewall.table",
      "params": {}
     },
@@ -1726,11 +1754,31 @@
      "params": {}
     },
     {
+     "control_id": "linux.host-firewall.default-deny",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.running",
+     "params": {}
+    },
+    {
      "control_id": "linux.lockout.deny-threshold",
      "params": {}
     },
     {
      "control_id": "linux.lockout.faillock-active",
+     "params": {}
+    },
+    {
+     "control_id": "linux.luks.root-encrypted",
+     "params": {}
+    },
+    {
+     "control_id": "linux.selinux-apparmor.enforcing",
      "params": {}
     },
     {
@@ -2189,6 +2237,10 @@
      "params": {}
     },
     {
+     "control_id": "linux.auto-updates.enabled",
+     "params": {}
+    },
+    {
      "control_id": "linux.firewall.table",
      "params": {}
     },
@@ -2197,11 +2249,31 @@
      "params": {}
     },
     {
+     "control_id": "linux.host-firewall.default-deny",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.enabled",
+     "params": {}
+    },
+    {
+     "control_id": "linux.host-firewall.running",
+     "params": {}
+    },
+    {
      "control_id": "linux.lockout.deny-threshold",
      "params": {}
     },
     {
      "control_id": "linux.lockout.faillock-active",
+     "params": {}
+    },
+    {
+     "control_id": "linux.luks.root-encrypted",
+     "params": {}
+    },
+    {
+     "control_id": "linux.selinux-apparmor.enforcing",
      "params": {}
     },
     {

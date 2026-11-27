@@ -148,6 +148,14 @@ func Label(id string) string {
 		return "BitLocker"
 	case "fail2ban":
 		return "fail2ban"
+	case "luks":
+		return "Disk encryption (LUKS)"
+	case "host-firewall":
+		return "Host firewall"
+	case "selinux-apparmor":
+		return "SELinux or AppArmor"
+	case "auto-updates":
+		return "Automatic updates"
 	}
 	s := strings.ReplaceAll(id, "-", " ")
 	if s == "" {

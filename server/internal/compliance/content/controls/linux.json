@@ -7062,6 +7062,306 @@
       },
       "licence_class": "ORIGINAL",
       "review_state": "none"
+    },
+    {
+      "id": "linux.luks.root-encrypted",
+      "version": 1,
+      "title": "The root filesystem on a LUKS volume",
+      "description": "The root filesystem on a LUKS volume.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "luks",
+        "setting": "luks-root-encrypted"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module luks, setting luks-root-encrypted."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Reinstall with disk encryption, or move the system to a LUKS volume. Encrypting a disk in place can lose data, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting luks-root-encrypted"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.host-firewall.running",
+      "version": 1,
+      "title": "A host firewall (ufw, firewalld or nftables) running",
+      "description": "A host firewall (ufw, firewalld or nftables) running.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "host-firewall",
+        "setting": "host-firewall-running"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module host-firewall, setting host-firewall-running."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Install and start a host firewall (ufw on Debian and Ubuntu, firewalld on RHEL and Fedora), and allow the ports in use first. A wrong change can cut off remote access, so EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting host-firewall-running"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.host-firewall.enabled",
+      "version": 1,
+      "title": "The host firewall starts at boot",
+      "description": "The host firewall starts at boot.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "host-firewall",
+        "setting": "host-firewall-enabled"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module host-firewall, setting host-firewall-enabled."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Enable the firewall's unit so that it starts at boot (systemctl enable). EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting host-firewall-enabled"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.host-firewall.default-deny",
+      "version": 1,
+      "title": "The host firewall drops incoming traffic by default",
+      "description": "The host firewall drops incoming traffic by default.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "high",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "host-firewall",
+        "setting": "host-firewall-default-deny"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module host-firewall, setting host-firewall-default-deny."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set the firewall's default for incoming traffic to deny (ufw default deny incoming, or a firewalld zone with the default or DROP target), after allowing the ports in use. EasyRMM only reports it.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting host-firewall-default-deny"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.selinux-apparmor.enforcing",
+      "version": 1,
+      "title": "SELinux enforcing, or AppArmor on with profiles loaded",
+      "description": "SELinux enforcing, or AppArmor on with profiles loaded.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "selinux-apparmor",
+        "setting": "selinux-apparmor-enforcing"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module selinux-apparmor, setting selinux-apparmor-enforcing."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Set SELinux to enforcing (RHEL, Fedora) or install and enable AppArmor with its profiles (Debian, Ubuntu). A mode that stops a service is found by running permissive first. EasyRMM only reports it here; the mac module applies it with guards.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting selinux-apparmor-enforcing"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
+    },
+    {
+      "id": "linux.auto-updates.enabled",
+      "version": 1,
+      "title": "Unattended-upgrades or dnf-automatic installing updates",
+      "description": "Unattended-upgrades or dnf-automatic installing updates.",
+      "platforms": {
+        "os": "linux"
+      },
+      "scopes": [
+        "any"
+      ],
+      "severity": "medium",
+      "executor": "hardening",
+      "executor_ref": {
+        "platform": "linux",
+        "module": "auto-updates",
+        "setting": "auto-updates-enabled"
+      },
+      "detect": {
+        "summary": "Read by the EasyRMM linux hardening check, module auto-updates, setting auto-updates-enabled."
+      },
+      "expected": {
+        "state": "in_place"
+      },
+      "remediation_text": "Install unattended-upgrades (Debian, Ubuntu) or dnf-automatic (RHEL, Fedora), schedule it, and let it install updates. EasyRMM only reports it; the EasyPatch connector schedules updates too.",
+      "apply_ref": null,
+      "undo_ref": null,
+      "apply_supported": false,
+      "undo_kind": "none",
+      "risk_tier": "T0",
+      "needs_restart": false,
+      "preconditions": [],
+      "author": "EasyRMM",
+      "provenance": {
+        "author": "EasyRMM",
+        "authored_on": "2026-11-26",
+        "method": "written from vendor documentation and observed behavior of the setting; the check is EasyRMM's own hardening script",
+        "sources": [
+          {
+            "source_id": "easyrmm-hardening",
+            "locator": "linux hardening setting auto-updates-enabled"
+          }
+        ],
+        "derived_from_content": false,
+        "reviewer": "pending second-person review",
+        "licence_class": "ORIGINAL"
+      },
+      "licence_class": "ORIGINAL",
+      "review_state": "none"
     }
   ]
 }

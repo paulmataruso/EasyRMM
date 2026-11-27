@@ -217,6 +217,7 @@
   {
    "req_id": "164.312(a)(2)(iv)",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "win.bitlocker.min-pin",
     "win.bitlocker.preboot-pin",
     "win.bitlocker.protected",

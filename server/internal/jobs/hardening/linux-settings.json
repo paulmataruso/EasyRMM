@@ -109,6 +109,12 @@
     {"id": "integrity-aide-baseline", "module": "integrity", "what": "An AIDE baseline"},
     {"id": "integrity-aide-daily", "module": "integrity", "what": "A daily AIDE check"},
     {"id": "lockout-faillock-active", "module": "lockout", "what": "Failed sign-ins counted by pam_faillock"},
-    {"id": "lockout-deny-threshold", "module": "lockout", "what": "Lockout after 10 failed sign-ins or fewer"}
+    {"id": "lockout-deny-threshold", "module": "lockout", "what": "Lockout after 10 failed sign-ins or fewer"},
+    {"id": "luks-root-encrypted", "module": "luks", "what": "The root filesystem on a LUKS volume"},
+    {"id": "host-firewall-running", "module": "host-firewall", "what": "A host firewall (ufw, firewalld or nftables) running"},
+    {"id": "host-firewall-enabled", "module": "host-firewall", "what": "The host firewall starts at boot"},
+    {"id": "host-firewall-default-deny", "module": "host-firewall", "what": "The host firewall drops incoming traffic by default"},
+    {"id": "selinux-apparmor-enforcing", "module": "selinux-apparmor", "what": "SELinux enforcing, or AppArmor on with profiles loaded"},
+    {"id": "auto-updates-enabled", "module": "auto-updates", "what": "Unattended-upgrades or dnf-automatic installing updates"}
   ]
 }
