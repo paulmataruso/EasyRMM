@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode/utf8"
 	"unsafe"
@@ -184,30 +185,111 @@ func command(prog, shell, script string, args []string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
+// Job object messages on a job's completion port (winnt.h).
+const (
+	jobMsgNewProcess = 6 // JOB_OBJECT_MSG_NEW_PROCESS: a process joined the job; the message's overlapped value is its id
+
+	// maxReported bounds the process ids a group remembers, so that a run
+	// that starts processes without end cannot grow the agent.
+	maxReported = 4096
+)
+
+// jobCompletionPort is JOBOBJECT_ASSOCIATE_COMPLETION_PORT.
+type jobCompletionPort struct {
+	key  uintptr
+	port windows.Handle
+}
+
+// The Windows calls a run's job object takes, as variables so that tests can
+// make one fail; production leaves them as they are.
+var (
+	createJobObject = func() (windows.Handle, error) { return windows.CreateJobObject(nil, nil) }
+	associatePort   = func(job, port windows.Handle) error {
+		info := jobCompletionPort{key: uintptr(job), port: port}
+		_, err := windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation,
+			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
+		return err
+	}
+	assignToJob = windows.AssignProcessToJobObject
+)
+
 // group is a started script in a job object: stopping the job stops
-// everything the script started.
+// everything the script started. Every process of the run is in it from its
+// first instruction (startLimited), and the job's completion port reports
+// each one that joins.
 type group struct {
-	cmd *exec.Cmd
-	job windows.Handle
+	cmd  *exec.Cmd
+	job  windows.Handle
+	port windows.Handle
+
+	mu   sync.Mutex
+	seen []uint32
+	done chan struct{} // closed when the port's reader has ended
 }
 
 func start(cmd *exec.Cmd) (*group, error) { return startLimited(cmd, 0) }
 
+// stopKey is the completion key release posts to end the port's reader; a
+// job's own messages carry the job handle as their key.
+const stopKey = 1
+
 // startLimited is start with a limit on the memory the job object's
 // processes may use together, where memLimit is not zero (a builtin's, so
-// that a runaway allocation ends the child and not the agent).
+// that a runaway allocation ends the child and not the agent). Still through
+// os/exec, so that the handles the process inherits, its pipes and its
+// command line stay as Go makes them, it takes four ordered steps (ADR-0060,
+// slice 0), and refuses the run, with the reason, where one fails:
+//
+//  1. make the job object and attach its completion port;
+//  2. start the process suspended (CREATE_SUSPENDED added to its flags);
+//  3. assign it to the job object, or terminate it and refuse;
+//  4. resume its thread.
+//
+// What the process starts cannot escape the job, since it has not run before
+// step 3 ends.
 func startLimited(cmd *exec.Cmd, memLimit uint64) (*group, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
 	}
-	if err := cmd.Start(); err != nil {
+	g, err := newGroup(cmd, memLimit)
+	if err != nil {
 		return nil, err
 	}
-	g := &group{cmd: cmd}
-	// Without a job, stopping ends the script's own process only.
-	job, err := windows.CreateJobObject(nil, nil)
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
+	if err := cmd.Start(); err != nil {
+		g.release()
+		return nil, err
+	}
+	if err := g.assign(); err != nil {
+		// The process never ran: stop it and reap it.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		g.release()
+		return nil, err
+	}
+	if err := resumeThreads(uint32(cmd.Process.Pid)); err != nil { //nolint:gosec // a process id
+		g.kill()
+		_ = cmd.Wait()
+		g.release()
+		return nil, err
+	}
+	return g, nil
+}
+
+// newGroup is step 1: the job object, its memory limit and its completion
+// port, which a goroutine drains so that a run that starts many processes
+// does not fill the queue.
+func newGroup(cmd *exec.Cmd, memLimit uint64) (*group, error) {
+	job, err := createJobObject()
 	if err != nil {
-		return g, nil //nolint:nilerr // see above
+		return nil, fmt.Errorf("could not make the job object: %w", err)
+	}
+	fail := func(what string, err error, port windows.Handle) (*group, error) {
+		if port != 0 {
+			_ = windows.CloseHandle(port)
+		}
+		_ = windows.CloseHandle(job)
+		return nil, fmt.Errorf("could not %s: %w", what, err)
 	}
 	if memLimit > 0 {
 		var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
@@ -215,22 +297,98 @@ func startLimited(cmd *exec.Cmd, memLimit uint64) (*group, error) {
 		info.JobMemoryLimit = uintptr(memLimit)
 		if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 			uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-			_ = windows.CloseHandle(job)
-			return g, nil //nolint:nilerr // see above
+			return fail("limit the job object's memory", err, 0)
 		}
 	}
-	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid)) //nolint:gosec // a process id
+	port, err := windows.CreateIoCompletionPort(windows.InvalidHandle, 0, 0, 1)
 	if err != nil {
-		_ = windows.CloseHandle(job)
-		return g, nil //nolint:nilerr // see above
+		return fail("make the job object's completion port", err, 0)
+	}
+	if err := associatePort(job, port); err != nil {
+		return fail("attach the completion port to the job object", err, port)
+	}
+	g := &group{cmd: cmd, job: job, port: port, done: make(chan struct{})}
+	go g.drain()
+	return g, nil
+}
+
+// assign is step 3.
+func (g *group) assign() error {
+	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(g.cmd.Process.Pid)) //nolint:gosec // a process id
+	if err != nil {
+		return fmt.Errorf("could not open the process to put it in the job object: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
-	if err := windows.AssignProcessToJobObject(job, h); err != nil {
-		_ = windows.CloseHandle(job)
-		return g, nil //nolint:nilerr // see above
+	if err := assignToJob(g.job, h); err != nil {
+		return fmt.Errorf("could not put the process in the job object: %w", err)
 	}
-	g.job = job
-	return g, nil
+	return nil
+}
+
+// resumeThreads is step 4: it resumes the suspended process's thread, found
+// by listing the process's threads, as Go's syscall closes the thread handle
+// at once. A process with no thread to resume is an error, and so is a thread
+// that cannot be resumed.
+func resumeThreads(pid uint32) error {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return fmt.Errorf("could not list the process's threads: %w", err)
+	}
+	defer func() { _ = windows.CloseHandle(snap) }()
+	e := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	resumed := 0
+	for err = windows.Thread32First(snap, &e); err == nil; err = windows.Thread32Next(snap, &e) {
+		if e.OwnerProcessID != pid {
+			continue
+		}
+		th, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, e.ThreadID)
+		if err != nil {
+			return fmt.Errorf("could not open the process's thread: %w", err)
+		}
+		_, err = windows.ResumeThread(th)
+		_ = windows.CloseHandle(th)
+		if err != nil {
+			return fmt.Errorf("could not resume the process: %w", err)
+		}
+		resumed++
+	}
+	if resumed == 0 {
+		return errors.New("the process has no thread to resume")
+	}
+	return nil
+}
+
+// drain reads the job's completion port until release ends it, remembering
+// the ids of the processes that joined the job.
+func (g *group) drain() {
+	defer close(g.done)
+	defer func() { _ = windows.CloseHandle(g.port) }()
+	for {
+		var code uint32
+		var key uintptr
+		var ov *windows.Overlapped
+		if err := windows.GetQueuedCompletionStatus(g.port, &code, &key, &ov, windows.INFINITE); err != nil && ov == nil {
+			return
+		}
+		if key == stopKey {
+			return
+		}
+		if code == jobMsgNewProcess {
+			g.mu.Lock()
+			if len(g.seen) < maxReported {
+				g.seen = append(g.seen, uint32(uintptr(unsafe.Pointer(ov)))) //nolint:gosec // the message carries a process id in the overlapped value
+			}
+			g.mu.Unlock()
+		}
+	}
+}
+
+// processes lists the ids of the processes the job has reported, the run's
+// own first.
+func (g *group) processes() []uint32 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]uint32(nil), g.seen...)
 }
 
 // terminate stops the script at once: a console program in a console of
@@ -249,6 +407,13 @@ func (g *group) kill() {
 func (g *group) release() {
 	if g.job != 0 {
 		_ = windows.CloseHandle(g.job)
+		g.job = 0
+	}
+	if g.done != nil {
+		// Ends the port's reader, which closes the port.
+		_ = windows.PostQueuedCompletionStatus(g.port, 0, stopKey, nil)
+		<-g.done
+		g.done = nil
 	}
 }
 
