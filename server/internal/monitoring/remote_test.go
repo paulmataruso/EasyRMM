@@ -40,6 +40,7 @@ func TestDecideRemote(t *testing.T) {
 		"silent, mesh not connected":     {with(silent, func(f *remoteFacts) { f.remoteOnline = false }), true, actNone, false},
 		"silent, never seen":             {with(silent, func(f *remoteFacts) { f.agentSeen = nil }), true, actNone, false},
 		"silent, back, alert":            {with(silent, func(f *remoteFacts) { f.agentSeen, f.alertID = ago(time.Minute), &alert }), true, actResolve, false},
+		"silent, back, alert, no judge":  {with(silent, func(f *remoteFacts) { f.agentSeen, f.alertID = ago(time.Minute), &alert }), false, actResolve, false},
 		"silent, back, no alert":         {with(silent, func(f *remoteFacts) { f.agentSeen = ago(time.Minute) }), true, actNone, false},
 		"silent, alert stays":            {with(silent, func(f *remoteFacts) { f.alertID = &alert }), true, actUpdate, false},
 		"silent, leaving, alert":         {with(silent, func(f *remoteFacts) { f.leaving, f.alertID = true, &alert }), true, actResolve, true},

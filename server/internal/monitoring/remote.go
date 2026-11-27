@@ -59,6 +59,11 @@ func decideRemote(f remoteFacts, now, floor time.Time, judge bool) remoteAction 
 		}
 		return remoteAction{}
 	}
+	// agent_silent resolves on the agent's own heartbeat, not on
+	// MeshCentral's view, so it must not wait for RemoteSettle.
+	if f.kind == KindAgentSilent && f.agentOnline && f.alertID != nil {
+		return remoteAction{act: actResolve, detail: "The EasyRMM agent checks in again."}
+	}
 	if !judge {
 		return remoteAction{}
 	}
