@@ -407,6 +407,9 @@ func (e *env) putService(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("installing %s: %w", e.paths.Binary(), err)
 	}
+	if err := host.Protect(filepath.Dir(e.paths.Binary())); err != nil {
+		return fmt.Errorf("protecting %s: %w", filepath.Dir(e.paths.Binary()), err)
+	}
 	svc := e.paths.AgentService()
 	if err := e.sd.Install(ctx, svc); err != nil {
 		return err

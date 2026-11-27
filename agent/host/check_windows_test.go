@@ -308,6 +308,29 @@ func TestCheckAbove(t *testing.T) {
 	wantUntrusted(t, "a junction on the way", CheckAbove(filepath.Join(j, "Modules")), j, "is a link, junction or other reparse point")
 }
 
+func TestSystemRoot(t *testing.T) {
+	pd := os.Getenv("ProgramData")
+	pf := os.Getenv("ProgramFiles")
+	sr := os.Getenv("SystemRoot")
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{pd, true},
+		{pf, true},
+		{sr, true},
+		{strings.ToUpper(pd), true},
+		{filepath.Join(pd, "EasyRMM"), false},
+		{filepath.Dir(pd), false},
+		{`C:\`, false},
+		{`C:\NotASystemRoot`, false},
+	} {
+		if got := systemRoot(tc.path); got != tc.want {
+			t.Errorf("systemRoot(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 // TestCheckSubtreeToleratesOpenFilesAndFindsWriters: ADR-0070 verifies the
 // folders it excludes without the exclusive open (the agent's own log is
 // open), and still finds a file or folder anyone else may write.

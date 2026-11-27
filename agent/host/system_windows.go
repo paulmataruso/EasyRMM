@@ -649,18 +649,24 @@ func CheckEntry(p string, links bool) error {
 	return nil
 }
 
-// CheckAbove checks p and the folders above it, up to its drive's root,
-// for what would let anyone but the administration put another folder in
-// p's place (ADR-0064: a PowerShell install and each module folder). Each
-// folder on the way that exists, p included, must not be a link or
-// junction, must have a trusted owner, and must not let others delete or
-// rename it, nor change its access list or owner (replaceRights); each
-// folder above p must not let others delete what it holds (replaceInRights).
-// Where p, or a folder on the way to it, does not exist, the nearest one
-// that does must not let others add a folder to it (createInRights),
-// unless it is the drive's root, which lets every user add a folder; a
-// drive's root is held only to replaceInRights. What p holds is not
-// checked here. It returns an *Untrusted for the first folder that fails.
+// CheckAbove checks p and the folders above it, up to its drive's root
+// or a well-known system root (whichever comes first), for what would let
+// anyone but the administration put another folder in p's place (ADR-0064:
+// a PowerShell install and each module folder). Each folder on the way
+// that exists, p included, must not be a link or junction, must have a
+// trusted owner, and must not let others delete or rename it, nor change
+// its access list or owner (replaceRights); each folder above p must not
+// let others delete what it holds (replaceInRights). Where p, or a folder
+// on the way to it, does not exist, the nearest one that does must not
+// let others add a folder to it (createInRights), unless it is the
+// drive's root, which lets every user add a folder; a drive's root is
+// held only to replaceInRights. What p holds is not checked here. It
+// returns an *Untrusted for the first folder that fails.
+//
+// The walk stops at well-known system roots (%ProgramData%, %ProgramFiles%
+// and siblings) after checking them: Windows manages their ACLs, and
+// walking above them to the drive root fails on real-world machines whose
+// root has non-standard permissions.
 func CheckAbove(p string) error {
 	p = filepath.Clean(p)
 	child, childExists := p, false
@@ -671,6 +677,9 @@ func CheckAbove(p string) error {
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	}
+	if systemRoot(p) {
+		return nil
 	}
 	for {
 		parent := filepath.Dir(child)
@@ -693,8 +702,22 @@ func CheckAbove(p string) error {
 		if why, err := folderProblem(parent, rights); why != "" || err != nil {
 			return untrustedOr(parent, why, err)
 		}
+		if systemRoot(parent) {
+			return nil
+		}
 		child, childExists = parent, true
 	}
+}
+
+// systemRoot reports whether p is a well-known Windows system directory
+// whose integrity the OS manages. CheckAbove stops walking at these.
+func systemRoot(p string) bool {
+	for _, env := range []string{"ProgramData", "ProgramFiles", "ProgramFiles(x86)", "SystemRoot"} {
+		if v := os.Getenv(env); v != "" && strings.EqualFold(filepath.Clean(p), filepath.Clean(v)) {
+			return true
+		}
+	}
+	return false
 }
 
 func untrustedOr(p, why string, err error) error {
@@ -985,9 +1008,22 @@ func (WindowsServices) Install(_ context.Context, s Service) error {
 	}
 	defer func() { _ = service.Close() }()
 	delay := max(s.RestartDelay, time.Second)
-	restart := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: delay}
-	if err := service.SetRecoveryActions([]mgr.RecoveryAction{restart, restart, restart}, uint32((24 * time.Hour).Seconds())); err != nil {
+	var actions []mgr.RecoveryAction
+	if s.RecoveryCommand != "" {
+		repair := mgr.RecoveryAction{Type: mgr.RunCommand, Delay: delay}
+		restart := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: delay}
+		actions = []mgr.RecoveryAction{repair, repair, restart}
+	} else {
+		restart := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: delay}
+		actions = []mgr.RecoveryAction{restart, restart, restart}
+	}
+	if err := service.SetRecoveryActions(actions, uint32((24*time.Hour).Seconds())); err != nil {
 		return fmt.Errorf("setting the %s service's recovery: %w", s.Name, err)
+	}
+	if s.RecoveryCommand != "" {
+		if err := service.SetRecoveryCommand(s.RecoveryCommand); err != nil {
+			return fmt.Errorf("setting the %s service's recovery command: %w", s.Name, err)
+		}
 	}
 	// An exit with an error code counts as a failure too, not only a crash.
 	if err := service.SetRecoveryActionsOnNonCrashFailures(true); err != nil {

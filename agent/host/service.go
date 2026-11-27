@@ -33,6 +33,11 @@ type Service struct {
 	TimeSync bool
 	// RestartDelay is the pause before a stopped service is started again.
 	RestartDelay time.Duration
+	// RecoveryCommand is the command line the SCM runs on failure before
+	// restarting (Windows RunCommand action). When set, the first two
+	// failure actions run this command; the third falls back to a plain
+	// service restart.
+	RecoveryCommand string
 }
 
 // Services installs and removes services in the system's service manager.
@@ -72,8 +77,18 @@ func (p Paths) AgentService() Service {
 	if p.Windows() {
 		s.Name, s.DisplayName = AgentWindowsService, "EasyRMM Agent"
 		s.Description = "Connects this computer to its EasyRMM server for monitoring, inventory, scripts and remote access."
+		s.RecoveryCommand = `"` + p.RecoveryCopy() + `" repair-install`
 	}
 	return s
+}
+
+// RecoveryCopy is the recovery binary's path.
+func (p Paths) RecoveryCopy() string {
+	ext := ""
+	if p.Windows() {
+		ext = ".exe"
+	}
+	return filepath.Join(p.State(), "recovery", "easyrmm-agent"+ext)
 }
 
 // Systemd installs and removes systemd units.
