@@ -122,6 +122,7 @@
   {
    "req_id": "CC6.1",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "linux.permissions.etc-cron-d",
     "linux.permissions.etc-cron-daily",
     "linux.permissions.etc-cron-hourly",
@@ -202,6 +203,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "win.firewall.domain-enabled",
     "win.firewall.domain-inbound",
     "win.firewall.domain-log-dropped",
@@ -231,6 +235,7 @@
   {
    "req_id": "CC6.7",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "linux.usb-storage.kept-from-loading",
     "win.autoplay.all-drives",
     "win.autoplay.autorun",
@@ -306,6 +311,7 @@
     "linux.audit.rules-sudoers",
     "linux.audit.rules-time",
     "linux.audit.service",
+    "linux.auto-updates.enabled",
     "linux.integrity.aide-baseline",
     "linux.integrity.aide-daily",
     "linux.integrity.aide-excludes",

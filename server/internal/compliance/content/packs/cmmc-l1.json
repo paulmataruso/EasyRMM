@@ -280,6 +280,7 @@
   {
    "req_id": "SI.L1-3.14.1",
    "control_ids": [
+    "linux.auto-updates.enabled",
     "win.defender.behavior",
     "win.defender.cloud",
     "win.defender.cloud-block-level",

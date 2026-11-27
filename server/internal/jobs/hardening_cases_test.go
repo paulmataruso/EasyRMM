@@ -142,6 +142,20 @@ var machineCases = map[string]map[string]map[string]machineCase{
 		HardeningApply: same(machineCase{Want: []string{HardeningUnchanged}, After: []string{HardeningNotInPlace, HardeningPartly, HardeningInPlace}}),
 		HardeningUndo:  same(machineCase{Want: []string{HardeningNothingToUndo}}),
 	},
+	// Report only (ADR-0082, P2): whatever the image has, the check answers
+	// and apply changes nothing.
+	"luks":             reportOnlyCase,
+	"host-firewall":    reportOnlyCase,
+	"selinux-apparmor": reportOnlyCase,
+	"auto-updates":     reportOnlyCase,
+}
+
+// reportOnlyCase is a module that only reports: it may be in any state, and
+// apply leaves it as it is.
+var reportOnlyCase = map[string]map[string]machineCase{
+	HardeningCheck: same(machineCase{Want: []string{HardeningNotInPlace, HardeningPartly, HardeningInPlace, HardeningNotApplicable}}),
+	HardeningApply: same(machineCase{Want: []string{HardeningUnchanged}, After: []string{HardeningNotInPlace, HardeningPartly, HardeningInPlace, HardeningNotApplicable}}),
+	HardeningUndo:  same(machineCase{Want: []string{HardeningNothingToUndo}}),
 }
 
 // machineReleaseCases: where one release differs from its family (image,

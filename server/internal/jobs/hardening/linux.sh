@@ -20,7 +20,8 @@
 #   <modules>           all, or a comma-separated list of ssh, firewall,
 #                       fail2ban, kernel, audit, permissions, services,
 #                       kernel-modules, sudo, time, shared-memory,
-#                       usb-storage, mac, integrity and lockout
+#                       usb-storage, mac, integrity, lockout, luks,
+#                       host-firewall, selinux-apparmor and auto-updates
 #   allow-tcp=LIST      ports or ranges (8080,9000-9100) the firewall leaves
 #   allow-udp=LIST      open besides those in use
 #   trusted=LIST        IPv4 or IPv6 addresses or CIDR ranges fail2ban never
@@ -95,7 +96,7 @@ unset CDPATH
 
 RESULT_TAG=EASYRMM-HARDENING-RESULT-V1
 # The modules in the order they are checked and reported.
-ALL_MODULES='ssh firewall fail2ban kernel audit permissions services kernel-modules sudo time shared-memory usb-storage mac integrity lockout'
+ALL_MODULES='ssh firewall fail2ban kernel audit permissions services kernel-modules sudo time shared-memory usb-storage mac integrity lockout luks host-firewall selinux-apparmor auto-updates'
 STATE_DIR=/var/lib/easyrmm-hardening
 # EasyRMM's own files, which apply writes and undo removes.
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-easyrmm-hardening.conf
@@ -5205,6 +5206,178 @@ undo_integrity_before() {
 undo_integrity_after() { daemon_reload; }
 
 # ---------------------------------------------------------------------------
+# Posture sources (ADR-0082, P2): four modules that only report, because each
+# is a decision for the person (encrypting a disk in place, a firewall's
+# policy, a mandatory access control mode, the update schedule) and none can
+# be undone from here. Each is one source posture reads.
+
+# luks_walk DEVNAME DEPTH: 0 when DEVNAME, or a device under it, is LUKS.
+luks_walk() {
+	[ "$2" -le 6 ] || return 1
+	lw_b=${1##*/}
+	case $(cat "/sys/class/block/$lw_b/dm/uuid" 2>/dev/null) in CRYPT-LUKS*) return 0 ;; esac
+	for lw_s in "/sys/class/block/$lw_b/slaves"/*; do
+		[ -e "$lw_s" ] || continue
+		luks_walk "${lw_s##*/}" $(($2 + 1)) && return 0
+	done
+	return 1
+}
+# luks: whether the root filesystem is on a LUKS volume, at any depth of the
+# device stack (LUKS under LVM, LVM under LUKS).
+check_luks() {
+	if [ "$IN_CONTAINER" = yes ]; then
+		not_applicable "In a container ($CONTAINER) disk encryption belongs to the host."
+		return
+	fi
+	cx_src=$(findmnt -no SOURCE / 2>/dev/null | head -n 1)
+	cx_dev=
+	case $cx_src in /dev/*) cx_dev=$(readlink -f "${cx_src%%\[*}" 2>/dev/null) ;; esac
+	if [ -z "$cx_dev" ] || [ ! -b "$cx_dev" ]; then
+		set_bad luks-root-encrypted "${cx_src:-unknown}" 'root on a LUKS volume' 'The root filesystem on a LUKS volume (it is not on a block device)'
+		change 'Left as it is: the root filesystem is not on a block device this check can read'
+		return
+	fi
+	if luks_walk "$cx_dev" 0; then
+		set_ok luks-root-encrypted LUKS 'root on a LUKS volume'
+		return
+	fi
+	if have lsblk && t 20 lsblk -nso TYPE "$cx_dev" 2>/dev/null | grep -qx crypt; then
+		# Plain dm-crypt is encrypted, but cannot be verified or managed here.
+		set_bad luks-root-encrypted 'dm-crypt, not LUKS' 'root on a LUKS volume' 'The root filesystem on a LUKS volume (it is on plain dm-crypt)'
+	else
+		set_bad luks-root-encrypted 'not encrypted' 'root on a LUKS volume' 'The root filesystem on a LUKS volume'
+	fi
+	change 'Left as it is: encrypting the system disk in place can lose data. Reinstall with disk encryption, or move the data to a LUKS volume'
+}
+
+# hf_report ENGINE RUNNING ENABLED DENY (each yes or no): the three findings.
+hf_report() {
+	if [ "$2" = yes ]; then set_ok host-firewall-running "$1" 'a firewall running'; else
+		set_bad host-firewall-running "$1 not running" 'a firewall running' 'A host firewall running'
+	fi
+	if [ "$3" = yes ]; then set_ok host-firewall-enabled "$1" 'starts at boot'; else
+		set_bad host-firewall-enabled "$1 not enabled" 'starts at boot' 'The host firewall starting at boot'
+	fi
+	if [ "$4" = yes ]; then set_ok host-firewall-default-deny "$1" 'incoming dropped by default'; else
+		set_bad host-firewall-default-deny "$1 accepts by default" 'incoming dropped by default' 'The host firewall dropping incoming traffic by default'
+	fi
+	[ "$M_BAD" -eq 0 ] || change 'Left as it is: a firewall change can cut off remote access. Turn the firewall on, and allow the ports in use first'
+}
+# host-firewall: whether a host firewall (ufw, firewalld or nftables) runs,
+# starts at boot and drops what it has no rule for.
+check_host_firewall() {
+	if [ "$IN_CONTAINER" = yes ]; then
+		not_applicable "In a container ($CONTAINER) the firewall belongs to the host."
+		return
+	fi
+	hf_run=no
+	hf_en=no
+	hf_deny=no
+	if have ufw && t 20 ufw status verbose 2>/dev/null | grep -q '^Status: active'; then
+		hf_eng=ufw
+		hf_run=yes
+		! unit_enabled ufw.service || hf_en=yes
+		! t 20 ufw status verbose 2>/dev/null | grep -qE '^Default: (deny|reject) \(incoming\)' || hf_deny=yes
+	elif have firewall-cmd && [ "$(t 20 firewall-cmd --state 2>/dev/null)" = running ]; then
+		hf_eng=firewalld
+		hf_run=yes
+		! unit_enabled firewalld.service || hf_en=yes
+		hf_zone=$(t 20 firewall-cmd --get-default-zone 2>/dev/null)
+		# A zone's target "default" refuses what no rule allows; DROP and REJECT do too.
+		case $(t 20 firewall-cmd --permanent --zone="$hf_zone" --get-target 2>/dev/null) in default | DROP | REJECT) hf_deny=yes ;; esac
+	elif have nft; then
+		hf_eng=nftables
+		hf_rules=$(t 30 nft list ruleset 2>/dev/null)
+		# A base chain on the input hook, and whether its policy is drop.
+		if printf '%s\n' "$hf_rules" | grep -q 'hook input'; then
+			hf_run=yes
+			! printf '%s\n' "$hf_rules" | grep 'hook input' | grep -qE 'policy (drop|reject)' || hf_deny=yes
+		fi
+		if unit_enabled nftables.service || unit_enabled easyrmm-firewall.service; then hf_en=yes; fi
+	else
+		hf_eng='no firewall'
+	fi
+	hf_report "$hf_eng" "$hf_run" "$hf_en" "$hf_deny"
+}
+
+# selinux-apparmor: SELinux enforcing, or AppArmor on with profiles loaded.
+check_selinux_apparmor() {
+	if [ "$IN_CONTAINER" = yes ]; then
+		not_applicable "In a container ($CONTAINER) mandatory access control belongs to the host."
+		return
+	fi
+	sa_se=disabled
+	if [ -r /sys/fs/selinux/enforce ]; then
+		case $(cat /sys/fs/selinux/enforce 2>/dev/null) in 1) sa_se=enforcing ;; 0) sa_se=permissive ;; esac
+	fi
+	if [ "$sa_se" = enforcing ]; then
+		set_ok selinux-apparmor-enforcing 'SELinux enforcing' 'SELinux enforcing, or AppArmor with profiles'
+		return
+	fi
+	sa_n=0
+	if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ]; then
+		sa_n=$(grep -c . /sys/kernel/security/apparmor/profiles 2>/dev/null)
+		case $sa_n in '' | *[!0-9]*) sa_n=0 ;; esac
+	fi
+	if [ "$sa_n" -gt 0 ]; then
+		set_ok selinux-apparmor-enforcing "AppArmor, $sa_n profiles" 'SELinux enforcing, or AppArmor with profiles'
+		return
+	fi
+	sa_v=none
+	[ "$sa_se" != permissive ] || sa_v='SELinux permissive'
+	set_bad selinux-apparmor-enforcing "$sa_v" 'SELinux enforcing, or AppArmor with profiles' 'SELinux enforcing, or AppArmor on with profiles loaded'
+	change 'Left as it is: turning on mandatory access control can stop services that run today. The mac module applies it with its guards'
+}
+
+# auto-updates: unattended-upgrades (Debian, Ubuntu) or dnf-automatic (RHEL,
+# Fedora) installed, scheduled, and set to install what it finds.
+check_auto_updates() {
+	if [ "$IN_CONTAINER" = yes ]; then
+		not_applicable "In a container ($CONTAINER) updates belong to the host."
+		return
+	fi
+	case $FAMILY in
+	debian)
+		au_tool=unattended-upgrades
+		if ! pkg_installed unattended-upgrades; then
+			au_v='not installed'
+		elif have apt-config && ! apt-config dump 2>/dev/null | grep -qE '^APT::Periodic::Unattended-Upgrade "[1-9]'; then
+			au_v='installed, switched off'
+		elif ! unit_enabled apt-daily-upgrade.timer; then
+			au_v='installed, no timer'
+		else
+			au_v=on
+		fi
+		;;
+	rhel | fedora)
+		au_tool=dnf-automatic
+		au_v='not installed'
+		if pkg_installed dnf-automatic || pkg_installed dnf5-plugin-automatic; then
+			au_v='installed, no timer'
+			for au_u in dnf-automatic-install.timer dnf5-automatic.timer dnf-automatic.timer; do
+				unit_enabled "$au_u" || continue
+				# Only the install timer, or apply_updates = yes, installs what it downloads.
+				if [ "$au_u" = dnf-automatic-install.timer ] || grep -qE '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*(yes|True|true|1)' /etc/dnf/automatic.conf /etc/dnf/dnf5-plugins/automatic.conf 2>/dev/null; then
+					au_v=on
+				else
+					au_v='downloads only'
+				fi
+				break
+			done
+		fi
+		;;
+	*)
+		not_applicable 'This distribution family has no unattended-upgrades or dnf-automatic to read.'
+		return
+		;;
+	esac
+	if [ "$au_v" = on ]; then set_ok auto-updates-enabled "$au_tool" 'installed, scheduled and installing'; else
+		set_bad auto-updates-enabled "$au_v" 'installed, scheduled and installing' "$au_tool installing updates by itself (now: $au_v)"
+		change "Left as it is: install and enable $au_tool; the EasyPatch connector schedules updates too"
+	fi
+}
+
+# ---------------------------------------------------------------------------
 # Running the modules
 
 # check_module MODULE: the module's check, from begin_module on.
@@ -5226,6 +5399,10 @@ check_module() {
 	mac) check_mac ;;
 	integrity) check_integrity ;;
 	lockout) check_lockout ;;
+	luks) check_luks ;;
+	host-firewall) check_host_firewall ;;
+	selinux-apparmor) check_selinux_apparmor ;;
+	auto-updates) check_auto_updates ;;
 	esac
 }
 

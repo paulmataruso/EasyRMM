@@ -91,6 +91,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "linux.ssh.ciphers",
     "linux.ssh.client-alive-count-max",
     "linux.ssh.client-alive-interval",
@@ -156,6 +159,7 @@
   {
    "req_id": "Art.32(1)(a)",
    "control_ids": [
+    "linux.luks.root-encrypted",
     "win.bitlocker.min-pin",
     "win.bitlocker.preboot-pin",
     "win.bitlocker.protected",
@@ -189,6 +193,9 @@
     "linux.firewall.rules-file",
     "linux.firewall.table",
     "linux.firewall.unit-enabled",
+    "linux.host-firewall.default-deny",
+    "linux.host-firewall.enabled",
+    "linux.host-firewall.running",
     "linux.ssh.ciphers",
     "linux.ssh.client-alive-count-max",
     "linux.ssh.client-alive-interval",

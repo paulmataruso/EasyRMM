@@ -95,6 +95,34 @@ export const MODULES: ModuleInfo[] = [
     does: "Reports whether failed sign-ins are counted by pam_faillock and lock the account after 10 or fewer. Changes nothing.",
     risk: "It changes nothing: a wrong change to the sign-in stack can lock everyone out, so the person makes it.",
   },
+  {
+    id: "luks",
+    name: "Disk encryption (LUKS)",
+    recommended: false,
+    does: "Reports whether the root filesystem is on a LUKS volume. Changes nothing.",
+    risk: "It changes nothing: encrypting a disk in place can lose data, so the person does it.",
+  },
+  {
+    id: "host-firewall",
+    name: "Host firewall",
+    recommended: false,
+    does: "Reports whether ufw, firewalld or nftables runs, starts at boot and drops incoming traffic by default. Changes nothing.",
+    risk: "It changes nothing: a firewall change can cut off remote access, so the person makes it.",
+  },
+  {
+    id: "selinux-apparmor",
+    name: "SELinux or AppArmor",
+    recommended: false,
+    does: "Reports whether SELinux is enforcing or AppArmor is on with profiles loaded. Changes nothing.",
+    risk: "It changes nothing: the mac module applies a mode, with its guards.",
+  },
+  {
+    id: "auto-updates",
+    name: "Automatic updates",
+    recommended: false,
+    does: "Reports whether unattended-upgrades or dnf-automatic is installed, scheduled and installing updates. Changes nothing.",
+    risk: "It changes nothing: the person installs and schedules it, or uses the EasyPatch connector.",
+  },
 ];
 
 const BY_ID = new Map(MODULES.map((m) => [m.id, m]));
