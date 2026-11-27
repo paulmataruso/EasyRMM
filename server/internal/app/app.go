@@ -127,6 +127,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/bitlocker"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/laps"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/ntp"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy/gpowire"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
 )
@@ -374,7 +376,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetRoleStore(d.Modules)
 	// The winmod job kind runs the catalog's actions where the module is
 	// on (ADR-0073, slice 5).
-	catalog, err := winmod.NewCatalog(slices.Concat(defender.Actions(), backup.Actions(), roles.Actions(), bitlocker.Actions())...)
+	catalog, err := winmod.NewCatalog(slices.Concat(defender.Actions(), backup.Actions(), roles.Actions(), bitlocker.Actions(), ntp.Actions(), laps.Actions())...)
 	if err != nil {
 		return nil, err
 	}

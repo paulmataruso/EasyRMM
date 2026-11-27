@@ -33,16 +33,21 @@ const (
 	GroupPolicy          Module = "group_policy"
 )
 
-// BitLocker is the module of ADR-0081's BitLocker actions. It is not in
-// Catalog: no role offers it and it has no toggle, since turning BitLocker on
-// is always a person's explicit, confirmed act; the dev-scope guard still
-// applies to it.
-const BitLocker Module = "bitlocker"
+// Non-role modules: available on any Windows device, not gated by a detected
+// server role. They have no toggle and no entry in Catalog.
+const (
+	BitLocker Module = "bitlocker"
+	NTP       Module = "ntp"
+	LAPS      Module = "laps"
+)
+
+// nonRole lists the modules that run on any Windows device.
+var nonRole = map[Module]bool{BitLocker: true, NTP: true, LAPS: true}
 
 // Known says whether a module is one the framework can run actions of: the
-// catalogue's, and BitLocker.
+// catalogue's, or any non-role module.
 func Known(m Module) bool {
-	if m == BitLocker {
+	if nonRole[m] {
 		return true
 	}
 	_, ok := Lookup(m)
