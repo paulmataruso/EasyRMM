@@ -1,0 +1,16 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $gd = Get-GpmDomain $c
+    $filters = @()
+    foreach ($f in @(Get-WmiFilterList $gd)) {
+        if ($filters.Count -ge 200) { break }
+        $queries = @()
+        try { foreach ($q in @($f.GetQueryList())) { $queries += [string]$q } } catch { $queries = @() }
+        $m = [regex]::Match([string]$f.Path, '\{([0-9A-Fa-f-]{36})\}')
+        $filters += [ordered]@{ id = $m.Groups[1].Value.ToLowerInvariant(); name = [string]$f.Name; description = [string]$f.Description; queries = @($queries) }
+    }
+    Write-Result $true ([ordered]@{ filters = @($filters) }) $null $null
+} catch {
+    Stop-ForError $_
+}

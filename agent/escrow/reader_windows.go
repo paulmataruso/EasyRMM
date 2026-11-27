@@ -11,6 +11,7 @@ import (
 
 	ole "github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
+	"golang.org/x/sys/windows"
 )
 
 // The one exception to the agent inventory's no-WMI rule (ADR-0081, section
@@ -195,7 +196,45 @@ func protectorIDs(vol *ole.IDispatch) ([]string, error) {
 	if arr == nil {
 		return nil, nil
 	}
-	return arr.ToStringArray(), nil
+	return stringsOf(arr)
+}
+
+var procSafeArrayGetElement = windows.NewLazySystemDLL("oleaut32.dll").NewProc("SafeArrayGetElement")
+
+// stringsOf reads a one-dimensional array of strings that WMI returns. WMI
+// hands an out-parameter array as VARIANT elements, which go-ole's
+// ToStringArray reads as BSTRs and crashes on (CI run 21); each element is
+// copied out, read, and cleared, so nothing leaks.
+func stringsOf(arr *ole.SafeArrayConversion) ([]string, error) {
+	vt, err := arr.GetType()
+	if err != nil {
+		return nil, err
+	}
+	if vt == uint16(ole.VT_BSTR) {
+		return arr.ToStringArray(), nil
+	}
+	if vt != uint16(ole.VT_VARIANT) {
+		return nil, fmt.Errorf("an array of type %d, not of strings", vt)
+	}
+	n, err := arr.TotalElements(0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, n)
+	for i := int32(0); i < n; i++ {
+		var e ole.VARIANT
+		idx := i
+		if hr, _, _ := procSafeArrayGetElement.Call(uintptr(unsafe.Pointer(arr.Array)), uintptr(unsafe.Pointer(&idx)), uintptr(unsafe.Pointer(&e))); hr != 0 {
+			return nil, ole.NewError(hr)
+		}
+		str, ok := e.Value().(string)
+		_ = ole.VariantClear(&e)
+		if !ok {
+			return nil, errors.New("an array element is not a string")
+		}
+		out = append(out, str)
+	}
+	return out, nil
 }
 
 // Volumes lists the volumes with BitLocker on them and their

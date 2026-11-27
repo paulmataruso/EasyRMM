@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-16"?>
+<GPO xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.microsoft.com/GroupPolicy/Settings">
+  <Identifier>
+    <Identifier xmlns="http://www.microsoft.com/GroupPolicy/Types">{8F2C1B3A-5D4E-4A7B-9C1D-2E3F4A5B6C7D}</Identifier>
+    <Domain xmlns="http://www.microsoft.com/GroupPolicy/Types">corp.example.test</Domain>
+  </Identifier>
+  <Name>Workstation baseline</Name>
+  <IncludeComments>true</IncludeComments>
+  <CreatedTime>2026-01-05T09:12:44</CreatedTime>
+  <ModifiedTime>2026-03-02T14:01:09</ModifiedTime>
+  <ReadTime>2026-03-02T14:05:00.1234567Z</ReadTime>
+  <SecurityDescriptor>
+    <Permissions>
+      <InheritsFromParent>false</InheritsFromParent>
+      <TrusteePermissions>
+        <Trustee>
+          <SID xmlns="http://www.microsoft.com/GroupPolicy/Types">S-1-5-11</SID>
+          <Name xmlns="http://www.microsoft.com/GroupPolicy/Types">NT AUTHORITY\Authenticated Users</Name>
+        </Trustee>
+        <Type xsi:type="PermissionType"><Perms>GpoApply</Perms></Type>
+        <Inherited>false</Inherited>
+        <Applied>true</Applied>
+      </TrusteePermissions>
+    </Permissions>
+    <Owner><SID xmlns="http://www.microsoft.com/GroupPolicy/Types">S-1-5-21-1-2-3-512</SID><Name xmlns="http://www.microsoft.com/GroupPolicy/Types">CORP\Domain Admins</Name></Owner>
+  </SecurityDescriptor>
+  <FilterDataAvailable>true</FilterDataAvailable>
+  <Computer>
+    <VersionDirectory>4</VersionDirectory>
+    <VersionSysvol>4</VersionSysvol>
+    <Enabled>true</Enabled>
+    <ExtensionData>
+      <Extension xmlns:q1="http://www.microsoft.com/GroupPolicy/Settings/Registry" xsi:type="q1:RegistrySettings">
+        <q1:Policy>
+          <q1:Name>Turn off Windows Defender Antivirus</q1:Name>
+          <q1:State>Disabled</q1:State>
+          <q1:Explain>This policy setting turns off Microsoft Defender Antivirus.</q1:Explain>
+          <q1:Supported>At least Windows Server 2012, Windows 8 or Windows RT</q1:Supported>
+          <q1:Category>Windows Components/Microsoft Defender Antivirus</q1:Category>
+        </q1:Policy>
+        <q1:Policy>
+          <q1:Name>Specify the maximum log file size (KB)</q1:Name>
+          <q1:State>Enabled</q1:State>
+          <q1:Supported>At least Windows Vista</q1:Supported>
+          <q1:Category>Windows Components/Event Log Service/Security</q1:Category>
+          <q1:Numeric>
+            <q1:Name>Maximum Log Size (KB)</q1:Name>
+            <q1:State>Enabled</q1:State>
+            <q1:Value>196608</q1:Value>
+          </q1:Numeric>
+        </q1:Policy>
+      </Extension>
+      <Name>Registry</Name>
+    </ExtensionData>
+    <ExtensionData>
+      <Extension xmlns:q2="http://www.microsoft.com/GroupPolicy/Settings/Security" xsi:type="q2:SecuritySettings">
+        <q2:SecurityOptions>
+          <q2:KeyName>MACHINE\System\CurrentControlSet\Control\Lsa\LimitBlankPasswordUse</q2:KeyName>
+          <q2:Display>
+            <q2:Name>Accounts: Limit local account use of blank passwords to console logon only</q2:Name>
+            <q2:Units />
+            <q2:DisplayBoolean>true</q2:DisplayBoolean>
+          </q2:Display>
+        </q2:SecurityOptions>
+        <q2:Account>
+          <q2:Name>MinimumPasswordLength</q2:Name>
+          <q2:SettingNumber>14</q2:SettingNumber>
+          <q2:Type>Password</q2:Type>
+        </q2:Account>
+      </Extension>
+      <Name>Security</Name>
+    </ExtensionData>
+    <ExtensionData>
+      <Extension xmlns:q3="http://www.microsoft.com/GroupPolicy/Settings/Scripts" xsi:type="q3:Scripts">
+        <q3:Script>
+          <q3:Command>\\corp.example.test\SYSVOL\corp.example.test\scripts\map.cmd</q3:Command>
+          <q3:Type>Startup</q3:Type>
+          <q3:Order>0</q3:Order>
+          <q3:RunOrder>PSScript</q3:RunOrder>
+        </q3:Script>
+      </Extension>
+      <Name>Scripts</Name>
+    </ExtensionData>
+    <ExtensionData>
+      <Extension xmlns:q4="http://www.microsoft.com/GroupPolicy/Settings/SoftwareInstallation" xsi:type="q4:SoftwareInstallationSettings">
+        <q4:MsiApplication>
+          <q4:Name>Contoso Viewer 2.1</q4:Name>
+          <q4:Path>\\files\apps\viewer.msi</q4:Path>
+          <q4:DeploymentType>Assigned</q4:DeploymentType>
+        </q4:MsiApplication>
+      </Extension>
+      <Name>Software Installation</Name>
+    </ExtensionData>
+  </Computer>
+  <User>
+    <VersionDirectory>2</VersionDirectory>
+    <VersionSysvol>2</VersionSysvol>
+    <Enabled>false</Enabled>
+    <ExtensionData>
+      <Extension xmlns:q5="http://www.microsoft.com/GroupPolicy/Settings/DriveMaps" xsi:type="q5:DriveMapSettings">
+        <q5:DriveMapSettings clsid="{8FDDCC1A-0C3C-43cd-A6B4-71A6DF20DA8C}">
+          <q5:Drive clsid="{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" name="H:" status="H:" changed="2026-02-01 10:00:00" uid="{A1B2C3D4-0000-0000-0000-000000000001}" userContext="1" cpassword="j1Uyj3Vx8TY9LtLZil2uAuZkFQA/4latT76ZwgdHdhw"> <!-- gitleaks:allow Microsoft's published sample cpassword: the report must hide it -->
+            <q5:Properties action="U" thisDrive="NOCHANGE" allDrives="NOCHANGE" userName="CORP\svc_share" path="\\files\home\%LogonUser%" label="Home" persistent="1" useLetter="1" letter="H"/>
+          </q5:Drive>
+        </q5:DriveMapSettings>
+      </Extension>
+      <Name>Drive Maps</Name>
+    </ExtensionData>
+  </User>
+  <LinksTo>
+    <SOMName>Workstations</SOMName>
+    <SOMPath>corp.example.test/Computers/Workstations</SOMPath>
+    <Enabled>true</Enabled>
+    <NoOverride>false</NoOverride>
+  </LinksTo>
+  <LinksTo>
+    <SOMName>corp.example.test</SOMName>
+    <SOMPath>corp.example.test</SOMPath>
+    <Enabled>true</Enabled>
+    <NoOverride>true</NoOverride>
+  </LinksTo>
+</GPO>

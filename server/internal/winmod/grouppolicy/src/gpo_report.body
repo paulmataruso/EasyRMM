@@ -1,0 +1,17 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    $xml = Get-GPOReport -Guid ([string]$p.id) -ReportType Xml @common
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$xml)
+    $ms = New-Object System.IO.MemoryStream
+    $gz = New-Object System.IO.Compression.GZipStream($ms, [System.IO.Compression.CompressionMode]::Compress)
+    $gz.Write($bytes, 0, $bytes.Length)
+    $gz.Close()
+    $out = $ms.ToArray()
+    if ($out.Length -gt 44000) { Stop-With 'report_too_large' 'The report of this GPO is too large to show here. Open it in the Group Policy Management Console.' }
+    Write-Result $true ([ordered]@{ id = ([string]$g.Id).ToLowerInvariant(); name = [string]$g.DisplayName; xmlGzip = [System.Convert]::ToBase64String($out) }) $null $null
+} catch {
+    Stop-ForError $_
+}

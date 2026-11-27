@@ -1,0 +1,23 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    Assert-Versions $g
+    $gd = Get-GpmDomain $c
+    $target = $null
+    if (([string]$p.filter).Length -gt 0) {
+        foreach ($f in @(Get-WmiFilterList $gd)) { if ([string]$f.Name -ceq [string]$p.filter) { $target = $f } }
+        if ($null -eq $target) { Stop-With 'not_found' 'The domain has no WMI filter of that name.' }
+    }
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'wmi_set' $c
+    $old = ConvertTo-GpoRow $g
+    $com = $gd.Domain.GetGPO((Format-Text '{{{0}}}' ([string]$g.Id) ''))
+    $com.SetWmiFilter($target)
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    $now = ConvertTo-GpoRow $after
+    Write-Changed (Format-Text 'Changed the WMI filter of {0}.' ([string]$g.DisplayName) '') ([ordered]@{ wmiFilter = [string]$old.wmiFilter }) ([ordered]@{ wmiFilter = [string]$now.wmiFilter }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

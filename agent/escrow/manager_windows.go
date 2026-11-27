@@ -204,7 +204,8 @@ func allProtectorCount(vol *ole.IDispatch) (int, error) {
 	if arr == nil {
 		return 0, nil
 	}
-	return len(arr.ToStringArray()), nil
+	n, err := arr.TotalElements(0)
+	return int(n), err
 }
 
 // AddRecoveryPassword adds a numerical-password protector with a password

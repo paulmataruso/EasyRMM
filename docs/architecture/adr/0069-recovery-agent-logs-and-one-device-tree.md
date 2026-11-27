@@ -786,3 +786,13 @@ The disposition test lists the table as "ends", the nearest of its
 dispositions; what the code does, and `docs/operations/moving-devices.md`
 says, is the move to another site. ADR-0058's "enrolled devices stay in their
 site" is not true after this ADR, and the device rows do not rely on it.
+
+### Amended 2026-11-26 (decided in review), Group Policy
+
+`gpo_org_settings` (migration `00083`, ADR-0083 slice 1) belongs to the
+organization, so the disposition test lists it as owned. `gpo_backups`
+(`00082`) and `gpo_change_requests` (`00083`) are records of the organization
+whose domain the controller served, so they stay with it when the controller
+moves. A backup is restored, and a request is used, only within the
+organization that holds it (both are looked up by the device's current
+organization), so neither reaches the new one.

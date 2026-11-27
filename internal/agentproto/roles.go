@@ -11,11 +11,15 @@ const (
 	RolePrintServer   = "print_server"
 	RoleWindowsBackup = "windows_backup"
 	RoleDefender      = "defender"
+	// RoleGPMC is a domain controller with the Group Policy Management tools
+	// (the GroupPolicy PowerShell module): ADR-0083 offers Group Policy there.
+	RoleGPMC = "gpmc"
 )
 
 // RoleNames lists every role name in a fixed order.
 var RoleNames = []string{
 	RoleADDS, RoleADCS, RoleDNS, RoleDHCP, RoleFileServer, RolePrintServer, RoleWindowsBackup, RoleDefender,
+	RoleGPMC,
 }
 
 // Role states. Present is a role that is installed and set up; the others

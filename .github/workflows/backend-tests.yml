@@ -93,6 +93,10 @@ jobs:
       # (-v) and accepts module_missing, so the job summary records it.
       - name: Windows module scripts (defender.status, hostile values)
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/winmod/...
+      # ADR-0083, slice 1: the Group Policy report parser on sample Get-GPOReport XML (no domain is needed), and every
+      # Group Policy script run in Windows PowerShell on empty parameters, which must answer with a typed refusal.
+      - name: Group Policy module (report parser, scripts)
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/winmod/grouppolicy/
       # ADR-0073, slice 9: the AST check over every catalogue script (no
       # Invoke-Expression, parameters only from standard input, no string or
       # filter built from a value, -AsPlainText only in the pinned helper),

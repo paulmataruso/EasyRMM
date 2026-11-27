@@ -5,7 +5,9 @@ package roles
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,6 +62,7 @@ func Read(ctx context.Context) (Inputs, error) {
 		}
 	}
 	in.PrintShared, in.PrintQueue = printerState()
+	in.GroupPolicyModule = groupPolicyModuleInstalled()
 	if in.Services["WinDefend"].Installed() {
 		in.Defender = queryDefender(ctx)
 	}
@@ -185,4 +188,15 @@ func queryDefender(ctx context.Context) Defender {
 		return Defender{}
 	}
 	return d
+}
+
+// groupPolicyModuleInstalled says whether the GroupPolicy PowerShell module (the Group Policy Management tools) is
+// on this computer.
+func groupPolicyModuleInstalled() bool {
+	dir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(dir, "WindowsPowerShell", "v1.0", "Modules", "GroupPolicy", "GroupPolicy.psd1"))
+	return err == nil
 }

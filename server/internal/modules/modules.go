@@ -30,6 +30,7 @@ const (
 	FileShares           Module = "file_shares"
 	Print                Module = "print"
 	WindowsBackup        Module = "windows_backup"
+	GroupPolicy          Module = "group_policy"
 )
 
 // BitLocker is the module of ADR-0081's BitLocker actions. It is not in
@@ -69,6 +70,7 @@ var Catalog = []Def{
 	{FileShares, "File shares", agentproto.RoleFileServer, rbac.PermSharesView},
 	{Print, "Print server", agentproto.RolePrintServer, rbac.PermPrintView},
 	{WindowsBackup, "Windows Backup", agentproto.RoleWindowsBackup, rbac.PermBackupView},
+	{GroupPolicy, "Group Policy", agentproto.RoleGPMC, rbac.PermGPOView},
 }
 
 // Lookup returns a module's definition.

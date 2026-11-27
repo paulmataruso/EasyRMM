@@ -10,6 +10,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dhcp"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/dns"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/fileshares"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/printsrv"
 )
 
@@ -23,6 +24,7 @@ func Actions() []winmod.Action {
 		certauth.Actions(),
 		fileshares.Actions(),
 		printsrv.Actions(),
+		grouppolicy.Actions(),
 	} {
 		all = append(all, a...)
 	}

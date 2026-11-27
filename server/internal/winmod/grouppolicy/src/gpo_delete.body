@@ -1,0 +1,15 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    Assert-NotDefault ([string]$p.id) 'deleted'
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    if (-not ([string]$g.DisplayName).Equals([string]$p.name, 'OrdinalIgnoreCase')) { Stop-With 'name_mismatch' 'The name typed is not this GPO''s name.' }
+    Assert-Versions $g
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'gpo_delete' $c
+    Remove-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Deleted the GPO {0}.' ([string]$g.DisplayName) '') ([ordered]@{ name = [string]$g.DisplayName; id = ([string]$g.Id).ToLowerInvariant() }) ([ordered]@{}) $g $backup $vb $null
+} catch {
+    Stop-ForError $_
+}

@@ -1,0 +1,16 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    if ((Test-DefaultPolicy ([string]$p.id)) -and [string]$p.status -ne 'AllSettingsEnabled') { Stop-With 'protected_policy' 'A Default policy is never disabled, in whole or in part, here.' }
+    Assert-Versions $g
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'gpo_status' $c
+    $old = [string]$g.GpoStatus
+    $g.GpoStatus = [string]$p.status
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Changed the status of {0} to {1}.' ([string]$g.DisplayName) ([string]$after.GpoStatus)) ([ordered]@{ status = $old }) ([ordered]@{ status = [string]$after.GpoStatus }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

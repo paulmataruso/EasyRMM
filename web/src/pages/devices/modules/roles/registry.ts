@@ -6,6 +6,7 @@ import { DnsView } from "./dns/DnsView";
 import { CaView } from "./ca/CaView";
 import { PrintView } from "./print/PrintView";
 import { SharesView } from "./shares/SharesView";
+import { GpoView } from "./gpo/GpoView";
 
 /** One role's view in the device's "Roles" tab (ADR-0076, section 8). */
 export interface RoleView {
@@ -24,4 +25,5 @@ export const ROLE_VIEWS: readonly RoleView[] = [
   { module: "certificate_authority", label: "Certificate authority", permission: "ca.view", component: CaView },
   { module: "file_shares", label: "File shares", permission: "shares.view", component: SharesView },
   { module: "print", label: "Print", permission: "print.view", component: PrintView },
+  { module: "group_policy", label: "Group Policy", permission: "gpo.view", component: GpoView },
 ];

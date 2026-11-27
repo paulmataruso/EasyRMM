@@ -1,0 +1,19 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    Assert-InDomain ([string]$p.target) $c
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    Assert-Versions $g
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'link_add' $c
+    $args2 = @{ Guid = [string]$p.id; Target = [string]$p.target; LinkEnabled = 'Yes'; Enforced = 'No' }
+    if ((Test-Param 'enabled') -and $p.enabled -eq $false) { $args2['LinkEnabled'] = 'No' }
+    if ((Test-Param 'enforced') -and $p.enforced -eq $true) { $args2['Enforced'] = 'Yes' }
+    if (Test-Param 'order') { $args2['Order'] = [int]$p.order }
+    $new = New-GPLink @args2 @common
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Linked the GPO {0} to {1}.' ([string]$g.DisplayName) ([string]$p.target)) ([ordered]@{}) ([ordered]@{ target = [string]$new.Target; enabled = [string]$new.Enabled; enforced = [string]$new.Enforced; order = [string]$new.Order }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

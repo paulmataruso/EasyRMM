@@ -66,6 +66,8 @@ type Inputs struct {
 	// shared yet.
 	PrintQueue bool
 	Defender   Defender
+	// GroupPolicyModule: the GroupPolicy PowerShell module (GPMC) is installed.
+	GroupPolicyModule bool
 }
 
 // Evaluate returns the roles the inputs show, in the order of
@@ -125,6 +127,10 @@ func Evaluate(in Inputs) []agentproto.Role {
 		default:
 			add(agentproto.RoleDefender, agentproto.RolePassive, d.Version)
 		}
+	}
+	// Group Policy is offered on a domain controller that has the tools (ADR-0083).
+	if running("NTDS") && in.ProductType == ProductController && in.GroupPolicyModule {
+		add(agentproto.RoleGPMC, agentproto.RolePresent, "")
 	}
 	return out
 }

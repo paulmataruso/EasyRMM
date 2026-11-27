@@ -1,0 +1,39 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    $row = ConvertTo-GpoRow $g
+    $xml = [xml](Get-GPOReport -Guid ([string]$p.id) -ReportType Xml @common)
+    $siteNames = @([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().Sites | ForEach-Object { [string]$_.Name })
+    $rl = @()
+    foreach ($n in $xml.GetElementsByTagName('LinksTo')) {
+        $path = Get-XmlChild $n 'SOMPath'
+        $sens = ($path -ieq [string]$c.Domain) -or ($path -ieq (Join-Text ([string]$c.Domain) '/Domain Controllers')) -or ($siteNames -contains $path)
+        $rl += [ordered]@{
+            name = (Get-XmlChild $n 'SOMName'); path = $path; enabled = ((Get-XmlChild $n 'Enabled') -eq 'true')
+            enforced = ((Get-XmlChild $n 'NoOverride') -eq 'true'); sensitive = [bool]$sens
+        }
+    }
+    $tr = @()
+    foreach ($e in @(Get-GPPermission -Guid ([string]$p.id) -All @common)) {
+        $kind = 'other'
+        switch ([string]$e.Trustee.SidType) {
+            'User' { $kind = 'user' }
+            'Group' { $kind = 'group' }
+            'Alias' { $kind = 'group' }
+            'Computer' { $kind = 'computer' }
+            'WellKnownGroup' { $kind = 'well_known' }
+        }
+        $tr += [ordered]@{
+            name = [string]$e.Trustee.Name; sid = [string]$e.Trustee.Sid.Value; type = $kind; permission = [string]$e.Permission
+            inherited = ((Get-Prop $e 'Inherited') -eq $true); denied = ((Get-Prop $e 'Denied') -eq $true); apply = (([string]$e.Permission -eq 'GpoApply') -and ((Get-Prop $e 'Denied') -ne $true))
+        }
+    }
+    $row['linkCount'] = [int]@($rl).Count
+    $row['reportLinks'] = @($rl)
+    $row['trustees'] = @($tr)
+    Write-Result $true $row $null $null
+} catch {
+    Stop-ForError $_
+}

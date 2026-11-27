@@ -1,0 +1,24 @@
+try {
+    Import-GroupPolicyModule
+    $c = Get-Context
+    $common = $c.Common
+    $g = Get-GPO -Guid ([string]$p.id) @common
+    if (-not ([string]$g.DisplayName).Equals([string]$p.name, 'OrdinalIgnoreCase')) { Stop-With 'name_mismatch' 'The name typed is not this GPO''s name.' }
+    Assert-Versions $g
+    $t = Resolve-Trustee ([string]$p.trustee) $c
+    $keep = $false
+    if (Test-Param 'keepRead') { $keep = ($p.keepRead -eq $true) }
+    $perms = @(Get-GPPermission -Guid ([string]$p.id) -All @common)
+    if (-not (Test-AppliesToSomeone $perms ([string]$p.trustee) $keep)) {
+        Stop-With 'no_reader' 'That would leave no principal with Read or Apply on this GPO, and it would stop applying to computers and users. Keep Read for the principal, or add another group first.'
+    }
+    $vb = Get-Versions $g
+    $backup = Save-GpoBackup $g 'sec_filter_remove' $c
+    $level = 'None'
+    if ($keep) { $level = 'GpoRead' }
+    [void](Set-GPPermission -Guid ([string]$p.id) -TargetName ([string]$t.Name) -TargetType ([string]$t.Type) -PermissionLevel $level -Replace @common)
+    $after = Get-GPO -Guid ([string]$p.id) @common
+    Write-Changed (Format-Text 'Removed {0} from the security filtering of {1}.' ([string]$t.Name) ([string]$g.DisplayName)) ([ordered]@{ applies = [string]$t.Name }) ([ordered]@{ now = $level }) $after $backup $vb (Get-Versions $after)
+} catch {
+    Stop-ForError $_
+}

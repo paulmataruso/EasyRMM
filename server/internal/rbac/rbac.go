@@ -105,6 +105,15 @@ const (
 	PermPrintViewSensitive Permission = "print.view_sensitive"
 	PermPrintDestroy       Permission = "print.destroy"
 
+	// Group Policy (ADR-0083). gpo.view reads GPOs, reports, links and backups; gpo.edit changes a GPO's content and
+	// requests or approves a change; gpo.link adds, removes or reorders a link and blocks inheritance (a link at the
+	// domain root reaches every computer, so it is its own permission); gpo.manage creates, copies, renames and deletes,
+	// changes security filtering, WMI filters and status, and backs up and restores.
+	PermGPOView   Permission = "gpo.view"
+	PermGPOEdit   Permission = "gpo.edit"
+	PermGPOLink   Permission = "gpo.link"
+	PermGPOManage Permission = "gpo.manage"
+
 	// PermRDPCredentialsSave lets a person save, replace and delete their own
 	// saved RDP credential on a device they may open remote desktop on
 	// (ADR-0079). It is never a way to read one.
@@ -211,6 +220,7 @@ var AllPermissions = []Permission{
 	PermQAView, PermQALinkCreate, PermQALinkPermanent, PermQASession, PermQATakeover, PermQAInstall,
 	PermNotificationManage,
 	PermBitLockerManage,
+	PermGPOView, PermGPOEdit, PermGPOLink, PermGPOManage,
 }
 
 // globalOnly permissions are only meaningful platform-wide and are never
@@ -302,6 +312,8 @@ var technicianPerms = union(viewPerms, []Permission{
 	// plus the reversible manage permissions. No Active Directory writes.
 	PermDefenderView, PermADView, PermDHCPView, PermPrintView, PermBackupView,
 	PermDefenderManage, PermBackupManage, PermPrintManage, PermADHelpdesk,
+	// Group Policy (ADR-0083): Technicians and Site Administrators read it; every write is an Organization Administrator's.
+	PermGPOView,
 	// Compliance (ADR-0078): view, scan and the fixes that need no step-up.
 	PermComplianceView, PermComplianceScan, PermComplianceFix,
 	PermQAView, PermQALinkCreate, PermQASession,
@@ -316,7 +328,7 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 })
 
 var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure, PermLogViewSensitive, PermBitLockerManage,
-	PermCAManage, PermADManage, PermADResetPassword,
+	PermCAManage, PermADManage, PermADResetPassword, PermGPOEdit, PermGPOLink, PermGPOManage,
 	// Every compliance permission but compliance.admin, which is server-wide.
 	PermComplianceFixHigh, PermComplianceFixApprove, PermComplianceEdit, PermComplianceAttest, PermComplianceApprove,
 	PermComplianceExport,

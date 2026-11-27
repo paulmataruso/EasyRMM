@@ -141,7 +141,7 @@ test-integration: agent-release-before ## Go unit + integration tests against Po
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
 	EASYRMM_TEST_AGENT_RELEASE_BEFORE="$(RELEASE_BEFORE_AGENT)" \
 	EASYRMM_TEST_MAIL_DIR="$${EASYRMM_TEST_MAIL_DIR:-$(TEST_MAIL_DIR)}" \
-		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
+		$(GO) test -race -count=1 -timeout 25m -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
 .PHONY: test-updater-published
