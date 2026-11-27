@@ -316,7 +316,7 @@ func TestRead(t *testing.T) {
 	f.ingest(f.device1(), batch(1,
 		sealed(t, "linux.journal", ev(0, "disk almost full"), ev(5*time.Minute, "nginx started"), ev(30*time.Minute, "Disk check ok")),
 		sealed(t, "linux.audit",
-			logblock.Event{Time: t0.Add(10 * time.Minute), ID: "EXECVE", Message: "EXECVE", Sensitive: map[string]string{"cmdline": "curl -u svc:hunter2 http://x"}},
+			logblock.Event{Time: t0.Add(10 * time.Minute), ID: "EXECVE", Message: "EXECVE", Sensitive: map[string]string{"cmdline": "curl -u svc:REDACTED http://x"}},
 			logblock.Event{Time: t0.Add(20 * time.Minute), ID: "USER_LOGIN", Message: "USER_LOGIN", Fields: map[string]string{"acct": "bob"}}),
 	))
 	admin := f.user("admin@example.com", rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: f.acme})
@@ -346,11 +346,11 @@ func TestRead(t *testing.T) {
 	}
 
 	// Command lines: shown and searched for log.view_sensitive only.
-	res, _ = f.svc.Read(f.ctx, admin, f.dev, logstore.Query{Since: since, Until: until, Text: "hunter2"})
+	res, _ = f.svc.Read(f.ctx, admin, f.dev, logstore.Query{Since: since, Until: until, Text: "REDACTED"})
 	if len(res.Items) != 1 || res.Items[0].Sensitive["cmdline"] == "" {
 		t.Fatalf("admin: %+v", res.Items)
 	}
-	res, err = f.svc.Read(f.ctx, tech, f.dev, logstore.Query{Since: since, Until: until, Text: "hunter2"})
+	res, err = f.svc.Read(f.ctx, tech, f.dev, logstore.Query{Since: since, Until: until, Text: "REDACTED"})
 	if err != nil || len(res.Items) != 0 {
 		t.Fatalf("a search found a command line for a caller who may not see it: %v %+v", err, res.Items)
 	}

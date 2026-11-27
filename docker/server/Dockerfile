@@ -84,6 +84,7 @@ LABEL org.opencontainers.image.title="EasyRMM server" \
 COPY --from=server /out/easyrmm-server /usr/local/bin/easyrmm-server
 COPY --from=server /out/easyrmm-keystore /usr/local/bin/easyrmm-keystore
 COPY --from=agents /out/agents/ /usr/share/easyrmm/agents/
+COPY --from=agents /out/agents/ /usr/share/easyrmm/agents-stable/
 USER 65532:65532
 ENV EASYRMM_DATA_DIR=/var/lib/easyrmm
 HEALTHCHECK --interval=30s --timeout=6s --start-period=90s --retries=3 \
