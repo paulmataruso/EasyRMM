@@ -159,3 +159,26 @@ func (DefenderSource) Read(ctx context.Context, q Query) (Result, error) {
 	}
 	return res, nil
 }
+
+// ChannelSource reads any event channel after a record bookmark, for the log
+// collector (ADR-0060): every event, rendered as XML, in record order.
+type ChannelSource struct{ Name string }
+
+// NewChannelSource returns a reader of the named channel.
+func NewChannelSource(name string) Source { return ChannelSource{Name: name} }
+
+// Read implements Source. A channel that does not exist has no events.
+func (c ChannelSource) Read(ctx context.Context, q Query) (Result, error) {
+	cond := "EventRecordID > 0"
+	if q.After > 0 {
+		cond = fmt.Sprintf("EventRecordID > %d", q.After)
+	}
+	if q.After == 0 && !q.Since.IsZero() {
+		cond += fmt.Sprintf(" and TimeCreated[timediff(@SystemTime) <= %d]", time.Since(q.Since).Milliseconds())
+	}
+	events, err := readAll(ctx, c.Name, "*[System["+cond+"]]", evtQueryForwardDirection, max(q.Limit, 1))
+	if errors.Is(err, errNoRecords) {
+		return Result{}, nil
+	}
+	return Result{Events: events}, err
+}

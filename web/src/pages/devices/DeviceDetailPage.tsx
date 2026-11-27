@@ -23,6 +23,7 @@ import { HardeningPanel } from "./DeviceHardening";
 import { PosturePanel } from "./PosturePanel";
 import { WindowsHardeningPanel } from "../hardening/WindowsHardening";
 import { AgentLogsPanel } from "./DeviceLogs";
+import { CollectedLogsPanel } from "./CollectedLogs";
 import { AssetPanel } from "../assets/AssetPanel";
 import { RegistryPanel } from "./registry/RegistryTab";
 import { EventLogPanel } from "./eventlog/EventLogTab";
@@ -102,6 +103,8 @@ export function DeviceDetailPage() {
     { id: "hardening", label: "Hardening", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") },
     // Agent logs (ADR-0069) need log.view: Technicians and above.
     { id: "logs", label: "Logs", hidden: !hasAgent || !can("log.view") },
+    // The logs the collector gathered from the computer itself (ADR-0060): the same permission.
+    { id: "collected", label: "Collected logs", hidden: !hasAgent || !can("log.view") },
     // The registry editor (ADR-0067): Windows devices with the agent, for holders of registry.view at the device's site.
     { id: "registry", label: "Registry", hidden: !hasAgent || d.platform !== "windows" || !atDevice("registry.view") },
     // The event viewer (ADR-0068): Windows devices with the agent, for holders of eventlog.view at the device's site. The
@@ -238,6 +241,12 @@ export function DeviceDetailPage() {
       {tab === "logs" && (
         <div role="tabpanel" aria-labelledby="tab-logs">
           <AgentLogsPanel device={d} />
+        </div>
+      )}
+
+      {tab === "collected" && (
+        <div role="tabpanel" aria-labelledby="tab-collected">
+          <CollectedLogsPanel device={d} />
         </div>
       )}
 

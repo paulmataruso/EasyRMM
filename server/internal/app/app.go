@@ -59,6 +59,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/backupapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/collectedlogsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/complianceapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/defenderapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
@@ -94,6 +95,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/jobkeys"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/keystore"
+	"github.com/paulmataruso/easyrmm/server/internal/logstore"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
@@ -183,6 +185,9 @@ type Deps struct {
 	ComplianceAlerts *calerts.Service
 	// AgentLogs stores agents' log records (ADR-0069).
 	AgentLogs *agentlogs.Service
+	// LogStore is the log store (ADR-0060); nil without EASYRMM_LOGS_DATABASE_URL
+	// or when its pool could not be made.
+	LogStore *logstore.Store
 	// Modules is the Windows management framework: roles and toggles
 	// (ADR-0073).
 	Modules *modules.Service
@@ -495,6 +500,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.AgentFiles = agentfiles.New(db, log, builds, files, d.EasyPatch)
 	d.Agents.OnServedBuildsChanged(func() { go d.AgentFiles.ServedChanged(context.WithoutCancel(ctx)) })
 	d.Agents.OnAgentVersion(func(v string) { go d.AgentFiles.VersionReported(v) })
+	// The log store never keeps EasyRMM down: its pool does not connect at
+	// start, its schema is migrated in the background, and a store that is
+	// missing or broken only means no collected logs (ADR-0060).
+	d.LogStore = openLogStore(ctx, cfg, log)
 	return d, nil
 }
 
@@ -584,6 +593,35 @@ func newMail(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, c 
 		opts = append(opts, mailserver.Authority(m365Authority))
 	}
 	return mailserver.New(db, auditLog, sealer, envMail(c), log, opts...)
+}
+
+// openLogStore makes the log store's pool and starts its migration and
+// upkeep in the background. It returns nil, with the reason logged, when the
+// store is not configured or its connection strings cannot be read.
+func openLogStore(ctx context.Context, cfg *config.Config, log *slog.Logger) *logstore.Store {
+	if cfg.LogsDatabaseURL == "" {
+		log.Info("log store: EASYRMM_LOGS_DATABASE_URL is not set; collected logs are off")
+		return nil
+	}
+	pool, err := logstore.OpenPool(ctx, cfg.LogsDatabaseURL, Version)
+	if err != nil {
+		log.Error("log store: EASYRMM_LOGS_DATABASE_URL cannot be used; collected logs are off", "error", err)
+		return nil
+	}
+	var owner *pgx.ConnConfig
+	if cfg.LogsDatabaseMigrationURL != "" {
+		if owner, err = pgx.ParseConfig(cfg.LogsDatabaseMigrationURL); err != nil {
+			log.Error("log store: EASYRMM_LOGS_DATABASE_MIGRATION_URL cannot be used; collected logs are off", "error", err)
+			pool.Close()
+			return nil
+		}
+	}
+	st := logstore.New(pool, log)
+	go func() {
+		st.Start(ctx, owner)
+		st.Close()
+	}()
+	return st
 }
 
 // MailCheck checks the mail server in force as the running server does and
@@ -760,6 +798,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	complianceapi.New(d.Compliance, d.ComplianceFix, d.ComplianceAssess).Register(mux)
 	postureapi.New(d.Posture).Register(mux)
 	agentlogsapi.New(d.AgentLogs).Register(mux)
+	collectedlogsapi.New(logstore.NewService(d.LogStore, d.DB)).Register(mux)
 	modulesapi.New(d.Modules).Register(mux)
 	defenderapi.New(d.DefenderLog, d.Modules).Register(mux)
 	backupapi.New(backup.NewCards(d.DB, d.Modules)).Register(mux)
@@ -810,7 +849,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore).WithTrust(d.TLSTrust)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithCollectedLogs(d.LogStore).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore).WithTrust(d.TLSTrust)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))

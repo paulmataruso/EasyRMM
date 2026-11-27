@@ -5152,3 +5152,43 @@ export interface ScheduledTaskRun {
   completedAt: string | null;
   jobIds: string[];
 }
+
+/** One event the log collector gathered from a device (ADR-0060). */
+export interface CollectedLogEvent {
+  time: string;
+  /** For example "windows.security", "linux.journal", "linux.auth". */
+  source: string;
+  level: "debug" | "info" | "warn" | "error";
+  id?: string;
+  message: string;
+  fields?: Record<string, string>;
+  /** Command lines and script text: sent only to holders of log.view_sensitive. */
+  sensitive?: Record<string, string>;
+}
+
+/** A read of a device's collected events, newest first. */
+export interface CollectedLogPage {
+  items: CollectedLogEvent[];
+  /** Older events exist in the range; `next` continues from there (pass it as `until`). */
+  more: boolean;
+  next?: string;
+  /** The read stopped before covering the range; narrow it. */
+  truncated: boolean;
+  canSeeSensitive: boolean;
+  sources: string[];
+}
+
+/** What a device logged in one hour, by source and level. */
+export interface CollectedLogBucket {
+  hour: string;
+  source: string;
+  level: string;
+  events: number;
+  bytes: number;
+}
+
+export interface CollectedLogTimeline {
+  since: string;
+  until: string;
+  buckets: CollectedLogBucket[];
+}
