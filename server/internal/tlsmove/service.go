@@ -4,7 +4,7 @@
 // obtains the target certificate and holds it, asks every device that uses the
 // name to verify the target chain (internal/tlstrust), waits until all have,
 // and then swaps the source atomically. Nothing is served from the target
-// until the swap, and a cancelled move changes nothing.
+// until the swap, and a canceled move changes nothing.
 package tlsmove
 
 import (
@@ -406,7 +406,7 @@ func (s *Service) Cancel(ctx context.Context, actor audit.Actor, name string) er
 	if err := s.clear(ctx, n); err != nil {
 		return err
 	}
-	s.record(ctx, actor, n, "cancelled", map[string]any{"from": cur, "to": moving})
+	s.record(ctx, actor, n, "canceled", map[string]any{"from": cur, "to": moving})
 	return nil
 }
 

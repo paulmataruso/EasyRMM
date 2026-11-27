@@ -39,7 +39,7 @@ import { useUrlState } from "../../lib/urlState";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const STATE_TONE: Record<ScheduledTaskState, Tone> = { active: "ok", paused: "warn", cancelled: "neutral", completed: "neutral" };
+const STATE_TONE: Record<ScheduledTaskState, Tone> = { active: "ok", paused: "warn", canceled: "neutral", completed: "neutral" };
 const RUN_TONE: Record<ScheduledRunState, Tone> = { pending: "info", running: "info", succeeded: "ok", failed: "danger", skipped: "neutral" };
 
 /** One line saying when a task runs, in the zone of its site or organization. */
@@ -104,7 +104,7 @@ export function ScheduledTasksPage() {
           <option value="active">Active</option>
           <option value="paused">Paused</option>
           <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
+          <option value="canceled">Cancelled</option>
         </Select>
       </Toolbar>
 
@@ -142,7 +142,7 @@ export function ScheduledTasksPage() {
                       </Link>{" "}
                       · owner {t.ownerEmail || "unknown"}
                     </div>
-                    {t.scriptChanged && t.state !== "cancelled" && (
+                    {t.scriptChanged && t.state !== "canceled" && (
                       <Badge tone="danger" className="mt-1" title="The library script no longer matches the pinned SHA-256; runs fail until the task is saved again.">
                         Script changed
                       </Badge>

@@ -306,7 +306,7 @@ func TestValidationAndKeys(t *testing.T) {
 	bad := []assets.Input{
 		{SiteID: e.hq, Kind: "toaster"},
 		{SiteID: e.hq, Fields: map[string]string{"purchase_date": "01/02/2020"}},
-		{SiteID: e.hq, Fields: map[string]string{"colour": "red"}},
+		{SiteID: e.hq, Fields: map[string]string{"color": "red"}},
 		{SiteID: e.hq, Fields: map[string]string{"warranty_status": "maybe"}},
 		{SiteID: e.plant},
 	}

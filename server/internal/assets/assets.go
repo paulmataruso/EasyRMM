@@ -386,8 +386,8 @@ func readValues(ctx context.Context, tx pgx.Tx, id uuid.UUID) ([]valueRow, error
 }
 
 func fieldViews(vals []valueRow) []FieldView {
-	out := make([]FieldView, 0, len(Catalogue))
-	for _, f := range Catalogue {
+	out := make([]FieldView, 0, len(Catalog))
+	for _, f := range Catalog {
 		v := FieldView{Field: f.Name, Label: f.Label, Editable: true, Sources: []SourceValue{}}
 		by := map[string]sourceValue{}
 		for _, r := range vals {
@@ -420,7 +420,7 @@ func refresh(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 		by[r.Field][r.Source] = sourceValue{Value: r.Value, State: r.State}
 	}
 	eff := map[string]string{}
-	for _, f := range Catalogue {
+	for _, f := range Catalog {
 		eff[f.Name] = effective(f, by[f.Name])
 	}
 	_, err = tx.Exec(ctx, `UPDATE assets SET name = $2, manufacturer = $3, model = $4, serial_number = $5, sku = $6, chassis_type = $7,

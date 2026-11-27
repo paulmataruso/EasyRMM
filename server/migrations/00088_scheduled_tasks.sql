@@ -28,8 +28,8 @@ CREATE TABLE automations (
     missed_run_rule text NOT NULL DEFAULT 'skip' CHECK (missed_run_rule IN ('run_asap', 'skip')),
     wait_hours      integer NOT NULL DEFAULT 24 CHECK (wait_hours BETWEEN 1 AND 168),
     owner_id        uuid NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
-    state           text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'paused', 'cancelled', 'completed')),
-    -- The next occurrence to fire; null while paused, cancelled or completed.
+    state           text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'paused', 'canceled', 'completed')),
+    -- The next occurrence to fire; null while paused, canceled or completed.
     next_run_at     timestamptz,
     last_run_at     timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),

@@ -30,7 +30,7 @@ func New(svc *tlsmove.Service, sessions *httpapi.Sessions) *API {
 // Register mounts the routes.
 func (a *API) Register(mux *http.ServeMux) {
 	r := func(pattern string, stepUp bool, h httpapi.HandlerFunc) {
-		var handler http.Handler = httpapi.Handle(h)
+		handler := httpapi.Handle(h)
 		if stepUp {
 			handler = a.sessions.RequireStepUp(handler)
 		}

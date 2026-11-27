@@ -377,14 +377,14 @@ func TestLifecycleAndPermissions(t *testing.T) {
 		t.Fatalf("update: %+v %v", u, err)
 	}
 	c, err := f.svc.Cancel(f.ctx, admin, task.ID)
-	if err != nil || c.State != StateCancelled || c.NextRunAt != nil {
+	if err != nil || c.State != StateCanceled || c.NextRunAt != nil {
 		t.Fatalf("cancel: %+v %v", c, err)
 	}
 	if _, err := f.svc.Resume(f.ctx, admin, task.ID); err == nil {
-		t.Fatal("a cancelled task resumed")
+		t.Fatal("a canceled task resumed")
 	}
 	if _, err := f.svc.Update(f.ctx, admin, task.ID, Patch{Name: &name}); err == nil {
-		t.Fatal("a cancelled task was edited")
+		t.Fatal("a canceled task was edited")
 	}
 	for _, a := range []string{"create", "update", "pause", "resume", "cancel"} {
 		if n := f.count(`SELECT count(*) FROM audit_log WHERE action = $1`, "automation."+a); n != 1 {

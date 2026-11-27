@@ -23,7 +23,7 @@ import (
 const (
 	StateActive    = "active"
 	StatePaused    = "paused"
-	StateCancelled = "cancelled"
+	StateCanceled  = "canceled"
 	StateCompleted = "completed"
 )
 
@@ -367,7 +367,7 @@ func (s *Service) reload(ctx context.Context, tx pgx.Tx, c access.Caller, id uui
 	return t, nil
 }
 
-var errFinished = apperr.Conflict("task_finished", "That task is cancelled or has finished; create a new one.")
+var errFinished = apperr.Conflict("task_finished", "That task is canceled or has finished; create a new one.")
 
 // Update edits a task.
 func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p Patch) (*Task, error) {
@@ -385,7 +385,7 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 		if err != nil {
 			return err
 		}
-		if t.State == StateCancelled || t.State == StateCompleted {
+		if t.State == StateCanceled || t.State == StateCompleted {
 			return errFinished
 		}
 		if p.Name != nil {
@@ -487,10 +487,10 @@ func (s *Service) setState(ctx context.Context, c access.Caller, id uuid.UUID, a
 			}
 			state, next = StateActive, &n
 		default:
-			if t.State == StateCancelled || t.State == StateCompleted {
+			if t.State == StateCanceled || t.State == StateCompleted {
 				return errFinished
 			}
-			state = StateCancelled
+			state = StateCanceled
 		}
 		owner := t.OwnerID
 		if state == StateActive {

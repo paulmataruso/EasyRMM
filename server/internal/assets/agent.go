@@ -44,7 +44,7 @@ func suggestKind(sys agentproto.SystemInfo, osDescription string) string {
 // The agent's values are the only ones it touches.
 func writeAgentValues(ctx context.Context, tx pgx.Tx, assetID, org uuid.UUID, vals map[string]string, force bool) error {
 	changed := force
-	for _, f := range Catalogue {
+	for _, f := range Catalog {
 		v, ok := vals[f.Name]
 		if !ok {
 			continue
@@ -80,7 +80,7 @@ func readInventory(ctx context.Context, tx pgx.Tx, deviceID uuid.UUID) (agentpro
 	}
 	var inv agentproto.Inventory
 	if err := json.Unmarshal(data, &inv); err != nil {
-		return agentproto.SystemInfo{}, false, nil
+		return agentproto.SystemInfo{}, false, err
 	}
 	return inv.System, true, nil
 }

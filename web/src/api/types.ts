@@ -5044,7 +5044,7 @@ export interface TlsTrust {
 // ---------------------------------------------------------------------------------------------
 
 export type ScheduleKind = "once" | "daily" | "weekly" | "monthly" | "interval";
-export type ScheduledTaskState = "active" | "paused" | "cancelled" | "completed";
+export type ScheduledTaskState = "active" | "paused" | "canceled" | "completed";
 export type MissedRunRule = "skip" | "run_asap";
 export type ScheduledRunState = "pending" | "running" | "succeeded" | "failed" | "skipped";
 

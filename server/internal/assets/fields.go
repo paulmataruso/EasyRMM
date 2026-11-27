@@ -37,7 +37,7 @@ const (
 	MaxNotesLength = 4000
 )
 
-// Field is one entry of the catalogue of fields an asset keeps a value for,
+// Field is one entry of the catalog of fields an asset keeps a value for,
 // per source.
 type Field struct {
 	Name string
@@ -51,8 +51,8 @@ type Field struct {
 	Label string
 }
 
-// Catalogue lists the fields in the order the console shows them.
-var Catalogue = []Field{
+// Catalog lists the fields in the order the console shows them.
+var Catalog = []Field{
 	{Name: "name", Agent: true, ManualFirst: true, Label: "Name"},
 	{Name: "manufacturer", Agent: true, Label: "Manufacturer"},
 	{Name: "model", Agent: true, Label: "Model"},
@@ -68,7 +68,7 @@ var Catalogue = []Field{
 }
 
 func fieldByName(name string) (Field, bool) {
-	for _, f := range Catalogue {
+	for _, f := range Catalog {
 		if f.Name == name {
 			return f, true
 		}
