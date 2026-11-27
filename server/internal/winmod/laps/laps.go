@@ -60,6 +60,26 @@ func Actions() []winmod.Action {
 	status.Freshness = 5 * time.Minute
 	status.Schedule = time.Hour
 
+	configure := winmod.Action{
+		Module: modules.LAPS,
+		Name: "laps.configure", Label: "Configure Windows LAPS policy", Version: 1,
+		Script: script("configure"), ScriptSHA256: pins["configure"],
+		Permission: rbac.PermDeviceConfigure, Timeout: 60, Changes: true,
+		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),
+		Params: []winmod.Param{
+			{Name: "backupDirectory", Type: winmod.Enum, Required: true, Values: []string{"1", "2"}},
+			{Name: "passwordAgeDays", Type: winmod.Int, Min: 1, Max: 365},
+			{Name: "passwordLength", Type: winmod.Int, Min: 8, Max: 64},
+			{Name: "passwordComplexity", Type: winmod.Enum, Values: []string{"1", "2", "3", "4"}},
+			{Name: "administratorAccountName", Type: winmod.Text, Max: 64, AllowEmpty: true},
+			{Name: "passwordExpirationProtectionEnabled", Type: winmod.Enum, Values: []string{"0", "1"}},
+			{Name: "adPasswordEncryptionEnabled", Type: winmod.Enum, Values: []string{"0", "1"}},
+			{Name: "adPasswordEncryptionPrincipal", Type: winmod.Text, Max: 256, AllowEmpty: true},
+			{Name: "postAuthenticationResetDelay", Type: winmod.Int, Min: 0, Max: 720},
+			{Name: "postAuthenticationActions", Type: winmod.Enum, Values: []string{"1", "3", "5"}},
+		},
+	}
+
 	resetPw := winmod.Action{
 		Module: modules.LAPS,
 		Name: "laps.reset_password", Label: "Trigger a LAPS password rotation", Version: 1,
@@ -68,5 +88,5 @@ func Actions() []winmod.Action {
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),
 	}
 
-	return []winmod.Action{status, resetPw}
+	return []winmod.Action{status, configure, resetPw}
 }

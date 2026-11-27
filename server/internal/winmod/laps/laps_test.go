@@ -19,8 +19,8 @@ func TestPins(t *testing.T) {
 
 func TestActions(t *testing.T) {
 	actions := Actions()
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, got %d", len(actions))
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions, got %d", len(actions))
 	}
 	names := map[string]bool{}
 	for _, a := range actions {
