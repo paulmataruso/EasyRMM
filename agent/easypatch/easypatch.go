@@ -64,7 +64,10 @@ type System interface {
 type Installer struct {
 	DeviceID string
 	// Key returns the pinned job-signing key, nil while none is pinned.
-	Key func() ed25519.PublicKey
+	Keys func() agentproto.Keys
+	// Record is told of each install instruction that verified (the
+	// instruction log).
+	Record agentproto.InstructionRecorder
 	// Dir is the agent's state directory; packages are downloaded to a
 	// directory in it and removed after the install.
 	Dir string
@@ -136,9 +139,9 @@ func (i *Installer) Start(ctx context.Context, s *agentproto.SignedEasyPatchInst
 	if s == nil {
 		return
 	}
-	var key ed25519.PublicKey
-	if i.Key != nil {
-		key = i.Key()
+	var key agentproto.Keys
+	if i.Keys != nil {
+		key = i.Keys()
 	}
 	p, err := agentproto.VerifyEasyPatchInstall(key, *s, i.DeviceID, i.now())
 	if err != nil {
@@ -151,6 +154,12 @@ func (i *Installer) Start(ctx context.Context, s *agentproto.SignedEasyPatchInst
 			i.report(id, "The EasyRMM agent refused the instruction: "+strings.TrimPrefix(err.Error(), "agentproto: ")+".")
 		}
 		return
+	}
+	if i.Record != nil {
+		i.Record(agentproto.InstructionEasyPatch, p.ID, key.SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyEasyPatchInstall(k, *s, i.DeviceID, i.now())
+			return err == nil
+		}))
 	}
 	i.mu.Lock()
 	if i.tried == nil {

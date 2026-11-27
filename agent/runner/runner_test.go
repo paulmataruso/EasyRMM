@@ -68,6 +68,9 @@ type server struct {
 	escrow string
 	// trust is its signed trust instruction, JSON (ADR-0055).
 	trust string
+	// extra is more answer fields, raw JSON ("," first): the job key
+	// statements and features (ADR-0057).
+	extra string
 }
 
 // download serves a signed download, as the server does.
@@ -132,6 +135,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.trust != "" {
 			update += `,"trust":` + s.trust
 		}
+		update += s.extra
 		announce := ""
 		if s.settingsSHA != "" {
 			announce = `,"settingsSha256":"` + s.settingsSHA + `"`
@@ -247,7 +251,7 @@ func newRunner(t *testing.T, s *server, m *mesh) *Runner {
 		Client: c, Store: store,
 		Facts:    func() agentproto.Facts { return agentproto.Facts{Hostname: "h"} },
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Key:      func() ed25519.PublicKey { return jobPub },
+		Keys:     func() agentproto.Keys { return agentproto.Keys{jobPub} },
 		DeviceID: "dev-1",
 	}
 	if m != nil {
@@ -310,11 +314,11 @@ func TestBeatRefusesUnsignedMeshAgent(t *testing.T) {
 		prepare func(*Runner, *server)
 		want    string
 	}{
-		"no key pinned yet": {func(r *Runner, _ *server) { r.Key = func() ed25519.PublicKey { return nil } },
+		"no key pinned yet": {func(r *Runner, _ *server) { r.Keys = func() agentproto.Keys { return nil } },
 			"install failed: no server key is pinned yet"},
 		"another server's key": {func(r *Runner, _ *server) {
 			other, _, _ := ed25519.GenerateKey(rand.Reader)
-			r.Key = func() ed25519.PublicKey { return other }
+			r.Keys = func() agentproto.Keys { return agentproto.Keys{other} }
 		}, "install failed: MeshAgent's settings: agentproto: the download's signature does not verify"},
 		"changed on the way": {func(_ *Runner, s *server) { s.tamper = true },
 			"install failed: MeshAgent's settings: agentproto: the download's signature does not verify"},
@@ -561,7 +565,7 @@ func TestBeatAppliesMovedSiteSettings(t *testing.T) {
 	for name, c := range map[string]func(*Runner, *server){
 		"another hash":        func(_ *Runner, s *server) { s.settingsSHA = strings.Repeat("a", 64) },
 		"changed on the way":  func(_ *Runner, s *server) { s.tamper = true },
-		"no key pinned yet":   func(r *Runner, _ *server) { r.Key = func() ed25519.PublicKey { return nil } },
+		"no key pinned yet":   func(r *Runner, _ *server) { r.Keys = func() agentproto.Keys { return nil } },
 		"reconfiguring fails": nil,
 	} {
 		s := &server{available: true, settingsSHA: good}

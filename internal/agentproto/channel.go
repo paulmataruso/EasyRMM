@@ -199,13 +199,13 @@ func SignChannelMessage(key ed25519.PrivateKey, m ChannelMessage) ([]byte, error
 // VerifyChannelMessage checks a server frame's size against max and its
 // signature against key, and returns the message. It does not check that
 // the message is the one expected: see ChannelMessage.Check.
-func VerifyChannelMessage(key ed25519.PublicKey, frame []byte, max int) (ChannelMessage, error) {
+func VerifyChannelMessage[K KeyArg](key K, frame []byte, max int) (ChannelMessage, error) {
 	var m ChannelMessage
 	payload, sig, err := openEnvelope(frame, max)
 	if err != nil {
 		return m, err
 	}
-	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(ChannelServerContext), payload...), sig) {
+	if !keysOf(key).verify(append([]byte(ChannelServerContext), payload...), sig) {
 		return m, ErrChannelSignature
 	}
 	if err := json.Unmarshal(payload, &m); err != nil || m.V != ChannelVersion {
@@ -266,7 +266,7 @@ func SignChannelAgentFrame(key ed25519.PrivateKey, f ChannelAgentFrame) ([]byte,
 // VerifyChannelAgentFrame checks an agent frame's size against
 // MaxChannelAgentFrame and its signature against the device's key, and
 // returns the frame. The caller checks its connection id and sequence.
-func VerifyChannelAgentFrame(key ed25519.PublicKey, frame []byte) (ChannelAgentFrame, error) {
+func VerifyChannelAgentFrame[K KeyArg](key K, frame []byte) (ChannelAgentFrame, error) {
 	var f ChannelAgentFrame
 	payload, sig, err := openEnvelope(frame, MaxChannelAgentFrame)
 	if err != nil {
@@ -275,7 +275,7 @@ func VerifyChannelAgentFrame(key ed25519.PublicKey, frame []byte) (ChannelAgentF
 	if err := json.Unmarshal(payload, &f); err != nil || f.V != ChannelVersion {
 		return ChannelAgentFrame{}, ErrChannelFrame
 	}
-	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, agentMessage(f.ConnID, f.Seq, payload), sig) {
+	if !keysOf(key).verify(agentMessage(f.ConnID, f.Seq, payload), sig) {
 		return ChannelAgentFrame{}, ErrChannelSignature
 	}
 	return f, nil

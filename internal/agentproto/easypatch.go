@@ -147,13 +147,13 @@ func SignEasyPatchInstall(key ed25519.PrivateKey, p EasyPatchInstallPayload) (Si
 // and returns its payload. It refuses installs for other devices, expired
 // ones, and any whose server, packages, certificate or token are not what
 // they should be.
-func VerifyEasyPatchInstall(key ed25519.PublicKey, s SignedEasyPatchInstall, deviceID string, now time.Time) (EasyPatchInstallPayload, error) {
+func VerifyEasyPatchInstall[K KeyArg](key K, s SignedEasyPatchInstall, deviceID string, now time.Time) (EasyPatchInstallPayload, error) {
 	b, err := base64.StdEncoding.DecodeString(s.Payload)
 	if err != nil {
 		return EasyPatchInstallPayload{}, ErrEasyPatchMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(s.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(easyPatchSigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(easyPatchSigContext), b...), sig) {
 		return EasyPatchInstallPayload{}, ErrEasyPatchSignature
 	}
 	var p EasyPatchInstallPayload

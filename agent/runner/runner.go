@@ -17,6 +17,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,6 +139,28 @@ type TrustAgent interface {
 	Answered(ctx context.Context, level int, s *agentproto.SignedTrust)
 }
 
+// KeyFollower is the agent's key store as the runner uses it (ADR-0057).
+type KeyFollower interface {
+	// Caps is what the agent announces in its heartbeat.
+	Caps() []string
+	// Report is each key the agent trusts, with its generation.
+	Report() []agentproto.TrustedKey
+	// Refusal is the statement the agent last refused, nil for none.
+	Refusal() *agentproto.KeyRefusal
+	// Answered handles a heartbeat answer's statements, the hand-over first.
+	Answered(level int, handover, cutover *agentproto.SignedKeyStatement)
+}
+
+// InstructionLog is the agent's log of accepted instructions as the runner
+// uses it (ADR-0057).
+type InstructionLog interface {
+	// Report is what the next heartbeat carries; nil unless the server
+	// listed the feature.
+	Report(featureListed bool) *agentproto.InstructionLogReport
+	// Acknowledged takes the server's acknowledgment.
+	Acknowledged(ack uint64)
+}
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -148,12 +171,25 @@ type Runner struct {
 	Mesh  MeshAgent
 	Facts func() agentproto.Facts
 	Log   *slog.Logger
-	// OnJobKey receives the server's job-signing key from each heartbeat.
-	OnJobKey func(key string)
-	// Key returns the pinned job-signing key, nil while none is pinned.
-	// MeshAgent and its settings are installed only when the server signed
-	// them with it.
-	Key func() ed25519.PublicKey
+	// OnJobKey receives the server's job-signing key and its generation from
+	// each heartbeat answer.
+	OnJobKey func(key string, generation int64)
+	// Keys returns the job-signing keys the agent trusts, nil while none is
+	// pinned. MeshAgent and its settings are installed only when the server
+	// signed them with one of them.
+	Keys func() agentproto.Keys
+	// JobKeys follows the server's job key (ADR-0057): the report of the
+	// keys the agent trusts, and the statements that change them; nil
+	// reports nothing and takes no statement.
+	JobKeys KeyFollower
+	// Instructions is the log of the instructions the agent accepted
+	// (ADR-0057); nil keeps none. Record is what the code that verifies an
+	// instruction calls.
+	Instructions InstructionLog
+	Record       agentproto.InstructionRecorder
+	// Authorities are the SHA-256 fingerprints of the certificates in the
+	// ca.pem the agent loaded, sent with the key report (ADR-0057).
+	Authorities []string
 	// Metrics measures the device for each heartbeat; nil sends none.
 	Metrics func(ctx context.Context) agentproto.Metrics
 	// Accepts is the job capabilities this build takes, sent with each
@@ -225,6 +261,9 @@ type Runner struct {
 	// Trust verifies certificate chains and widens the agent's trust when a
 	// signed instruction asks (ADR-0055); nil does neither.
 	Trust TrustAgent
+
+	// instrFeature: the server's last answer listed the instruction log.
+	instrFeature bool
 
 	status      state.Status
 	failures    int
@@ -385,6 +424,18 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		req.Caps = append(req.Caps, r.Trust.Caps()...)
 		req.Trust = r.Trust.Report()
 	}
+	if r.JobKeys != nil && r.Client.Level() >= 2 {
+		// The keys the agent trusts, the authorities it loaded, a statement
+		// it refused and its instruction log, by the same rule: none in a
+		// process's first heartbeat, since no answer has been seen.
+		req.Caps = append(req.Caps, r.JobKeys.Caps()...)
+		req.JobKeys = r.JobKeys.Report()
+		req.Authorities = r.Authorities
+		req.KeyRefused = r.JobKeys.Refusal()
+		if r.Instructions != nil {
+			req.InstructionLog = r.Instructions.Report(r.instrFeature)
+		}
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -396,6 +447,17 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		return r.failed(err), nil
 	}
 	r.failures = 0
+	if r.JobKeys != nil {
+		// Before anything else in the answer: its instructions are checked
+		// with the keys the agent trusts after the statements (ADR-0057).
+		r.JobKeys.Answered(r.Client.Level(), resp.KeyHandover, resp.KeyCutover)
+	}
+	if r.Instructions != nil {
+		r.instrFeature = slices.Contains(resp.Features, agentproto.FeatureInstructionLog)
+		if r.instrFeature {
+			r.Instructions.Acknowledged(resp.InstructionAck)
+		}
+	}
 	if r.Channel != nil {
 		r.Channel.Answered(resp, len(req.Channel) > 0)
 	}
@@ -415,7 +477,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		}
 	}
 	if r.OnJobKey != nil && resp.JobKey != "" {
-		r.OnJobKey(resp.JobKey)
+		r.OnJobKey(resp.JobKey, resp.JobKeyGeneration)
 	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
@@ -557,15 +619,15 @@ func (r *Runner) installMesh(ctx context.Context) error {
 // meshPackage fetches MeshAgent's settings and returns them with a function
 // that downloads its binary, each checked against the server's signature.
 func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte, error) {
-	key := r.Key()
-	if key == nil {
+	key := r.Keys()
+	if len(key) == 0 {
 		return nil, nil, errors.New("no server key is pinned yet to check MeshAgent with")
 	}
 	settings, signed, err := r.Client.MeshSettings(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := signed.Verify(key); err != nil {
+	if err := r.verifyDownload(signed, key); err != nil {
 		return nil, nil, fmt.Errorf("MeshAgent's settings: %w", err)
 	}
 	return func(w io.Writer) error {
@@ -573,7 +635,7 @@ func (r *Runner) meshPackage(ctx context.Context) (func(io.Writer) error, []byte
 		if err != nil {
 			return err
 		}
-		if err := signed.Verify(key); err != nil {
+		if err := r.verifyDownload(signed, key); err != nil {
 			return fmt.Errorf("MeshAgent: %w", err)
 		}
 		return nil
@@ -590,21 +652,36 @@ func (r *Runner) applyMeshSettings(ctx context.Context, want string) error {
 	if want == r.Mesh.AppliedSettings() {
 		return nil
 	}
-	key := r.Key()
-	if key == nil {
+	key := r.Keys()
+	if len(key) == 0 {
 		return errors.New("no server key is pinned yet to check MeshAgent's settings with")
 	}
 	settings, signed, err := r.Client.MeshSettings(ctx)
 	if err != nil {
 		return err
 	}
-	if err := signed.Verify(key); err != nil {
+	if err := r.verifyDownload(signed, key); err != nil {
 		return fmt.Errorf("MeshAgent's settings: %w", err)
 	}
 	if sum := sha256.Sum256(settings); hex.EncodeToString(sum[:]) != want {
 		return errors.New("MeshAgent's settings are not the ones the server announced")
 	}
 	return r.Mesh.Reconfigure(ctx, settings)
+}
+
+// verifyDownload checks the server's signature on a download with the keys
+// the agent trusts and logs it as an instruction accepted, named by the nonce
+// of the request it answered (ADR-0057).
+func (r *Runner) verifyDownload(signed client.Signed, keys agentproto.Keys) error {
+	if err := signed.Verify(keys); err != nil {
+		return err
+	}
+	if r.Record != nil {
+		r.Record(agentproto.InstructionDownload, signed.Nonce, keys.SignerOf(func(k ed25519.PublicKey) bool {
+			return signed.Verify(agentproto.Keys{k}) == nil
+		}))
+	}
+	return nil
 }
 
 // heartbeatInterval is the server's heartbeat interval, kept within

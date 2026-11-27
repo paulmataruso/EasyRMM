@@ -114,7 +114,7 @@ func exists(name string) bool {
 // updater is the agent running build b, as version v.
 func (f *fixture) updater(b []byte, v string) *Updater {
 	return &Updater{
-		Client: f.client, DeviceID: "dev-1", Key: func() ed25519.PublicKey { return f.pub },
+		Client: f.client, DeviceID: "dev-1", Keys: func() agentproto.Keys { return agentproto.Keys{f.pub} },
 		Version: v, SHA256: digest(b), Exe: f.exe, Dir: f.dir, Jobs: f.jobs,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Probe: func(_ context.Context, exe string) (string, error) {
@@ -259,16 +259,16 @@ func TestApplyIgnores(t *testing.T) {
 			t.Errorf("%s: acted on it", name)
 		}
 	}
-	u.Key = func() ed25519.PublicKey { return other }
+	u.Keys = func() agentproto.Keys { return agentproto.Keys{other} }
 	if u.Apply(context.Background(), f.instruction("a1")) || f.client.downloads != 0 {
 		t.Error("acted on an update signed by another key")
 	}
-	u.Key = func() ed25519.PublicKey { return nil }
+	u.Keys = func() agentproto.Keys { return nil }
 	if u.Apply(context.Background(), f.instruction("a1")) || f.client.downloads != 0 {
 		t.Error("acted on an update without a pinned key")
 	}
 	// Canceled while downloading: no failure to report, nothing left.
-	u.Key = func() ed25519.PublicKey { return f.pub }
+	u.Keys = func() agentproto.Keys { return agentproto.Keys{f.pub} }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	f.client.err = context.Canceled

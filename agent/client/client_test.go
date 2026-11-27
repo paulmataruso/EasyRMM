@@ -194,10 +194,10 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	var buf bytes.Buffer
 	signed, err := c.MeshAgent(ctx, "linux", "arm64", &buf)
-	if err != nil || buf.Len() != 4096 || signed.SHA256 != sha256.Sum256(f.mesh) || signed.Verify(jobPub) != nil {
+	if err != nil || buf.Len() != 4096 || signed.SHA256 != sha256.Sum256(f.mesh) || signed.Verify(agentproto.Keys{jobPub}) != nil {
 		t.Errorf("MeshAgent = %d bytes, %+v, %v", buf.Len(), signed, err)
 	}
-	if err := signed.Verify(otherPub); !errors.Is(err, agentproto.ErrDownloadSignature) {
+	if err := signed.Verify(agentproto.Keys{otherPub}); !errors.Is(err, agentproto.ErrDownloadSignature) {
 		t.Errorf("MeshAgent verified with another key: %v", err)
 	}
 	if _, err := c.MeshAgent(ctx, "plan9", "arm64", &buf); err == nil || Code(err) != "" {
@@ -212,7 +212,7 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 		t.Errorf("an oversized download: %v", err)
 	}
 	b, signed, err := c.MeshSettings(ctx)
-	if err != nil || string(b) != "MeshID=0x1" || signed.Verify(jobPub) != nil {
+	if err != nil || string(b) != "MeshID=0x1" || signed.Verify(agentproto.Keys{jobPub}) != nil {
 		t.Errorf("settings = %q, %+v, %v", b, signed, err)
 	}
 	f.short = true
@@ -220,8 +220,8 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 		t.Errorf("settings cut short: %v", err)
 	}
 	f.short, f.tamper = false, true
-	if b, signed, err := c.MeshSettings(ctx); err != nil || string(b) != "MeshID=0x2" || !errors.Is(signed.Verify(jobPub), agentproto.ErrDownloadSignature) {
-		t.Errorf("settings changed after signing = %q, %v, %v", b, signed.Verify(jobPub), err)
+	if b, signed, err := c.MeshSettings(ctx); err != nil || string(b) != "MeshID=0x2" || !errors.Is(signed.Verify(agentproto.Keys{jobPub}), agentproto.ErrDownloadSignature) {
+		t.Errorf("settings changed after signing = %q, %v, %v", b, signed.Verify(agentproto.Keys{jobPub}), err)
 	}
 	if h, err := c.Inventory(ctx, []byte(`{"os":{}}`)); err != nil || h != "9" {
 		t.Errorf("inventory = %q, %v", h, err)
@@ -375,7 +375,7 @@ func TestJobCalls(t *testing.T) {
 	}
 	c.SetIdentity("dev-1", key)
 
-	if p, err := c.Poll(ctx, nil); err != nil || len(p.Cancel) != 1 || p.Cancel[0] != "r9" {
+	if p, err := c.Poll(ctx, nil, nil); err != nil || len(p.Cancel) != 1 || p.Cancel[0] != "r9" {
 		t.Errorf("poll = %+v, %v", p, err)
 	}
 	if s, err := c.Start(ctx, "r1"); err != nil || !s.Proceed {
@@ -480,7 +480,7 @@ func TestNewFieldsFollowTheServersLevel(t *testing.T) {
 		Interpreter: &agentproto.Interpreter{Edition: agentproto.EditionCore, Version: "7.6.10", Arch: agentproto.ArchX64, Path: `C:\Program Files\PowerShell\7\pwsh.exe`}}
 	poll := func(want string) {
 		t.Helper()
-		if _, err := c.Poll(ctx, accepts); err != nil {
+		if _, err := c.Poll(ctx, accepts, nil); err != nil {
 			t.Fatalf("poll: %v", err)
 		}
 		if got := s.last("poll"); got != want {
@@ -523,7 +523,7 @@ func TestNewFieldsFollowTheServersLevel(t *testing.T) {
 	if err := c.Result(ctx, "r2", result); err != nil || !strings.Contains(s.last("result"), `"interpreter":{"edition":"Core","version":"7.6.10","arch":"x64"`) {
 		t.Errorf("a level 2 server: %v, result sent %s", err, s.last("result"))
 	}
-	if _, err := c.Poll(ctx, []string{}); err != nil || s.last("poll") != `{"accepts":[]}` {
+	if _, err := c.Poll(ctx, []string{}, nil); err != nil || s.last("poll") != `{"accepts":[]}` {
 		t.Errorf("a build that accepts nothing says so: %v %s", err, s.last("poll"))
 	}
 

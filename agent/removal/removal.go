@@ -26,7 +26,10 @@ const File = "removal.json"
 type Remover struct {
 	DeviceID string
 	// Key returns the pinned job key, nil while none is pinned.
-	Key func() ed25519.PublicKey
+	Keys func() agentproto.Keys
+	// Record is told of each uninstall instruction that verified (the
+	// instruction log).
+	Record agentproto.InstructionRecorder
 	// Dir is the agent's state folder.
 	Dir string
 	Log *slog.Logger
@@ -56,10 +59,17 @@ func (r *Remover) Apply(ctx context.Context, u *agentproto.SignedUninstall) bool
 	if r.Now != nil {
 		now = r.Now()
 	}
-	p, err := agentproto.VerifyUninstall(r.Key(), *u, r.DeviceID, now)
+	keys := r.Keys()
+	p, err := agentproto.VerifyUninstall(keys, *u, r.DeviceID, now)
 	if err != nil {
 		r.Log.Error("refused an uninstall instruction", "error", err)
 		return false
+	}
+	if r.Record != nil {
+		r.Record(agentproto.InstructionUninstall, p.ID, keys.SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyUninstall(k, *u, r.DeviceID, now)
+			return err == nil
+		}))
 	}
 	if p.ID == r.started && now.Sub(r.startedAt) < agentproto.UninstallRunning {
 		return false // the uninstaller runs; it stops this agent

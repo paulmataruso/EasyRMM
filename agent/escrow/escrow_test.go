@@ -111,7 +111,7 @@ func newFx(t *testing.T) *fx {
 	}
 	f.server = &fakeServer{need: []agentproto.EscrowNeed{{VolumeID: `\\?\Volume{1}\`, ProtectorID: "{P1}"}}, answer: agentproto.EscrowAnswer{State: "verified"}}
 	f.a = &escrow.Agent{
-		DeviceID: device, Key: func() ed25519.PublicKey { return f.signPub },
+		DeviceID: device, Keys: func() agentproto.Keys { return agentproto.Keys{f.signPub} },
 		Reader: f.reader, Server: f.server, Store: f.store,
 		Log: slog.New(slog.NewTextHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Now: func() time.Time { return f.now },
@@ -196,14 +196,14 @@ func TestNothingHappensWithoutAVerifiedKey(t *testing.T) {
 		t.Fatal("the agent acted without an escrow key")
 	}
 	// No job key pinned: nothing is trusted.
-	f.a.Key = func() ed25519.PublicKey { return nil }
+	f.a.Keys = func() agentproto.Keys { return nil }
 	f.a.Answered(f.signed(1, "key-1", nil))
 	f.a.Sync(context.Background())
 	if len(f.server.reports) != 0 {
 		t.Fatal("an escrow key was taken with no job key pinned")
 	}
 	// A key signed by someone else, for another device, or expired.
-	f.a.Key = func() ed25519.PublicKey { return f.signPub }
+	f.a.Keys = func() agentproto.Keys { return agentproto.Keys{f.signPub} }
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
 	forged, _ := agentproto.SignEscrowKey(other, agentproto.EscrowKeyPayload{
 		V: 1, DeviceID: device, OrgID: org, KeyID: "k", KeyVersion: 1, PublicKey: base64.StdEncoding.EncodeToString(f.orgPub),
@@ -245,7 +245,7 @@ func TestEscrowKeyVersionNeverGoesBack(t *testing.T) {
 	if k := f.store.LoadEscrowKey(); k.Version != 3 {
 		t.Fatalf("newer not taken: %+v", k)
 	}
-	f2 := &escrow.Agent{DeviceID: device, Key: f.a.Key, Reader: f.reader, Server: f.server, Store: f.store, Log: f.a.Log, Now: f.a.Now}
+	f2 := &escrow.Agent{DeviceID: device, Keys: f.a.Keys, Reader: f.reader, Server: f.server, Store: f.store, Log: f.a.Log, Now: f.a.Now}
 	f2.Answered(f.signed(2, "key-2", nil))
 	if k := f.store.LoadEscrowKey(); k.Version != 3 {
 		t.Fatalf("a restarted agent went back: %+v", k)

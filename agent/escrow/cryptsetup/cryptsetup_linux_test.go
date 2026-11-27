@@ -420,7 +420,7 @@ func TestRealLUKSThroughTheAgent(t *testing.T) {
 	logs := &bytes.Buffer{}
 	srv := &fakeServer{answer: agentproto.EscrowAnswer{State: agentproto.EscrowVerified}, need: []agentproto.EscrowNeed{{VolumeID: uuid}}}
 	a := &escrow.Agent{
-		DeviceID: device, Key: func() ed25519.PublicKey { return signPub },
+		DeviceID: device, Keys: func() agentproto.Keys { return agentproto.Keys{signPub} },
 		Reader: stubReader{}, LUKS: l.backend(), Server: srv, Store: store,
 		Log: slog.New(slog.NewTextHandler(logs, nil)), Now: func() time.Time { return now },
 	}
@@ -498,7 +498,7 @@ func TestRealLUKSRotationRemovesTheOldSlotOnlyOnceTheNewOneIsVerified(t *testing
 	logs := &bytes.Buffer{}
 	srv := &fakeServer{answer: agentproto.EscrowAnswer{State: agentproto.EscrowVerified}, need: []agentproto.EscrowNeed{{VolumeID: uuid}}}
 	a := &escrow.Agent{
-		DeviceID: device, Key: func() ed25519.PublicKey { return signPub },
+		DeviceID: device, Keys: func() agentproto.Keys { return agentproto.Keys{signPub} },
 		Reader: stubReader{}, LUKS: l.backend(), Server: srv, Store: store,
 		Log: slog.New(slog.NewTextHandler(logs, nil)), Now: func() time.Time { return now },
 	}

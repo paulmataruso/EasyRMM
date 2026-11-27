@@ -46,7 +46,7 @@ func newFakeServer() *fakeServer {
 	}
 }
 
-func (f *fakeServer) Poll(ctx context.Context, _ []string) (*agentproto.PollResponse, error) {
+func (f *fakeServer) Poll(ctx context.Context, _ []string, _ []agentproto.TrustedKey) (*agentproto.PollResponse, error) {
 	select {
 	case p := <-f.polls:
 		return p, nil

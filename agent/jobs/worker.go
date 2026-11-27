@@ -25,8 +25,9 @@ import (
 
 // Client is the part of the server client the worker uses.
 type Client interface {
-	// Poll sends the capabilities this build accepts (Accepts).
-	Poll(ctx context.Context, accepts []string) (*agentproto.PollResponse, error)
+	// Poll sends the capabilities this build accepts (Accepts) and the
+	// server keys it trusts (ADR-0057).
+	Poll(ctx context.Context, accepts []string, keys []agentproto.TrustedKey) (*agentproto.PollResponse, error)
 	Start(ctx context.Context, runID string) (*agentproto.StartResponse, error)
 	Result(ctx context.Context, runID string, r agentproto.ResultRequest) error
 }
@@ -58,9 +59,23 @@ type Worker struct {
 	// changed what the inventory shows (ADR-0028).
 	Finished func()
 
-	key    atomic.Pointer[ed25519.PublicKey]
-	keySet chan struct{}
-	once   sync.Once
+	// Keys returns the server keys the agent trusts (ADR-0057), nil while
+	// none is pinned: the worker then does not ask for jobs. Dropped returns
+	// the keys a cut-over took away, to recognise a job signed with one; and
+	// Report the keys a poll reports. All three are optional: SetKey gives a
+	// worker one fixed key.
+	Keys    func() agentproto.Keys
+	Dropped func() agentproto.Keys
+	Report  func() []agentproto.TrustedKey
+	// Record is told of each job accepted (the instruction log); nil records
+	// nothing.
+	Record agentproto.InstructionRecorder
+
+	fixed   atomic.Pointer[agentproto.Keys]
+	keySet  chan struct{}
+	dropMu  sync.Mutex
+	dropped map[string]int
+	once    sync.Once
 	// paused holds new jobs back while the agent updates (ADR-0027).
 	paused  atomic.Bool
 	resumed chan struct{}
@@ -120,20 +135,53 @@ func (w *Worker) workRoot() string { return filepath.Join(w.Dir, "work") }
 // link or junction found there, never what it points to.
 func (w *Worker) ClearWork() error { return os.RemoveAll(w.workRoot()) }
 
-// SetKey sets the pinned job-signing key. Until it is set the worker does
-// not ask for jobs.
+// SetKey fixes the job-signing key of a worker that has no Keys function.
+// Until a key is known the worker does not ask for jobs.
 func (w *Worker) SetKey(encoded string) error {
-	w.init()
 	k, err := agentproto.DecodeKey(encoded)
 	if err != nil {
 		return err
 	}
-	w.key.Store(&k)
+	w.fixed.Store(&agentproto.Keys{k})
+	w.KeysChanged()
+	return nil
+}
+
+// KeysChanged tells the worker that the keys the agent trusts may have
+// changed: one that waited for a key asks for jobs now.
+func (w *Worker) KeysChanged() {
+	w.init()
 	select {
 	case w.keySet <- struct{}{}:
 	default:
 	}
+}
+
+// keys is the server keys the agent trusts now.
+func (w *Worker) keys() agentproto.Keys {
+	if w.Keys != nil {
+		return w.Keys()
+	}
+	if f := w.fixed.Load(); f != nil {
+		return *f
+	}
 	return nil
+}
+
+// DroppedAfter is how many deliveries of a run signed with a key the agent
+// dropped are left alone: the next is reported failed (ADR-0057).
+const DroppedAfter = 3
+
+// droppedDelivery counts one more delivery of a run signed with a dropped key
+// and returns the count. The map is bounded: a flood of run IDs cannot grow it.
+func (w *Worker) droppedDelivery(runID string) int {
+	w.dropMu.Lock()
+	defer w.dropMu.Unlock()
+	if w.dropped == nil || len(w.dropped) >= 256 {
+		w.dropped = map[string]int{}
+	}
+	w.dropped[runID]++
+	return w.dropped[runID]
 }
 
 // Pause stops the worker from asking for jobs and from starting delivered
@@ -169,7 +217,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	w.recover()
 	failures := 0
 	for ctx.Err() == nil {
-		if w.key.Load() == nil {
+		if len(w.keys()) == 0 {
 			select {
 			case <-ctx.Done():
 			case <-w.keySet:
@@ -187,7 +235,11 @@ func (w *Worker) Run(ctx context.Context) error {
 		if w.Live != nil && w.Live() && !w.waitLive(ctx) {
 			continue
 		}
-		resp, err := w.Client.Poll(ctx, Accepts())
+		var report []agentproto.TrustedKey
+		if w.Report != nil {
+			report = w.Report()
+		}
+		resp, err := w.Client.Poll(ctx, Accepts(), report)
 		switch {
 		case err == nil:
 			failures = 0
@@ -244,14 +296,34 @@ func (w *Worker) recover() {
 // accept checks a delivered job and starts working on it, unless it is a
 // repeat of one already accepted.
 func (w *Worker) accept(ctx context.Context, sj agentproto.SignedJob) {
-	key := w.key.Load()
-	p, err := agentproto.VerifyJob(*key, sj, w.DeviceID, time.Now())
+	keys := w.keys()
+	p, err := agentproto.VerifyJob(keys, sj, w.DeviceID, time.Now())
 	if _, idErr := uuid.Parse(p.RunID); idErr != nil {
 		w.Log.Error("refused a job without a valid run id", "error", err)
 		return
 	}
 	if w.known(p.RunID) {
 		return
+	}
+	if errors.Is(err, agentproto.ErrJobSignature) && w.Dropped != nil && p.DeviceID == w.DeviceID {
+		if dropped := w.Dropped(); len(dropped) > 0 {
+			if _, derr := agentproto.VerifyJob(dropped, sj, w.DeviceID, time.Now()); derr == nil {
+				// Signed with a key the agent dropped at a cut-over: the
+				// server signed it before it saw the agent's new report. It
+				// is left alone, so that the redelivery, signed with the
+				// newer key, runs; the third such delivery is reported
+				// failed, so that a run never waits silently.
+				if n := w.droppedDelivery(p.RunID); n < DroppedAfter {
+					w.Log.Warn("left a job signed with a key this agent no longer trusts for its redelivery", "run_id", p.RunID, "delivery", n)
+					return
+				}
+				w.Log.Error("refused a job signed with a key this agent no longer trusts", "run_id", p.RunID, "job_id", p.JobID)
+				w.finish(ctx, record{RunID: p.RunID, JobID: p.JobID}, agentproto.ResultRequest{
+					Status: agentproto.RunFailed, Error: "Signed with a key this agent no longer trusts. It was not run.", FinishedAt: time.Now().UTC(),
+				})
+				return
+			}
+		}
 	}
 	if err != nil {
 		w.Log.Error("refused a job", "error", err, "run_id", p.RunID, "job_id", p.JobID)
@@ -271,6 +343,12 @@ func (w *Worker) accept(ctx context.Context, sj agentproto.SignedJob) {
 	if err := w.journal().put(rec); err != nil {
 		w.Log.Error("recording a job failed; it will be delivered again", "error", err, "run_id", p.RunID)
 		return
+	}
+	if w.Record != nil {
+		w.Record(agentproto.InstructionJob, p.RunID, keys.SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyJob(k, sj, w.DeviceID, time.Now())
+			return err == nil
+		}))
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	w.mu.Lock()
@@ -500,7 +578,7 @@ func (w *Worker) PollNow() {
 // both. ctx is the agent's own, not the connection's.
 func (w *Worker) Deliver(ctx context.Context, resp *agentproto.PollResponse) {
 	w.init()
-	if resp == nil || w.key.Load() == nil {
+	if resp == nil || len(w.keys()) == 0 {
 		return // the poll delivers them again
 	}
 	for _, j := range resp.Jobs {

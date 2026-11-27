@@ -95,7 +95,7 @@ func newFixture(t *testing.T, formats ...string) *fixture {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	f := &fixture{t: t, priv: priv, sys: &fakeSystem{formats: formats}, served: testPackage, now: time.Now()}
 	f.in = &Installer{
-		DeviceID: "dev-1", Key: func() ed25519.PublicKey { return pub }, Dir: t.TempDir(),
+		DeviceID: "dev-1", Keys: func() agentproto.Keys { return agentproto.Keys{pub} }, Dir: t.TempDir(),
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), System: f.sys, Now: func() time.Time { return f.now },
 		Finished: func() { f.finished++ },
 		Download: func(_ context.Context, url, ca string, limit int64, w io.Writer) error {
@@ -202,7 +202,7 @@ func TestInstallRefusals(t *testing.T) {
 		t.Errorf("garbage reported: %+v", last)
 	}
 	// No pinned key yet.
-	f.in.Key = func() ed25519.PublicKey { return nil }
+	f.in.Keys = func() agentproto.Keys { return nil }
 	r := payload(f.now, agentproto.EasyPatchDeb)
 	r.ID = "no-key"
 	f.in.Start(context.Background(), f.sign(r))

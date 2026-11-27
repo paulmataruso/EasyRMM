@@ -84,13 +84,13 @@ func SignUninstall(key ed25519.PrivateKey, p UninstallPayload) (SignedUninstall,
 // VerifyUninstall checks a signed uninstall instruction with the pinned
 // server key and returns its payload. It refuses instructions for other
 // devices and expired ones.
-func VerifyUninstall(key ed25519.PublicKey, u SignedUninstall, deviceID string, now time.Time) (UninstallPayload, error) {
+func VerifyUninstall[K KeyArg](key K, u SignedUninstall, deviceID string, now time.Time) (UninstallPayload, error) {
 	b, err := base64.StdEncoding.DecodeString(u.Payload)
 	if err != nil {
 		return UninstallPayload{}, ErrUninstallMalformed
 	}
 	sig, err := base64.StdEncoding.DecodeString(u.Signature)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, append([]byte(uninstallSigContext), b...), sig) {
+	if err != nil || !keysOf(key).verify(append([]byte(uninstallSigContext), b...), sig) {
 		return UninstallPayload{}, ErrUninstallSignature
 	}
 	var p UninstallPayload

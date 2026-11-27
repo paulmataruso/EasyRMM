@@ -136,7 +136,7 @@ func TestVerifyTrustMalformedAndKeyless(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	now := time.Now()
 	s, _ := SignTrust(priv, goodTrust(t, now))
-	if _, err := VerifyTrust(nil, s, "dev-1", "rmm.example.com", now); !errors.Is(err, ErrTrustSignature) {
+	if _, err := VerifyTrust(Keys(nil), s, "dev-1", "rmm.example.com", now); !errors.Is(err, ErrTrustSignature) {
 		t.Errorf("no key: %v", err)
 	}
 	if _, err := VerifyTrust(pub[:5], s, "dev-1", "rmm.example.com", now); !errors.Is(err, ErrTrustSignature) {

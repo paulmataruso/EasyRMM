@@ -43,14 +43,17 @@ type Agent struct {
 	// Config is the enrollment, whose CAFile and TrustSystem a widening
 	// changes. Its Server names the origin instructions must be for.
 	Config *state.Config
-	// Key returns the pinned job-signing key, nil while none is pinned: an
-	// agent that has pinned none refuses every instruction. Trust is never
-	// widened on first use.
-	Key      func() ed25519.PublicKey
+	// Keys returns the job-signing keys the agent trusts, nil while none is
+	// pinned: an agent that has pinned none refuses every instruction. Trust
+	// is never widened on first use.
+	Keys     func() agentproto.Keys
 	Store    Store
 	Client   Retruster
 	Verifier Verifier
 	Log      *slog.Logger
+	// Record is told of each instruction carried out (the instruction log);
+	// nil records nothing.
+	Record agentproto.InstructionRecorder
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 
@@ -116,7 +119,7 @@ func (a *Agent) Answered(_ context.Context, level int, s *agentproto.SignedTrust
 		a.Log.Warn("refused a trust instruction from a server that does not speak protocol level 2")
 		return
 	}
-	p, err := agentproto.VerifyTrust(a.Key(), *s, a.DeviceID, a.origin(), a.now())
+	p, err := agentproto.VerifyTrust(a.Keys(), *s, a.DeviceID, a.origin(), a.now())
 	if err != nil {
 		a.Log.Warn("refused a trust instruction", "error", err)
 		if errors.Is(err, agentproto.ErrTrustSignature) || p.ID == "" || len(p.ID) > 64 {
@@ -149,6 +152,12 @@ func (a *Agent) Answered(_ context.Context, level int, s *agentproto.SignedTrust
 		a.Log.Warn("a trust instruction was not carried out", "id", p.ID, "reason", rep.Refused)
 		a.setReport(&rep)
 		return
+	}
+	if a.Record != nil {
+		a.Record(agentproto.InstructionTrust, p.ID, a.Keys().SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyTrust(k, *s, a.DeviceID, a.origin(), a.now())
+			return err == nil
+		}))
 	}
 	b, _ := json.Marshal(rep)
 	log.Issued = p.IssuedAt
@@ -268,7 +277,7 @@ func (a *Agent) widen(existing []byte, add []*x509.Certificate) error {
 		}
 		next.CAFile = path
 	}
-	if next == *a.Config {
+	if next.CAFile == a.Config.CAFile && next.TrustSystem == a.Config.TrustSystem {
 		return nil
 	}
 	if err := a.Store.SaveConfig(&next); err != nil {

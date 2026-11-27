@@ -88,7 +88,7 @@ func TestChannelServerRoundTripAndRefusals(t *testing.T) {
 			t.Errorf("%q: %v", bad, err)
 		}
 	}
-	if _, err := VerifyChannelMessage(nil, frame, MaxChannelFrame); err == nil {
+	if _, err := VerifyChannelMessage(Keys(nil), frame, MaxChannelFrame); err == nil {
 		t.Error("no key verified")
 	}
 }

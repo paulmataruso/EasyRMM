@@ -61,7 +61,7 @@ func startMesh(ctx context.Context, c *client.Client, o Options, cf *confiner, d
 	if err != nil {
 		return nil, fmt.Errorf("fetching MeshAgent's settings: %w", err)
 	}
-	if err := sig.Verify(key); err != nil {
+	if err := sig.Verify(agentproto.Keys{key}); err != nil {
 		return nil, fmt.Errorf("MeshAgent's settings are not signed by the server: %w", err)
 	}
 	name := serviceName(res.SessionID)
@@ -76,7 +76,7 @@ func startMesh(ctx context.Context, c *client.Client, o Options, cf *confiner, d
 		if err != nil {
 			return err
 		}
-		return sig.Verify(key)
+		return sig.Verify(agentproto.Keys{key})
 	}, settings)
 	if err != nil {
 		cancel()

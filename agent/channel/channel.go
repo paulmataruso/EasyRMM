@@ -103,8 +103,8 @@ type Config struct {
 	Dialer   Dialer
 	DeviceID string
 	// Key returns the pinned job-signing key, nil while none is pinned.
-	Key func() ed25519.PublicKey
-	Log *slog.Logger
+	Keys func() agentproto.Keys
+	Log  *slog.Logger
 	// Off is the agent-side switch: an agent that is off never connects,
 	// whatever the server lists.
 	Off    bool
@@ -471,8 +471,8 @@ func bigType(t string) bool {
 }
 
 func (c *Channel) verify(frame []byte) (agentproto.ChannelMessage, bool) {
-	key := c.cfg.Key()
-	if key == nil {
+	key := c.cfg.Keys()
+	if len(key) == 0 {
 		return agentproto.ChannelMessage{}, false
 	}
 	m, err := agentproto.VerifyChannelMessage(key, frame, agentproto.MaxChannelBigFrame)

@@ -67,7 +67,9 @@ type Updater struct {
 	Client   Client
 	DeviceID string
 	// Key returns the pinned job-signing key, nil while none is pinned.
-	Key func() ed25519.PublicKey
+	Keys func() agentproto.Keys
+	// Record is told of each update that verified (the instruction log).
+	Record agentproto.InstructionRecorder
 	// Version and SHA256 identify the running build; Exe is its path.
 	Version string
 	SHA256  string
@@ -294,8 +296,8 @@ func (u *Updater) Apply(ctx context.Context, su *agentproto.SignedUpdate) bool {
 		}
 		return false
 	}
-	key := u.Key()
-	if key == nil {
+	key := u.Keys()
+	if len(key) == 0 {
 		u.Log.Warn("an update arrived before the server's job key was pinned; ignored")
 		return false
 	}
@@ -303,6 +305,12 @@ func (u *Updater) Apply(ctx context.Context, su *agentproto.SignedUpdate) bool {
 	if err != nil {
 		u.Log.Error("refused an update", "error", err)
 		return u.Apply(ctx, nil)
+	}
+	if u.Record != nil {
+		u.Record(agentproto.InstructionUpdate, p.ID, key.SignerOf(func(k ed25519.PublicKey) bool {
+			_, err := agentproto.VerifyUpdate(k, *su, u.DeviceID, u.now())
+			return err == nil
+		}))
 	}
 	if u.tried[p.ID] || p.SHA256 == u.SHA256 || u.probation != nil {
 		return false

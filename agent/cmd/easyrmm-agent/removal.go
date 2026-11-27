@@ -12,6 +12,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/removal"
+	"github.com/paulmataruso/easyrmm/agent/trust"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -70,7 +71,7 @@ func (e *env) removeOnRequest(ctx context.Context, file string) error {
 	}
 	// Checked again: only an instruction the server signed removes the
 	// agent this way, and only for the time it is valid.
-	p, err := agentproto.VerifyUninstall(pinnedKey(cfg)(), u, cfg.DeviceID, time.Now())
+	p, err := agentproto.VerifyUninstall(trust.HeldKeys(cfg), u, cfg.DeviceID, time.Now())
 	if err != nil {
 		return err
 	}

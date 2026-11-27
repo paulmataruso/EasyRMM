@@ -100,7 +100,11 @@ commands:
             (what a job does); it reads and writes the files named in
             EASYRMM_JOB_INPUT and EASYRMM_JOB_RESULT
   run       run the agent in the foreground (what the service does)
-  status    show the enrollment and the last heartbeat
+  status    show the enrollment, the server keys this agent trusts, its latest
+            accepted instructions and the last heartbeat
+  trust-key <generation>:<key> [--force]
+            trust only this server job key, as the console prints it, and
+            restart the agent's service (run as root or administrator)
   uninstall [--package deb|rpm|msi [--rollback]]
             stop and remove the agent and MeshAgent from this machine; while a
             package holds the agent, remove the package instead
@@ -242,6 +246,8 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.run(ctx)
 	case "status":
 		return e.status(ctx)
+	case "trust-key":
+		return e.trustKey(ctx, rest)
 	case "uninstall":
 		return e.uninstall(ctx, rest)
 	case "version", "--version", "-v":
@@ -497,7 +503,8 @@ func (e *env) registerPEM(ctx context.Context, server, token string, caPEM []byt
 	if resp.DeviceID == "" {
 		return nil, nil, errors.New("enrolling: the server answered without a device")
 	}
-	cfg.DeviceID, cfg.EnrolledAt, cfg.JobKey = resp.DeviceID, time.Now().UTC(), resp.JobKey
+	cfg.DeviceID, cfg.EnrolledAt = resp.DeviceID, time.Now().UTC()
+	cfg.PinFirstKey(resp.JobKey, resp.JobKeyGeneration)
 	if err := e.store.Save(cfg, key); err != nil {
 		return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 	}
@@ -543,6 +550,15 @@ func (e *env) run(ctx context.Context) error {
 	}
 	jobs.AgentVersion = Version
 	c.SetIdentity(cfg.DeviceID, key)
+	// The server keys this agent trusts, and the log of what it accepted
+	// (ADR-0057). Every check of a signed instruction below reads the keys
+	// from the store, so a statement takes effect at once.
+	il := &trust.InstructionLog{Store: e.store, Log: e.log}
+	ks := &trust.KeyStore{DeviceID: cfg.DeviceID, Install: agentproto.InstallID(key.Public().(ed25519.PublicKey)),
+		Config: cfg, Store: e.store, Log: e.log, Record: il.Record}
+	if len(ks.Report()) > 0 && len(ks.Keys()) == 0 {
+		return errors.New("the pinned job key in the configuration is damaged")
+	}
 	r := &runner.Runner{
 		Client:   c,
 		DeviceID: cfg.DeviceID,
@@ -550,14 +566,18 @@ func (e *env) run(ctx context.Context) error {
 		Accepts:  jobs.Accepts(),
 		Facts:    func() agentproto.Facts { return host.Facts(Version) },
 		Log:      e.log,
-		// MeshAgent's files are checked with the key pinned for jobs.
-		Key: pinnedKey(cfg),
+		// MeshAgent's files are checked with the keys trusted for jobs.
+		Keys:         ks.Keys,
+		JobKeys:      ks,
+		Instructions: il,
+		Record:       il.Record,
+		Authorities:  caFingerprints(cfg.CAFile),
 	}
 	if runtime.GOOS == "windows" {
 		r.Roles = &roles.Scanner{Read: roles.Read}
 		// BitLocker recovery keys are escrowed only with the escrow key the
 		// server's heartbeat answer carries (ADR-0081).
-		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Reader: escrow.SystemReader{}, Manager: escrow.SystemManager{}, LUKS: cryptsetup.System(), Server: c, Store: e.store, Log: e.log}
+		r.Escrow = &escrow.Agent{DeviceID: cfg.DeviceID, Keys: ks.Keys, Reader: escrow.SystemReader{}, Manager: escrow.SystemManager{}, LUKS: cryptsetup.System(), Server: c, Store: e.store, Log: e.log}
 	}
 	var mesh *meshagent.Manager
 	var ship *logship.Shipper
@@ -594,7 +614,7 @@ func (e *env) run(ctx context.Context) error {
 	if !supported() {
 		return r.Run(ctx)
 	}
-	up := e.updater(cfg, c)
+	up := e.updater(cfg, c, ks.Keys, il.Record)
 	if up != nil {
 		if up.Settle() {
 			return e.restart(up.Exe)
@@ -607,7 +627,8 @@ func (e *env) run(ctx context.Context) error {
 		}
 		r.Update = up
 	}
-	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log, Finished: r.RefreshInventory}
+	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log, Finished: r.RefreshInventory,
+		Keys: ks.Keys, Dropped: ks.Dropped, Report: ks.Report, Record: il.Record}
 	if ea, ok := r.Escrow.(*escrow.Agent); ok && e.paths.Windows() {
 		// Native actions (ADR-0081): BitLocker's enable runs as agent code, so
 		// the recovery password it makes never passes through a script.
@@ -622,13 +643,8 @@ func (e *env) run(ctx context.Context) error {
 			e.log.Warn("emptying the scripts' working folder failed", "error", err)
 		}
 	}
-	if cfg.JobKey != "" {
-		if err := w.SetKey(cfg.JobKey); err != nil {
-			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)
-		}
-	}
-	// The EasyPatch agent's install (ADR-0031) trusts the same key.
-	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
+	// The EasyPatch agent's install (ADR-0031) trusts the same keys.
+	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Keys: ks.Keys, Record: il.Record, Dir: e.store.Dir(), Log: e.log,
 		Present: inventory.Collector{}.EasyPatch, Finished: r.RefreshInventory, Services: e.sd}
 	r.EasyPatch = ep
 	// Repairs of the EasyPatch agent (ADR-0069).
@@ -640,14 +656,14 @@ func (e *env) run(ctx context.Context) error {
 		// An update waits for scripts and for the EasyPatch install.
 		up.Jobs = busyJobs{w, ep}
 	}
-	r.OnJobKey = e.pinJobKey(cfg, w)
+	r.OnJobKey = e.pinJobKey(ks, w)
 	r.Removal = &removal.Remover{
-		DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
+		DeviceID: cfg.DeviceID, Keys: ks.Keys, Record: il.Record, Dir: e.store.Dir(), Log: e.log,
 		Launch: e.launchRemoval, Report: c.Removed,
 	}
 	// Certificate chains are verified, and trust widened, only for an
 	// instruction signed with the pinned job key (ADR-0055).
-	r.Trust = &trust.Agent{DeviceID: cfg.DeviceID, Config: cfg, Key: pinnedKey(cfg), Store: e.store, Client: c, Log: e.log}
+	r.Trust = &trust.Agent{DeviceID: cfg.DeviceID, Config: cfg, Keys: ks.Keys, Record: il.Record, Store: e.store, Client: c, Log: e.log}
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -659,7 +675,7 @@ func (e *env) run(ctx context.Context) error {
 		// code that applies it from a heartbeat or poll answer. While
 		// someone follows the logs, batches go over it too, and over HTTPS
 		// whenever it cannot take one. EASYRMM_AGENT_CHANNEL=off turns it off.
-		ch = channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Log: e.log, Device: key,
+		ch = channel.New(channel.Config{Dialer: c, DeviceID: cfg.DeviceID, Keys: ks.Keys, Log: e.log, Device: key,
 			Handlers: channel.Handlers{Jobs: w.Deliver, Logs: ship.Apply, Repair: r.ApplyRepair, Settings: r.ApplySettings, PollNow: w.PollNow}})
 		r.Channel, r.Nudge, r.OnJobsWaiting = ch, ch.Checkin, w.PollNow
 		w.Live, w.Changed = ch.Live, ch.LiveChanged()
@@ -720,7 +736,7 @@ func (e *env) keepRecovery(up *update.Updater) bool {
 
 // updater returns the agent's self-update (ADR-0027), or nil when the agent
 // cannot read its own executable.
-func (e *env) updater(cfg *state.Config, c *client.Client) *update.Updater {
+func (e *env) updater(cfg *state.Config, c *client.Client, keys func() agentproto.Keys, record agentproto.InstructionRecorder) *update.Updater {
 	exe, sum, err := update.Self()
 	if err != nil {
 		e.log.Warn("reading the agent's own executable failed; it cannot update itself", "error", err)
@@ -728,19 +744,8 @@ func (e *env) updater(cfg *state.Config, c *client.Client) *update.Updater {
 	}
 	return &update.Updater{
 		Client: c, DeviceID: cfg.DeviceID, Version: Version, SHA256: sum, Exe: exe, Dir: e.store.Dir(), Log: e.log,
-		// The key pinned for jobs signs updates too.
-		Key: pinnedKey(cfg),
-	}
-}
-
-// pinnedKey returns the pinned job-signing key, nil while none is pinned.
-func pinnedKey(cfg *state.Config) func() ed25519.PublicKey {
-	return func() ed25519.PublicKey {
-		k, err := agentproto.DecodeKey(cfg.JobKey)
-		if err != nil {
-			return nil
-		}
-		return k
+		// The keys trusted for jobs sign updates too.
+		Keys: keys, Record: record,
 	}
 }
 
@@ -754,26 +759,22 @@ type busyJobs struct {
 func (b busyJobs) Busy() bool { return b.Worker.Busy() || b.ep.Busy() }
 
 // pinJobKey pins the server's job-signing key the first time it is seen
-// (ADR-0017) and refuses to follow a change.
-func (e *env) pinJobKey(cfg *state.Config, w *jobs.Worker) func(string) {
+// (ADR-0017), learns the generation of a key pinned before generations, and
+// never follows a key it is not handed by a statement (ADR-0057).
+func (e *env) pinJobKey(ks *trust.KeyStore, w *jobs.Worker) func(string, int64) {
 	var warned time.Time
-	return func(key string) {
+	return func(key string, generation int64) {
+		had := len(ks.Keys())
+		trusted, err := ks.Pin(key, generation)
 		switch {
-		case key == cfg.JobKey:
-		case cfg.JobKey == "":
-			if err := w.SetKey(key); err != nil {
-				e.log.Error("the server sent a job key that is not valid", "error", err)
-				return
-			}
-			cfg.JobKey = key
-			if err := e.store.SaveConfig(cfg); err != nil {
-				e.log.Error("saving the job key failed", "error", err)
-				return
-			}
+		case err != nil:
+			e.log.Error("the server sent a job key that cannot be used", "error", err)
+		case trusted && had == 0:
+			w.KeysChanged()
 			e.log.Info("pinned the server's job key")
-		case time.Since(warned) > time.Hour:
+		case !trusted && time.Since(warned) > time.Hour:
 			warned = time.Now()
-			e.log.Error("the server's job key differs from the pinned one; jobs signed with it are refused. Reinstall the agent if the server's key was replaced.")
+			e.log.Error("the server's job key is not one this agent trusts; jobs signed with it are refused. The server hands over a new key with a signed statement; if it cannot, run trust-key on this computer.")
 		}
 	}
 }
@@ -797,6 +798,7 @@ func (e *env) status(ctx context.Context) error {
 	w := e.stdout
 	_, _ = fmt.Fprintf(w, "Server:     %s\nDevice:     %s\nEnrolled:   %s\n", cfg.Server, cfg.DeviceID, cfg.EnrolledAt.Local().Format(time.RFC1123))
 	e.packageStatus()
+	e.printKeys(cfg)
 	if supported() && e.hasServices() {
 		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, e.paths.AgentService().Name))
 	}
