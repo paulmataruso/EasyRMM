@@ -84,7 +84,8 @@ var Kinds = map[string]Kind{
 	KindSoftware: {Name: KindSoftware, Executor: ExecScript, Listed: true, AuditAction: "device.software_action"},
 	KindHardening: {Name: KindHardening, Executor: ExecScript, Listed: true, AuditAction: "device.hardening",
 		ChangeLock: true},
-	KindWinmod: {Name: KindWinmod, Executor: ExecScript, AuditAction: "winmod"},
+	KindMaintenance: {Name: KindMaintenance, Executor: ExecScript, Listed: true, AuditAction: "device.maintenance_action"},
+	KindWinmod:      {Name: KindWinmod, Executor: ExecScript, AuditAction: "winmod"},
 	KindRegistryQuery: {
 		Name: KindRegistryQuery, Executor: ExecBuiltin, Builtin: agentproto.BuiltinRegistry, Platforms: []string{"windows"},
 		Requires: []string{agentproto.CapJobStructured}, BuiltinVersions: []int{agentproto.RegistryInputVersion},

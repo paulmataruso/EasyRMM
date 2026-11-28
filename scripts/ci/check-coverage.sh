@@ -107,6 +107,8 @@ floors=(
   "server/internal/notify                  78"
   "server/internal/addrpolicy              88"
   "server/internal/httpapi/jobsapi         90"
+  # Scheduled tasks (feature 11): the scheduler, windows, pacing and the actions.
+  "server/internal/schedule                80"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
   # Disk health: what agents read, judged by the server's rules (ADR-0065).

@@ -151,6 +151,25 @@ const oneChangeAtATime = `NOT EXISTS (
 	  )
 )`
 
+// oneMaintenanceAtATime holds a maintenance run (restart, shutdown, service
+// action) back while another change of the device (hardening, software or
+// maintenance) is sent, running or queued before it, and holds those back
+// while a maintenance run is sent or running, or queued before them
+// (feature 11, slice 3: exclusivity per device). A hardening confirm waits
+// for nothing. r and j are the run and job of the candidate.
+const oneMaintenanceAtATime = `NOT EXISTS (
+	SELECT 1 FROM job_runs r2 JOIN jobs j2 ON j2.id = r2.job_id
+	WHERE r2.device_id = r.device_id AND r2.id <> r.id
+	  AND j.hardening->>'mode' IS DISTINCT FROM 'confirm'
+	  AND (
+	    (j.kind = 'maintenance' AND j2.kind IN ('hardening', 'software', 'maintenance'))
+	    OR (j.kind IN ('hardening', 'software') AND j2.kind = 'maintenance')
+	  )
+	  AND (r2.status IN ('sent', 'running')
+	       OR (r2.status = 'queued' AND r2.expires_at > now() AND r2.cancel_requested_at IS NULL
+	           AND (r2.created_at, r2.id) < (r.created_at, r.id)))
+)`
+
 // claim marks the device's due runs delivered and signs them, and collects
 // cancellations to send. A run whose job requires a capability the poll's
 // list lacks is left queued.
@@ -178,6 +197,7 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID, accepts []string)
 			  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
 			  AND j.requires <@ $4::text[]
 			  AND `+oneChangeAtATime+`
+			  AND `+oneMaintenanceAtATime+`
 			  AND `+oneEventlogAtATime+`
 			ORDER BY (j.lane IS NOT NULL) DESC, r.created_at, r.id LIMIT $3
 			FOR UPDATE OF r SKIP LOCKED`,
@@ -554,6 +574,11 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		}
 		switch {
 		case err == nil && in.Status == StatusSucceeded:
+			// A restart or shutdown that went through says the device is
+			// about to be offline (feature 11, slice 3).
+			if eerr := s.expectOffline(ctx, tx, device, job); eerr != nil {
+				return eerr
+			}
 			// A hardening run's result is kept per module (ADR-0051).
 			return s.recordHardening(ctx, tx, device, run, job, ran, stdout)
 		case err == nil:

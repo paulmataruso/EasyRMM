@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
@@ -17,7 +16,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/notify"
-	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
 // stuckAfter is how long a pending or running occurrence may sit before it
@@ -271,10 +269,13 @@ func (s *Service) prepare(ctx context.Context, t *Task) (c access.Caller, sc *jo
 		return c, nil, fmt.Sprintf("The owner's permissions could not be read: %v", err)
 	}
 	c = access.User(p, s.scopeOf(p), audit.Actor{Type: audit.ActorUser, ID: t.OwnerID, Label: email + " (scheduled task " + t.Name + ")"})
-	if !c.Can(rbac.PermScriptRun, t.resource()) {
-		return c, nil, "The owner may no longer run scripts here."
+	if !c.Can(t.perm(), t.resource()) {
+		return c, nil, "The owner may no longer " + t.permVerb() + " here."
 	}
-	sc, err = s.scripts.GetScript(ctx, c, t.ScriptID)
+	if t.StepKind != StepScript {
+		return c, nil, ""
+	}
+	sc, err = s.scripts.GetScript(ctx, c, *t.ScriptID)
 	switch {
 	case errors.Is(err, apperr.ErrNotFound):
 		return c, nil, "The script no longer exists, or the owner can no longer read it."
@@ -289,6 +290,7 @@ func (s *Service) prepare(ctx context.Context, t *Task) (c access.Caller, sc *jo
 // device is a target of a run.
 type device struct {
 	id, site uuid.UUID
+	platform string
 	online   bool
 }
 
@@ -297,6 +299,7 @@ type device struct {
 // empty, narrows to those devices (a later batch). With OnlyIfOnline the
 // offline ones are left out and counted.
 func (s *Service) resolve(ctx context.Context, c access.Caller, t *Task, sc *jobs.Script, w notify.TaskWindow, only []uuid.UUID) (devs []device, offline int, err error) {
+	platforms := t.platforms(sc)
 	if only == nil {
 		only = []uuid.UUID{}
 	}
@@ -305,10 +308,10 @@ func (s *Service) resolve(ctx context.Context, c access.Caller, t *Task, sc *job
 		site = &w.SiteID
 	}
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, site_id, coalesce(agent_online_until > now(), false) FROM devices
+		rows, err := tx.Query(ctx, `SELECT id, site_id, platform, coalesce(agent_online_until > now(), false) FROM devices
 			WHERE organization_id = $1 AND ($2::uuid IS NULL OR site_id = $2) AND platform = ANY($3) AND agent_public_key IS NOT NULL
 			  AND (cardinality($4::uuid[]) = 0 OR id = ANY($4)) AND (cardinality($5::uuid[]) = 0 OR id = ANY($5))
-			ORDER BY site_id, id`, t.OrganizationID, site, agentproto.ShellPlatforms(sc.Shell), t.Targets.DeviceIDs, only)
+			ORDER BY site_id, id`, t.OrganizationID, site, platforms, t.Targets.DeviceIDs, only)
 		if err != nil {
 			return err
 		}
@@ -316,7 +319,7 @@ func (s *Service) resolve(ctx context.Context, c access.Caller, t *Task, sc *job
 		for rows.Next() {
 			var d device
 			var st *uuid.UUID
-			if err := rows.Scan(&d.id, &st, &d.online); err != nil {
+			if err := rows.Scan(&d.id, &st, &d.platform, &d.online); err != nil {
 				return err
 			}
 			if st != nil {
@@ -333,19 +336,44 @@ func (s *Service) resolve(ctx context.Context, c access.Caller, t *Task, sc *job
 	return devs, offline, err
 }
 
-// makeJobs makes jobs for the devices, in batches of at most the bound on
-// a job.
-func (s *Service) makeJobs(ctx context.Context, c access.Caller, t *Task, devs []uuid.UUID) (jobIDs []uuid.UUID, err error) {
-	for len(devs) > 0 {
-		n := min(jobs.MaxDevices, len(devs))
-		j, err := s.scripts.CreateJob(ctx, c, jobInput(t, devs[:n]))
-		if err != nil {
-			return jobIDs, err
+// makeJobs makes the jobs of the task's step for the devices, in batches of
+// at most the bound on a job, and for a maintenance step one set per
+// platform (its script differs).
+func (s *Service) makeJobs(ctx context.Context, c access.Caller, t *Task, devs []device) (jobIDs []uuid.UUID, err error) {
+	platforms := []string{""}
+	if t.StepKind != StepScript && t.StepKind != StepSoftware {
+		platforms = []string{"linux", "windows"}
+	}
+	for _, p := range platforms {
+		var ids []uuid.UUID
+		for _, d := range devs {
+			if p == "" || d.platform == p {
+				ids = append(ids, d.id)
+			}
 		}
-		jobIDs = append(jobIDs, j.ID)
-		devs = devs[n:]
+		for len(ids) > 0 {
+			n := min(jobs.MaxDevices, len(ids))
+			j, err := s.createJob(ctx, c, t, p, ids[:n])
+			if err != nil {
+				return jobIDs, err
+			}
+			jobIDs = append(jobIDs, j.ID)
+			ids = ids[n:]
+		}
 	}
 	return jobIDs, nil
+}
+
+// createJob makes one job of the task's step.
+func (s *Service) createJob(ctx context.Context, c access.Caller, t *Task, platform string, devs []uuid.UUID) (*jobs.Job, error) {
+	switch t.StepKind {
+	case StepScript:
+		return s.scripts.CreateJob(ctx, c, jobs.JobInput{ScriptID: *t.ScriptID, DeviceIDs: devs, Args: t.ScriptArgs, WaitHours: t.WaitHours})
+	case StepSoftware:
+		return s.scripts.CreateSoftwareJob(ctx, c, jobs.SoftwareInput{DeviceIDs: devs, Software: *t.Step.Software, WaitHours: t.WaitHours})
+	}
+	return s.scripts.CreateMaintenanceJob(ctx, c, jobs.MaintenanceInput{DeviceIDs: devs, Platform: platform,
+		Maintenance: t.Step.maintenance(t.StepKind), WaitHours: t.WaitHours})
 }
 
 // launch starts one occurrence: the jobs of the devices whose turn it is
@@ -390,6 +418,14 @@ func (s *Service) launch(ctx context.Context, t *Task, runID uuid.UUID) (jobIDs 
 			later = append(later, sl)
 		}
 	}
+	byID := make(map[uuid.UUID]device, len(devs))
+	for _, d := range devs {
+		byID[d.id] = d
+	}
+	firstDevs := make([]device, 0, len(first))
+	for _, id := range first {
+		firstDevs = append(firstDevs, byID[id])
+	}
 	if len(later) > 0 {
 		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 			for _, sl := range later {
@@ -408,7 +444,7 @@ func (s *Service) launch(ctx context.Context, t *Task, runID uuid.UUID) (jobIDs 
 			return fail("The staggered starts could not be planned: %v", err)
 		}
 	}
-	jobIDs, err = s.makeJobs(ctx, c, t, first)
+	jobIDs, err = s.makeJobs(ctx, c, t, firstDevs)
 	if err != nil {
 		if batches > 0 {
 			// The planned starts still run; this run keeps what it made.
@@ -420,8 +456,4 @@ func (s *Service) launch(ctx context.Context, t *Task, runID uuid.UUID) (jobIDs 
 		return jobIDs, RunSucceeded, fmt.Sprintf(" Made %d job(s) now; %d later start(s) over %d minute(s).%s", len(jobIDs), batches, int(span/time.Minute), note), batches
 	}
 	return jobIDs, RunSucceeded, fmt.Sprintf(" Made %d job(s).%s", len(jobIDs), note), 0
-}
-
-func jobInput(t *Task, devs []uuid.UUID) jobs.JobInput {
-	return jobs.JobInput{ScriptID: t.ScriptID, DeviceIDs: devs, Args: t.ScriptArgs, WaitHours: t.WaitHours}
 }

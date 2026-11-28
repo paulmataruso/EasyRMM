@@ -1,4 +1,4 @@
-import { describeSchedule } from "./ScheduledTasksPage";
+import { describeSchedule, describeStep } from "./ScheduledTasksPage";
 
 describe("describeSchedule", () => {
   it("names the zone the time is read in", () => {
@@ -12,5 +12,18 @@ describe("describeSchedule", () => {
     expect(describeSchedule({ kind: "interval", everyMinutes: 120 }, "UTC")).toBe("Every 2 hour(s)");
     expect(describeSchedule({ kind: "interval", everyMinutes: 45 }, "UTC")).toBe("Every 45 minutes");
     expect(describeSchedule({ kind: "interval", everyMinutes: 2880 }, "UTC")).toBe("Every 2 day(s)");
+  });
+});
+
+describe("describeStep", () => {
+  it("says what each kind of step does", () => {
+    expect(describeStep({ stepKind: "script", step: {}, scriptName: "Clean temp" })).toBe("Clean temp");
+    expect(describeStep({ stepKind: "restart", step: {}, scriptName: "" })).toBe("Restart");
+    expect(describeStep({ stepKind: "shutdown", step: { platform: "linux" }, scriptName: "" })).toBe("Shut down (Linux only)");
+    expect(describeStep({ stepKind: "service", step: { action: "service_stop", service: "Spooler", platform: "windows" }, scriptName: "" })).toBe(
+      "Stop service Spooler (Windows only)",
+    );
+    const software = { action: "install", manager: "system", package: "jq", version: "1.7" } as const;
+    expect(describeStep({ stepKind: "software", step: { software }, scriptName: "" })).toBe("Install jq 1.7");
   });
 });

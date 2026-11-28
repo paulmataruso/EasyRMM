@@ -142,15 +142,19 @@ func (s *Service) runBatch(ctx context.Context, id uuid.UUID) error {
 	}); err != nil {
 		return err
 	}
-	state, detail, jobID := s.batchJob(ctx, t, devs)
+	state, detail, jobIDs := s.batchJob(ctx, t, devs)
 	if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE automation_run_batches SET state = $2, detail = $3, job_id = $4 WHERE id = $1`, id, state, detail, jobID); err != nil {
+		var first *uuid.UUID
+		if len(jobIDs) > 0 {
+			first = &jobIDs[0]
+		}
+		if _, err := tx.Exec(ctx, `UPDATE automation_run_batches SET state = $2, detail = $3, job_id = $4 WHERE id = $1`, id, state, detail, first); err != nil {
 			return err
 		}
-		if jobID == nil {
+		if len(jobIDs) == 0 {
 			return nil
 		}
-		_, err := tx.Exec(ctx, `UPDATE automation_runs SET job_ids = job_ids || $2::uuid WHERE id = $1`, runID, *jobID)
+		_, err := tx.Exec(ctx, `UPDATE automation_runs SET job_ids = job_ids || $2::uuid[] WHERE id = $1`, runID, jobIDs)
 		return err
 	}); err != nil {
 		return err
@@ -158,7 +162,7 @@ func (s *Service) runBatch(ctx context.Context, id uuid.UUID) error {
 	return s.settle(ctx, runID)
 }
 
-func (s *Service) batchJob(ctx context.Context, t *Task, devs []uuid.UUID) (state, detail string, jobID *uuid.UUID) {
+func (s *Service) batchJob(ctx context.Context, t *Task, devs []uuid.UUID) (state, detail string, jobIDs []uuid.UUID) {
 	if !devscope.Allowed(t.OrganizationID) {
 		return "skipped", "The development scope does not reach this organization.", nil
 	}
@@ -187,15 +191,11 @@ func (s *Service) batchJob(ctx context.Context, t *Task, devs []uuid.UUID) (stat
 	if len(live) == 0 {
 		return "skipped", "No device is left to start." + note, nil
 	}
-	list := make([]uuid.UUID, len(live))
-	for i, d := range live {
-		list[i] = d.id
-	}
-	j, err := s.scripts.CreateJob(ctx, c, jobInput(t, list))
+	ids, err := s.makeJobs(ctx, c, t, live)
 	if err != nil {
-		return "failed", fmt.Sprintf("A job could not be made: %v", err), nil
+		return "failed", fmt.Sprintf("A job could not be made: %v", err), ids
 	}
-	return "done", fmt.Sprintf("Made a job for %d device(s).%s", len(list), note), &j.ID
+	return "done", fmt.Sprintf("Made %d job(s) for %d device(s).%s", len(ids), len(live), note), ids
 }
 
 // settle closes a staggered run once none of its batches is waiting.

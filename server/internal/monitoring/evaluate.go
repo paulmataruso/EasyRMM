@@ -240,6 +240,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 				OR (p.organization_id = d.organization_id AND (p.site_id IS NULL OR p.site_id = d.site_id)))
 			LEFT JOIN alerts a ON a.policy_id = p.id AND a.device_id = d.id AND a.status <> 'resolved'
 			LEFT JOIN alert_suppressions sup ON sup.device_id = d.id AND sup.kind = p.kind AND sup.subject = ''
+			LEFT JOIN device_expected_offline eo ON eo.device_id = d.id AND eo.until_at > $1::timestamptz
 			LEFT JOIN LATERAL (
 				SELECT count(*) AS n, min(v) AS lo, (array_agg(v ORDER BY at DESC))[1] AS last,
 					count(*) FILTER (WHERE at > $1::timestamptz - make_interval(secs => greatest(least(p.minutes, $2) * 60, `+windowIntervals+` * d.agent_heartbeat_seconds))) AS n_recent,
@@ -254,6 +255,7 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, e
 			) s ON true
 			WHERE p.enabled AND p.kind IN ('offline', 'cpu', 'memory', 'disk')
 			  AND sup.id IS NULL
+			  AND (a.id IS NOT NULL OR p.kind <> 'offline' OR eo.device_id IS NULL) -- a restart or shutdown in hand: no new offline alert
 		) f
 		WHERE alert_id IS NOT NULL
 		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)

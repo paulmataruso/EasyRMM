@@ -138,6 +138,16 @@ func (in SoftwareInput) check(f apperr.Fields) manager {
 	return m
 }
 
+// Check reports what is wrong with a software action, as a software job's
+// request would.
+func (sw Software) Check(f apperr.Fields) {
+	SoftwareInput{Software: sw}.check(f)
+}
+
+// Platform is the platform the action's package manager runs on, empty for
+// an unknown manager.
+func (sw Software) Platform() string { return managers[sw.Manager].platform }
+
 // CreateSoftwareJob installs, updates or removes a package on devices
 // through their package manager (ADR-0028). It runs as a job of one of
 // EasyRMM's own scripts with the package as an argument, and needs

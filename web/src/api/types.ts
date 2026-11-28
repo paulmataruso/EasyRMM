@@ -1339,7 +1339,7 @@ export interface JobArguments {
   args: string[];
 }
 
-export type JobKind = "script" | "software" | "hardening" | "registry_query" | "registry_change" | "eventlog_query";
+export type JobKind = "script" | "software" | "hardening" | "maintenance" | "registry_query" | "registry_change" | "eventlog_query";
 
 /** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
@@ -5130,6 +5130,19 @@ export interface TaskSchedule {
   everyMinutes?: number;
 }
 
+/** What a scheduled task does: run a library script, or one of EasyRMM's own actions. */
+export type TaskStepKind = "script" | "software" | "restart" | "shutdown" | "service";
+
+export interface TaskStep {
+  /** A software step's action. */
+  software?: { action: "install" | "upgrade" | "uninstall"; manager: "winget" | "chocolatey" | "system"; package: string; version?: string };
+  /** A service step's action: service_start, service_stop or service_restart. */
+  action?: "service_start" | "service_stop" | "service_restart";
+  service?: string;
+  /** Restart and shutdown: limit to one platform (empty is both). A service step needs one. */
+  platform?: "windows" | "linux" | "";
+}
+
 export interface ScheduledTask {
   id: string;
   organizationId: string;
@@ -5138,7 +5151,10 @@ export interface ScheduledTask {
   siteName: string;
   name: string;
   schedule: TaskSchedule;
-  scriptId: string;
+  stepKind: TaskStepKind;
+  step: TaskStep;
+  /** Null unless the step is a script. */
+  scriptId: string | null;
   scriptName: string;
   scriptSha256: string;
   /** The library's script is no longer the pinned one; runs fail until the task is saved with the new one. */
@@ -5169,7 +5185,9 @@ export interface ScheduledTaskInput {
   name: string;
   organizationId: string;
   siteId: string | null;
-  scriptId: string;
+  stepKind?: TaskStepKind;
+  step?: TaskStep;
+  scriptId?: string;
   scriptArgs: string[];
   deviceIds: string[];
   schedule: TaskSchedule;
