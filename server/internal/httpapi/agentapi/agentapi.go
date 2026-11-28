@@ -625,9 +625,10 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 			out.Features = append(out.Features, agentproto.FeatureChannel)
 			out.Instance = a.channel.Instance()
 			out.JobsWaiting = a.channel.TakeJobsWaiting(d.ID)
-			if !out.JobsWaiting && a.jobs != nil && a.channel.Live(d.ID) {
-				// A live agent holds no poll: work the channel has not
-				// carried (a lost push, a held-back run) is found here.
+			if !out.JobsWaiting && a.jobs != nil {
+				// Work the channel has not carried: a lost push, a
+				// held-back run, or a job queued while the channel was
+				// down and the agent's poll has not reached the server.
 				if w, err := a.jobs.Waiting(r.Context(), d.ID); err == nil {
 					out.JobsWaiting = w
 				}

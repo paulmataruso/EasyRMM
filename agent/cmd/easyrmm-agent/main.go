@@ -60,8 +60,17 @@ import (
 var Version = "dev"
 
 func main() {
-	if started, code := asService(); started {
-		os.Exit(code)
+	// The service is registered with "run" as its argument. Only enter
+	// service mode when that matches: svc.IsWindowsService checks the
+	// parent process, and the SCM's RUN PROCESS failure-recovery action
+	// shares the same parent (services.exe) and session, so without this
+	// guard a "repair-install" started by the SCM tries svc.Run, fails
+	// to connect to the service dispatcher, and exits — leaving the
+	// service dead instead of repaired.
+	if len(os.Args) <= 1 || os.Args[1] == "run" {
+		if started, code := asService(); started {
+			os.Exit(code)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
