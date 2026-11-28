@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useOrganizations, useSites } from "../../api/hooks";
@@ -144,6 +144,36 @@ function ScriptForm({ script }: { script?: Script }) {
       const { [field]: _gone, ...rest } = m;
       return rest;
     });
+
+  const handleBodyKey = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const val = ta.value;
+    const { selectionStart: s, selectionEnd: end } = ta;
+    const tab = "    ";
+    if (!e.shiftKey && s === end) {
+      setBody(val.slice(0, s) + tab + val.slice(end));
+      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + tab.length; });
+      return;
+    }
+    const lineStart = val.lastIndexOf("\n", s - 1) + 1;
+    const lines = val.slice(lineStart, end).split("\n");
+    let shift = 0;
+    const result = lines.map((ln, i) => {
+      if (e.shiftKey) {
+        const removed = ln.startsWith(tab) ? tab : ln.match(/^ {1,3}/)?.[0] ?? "";
+        if (i === 0) shift = -removed.length;
+        return ln.slice(removed.length);
+      }
+      if (i === 0) shift = tab.length;
+      return tab + ln;
+    });
+    const next = val.slice(0, lineStart) + result.join("\n") + val.slice(end);
+    const delta = next.length - val.length;
+    setBody(next);
+    requestAnimationFrame(() => { ta.selectionStart = s + shift; ta.selectionEnd = end + delta; });
+  }, []);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -327,6 +357,7 @@ function ScriptForm({ script }: { script?: Script }) {
                 setBody(e.target.value);
                 edited("body");
               }}
+              onKeyDown={handleBodyKey}
               rows={20}
               spellCheck={false}
               autoCapitalize="off"
