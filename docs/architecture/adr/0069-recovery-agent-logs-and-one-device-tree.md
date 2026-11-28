@@ -823,3 +823,14 @@ possible restore), so the disposition test does not list them, and a move leaves
 them alone. The new columns on `devices` (the last report of the keys the device
 trusts, the cut-over sent, the authorities in its `ca.pem`) move with the
 device's row; those on `retired_devices` stay, as that table does.
+
+### Amended 2026-11-28 (decided in review), posture P4
+
+`posture_policies` (migration `00103`, ADR-0082 slice P4) holds an
+organization's weight overrides for posture controls. It belongs to the
+organization, so the disposition test lists it as owned.
+
+`posture_history` (migration `00104`, ADR-0082 slice P4) holds a row each
+time a device's posture word or score changes. It is keyed by `device_id`
+alone with no organization or site, so a move leaves the rows alone: they
+**follow the device**, like `posture_patching`.

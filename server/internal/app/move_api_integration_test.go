@@ -337,7 +337,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"devices": moves,
 		// follows
 		"agent_nonces": follows, "agent_updates": follows, "device_disk_health": follows, "device_disk_health_samples": follows,
-		"device_hardening": follows, "posture_patching": follows, "posture_log_collection": follows, "device_volume_reports": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
+		"device_hardening": follows, "posture_patching": follows, "posture_log_collection": follows, "posture_history": follows, "device_volume_reports": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
 		"device_metrics": follows, "device_removals": follows, "device_software": follows, "enrollment_requests": follows,
 		"retired_agent_nonces": follows,
 		// what the computer's agent trusts (ADR-0055 5b1) is the computer's own fact
@@ -370,7 +370,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"compliance_assessments": owned, "compliance_implementations": owned, "compliance_objective_results": owned, "compliance_attestations": owned,
 		"compliance_evidence": owned, "compliance_evidence_links": owned, "compliance_org_keys": owned, "compliance_poam_items": owned, "compliance_poam_milestones": owned,
 		"compliance_documents": owned, "compliance_document_sections": owned, "compliance_score_snapshots": owned, "compliance_scope_assets": stays,
-		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "notification_channels": owned, "notification_channel_shares": owned, "notification_quotas": owned, "notification_rules": owned, "notification_rule_orgs": owned, "notification_rule_sites": owned, "notification_rule_groups": owned, "site_maintenance_windows": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
+		"alert_policies": owned, "posture_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "notification_channels": owned, "notification_channel_shares": owned, "notification_quotas": owned, "notification_rules": owned, "notification_rule_orgs": owned, "notification_rule_sites": owned, "notification_rule_groups": owned, "site_maintenance_windows": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
 		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned, "automations": owned, "automation_runs": stays, "automation_run_batches": stays,
 		// asset record (ADR-0066 slice 2): the hardware follows the device (org/site updated by moveOne); values follow the asset; the age policy is owned
 		"assets": updates, "asset_field_values": updates, "asset_age_policies": owned,
