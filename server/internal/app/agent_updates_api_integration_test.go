@@ -140,6 +140,11 @@ func TestAgentUpdatesAPI(t *testing.T) {
 	wantStatus(t, admin.do("PUT", "/api/v1/settings/agent-updates", map[string]any{"mode": "manual", "maxConcurrent": 0}), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("PUT", "/api/v1/settings/agent-updates", "nope"), http.StatusBadRequest, "")
 	a2, a3 := enroll("pc-2"), enroll("pc-3")
+	// Mark the devices as not fresh: they have run the server's build at
+	// least once. Without this, ADR-0056's "fresh device" rule updates them
+	// even in manual mode.
+	beat(a2, buildSHA)
+	beat(a3, buildSHA)
 	if beat(a2, oldSHA) != nil || beat(a3, oldSHA) != nil {
 		t.Fatal("manual mode updated a device nobody asked for")
 	}

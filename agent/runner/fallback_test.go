@@ -11,7 +11,7 @@ import (
 func TestFallbackWaitsAnHourOfFailuresThenTriesAtMostOncePerHour(t *testing.T) {
 	s := &server{status: http.StatusBadGateway, code: "bad_gateway"}
 	r := newRunner(t, s, nil)
-	r.FallbackAfter = 40 * time.Millisecond
+	r.FallbackAfter = 500 * time.Millisecond
 	tries := 0
 	switchNext := false
 	r.Fallback = func(context.Context) bool { tries++; return switchNext }
@@ -26,7 +26,7 @@ func TestFallbackWaitsAnHourOfFailuresThenTriesAtMostOncePerHour(t *testing.T) {
 	if tries != 0 {
 		t.Fatalf("tried after %d failed heartbeats with no wait", tries)
 	}
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 	// After the wait, one try; a failed try is not repeated at once.
 	if _, err := r.beat(ctx); err != nil || tries != 1 {
 		t.Fatalf("first try: %d %v", tries, err)
@@ -34,7 +34,7 @@ func TestFallbackWaitsAnHourOfFailuresThenTriesAtMostOncePerHour(t *testing.T) {
 	if _, err := r.beat(ctx); err != nil || tries != 1 {
 		t.Fatalf("a second try came at once: %d %v", tries, err)
 	}
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 	switchNext = true
 	if _, err := r.beat(ctx); !errors.Is(err, ErrMoved) || tries != 2 {
 		t.Fatalf("after the switch: %d %v", tries, err)
@@ -44,13 +44,13 @@ func TestFallbackWaitsAnHourOfFailuresThenTriesAtMostOncePerHour(t *testing.T) {
 func TestASuccessfulHeartbeatEndsTheRunOfFailures(t *testing.T) {
 	s := &server{status: http.StatusBadGateway, code: "bad_gateway"}
 	r := newRunner(t, s, nil)
-	r.FallbackAfter = 40 * time.Millisecond
+	r.FallbackAfter = 500 * time.Millisecond
 	tries := 0
 	r.Fallback = func(context.Context) bool { tries++; return false }
 	ctx := context.Background()
 
 	_, _ = r.beat(ctx)
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 	s.mu.Lock()
 	s.status = 0
 	s.mu.Unlock()
