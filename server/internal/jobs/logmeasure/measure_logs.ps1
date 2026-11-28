@@ -81,9 +81,9 @@ $securityFailureIds = ConvertTo-IdSet @(4662, 4768, 4769, 4771, 4776)
 $systemAccounts = @('SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE', 'ANONYMOUS LOGON')
 
 function Get-PropertyText {
-    param($Event, [int]$Index)
-    if ($Event.Properties.Count -le $Index) { return '' }
-    $v = $Event.Properties[$Index].Value
+    param($Evt, [int]$Index)
+    if ($Evt.Properties.Count -le $Index) { return '' }
+    $v = $Evt.Properties[$Index].Value
     if ($null -eq $v) { return '' }
     return [string]$v
 }
@@ -98,30 +98,29 @@ function Test-SystemAccount {
 # 4624's TargetUserName is property 5 and its LogonType 8; 4672's
 # SubjectUserName is property 1.
 function Test-SecurityKept {
-    param($Event)
-    $id = [int]$Event.Id
+    param($Evt)
+    $id = [int]$Evt.Id
     if ($securityFailureIds.ContainsKey($id)) {
-        return (($Event.Keywords -band $auditFailure) -ne 0)
+        return (($Evt.Keywords -band $auditFailure) -ne 0)
     }
     if (-not $securityIds.ContainsKey($id)) { return $false }
     if ($id -eq 4624) {
-        $name = Get-PropertyText $Event 5
-        $type = Get-PropertyText $Event 8
+        $name = Get-PropertyText $Evt 5
+        $type = Get-PropertyText $Evt 8
         if (Test-SystemAccount $name) { return $false }
         if ($type -eq '5') { return $false }
         if ($type -eq '3' -and $name.EndsWith('$')) { return $false }
         return $true
     }
     if ($id -eq 4672) {
-        return -not (Test-SystemAccount (Get-PropertyText $Event 1))
+        return -not (Test-SystemAccount (Get-PropertyText $Evt 1))
     }
     return $true
 }
 
 function Test-LevelError {
-    param($Event)
-    # Level 1 is critical, 2 error.
-    return ($null -ne $Event.Level -and $Event.Level -le 2)
+    param($Evt)
+    return ($null -ne $Evt.Level -and $Evt.Level -le 2)
 }
 
 $systemIds = ConvertTo-IdSet @(104, 1074, 6005, 6006, 6008, 7040, 7045)

@@ -9,7 +9,10 @@
         # Function names are the scripts' own (Test-, Get-, Resolve-), not
         # cmdlets: none supports -WhatIf, and none is exported.
         'PSUseShouldProcessForStateChangingFunctions',
-        'PSUseSingularNouns'
+        'PSUseSingularNouns',
+        # Scripts probe for capabilities with try/catch {}; the empty catch
+        # is intentional (the caller checks the result, not the error).
+        'PSAvoidUsingEmptyCatchBlock'
     )
     Rules        = @{
         PSUseCompatibleSyntax = @{
