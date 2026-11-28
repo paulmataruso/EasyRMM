@@ -26,6 +26,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
+	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -257,6 +258,12 @@ type RunnerState struct {
 	// this computer; the runner then asks the user (Offer says who offers).
 	Install string        `json:"install,omitempty"`
 	Offer   *InstallOffer `json:"offer,omitempty"`
+	// EasyPatchToken and EasyPatchServer are what the runner's EasyPatch
+	// agent enrolls with (ADR-0080 QA6). They are in one answer only, the
+	// one after the session became active, and only for an elevated runner
+	// of an organization linked to EasyPatch.
+	EasyPatchToken  string `json:"easypatchToken,omitempty"`
+	EasyPatchServer string `json:"easypatchServer,omitempty"`
 }
 
 // InstallOffer names what the user is asked to keep on their computer.
@@ -270,12 +277,16 @@ type InstallOffer struct {
 // is told without waiting for the sweep.
 func (s *Service) Status(ctx context.Context, device uuid.UUID) (*RunnerState, error) {
 	var out RunnerState
+	var claim bool
+	var sid, sorg uuid.UUID
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var id uuid.UUID
 		var requested, expires time.Time
 		var org uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT id, state, end_reason, requested_at, expires_at, install_state, organization_id FROM quick_assist_sessions WHERE device_id = $1 FOR UPDATE`, device).
-			Scan(&id, &out.State, &out.EndReason, &requested, &expires, &out.Install, &org)
+		var elevated bool
+		var epState string
+		err := tx.QueryRow(ctx, `SELECT id, state, end_reason, requested_at, expires_at, install_state, organization_id, elevated, easypatch_state FROM quick_assist_sessions WHERE device_id = $1 FOR UPDATE`, device).
+			Scan(&id, &out.State, &out.EndReason, &requested, &expires, &out.Install, &org, &elevated, &epState)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
@@ -301,14 +312,100 @@ func (s *Service) Status(ctx context.Context, device uuid.UUID) (*RunnerState, e
 			if _, err := tx.Exec(ctx, `UPDATE devices SET agent_last_seen_at = $2 WHERE id = $1`, device, now); err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET last_seen_at = $2 WHERE id = $1 AND state IN ('requested','active')`, id, now)
-			return err
+			if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET last_seen_at = $2 WHERE id = $1 AND state IN ('requested','active')`, id, now); err != nil {
+				return err
+			}
+			// The session's EasyPatch token is claimed here, once; it is made
+			// after the transaction, since the engine is another service.
+			if out.State == SessionActive && elevated && epState == "none" && s.patch != nil && devscope.Allowed(org) {
+				claim = true
+				sid, sorg = id, org
+				_, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET easypatch_state = 'issuing' WHERE id = $1`, id)
+				return err
+			}
+			return nil
 		}
 		_, err = tx.Exec(ctx, `UPDATE quick_assist_sessions SET state = $2, end_reason = $3, ended_at = $4 WHERE id = $1`, id, out.State, out.EndReason, now)
 		return err
 	})
+	if err == nil && claim {
+		s.issuePatchToken(ctx, sid, sorg, &out)
+	}
 	return &out, err
 }
+
+// issuePatchToken makes the session's EasyPatch token, which the claim in
+// Status allows once. An engine that answers an error leaves the session as
+// it was, so the next poll tries again; one with nothing to give (patching
+// not set up, the organization not linked) ends the question.
+func (s *Service) issuePatchToken(ctx context.Context, session, org uuid.UUID, out *RunnerState) {
+	set := func(state string, tok, site *uuid.UUID) {
+		_ = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET easypatch_state = $2, easypatch_token_id = $3, easypatch_site_id = $4
+				WHERE id = $1 AND easypatch_state = 'issuing'`, session, state, tok, site)
+			return err
+		})
+	}
+	var site string
+	_ = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT name FROM sites WHERE organization_id = $1 AND kind = 'quick_assist'`, org).Scan(&site)
+	})
+	if site == "" {
+		site = "Quick Assist"
+	}
+	g, err := s.patch.AdHocToken(ctx, org, site, "Quick Assist session "+session.String())
+	switch {
+	case err != nil:
+		set("none", nil, nil)
+	case g == nil:
+		set("unavailable", nil, nil)
+	default:
+		set("issued", &g.TokenID, &g.SiteID)
+		out.EasyPatchToken, out.EasyPatchServer = g.Secret, g.Server
+	}
+}
+
+// removeSessionPatch revokes the EasyPatch token and endpoint a session
+// made, best effort and after the transaction as for the MeshAgent node.
+func (s *Service) removeSessionPatch(ctx context.Context, tx pgx.Tx, session uuid.UUID) {
+	if s.patch == nil {
+		return
+	}
+	var org uuid.UUID
+	var tok, site *uuid.UUID
+	var host string
+	if err := tx.QueryRow(ctx, `SELECT s.organization_id, s.easypatch_token_id, s.easypatch_site_id, coalesce(d.name, '')
+		FROM quick_assist_sessions s LEFT JOIN devices d ON d.id = s.device_id
+		WHERE s.id = $1 AND s.easypatch_state = 'issued'`, session).Scan(&org, &tok, &site, &host); err != nil || tok == nil || site == nil {
+		return
+	}
+	if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET easypatch_state = 'removed' WHERE id = $1`, session); err != nil {
+		return
+	}
+	t, st := *tok, *site
+	go func() {
+		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+		defer cancel()
+		if err := s.patch.AdHocRemove(c, org, t, st, host); err != nil {
+			// Put back so the sweep tries again.
+			_ = s.db.InTx(c, database.System, func(tx pgx.Tx) error {
+				_, err := tx.Exec(c, `UPDATE quick_assist_sessions SET easypatch_state = 'issued' WHERE id = $1 AND easypatch_state = 'removed'`, session)
+				return err
+			})
+		}
+	}()
+}
+
+// PatchIssuer is what makes and ends a session's EasyPatch enrollment
+// (the EasyPatch service, ADR-0080 QA6).
+type PatchIssuer interface {
+	AdHocToken(ctx context.Context, org uuid.UUID, siteName, description string) (*easypatch.AdHocGrant, error)
+	AdHocRemove(ctx context.Context, org uuid.UUID, tokenID, siteID uuid.UUID, hostname string) error
+}
+
+// SetPatchIssuer sets what gives sessions an EasyPatch token and removes
+// what they made; the app sets it when patching is on.
+func (s *Service) SetPatchIssuer(p PatchIssuer) { s.patch = p }
 
 // Session is what the console shows of a session. The code is never in it.
 type Session struct {
@@ -628,6 +725,7 @@ func (s *Service) RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr
 				return err
 			}
 			s.removeSessionNode(ctx, tx, device)
+			s.removeSessionPatch(ctx, tx, id)
 			if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE id = $1 AND quick_assist`, device); err != nil {
 				return err
 			}
@@ -651,6 +749,7 @@ func (s *Service) RunnerEnd(ctx context.Context, device uuid.UUID, ip netip.Addr
 			return err
 		}
 		s.removeSessionNode(ctx, tx, device)
+		s.removeSessionPatch(ctx, tx, id)
 		// The key stops working: nothing signed by it is accepted again.
 		if _, err := tx.Exec(ctx, `UPDATE devices SET agent_public_key = NULL, enrolled_at = NULL WHERE id = $1`, device); err != nil {
 			return err
@@ -786,13 +885,37 @@ func (s *Service) Sweep(ctx context.Context) error {
 			WHERE quick_assist AND agent_public_key IS NOT NULL AND id IN (SELECT device_id FROM quick_assist_sessions WHERE state IN ('ended','declined','lost') AND cleanup <> 'none')`); err != nil {
 			return err
 		}
+		// The EasyPatch token and endpoint of a session that ended without
+		// its runner saying so (lost, past its length), or whose removal
+		// failed, are revoked now.
+		prows, err := tx.Query(ctx, `SELECT id FROM quick_assist_sessions
+			WHERE state IN ('ended','declined','lost') AND easypatch_state = 'issued' AND organization_id = ANY($1)`, s.allowedOrgs(ctx, tx))
+		if err != nil {
+			return err
+		}
+		var stale []uuid.UUID
+		for prows.Next() {
+			var id uuid.UUID
+			if err := prows.Scan(&id); err != nil {
+				prows.Close()
+				return err
+			}
+			stale = append(stale, id)
+		}
+		prows.Close()
+		if err := prows.Err(); err != nil {
+			return err
+		}
+		for _, id := range stale {
+			s.removeSessionPatch(ctx, tx, id)
+		}
 		// Retention.
 		old := now.Add(-Retention)
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE quick_assist AND id IN (SELECT device_id FROM quick_assist_sessions WHERE ended_at < $1 AND state <> 'converted' AND organization_id = ANY($2))`,
 			old, s.allowedOrgs(ctx, tx)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM quick_assist_sessions WHERE ended_at < $1 AND organization_id = ANY($2)`, old, s.allowedOrgs(ctx, tx))
+		_, err = tx.Exec(ctx, `DELETE FROM quick_assist_sessions WHERE ended_at < $1 AND organization_id = ANY($2)`, old, s.allowedOrgs(ctx, tx))
 		return err
 	})
 }
