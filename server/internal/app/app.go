@@ -417,6 +417,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
+	d.QuickAssist.SetPatchIssuer(d.EasyPatch)
 	// A removed device's EasyPatch agent is told to uninstall itself at once,
 	// not at the next reconcile pass (ADR-0050).
 	d.Agents.OnRemoved(d.EasyPatch.Kick)

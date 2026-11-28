@@ -118,6 +118,7 @@ type Service struct {
 	// onThrottled, when set, hears of a link that went over its bucket, at
 	// most once per link per day.
 	removeNode  NodeRemover
+	patch       PatchIssuer
 	onThrottled func(ctx context.Context, org uuid.UUID, link string)
 }
 

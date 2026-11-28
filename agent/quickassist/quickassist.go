@@ -5,8 +5,8 @@
 // reports what it checked. It installs no service, no scheduled task and no
 // start-up entry, and keeps its files in one folder of its own.
 //
-// The Windows runner and MeshAgent child are built. The EasyPatch
-// ad-hoc agent is not built yet (QA6).
+// The Windows runner, the MeshAgent child and the EasyPatch ad-hoc agent
+// child (QA6) are built.
 package quickassist
 
 import (
@@ -57,11 +57,13 @@ type Options struct {
 	// Install runs the permanent installation with the conversion token;
 	// default: this program's own "install" command.
 	// NoMesh leaves MeshAgent out (tests of a server without remote access).
-	NoMesh  bool
-	Install func(ctx context.Context, server, token string) error
-	Version string
-	In      io.Reader
-	Out     io.Writer
+	NoMesh bool
+	// EasyPatch is the EasyPatch agent's file; default: beside this program.
+	EasyPatch string
+	Install   func(ctx context.Context, server, token string) error
+	Version   string
+	In        io.Reader
+	Out       io.Writer
 	// Poll overrides the server's heartbeat (tests).
 	Poll time.Duration
 	// Elevated says the program runs with administrative rights.
@@ -222,9 +224,10 @@ this session. Nothing is installed, and everything is removed when it ends.
 	sess := &sessionState{cf: cf, dir: dir}
 	reason := run(ctx, c, o, rd, tk.Server, res, sess)
 	left := sess.mesh.stop(context.WithoutCancel(ctx))
+	epLeft := sess.ep.stop(context.WithoutCancel(ctx))
 	cf.Close()
 	_, _ = fmt.Fprintf(o.Out, "\nEnding the session (%s) and removing everything this program made.\n", reason)
-	rep := cleanup(dir, lock)
+	rep := cleanup(dir, lock, epChecks(sess.ep, epLeft)...)
 	for _, path := range left {
 		rep.Checks = append(rep.Checks, client.QACheck{Name: "registry_key_removed", OK: false, Detail: path})
 		rep.Result = "residue"
@@ -252,6 +255,7 @@ type sessionState struct {
 	cf   *confiner
 	dir  string
 	mesh *meshRun
+	ep   *epRun
 }
 
 func answerPrompt(window bool) string {
@@ -271,9 +275,15 @@ func run(ctx context.Context, c *client.Client, o Options, rd *bufio.Reader, ser
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
-	announced, asked := false, false
+	announced, asked, epDone := false, false, false
 	for {
 		st, err := c.QAStatus(ctx)
+		// The EasyPatch token comes with the first answer after the
+		// technician accepted, or a later one when the engine was busy.
+		if err == nil && st.State == "active" && !epDone && st.EasyPatchToken != "" {
+			epDone = true
+			sess.ep = beginEasyPatch(o, sess, res.SessionID, st)
+		}
 		switch {
 		case ctx.Err() != nil:
 			return "user"
@@ -373,7 +383,7 @@ func makeFolder(dir string) (*os.File, error) {
 
 // cleanup removes the session folder and verifies what it removed. A check
 // that fails is retried three times over ten seconds, then reported.
-func cleanup(dir string, lock *os.File) *client.QACleanup {
+func cleanup(dir string, lock *os.File, extra ...client.QACheck) *client.QACleanup {
 	if lock != nil {
 		_ = lock.Close()
 	}
@@ -398,6 +408,7 @@ func cleanup(dir string, lock *os.File) *client.QACleanup {
 	for _, n := range []string{"no_service", "no_scheduled_task", "no_child_process", "no_listening_socket"} {
 		checks = append(checks, client.QACheck{Name: n, OK: true, Detail: "none was made"})
 	}
+	checks = append(checks, extra...)
 	sort.Slice(checks, func(i, j int) bool { return checks[i].Name < checks[j].Name })
 	h := sha256.New()
 	result := "verified"
@@ -438,4 +449,24 @@ func Clean(base string) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// beginEasyPatch starts the session's EasyPatch agent when the session wants
+// one, and says to the user what it did or why not. A session without it is
+// still a session: patching is an extra.
+func beginEasyPatch(o Options, sess *sessionState, sessionID string, st *client.QAState) *epRun {
+	want, why := wantEasyPatch(o, st)
+	if !want {
+		if why != "" {
+			_, _ = fmt.Fprintf(o.Out, "Patching is not available for this session: %s\n", why)
+		}
+		return nil
+	}
+	r, err := startEasyPatch(o, sess.cf, sess.dir, sessionID, st)
+	if err != nil {
+		_, _ = fmt.Fprintf(o.Out, "Patching is not available for this session: %v\n", err)
+		return nil
+	}
+	_, _ = fmt.Fprintln(o.Out, "The technician can see and install this computer's updates during the session.")
+	return r
 }

@@ -43,6 +43,10 @@ type QAState struct {
 	EndReason string   `json:"endReason"`
 	Install   string   `json:"install"`
 	Offer     *QAOffer `json:"offer"`
+	// EasyPatchToken and EasyPatchServer are what the EasyPatch agent of an
+	// elevated session enrolls with; empty when none is offered.
+	EasyPatchToken  string `json:"easypatchToken"`
+	EasyPatchServer string `json:"easypatchServer"`
 }
 
 // QAOffer names what the user is asked to keep.
