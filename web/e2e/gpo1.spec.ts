@@ -50,6 +50,8 @@ const kindOf = (script: string) =>
   : script.includes("New-GPLink") ? "link_add"
   : "other";
 
+const defaultReportXml = `<GPO xmlns="http://www.microsoft.com/GroupPolicy/Settings"><Name>Workstation baseline</Name><Computer><Enabled>true</Enabled></Computer><User><Enabled>true</Enabled></User></GPO>`;
+const defaultReportGz = gzipSync(Buffer.from(defaultReportXml)).toString("base64");
 const results: Record<string, unknown> = {
   status: { domain: "corp.test", domainDn: DOMAIN_DN, controller: "dc1.corp.test", gpoCount: 2, empty: 1, unlinked: 1, targets: 3 },
   gpo_list: { total: 1, offset: 0, next: null, walked: true, items: [baseline] },
@@ -57,6 +59,7 @@ const results: Record<string, unknown> = {
   gpo_get: { ...baseline, reportLinks: [{ name: "Workstations", path: "corp.test/Computers/Workstations", enabled: true, enforced: false, sensitive: false }], trustees: [
     { name: "Authenticated Users", sid: "S-1-5-11", type: "well_known", permission: "GpoApply", inherited: false, denied: false, apply: true }] },
   wmi_filters: { filters: [] },
+  gpo_report: { id: GPO, name: "Workstation baseline", xmlGzip: defaultReportGz },
 };
 
 /** The agent answers every module job that arrives, in the background, from `results` unless a test set `override` for its kind
