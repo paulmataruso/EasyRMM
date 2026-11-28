@@ -88,6 +88,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsaddnameapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsdnsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlsmoveapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tlstrustapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
@@ -116,6 +117,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/tlsaddname"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
+	"github.com/paulmataruso/easyrmm/server/internal/tlsdns"
 	"github.com/paulmataruso/easyrmm/server/internal/tlsmove"
 	"github.com/paulmataruso/easyrmm/server/internal/tlstrust"
 	"github.com/paulmataruso/easyrmm/server/internal/updater"
@@ -249,6 +251,8 @@ type Deps struct {
 	TLSMove *tlsmove.Service
 	// TLSAdd adds a name pair to an IP install (ADR-0055, 5b3).
 	TLSAdd    *tlsaddname.Service
+	// TLSDNS manages DNS-01 challenge credentials (ADR-0055, 5b4).
+	TLSDNS    *tlsdns.Service
 	moveCerts *moveCerts
 }
 
@@ -479,8 +483,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Keystore.SetStepUp(sessions)
 	d.Keystore.SetNotifier(mailSvc)
 	d.Notify = newNotify(cfg, db, auditLog, sealer, mailSvc, log)
+	d.TLSDNS = tlsdns.New(tlsdns.Deps{DB: db, Sealer: sealer, Audit: auditLog, Log: log})
 	if cfg.TLSMode == config.TLSAcme {
-		d.TLS = newTLS(cfg, db, auditLog, sealer, d.Notify, log)
+		set := tlsSettings(cfg)
+		set.DNSSolver = d.TLSDNS.SolverFor
+		d.TLS = tlscert.New(tlscert.Deps{DB: db, Sealer: sealer, Audit: auditLog, Alerts: tlsNotices{n: d.Notify}, Log: log}, set)
 	}
 	d.moveCerts = &moveCerts{tls: d.TLS, pki: d.PKI}
 	d.TLSMove = tlsmove.New(tlsmove.Deps{DB: db, Audit: auditLog, Certs: d.moveCerts, Trust: d.TLSTrust,
@@ -813,6 +820,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	tlsapi.New(d.TLS, string(cfg.TLSMode)).WithNames(moveNames(cfg)).Register(mux)
 	tlsmoveapi.New(d.TLSMove, d.Sessions).Register(mux)
 	tlsaddnameapi.New(d.TLSAdd, d.Sessions).Register(mux)
+	tlsdnsapi.New(d.TLSDNS, d.Sessions).Register(mux)
 	jobkeyapi.New(d.JobKeys, d.Sessions).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)

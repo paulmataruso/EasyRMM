@@ -70,6 +70,9 @@ type Settings struct {
 	CAAResolvers []string
 	// Warnings are notes the page shows (an ignored EASYRMM_MESH_CERT_URL).
 	Warnings []string
+	// DNSSolver returns a DNS-01 solver for the named host, or nil when no
+	// DNS credentials cover its zone (ADR-0055, 5b4).
+	DNSSolver func(ctx context.Context, name string) (*certmagic.DNS01Solver, error)
 }
 
 // Event is what the service tells people about a name (ADR-0055, "When a
@@ -223,6 +226,9 @@ func (s *Service) Start(ctx context.Context) error {
 		iss.AltHTTPPort = portNumber(p)
 	}
 	iss.AltTLSALPNPort = portNumber(s.set.TLSPort)
+	if s.set.DNSSolver != nil {
+		iss.DNS01Solver = newDNSSolverMux(s.set.DNSSolver)
+	}
 	s.issuer = iss
 	s.magic.Issuers = []certmagic.Issuer{iss}
 

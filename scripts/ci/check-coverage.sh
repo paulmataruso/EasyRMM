@@ -226,6 +226,10 @@ floors=(
   # The job key ring (ADR-0057): the move from settings, the key chosen for each device, the reports and the instruction log.
   "server/internal/jobkeys                 90"
   "server/internal/httpapi/tlstrustapi     75"
+  # DNS-01 challenge credentials (ADR-0055, slice 5b4): validation helpers have
+  # unit tests; the DB and sealer paths are covered by integration tests later.
+  "server/internal/tlsdns                 20"
+  "server/internal/httpapi/tlsdnsapi      20"
 )
 
 if [[ ! -f "$profile" ]]; then

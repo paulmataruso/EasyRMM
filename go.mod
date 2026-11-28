@@ -14,6 +14,9 @@ require (
 	github.com/google/go-tpm-tools v0.3.13-0.20230620182252-4639ecce2aba
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/libdns/cloudflare v0.2.2
+	github.com/libdns/libdns v1.1.1
+	github.com/libdns/rfc2136 v1.0.1
 	github.com/mholt/acmez/v3 v3.1.7
 	github.com/miekg/dns v1.1.73
 	github.com/pquerna/otp v1.5.0
@@ -80,7 +83,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/jedisct1/go-minisign v0.0.0-20211028175153-1c139d1cc84b // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
-	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mfridman/interpolate v0.2.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect

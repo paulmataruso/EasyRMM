@@ -8,6 +8,7 @@ import { Alert, Badge, Button, Card, ErrorState, InlineError, Spinner, TableWrap
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { AddedName } from "./AddedName";
 import { CertificateSources } from "./CertificateMove";
+import { DNSProviders } from "./DNSProviders";
 
 const STATE_LABEL: Record<TlsNameStatus["state"], string> = {
   valid: "Valid",
@@ -79,6 +80,7 @@ export function CertificatesTab() {
       ) : (
         status.names.map((n) => <NameCard key={n.name} n={n} />)
       )}
+      <DNSProviders />
       {names.length > 0 && <CertificateSources names={names} canAcme />}
     </div>
   );

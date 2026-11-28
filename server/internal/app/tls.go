@@ -13,10 +13,8 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
-	"github.com/paulmataruso/easyrmm/server/internal/notify"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/tlscert"
 )
@@ -67,10 +65,6 @@ func ownAddresses(cfg *config.Config) []netip.Addr {
 	return out
 }
 
-// newTLS builds the certificate service for acme mode.
-func newTLS(cfg *config.Config, db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, n *notify.Service, log *slog.Logger) *tlscert.Service {
-	return tlscert.New(tlscert.Deps{DB: db, Sealer: sealer, Audit: auditLog, Alerts: tlsNotices{n: n}, Log: log}, tlsSettings(cfg))
-}
 
 // ErrTLSChecksFailed is returned by TLSCheck when a check failed.
 var ErrTLSChecksFailed = errors.New("a check failed")
