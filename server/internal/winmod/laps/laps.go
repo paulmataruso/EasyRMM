@@ -52,7 +52,7 @@ type Changed struct {
 func Actions() []winmod.Action {
 	status := winmod.Action{
 		Module: modules.LAPS,
-		Name: "laps.status", Label: "Read the LAPS configuration", Version: 1,
+		Name:   "laps.status", Label: "Read the LAPS configuration", Version: 1,
 		Script: script("status"), ScriptSHA256: pins["status"],
 		Permission: rbac.PermDeviceView, Timeout: 60,
 		Keep: time.Hour, Decode: winmod.Typed[Status](),
@@ -62,7 +62,7 @@ func Actions() []winmod.Action {
 
 	configure := winmod.Action{
 		Module: modules.LAPS,
-		Name: "laps.configure", Label: "Configure Windows LAPS policy", Version: 1,
+		Name:   "laps.configure", Label: "Configure Windows LAPS policy", Version: 1,
 		Script: script("configure"), ScriptSHA256: pins["configure"],
 		Permission: rbac.PermDeviceConfigure, Timeout: 60, Changes: true,
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),
@@ -82,7 +82,7 @@ func Actions() []winmod.Action {
 
 	resetPw := winmod.Action{
 		Module: modules.LAPS,
-		Name: "laps.reset_password", Label: "Trigger a LAPS password rotation", Version: 1,
+		Name:   "laps.reset_password", Label: "Trigger a LAPS password rotation", Version: 1,
 		Script: script("reset_password"), ScriptSHA256: pins["reset_password"],
 		Permission: rbac.PermDeviceConfigure, Timeout: 120, Changes: true,
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),

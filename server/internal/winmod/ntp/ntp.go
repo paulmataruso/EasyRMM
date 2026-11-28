@@ -25,11 +25,11 @@ func script(name string) string {
 
 // Status is ntp.status's result.
 type Status struct {
-	Timezone Timezone    `json:"timezone"`
-	Service  ServiceInfo `json:"service"`
-	Config   NTPConfig   `json:"config"`
-	Peers    []Peer      `json:"peers"`
-	SystemUTC string     `json:"systemTimeUtc"`
+	Timezone  Timezone    `json:"timezone"`
+	Service   ServiceInfo `json:"service"`
+	Config    NTPConfig   `json:"config"`
+	Peers     []Peer      `json:"peers"`
+	SystemUTC string      `json:"systemTimeUtc"`
 }
 
 // Timezone describes the system's timezone.
@@ -82,7 +82,7 @@ type SyncResult struct {
 func Actions() []winmod.Action {
 	status := winmod.Action{
 		Module: modules.NTP,
-		Name: "ntp.status", Label: "Read the time service and timezone", Version: 1,
+		Name:   "ntp.status", Label: "Read the time service and timezone", Version: 1,
 		Script: script("status"), ScriptSHA256: pins["status"],
 		Permission: rbac.PermDeviceView, Timeout: 60,
 		Keep: time.Hour, Decode: winmod.Typed[Status](),
@@ -92,7 +92,7 @@ func Actions() []winmod.Action {
 
 	setTZ := winmod.Action{
 		Module: modules.NTP,
-		Name: "ntp.set_timezone", Label: "Set the timezone", Version: 1,
+		Name:   "ntp.set_timezone", Label: "Set the timezone", Version: 1,
 		Script: script("set_timezone"), ScriptSHA256: pins["set_timezone"],
 		Permission: rbac.PermDeviceConfigure, Timeout: 30, Changes: true,
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),
@@ -103,7 +103,7 @@ func Actions() []winmod.Action {
 
 	setNTP := winmod.Action{
 		Module: modules.NTP,
-		Name: "ntp.set_ntp_server", Label: "Set the NTP server", Version: 1,
+		Name:   "ntp.set_ntp_server", Label: "Set the NTP server", Version: 1,
 		Script: script("set_ntp_server"), ScriptSHA256: pins["set_ntp_server"],
 		Permission: rbac.PermDeviceConfigure, Timeout: 30, Changes: true,
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[Changed](),
@@ -115,7 +115,7 @@ func Actions() []winmod.Action {
 
 	forceSync := winmod.Action{
 		Module: modules.NTP,
-		Name: "ntp.force_sync", Label: "Force a time resync", Version: 1,
+		Name:   "ntp.force_sync", Label: "Force a time resync", Version: 1,
 		Script: script("force_sync"), ScriptSHA256: pins["force_sync"],
 		Permission: rbac.PermDeviceConfigure, Timeout: 30, Changes: true,
 		Keep: 7 * 24 * time.Hour, Decode: winmod.Typed[SyncResult](),

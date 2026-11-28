@@ -134,7 +134,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (*D
 
 // RecordLogs notes that log blocks of the computer were accepted just now. The
 // log store is a database of its own, so posture keeps this one fact in the main
-// database (migration 90621).
+// database (migration 00095).
 func (s *Service) RecordLogs(ctx context.Context, device uuid.UUID) error {
 	now := s.now()
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {

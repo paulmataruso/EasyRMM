@@ -13,5 +13,5 @@
 
 ## Integrator notes
 
-- Migration `90621_posture_log_collection.sql` (main database): table `posture_log_collection` (device_id, first_received_at, last_received_at), row-level security like `posture_patching`. The log store is a separate database, so posture cannot join it; the agentapi `collectedLogs` handler calls `posture.Service.RecordLogs` after a batch with at least one non-refused block (`WithLogPosture`, wired in `app.go`).
+- Migration `00095_posture_log_collection.sql` (main database): table `posture_log_collection` (device_id, first_received_at, last_received_at), row-level security like `posture_patching`. The log store is a separate database, so posture cannot join it; the agentapi `collectedLogs` handler calls `posture.Service.RecordLogs` after a batch with at least one non-refused block (`WithLogPosture`, wired in `app.go`).
 - Rollout effect: on deploy every covered computer without a row drops by the control's weight until its first batch. Orgs held back by dev-scope never receive logs and will show not in place.
