@@ -590,6 +590,31 @@ Tracks when each device last forwarded security logs. A device within the freshn
 |---|---|
 | `posture_log_collection` | One row per device: `first_received_at` and `last_received_at`. Row-level security reads through `devices`; written at platform scope only. Goes with the device (cascade) |
 
+## Signed settings delivery (migration 00096, ADR-0058 slice 2)
+
+`agent_device_state` tracks each enrolled device's settings delivery: its agent's capabilities
+(`capabilities` as a JSONB object, the build that reported them, the time), the last document the
+server issued (`doc_version`, `doc_hash`, `doc_issued_at`, `doc_catalog_version`), what the agent
+reported applying (`applied_version`, `applied_hash`, `applied_at`, `problems`), and a counter
+(`not_applied_heartbeats`) that flags a device after three heartbeats without the current version
+applied. One row per device (primary key `device_id`), cascades with the device, follows it in a
+move. RLS reads through devices, writes need `easyrmm_scope_all()`.
+
+## Recurring schedule actions (migration 00097, Feature 11 slice 3)
+
+Maintenance jobs (`jobs.kind = 'maintenance'`): restart, shutdown and service start/stop/restart,
+each a fixed script of EasyRMM's own, one per platform. `jobs.maintenance` (JSONB) holds the
+action.
+
+Automation steps (`automations.step_kind`) gain `software`, `restart`, `shutdown` and `service`;
+`automations.step` (JSONB) holds what the step needs (a package, a service name). `script_id`
+and `script_sha256` are nullable now, required only for script steps.
+
+`device_expected_offline`: when a restart or shutdown succeeds, it records that the device will
+be offline until `until_at`. Monitoring suppresses offline, remote-down and agent-silent alerts
+for it until then. One row per device (primary key `device_id`), cascades with the device. RLS
+lets both the system scope and the device's own scope read and write.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).
