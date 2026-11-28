@@ -285,6 +285,8 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST "+agentproto.PathHeartbeat, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.heartbeat)))
 	mux.Handle("POST "+agentproto.PathRemoved, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.removed)))
 	mux.Handle("POST "+agentproto.PathUninstalled, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.uninstalled)))
+	mux.Handle("POST "+agentproto.PathAddress, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, false, a.address)))
+	mux.Handle("POST "+agentproto.PathMove, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, false, a.moved)))
 	mux.Handle("GET "+agentproto.PathMeshAgent, httpapi.Handle(a.signed(a.meshAgent)))
 	mux.Handle("GET "+agentproto.PathMeshSettings, httpapi.Handle(a.signed(a.meshSettings)))
 	if a.jobs != nil {

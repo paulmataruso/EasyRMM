@@ -106,6 +106,10 @@ type Channel interface {
 // itself.
 var ErrRestart = errors.New("runner: the agent must restart into another build")
 
+// ErrMoved ends Run when the agent changed its server address in this process
+// and must restart to read it (ADR-0061).
+var ErrMoved = errors.New("runner: the agent changed its server address and must restart")
+
 // ErrRemoved ends Run when the agent must uninstall itself in this process.
 var ErrRemoved = errors.New("runner: the agent must uninstall itself")
 
@@ -279,6 +283,13 @@ type Runner struct {
 	// Settings holds the signed settings the server sends (ADR-0058); nil
 	// takes none, and the agent follows the answer's interval as before.
 	Settings SettingsAgent
+	// Fallback is called when every heartbeat has failed for FallbackAfter,
+	// and again each FallbackAfter while they go on failing: it checks the
+	// address the agent last moved from and switches back to it if that
+	// address confirms itself, returning true (ADR-0061). Nil never does.
+	Fallback func(ctx context.Context) bool
+	// FallbackAfter is that wait; zero is an hour.
+	FallbackAfter time.Duration
 	// ReportWithin is how soon the next heartbeat comes after a document was
 	// applied or refused, and after the first of a process, so that the
 	// server hears the report (5 s, within the ADR's 10).
@@ -287,15 +298,18 @@ type Runner struct {
 	// instrFeature: the server's last answer listed the instruction log.
 	instrFeature bool
 
-	status      state.Status
-	failures    int
-	lastInstall time.Time
-	inv         []byte // the inventory's JSON, as hashed and uploaded
-	invHash     string
-	invNew      bool // inv has the fields added after protocol level 2
-	invAt       time.Time
-	invFailed   time.Time
-	invStale    atomic.Bool
+	status   state.Status
+	failures int
+	// down is when the current run of failed heartbeats began, fbTried when
+	// the fall-back was last tried.
+	down, fbTried time.Time
+	lastInstall   time.Time
+	inv           []byte // the inventory's JSON, as hashed and uploaded
+	invHash       string
+	invNew        bool // inv has the fields added after protocol level 2
+	invAt         time.Time
+	invFailed     time.Time
+	invStale      atomic.Bool
 	// meshErr is the last failure of installing MeshAgent, for its state.
 	meshErr string
 	meshMu  sync.Mutex
@@ -487,9 +501,13 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		if r.Update != nil && r.Update.Unreached() {
 			return 0, ErrRestart
 		}
+		if r.fellBack(ctx) {
+			return 0, ErrMoved
+		}
 		return r.failed(err), nil
 	}
 	r.failures = 0
+	r.down = time.Time{}
 	if r.JobKeys != nil {
 		// Before anything else in the answer: its instructions are checked
 		// with the keys the agent trusts after the statements (ADR-0057).
@@ -675,6 +693,26 @@ func (r *Runner) syncInventory(ctx context.Context, serverHash string) {
 	r.invFailed = time.Time{}
 	r.status.InventoryUploaded, r.status.InventoryError = time.Now().UTC(), ""
 	r.Log.Info("uploaded the inventory", "bytes", len(r.inv))
+}
+
+// fellBack runs the fall-back once the heartbeats have failed for
+// FallbackAfter, and then at most that often, and reports whether the agent
+// switched address. Downtime of the whole deployment does not trigger it: the
+// address it would go back to confirms nothing then either.
+func (r *Runner) fellBack(ctx context.Context) bool {
+	now := time.Now()
+	if r.down.IsZero() {
+		r.down = now
+	}
+	after := r.FallbackAfter
+	if after <= 0 {
+		after = time.Duration(agentproto.FallbackAfterSeconds) * time.Second
+	}
+	if r.Fallback == nil || now.Sub(r.down) < after || (!r.fbTried.IsZero() && now.Sub(r.fbTried) < after) {
+		return false
+	}
+	r.fbTried = now
+	return r.Fallback(ctx)
 }
 
 func (r *Runner) failed(err error) time.Duration {

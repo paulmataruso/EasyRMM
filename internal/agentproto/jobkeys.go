@@ -69,6 +69,8 @@ const (
 	InstructionTrust     = "trust"
 	InstructionHandover  = "handover"
 	InstructionCutover   = "cutover"
+	// InstructionAddress is the server confirming an address (ADR-0061).
+	InstructionAddress = "address"
 )
 
 // Keys is the set of job-signing public keys an agent trusts. A signature by

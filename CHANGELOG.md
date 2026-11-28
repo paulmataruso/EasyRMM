@@ -8,6 +8,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Move an agent between a server's addresses by hand**
+  ([ADR-0061](docs/architecture/adr/0061-moving-to-a-new-name.md), slice 1).
+  `easyrmm-agent set-server https://rmm.example.com` asks the address to
+  confirm itself with a signature by a job key the agent trusts, over the
+  agent's own request, and only then makes it the agent's server; `install`
+  run again on an enrolled computer does the same for an address it was not
+  given before, and succeeds quietly for one the agent moved from. An agent
+  whose server has not answered for an hour goes back to the address it
+  moved from if that confirms itself. The server answers the check on
+  `/api/agent/v1/address` for the addresses it serves agents on, takes the
+  agent's reports on `/api/agent/v1/move` and audits them. Nothing moves
+  agents by itself yet.
+
+- **A record of the names each server's `.env` gives it**
+  ([ADR-0061](docs/architecture/adr/0061-moving-to-a-new-name.md), slice 1).
+  Each server keeps a random ID in its data directory and records its
+  `EASYRMM_PUBLIC_URL` and `EASYRMM_MESH_PUBLIC_URL` pair under it, at every
+  start and hourly (migration 00102). Nothing acts on it yet; the release that
+  moves agents starts from it.
+
 - **Repair the EasyRMM agent through patching**
   ([ADR-0069](docs/architecture/adr/0069-recovery-agent-logs-and-one-device-tree.md),
   slice R3). When the EasyRMM agent is silent while the EasyPatch agent

@@ -125,6 +125,8 @@ const ACTIONS: Record<string, string> = {
   "device.removal_request": "Asked to remove device",
   "device.removal_cancel": "Cancelled device removal",
   "device.removal_failed": "Agent could not remove itself",
+  "device.address_change": "Agent changed server address",
+  "device.address_change_failed": "Agent could not change server address",
   "device.remove": "Removed device",
   "device.retired_cleanup": "Removed agent of a removed device",
   "agent_updates.update": "Changed agent update settings",

@@ -85,6 +85,10 @@ const (
 	escrowFile  = "escrow.json"
 	trustFile   = "trust.json"
 	keysFile    = "jobkeys.json"
+	// addressFile holds the addresses the agent moved from (ADR-0061); a
+	// file of its own, so that a build that does not know it neither reads
+	// nor rewrites it.
+	addressFile = "address.json"
 	instrFile   = "instructions.json"
 	caFile      = "ca.pem"
 	packageFile = "package.json"
@@ -107,6 +111,7 @@ var layout = [][]string{
 	{escrowFile},
 	{trustFile},
 	{keysFile},
+	{addressFile},
 	{instrFile},
 	{settingsFile},
 	{packageFile},
@@ -354,6 +359,12 @@ func (s Store) Save(c *Config, key ed25519.PrivateKey) error {
 	}
 	// A new enrollment starts a new log (ADR-0057).
 	if err := s.ClearKeyState(); err != nil {
+		return err
+	}
+	// And forgets the addresses an earlier identity moved from (ADR-0061).
+	if path, err := s.path(addressFile); err != nil {
+		return err
+	} else if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
@@ -740,4 +751,107 @@ func writeFile(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// MaxMoved is how many addresses address.json keeps.
+const MaxMoved = 8
+
+// Moved is one address the agent left, and when.
+type Moved struct {
+	// Server is the address the agent moved from.
+	Server string `json:"server"`
+	// At is when the agent left it.
+	At time.Time `json:"at"`
+}
+
+// Addresses is what the agent remembers of the addresses it moved from
+// (ADR-0061), oldest first: the last is the previous address, the one it
+// falls back to. It holds no secret.
+type Addresses struct {
+	Moved []Moved `json:"moved,omitempty"`
+}
+
+// Previous returns the address the agent moved from last, "" for none.
+func (a Addresses) Previous() (Moved, bool) {
+	if len(a.Moved) == 0 {
+		return Moved{}, false
+	}
+	return a.Moved[len(a.Moved)-1], true
+}
+
+// Has reports whether server is an address the agent moved from.
+func (a Addresses) Has(server string) bool {
+	for _, m := range a.Moved {
+		if m.Server == server {
+			return true
+		}
+	}
+	return false
+}
+
+// Left returns the addresses with server, the one just left, as the last,
+// and no other entry for it, keeping the newest MaxMoved.
+func (a Addresses) Left(server string, at time.Time) Addresses {
+	out := Addresses{Moved: make([]Moved, 0, len(a.Moved)+1)}
+	for _, m := range a.Moved {
+		if m.Server != server {
+			out.Moved = append(out.Moved, m)
+		}
+	}
+	out.Moved = append(out.Moved, Moved{Server: server, At: at.UTC()})
+	if n := len(out.Moved) - MaxMoved; n > 0 {
+		out.Moved = out.Moved[n:]
+	}
+	return out
+}
+
+// Without returns the addresses without server, the one the agent came back
+// to.
+func (a Addresses) Without(server string) Addresses {
+	out := Addresses{}
+	for _, m := range a.Moved {
+		if m.Server != server {
+			out.Moved = append(out.Moved, m)
+		}
+	}
+	return out
+}
+
+// LoadAddresses reads address.json; an empty one when there is none or it is
+// damaged: the agent then has nowhere to fall back to, nothing more.
+func (s Store) LoadAddresses() Addresses {
+	var a Addresses
+	path, err := s.path(addressFile)
+	if err != nil {
+		return a
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	if err != nil || json.Unmarshal(b, &a) != nil {
+		return Addresses{}
+	}
+	return a
+}
+
+// SaveAddresses records address.json.
+func (s Store) SaveAddresses(a Addresses) error {
+	b, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+	return s.write(addressFile, append(b, '\n'))
+}
+
+// SetServer switches the agent to server: address.json first, with the
+// address it leaves, then agent.json, so that an interruption between them
+// leaves an agent that is where it was and remembers one address too many,
+// never one that is somewhere new with no way back. The configuration is
+// the one the agent runs with; only its Server changes.
+func (s Store) SetServer(c *Config, server string, at time.Time) error {
+	next := *c
+	next.Server = server
+	prev := s.LoadAddresses().Left(c.Server, at).Without(server)
+	if err := s.SaveAddresses(prev); err != nil {
+		return err
+	}
+	return s.SaveConfig(&next)
 }

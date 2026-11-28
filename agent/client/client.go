@@ -35,10 +35,12 @@ type Client struct {
 	// and roots, HTTP/1.1 only, and no overall timeout (ADR-0059).
 	ws     atomic.Pointer[http.Client]
 	custom bool // Options.Transport was given: Retrust changes nothing
-	device string
-	key    ed25519.PrivateKey
-	now    func() time.Time
-	agent  string
+	// noRedirect: Options.NoRedirect.
+	noRedirect bool
+	device     string
+	key        ed25519.PrivateKey
+	now        func() time.Time
+	agent      string
 	// level is the protocol level of the last heartbeat answer, 1 for an
 	// answer without one; known is closed at the first answer. Request
 	// fields added after level 2 are sent only while level is 2 or higher
@@ -70,6 +72,10 @@ type Options struct {
 	Version string
 	// Transport replaces the HTTP transport (tests).
 	Transport http.RoundTripper
+	// NoRedirect makes the client follow no redirect: an answer that is not 2xx,
+	// a redirect included, is an error. The check of an address is made so
+	// (ADR-0061).
+	NoRedirect bool
 }
 
 // New returns a client that is not yet enrolled.
@@ -87,12 +93,13 @@ func New(o Options) (*Client, error) {
 		rt = t
 	}
 	c := &Client{
-		base:    u,
-		custom:  o.Transport != nil,
-		now:     time.Now,
-		agent:   "easyrmm-agent/" + o.Version,
-		known:   make(chan struct{}),
-		knownBy: time.Now().Add(LevelWait),
+		base:       u,
+		custom:     o.Transport != nil,
+		noRedirect: o.NoRedirect,
+		now:        time.Now,
+		agent:      "easyrmm-agent/" + o.Version,
+		known:      make(chan struct{}),
+		knownBy:    time.Now().Add(LevelWait),
 	}
 	c.setTransport(rt)
 	return c, nil
@@ -158,7 +165,11 @@ func (c *Client) setTransport(rt http.RoundTripper) {
 		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 		wsRT = t
 	}
-	c.http.Store(&http.Client{Transport: rt, Timeout: 5 * time.Minute})
+	hc := &http.Client{Transport: rt, Timeout: 5 * time.Minute}
+	if c.noRedirect {
+		hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	c.http.Store(hc)
 	c.ws.Store(&http.Client{Transport: wsRT})
 }
 

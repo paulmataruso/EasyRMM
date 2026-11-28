@@ -198,6 +198,10 @@ floors=(
   "agent/winevent                          75"
   "agent/update                            80"
   "agent/removal                           85"
+  # Moving an agent between addresses (ADR-0061): the check, the switch and the fall-back.
+  "agent/move                              85"
+  # The record of the names each server's .env gives it (ADR-0061); measured with the integration tests.
+  "server/internal/serverenv               80"
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"

@@ -119,6 +119,10 @@ commands:
             (Linux; run as root)
   status    show the enrollment, the server keys this agent trusts, its latest
             accepted instructions and the last heartbeat
+  set-server https://rmm.example.com
+            check that this address is this agent's server (it must confirm
+            itself with a job key the agent trusts) and make it the agent's
+            address; run as root or administrator
   trust-key <generation>:<key> [--force]
             trust only this server job key, as the console prints it, and
             restart the agent's service (run as root or administrator)
@@ -273,6 +277,8 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 		return e.status(ctx)
 	case "trust-key":
 		return e.trustKey(ctx, rest)
+	case "set-server":
+		return e.setServer(ctx, rest)
 	case "uninstall":
 		return e.uninstall(ctx, rest)
 	case "version", "--version", "-v":
@@ -337,9 +343,15 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		_, _ = fmt.Fprintf(e.stdout, "Already waiting for approval in the EasyRMM console at %s, as device code %s.\n", waiting.Server, waiting.Code)
 	case err == nil:
 		if cfg.Server != mustServer(*server) {
-			return fmt.Errorf("this machine is enrolled with %s; run \"easyrmm-agent uninstall\" first", cfg.Server)
+			// An address the agent moved from, or one this same server
+			// confirms for this device, is the server it is enrolled with
+			// (ADR-0061).
+			if !e.alreadyEnrolledElsewhere(ctx, cfg, *server) {
+				return fmt.Errorf("this machine is enrolled with %s; run \"easyrmm-agent uninstall\" first", cfg.Server)
+			}
+		} else {
+			_, _ = fmt.Fprintf(e.stdout, "Already enrolled with %s as device %s.\n", cfg.Server, cfg.DeviceID)
 		}
-		_, _ = fmt.Fprintf(e.stdout, "Already enrolled with %s as device %s.\n", cfg.Server, cfg.DeviceID)
 	case errors.Is(err, state.ErrNotEnrolled):
 		tok := *token
 		if tok == "" {
@@ -690,6 +702,9 @@ func (e *env) run(ctx context.Context) error {
 		up.Jobs = busyJobs{w, ep}
 	}
 	r.OnJobKey = e.pinJobKey(ks, w)
+	// An hour of failed heartbeats makes the agent ask the address it moved
+	// from, and go back to it if it confirms itself (ADR-0061).
+	r.Fallback = e.moverFor(cfg, key, ks.Keys, busyJobs{w, ep}.Busy).Fallback
 	r.Removal = &removal.Remover{
 		DeviceID: cfg.DeviceID, Keys: ks.Keys, Record: il.Record, Dir: e.store.Dir(), Log: e.log,
 		Launch: e.launchRemoval, Report: c.Removed,
@@ -743,6 +758,17 @@ func (e *env) run(ctx context.Context) error {
 			mesh.Wait()
 		}
 		return e.removeOnRequest(parent, e.removalFile())
+	}
+	if errors.Is(err, runner.ErrMoved) {
+		// The configuration names the new address; the same build reads it.
+		if mesh != nil {
+			mesh.Wait()
+		}
+		exe, serr := e.self()
+		if serr != nil {
+			return serr
+		}
+		return e.restart(exe)
 	}
 	if errors.Is(err, runner.ErrRestart) {
 		// The new build starts its own MeshAgent child.
@@ -839,6 +865,7 @@ func (e *env) status(ctx context.Context) error {
 	}
 	w := e.stdout
 	_, _ = fmt.Fprintf(w, "Server:     %s\nDevice:     %s\nEnrolled:   %s\n", cfg.Server, cfg.DeviceID, cfg.EnrolledAt.Local().Format(time.RFC1123))
+	e.printAddress()
 	e.packageStatus()
 	e.printKeys(cfg)
 	if supported() && e.hasServices() {

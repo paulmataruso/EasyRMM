@@ -971,6 +971,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	defer cancel()
 	var wg sync.WaitGroup
 	wg.Go(func() { hold.Run(ctx) })
+	wg.Go(func() { runEnvRecord(ctx, cfg, db, log) })
 	if deps.AgentChannel.Enabled() {
 		// A hold ends the agents' connections (restart), and so does stopping.
 		deps.AgentChannel.SetHeld(hold.Held)
