@@ -5,6 +5,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { ComplianceTab } from "../compliance/ComplianceTab";
+import { AgentSettingsTab } from "./tabs/AgentSettingsTab";
 import { AlertPoliciesTab } from "./tabs/AlertPoliciesTab";
 import { AssetsTab } from "./tabs/AssetsTab";
 import { ContactsTab } from "./tabs/ContactsTab";
@@ -138,6 +139,14 @@ export const LEVEL_TABS: readonly LevelTab[] = [
     permission: "notification.manage",
     levels: ["organization"],
     component: NotificationsTab,
+  },
+  {
+    // Agent settings (ADR-0058, slice 3): the heartbeat interval and its kin, set here for everything below.
+    id: "agent-settings",
+    label: "Agent settings",
+    permission: "device.view",
+    levels: ["organization", "site"],
+    component: AgentSettingsTab,
   },
   {
     id: "install",

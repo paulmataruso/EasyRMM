@@ -5249,3 +5249,67 @@ export interface CollectedLogTimeline {
   until: string;
   buckets: CollectedLogBucket[];
 }
+
+// Agent settings (ADR-0058, slice 3): GET {scope}/agent-settings.
+export type AgentSettingScope = "platform" | "organization" | "site" | "device";
+
+export interface AgentSettingSource {
+  scope: AgentSettingScope;
+  id?: string;
+  name?: string;
+}
+
+export interface AgentSettingEntry {
+  key: string;
+  title: string;
+  description: string;
+  type: "integer";
+  min: number;
+  max: number;
+  default: number;
+  /** The value set at this scope; null when it inherits. */
+  set: { value: number; enforced: boolean; setBy: string; updatedAt: string; inEffect: boolean } | null;
+  inherited: { value: number; from: AgentSettingSource | null };
+  enforcedBy: AgentSettingSource | null;
+  effective: { value: number; from: AgentSettingSource | null; raised: boolean };
+  canWrite: boolean;
+  canEnforce: boolean;
+  permission: string;
+}
+
+/** Where a device's settings document stands; "none" is a device that takes settings and has had nothing issued. */
+export type AgentDocumentState = "applied" | "waiting" | "pending" | "not_applied" | "unsupported" | "none";
+
+export interface AgentSettingsDocument {
+  state: AgentDocumentState;
+  version: number;
+  appliedVersion: number;
+  issuedAt: string | null;
+  appliedAt: string | null;
+  notAppliedHeartbeats: number;
+  problems: Record<string, string>;
+}
+
+export interface AgentSettingsListing {
+  scope: AgentSettingScope;
+  id?: string;
+  name?: string;
+  limits: { minHeartbeatSeconds: number };
+  items: AgentSettingEntry[];
+  device?: { heartbeatSeconds: number; onlineUntil: string | null };
+  document?: AgentSettingsDocument;
+}
+
+export interface AgentSettingsProblemDevice {
+  id: string;
+  name: string;
+  organizationId: string;
+  organizationName: string;
+  agentVersion: string;
+  notAppliedHeartbeats: number;
+}
+
+export interface AgentSettingsProblems {
+  unsupported: AgentSettingsProblemDevice[];
+  notApplied: AgentSettingsProblemDevice[];
+}
