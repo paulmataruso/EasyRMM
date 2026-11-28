@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
 // open opens the store of a state folder under a test's own root.
@@ -365,5 +367,42 @@ func TestPackageRecord(t *testing.T) {
 	// A store that Open did not make reads and writes nothing.
 	if _, err := (Store{}).LoadPackage(); err == nil {
 		t.Error("an unopened store read the record")
+	}
+}
+
+func TestSettingsAreSavedOwnerOnlyAndDamageReadsAsNone(t *testing.T) {
+	s := open(t)
+	if got := s.LoadSettings(); got != nil {
+		t.Fatalf("nothing saved: %+v", got)
+	}
+	if err := os.MkdirAll(s.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	in := Settings{Document: agentproto.SignedSettings{Payload: "cGF5bG9hZA==", Signature: "c2ln"},
+		Applied: map[string]json.RawMessage{"agent.heartbeat_seconds": json.RawMessage("120")}}
+	if err := s.SaveSettings(in); err != nil {
+		t.Fatal(err)
+	}
+	got := s.LoadSettings()
+	if got == nil || got.Document != in.Document || string(got.Applied["agent.heartbeat_seconds"]) != "120" {
+		t.Fatalf("loaded %+v", got)
+	}
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(filepath.Join(s.Dir(), settingsFile))
+		if err != nil || st.Mode().Perm() != 0o600 {
+			t.Errorf("settings.json mode = %v, %v", st.Mode().Perm(), err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir(), settingsFile), []byte("{damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.LoadSettings(); got != nil {
+		t.Errorf("a damaged file loaded: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir(), settingsFile), []byte(`{"document":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.LoadSettings(); got != nil {
+		t.Errorf("an empty document loaded: %+v", got)
 	}
 }
