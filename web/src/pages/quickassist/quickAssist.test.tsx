@@ -16,6 +16,7 @@ const request: QuickAssistSession = {
   id: "s1", linkId: "l1", linkName: "Support for Contoso", organizationId: "o1", deviceId: "d1", deviceName: "FRONT-DESK", platform: "linux",
   state: "requested", elevated: false, test: true, requestedAt: "2026-11-26T10:00:00Z", acceptedBy: null, acceptedAt: null, endedAt: null,
   endReason: "", lastSeenAt: "2026-11-26T10:00:00Z", cleanup: "none", sourceIp: "203.0.113.5", disconnected: false,
+  expiresAt: "2099-01-01T00:00:00Z", extended: false, lastActivityAt: "2026-11-26T10:00:00Z",
 };
 
 const routes = (sessions: QuickAssistSession[], extra = {}) => ({
@@ -85,11 +86,36 @@ describe("Quick Assist", () => {
     expect(await screen.findByText(/Ended by the technician\. Cleaned up, verified\./)).toBeInTheDocument();
   });
 
+  it("offers Extend only near the end of a session, once", async () => {
+    const user = userEvent.setup();
+    const soon = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const far = { ...request, state: "active" as const, acceptedBy: "u-alex" };
+    const near = { ...far, id: "s3", deviceName: "NEAR-END", expiresAt: soon };
+    const done = { ...far, id: "s4", deviceName: "EXTENDED", expiresAt: soon, extended: true };
+    const server = installFakeApi(routes([far, near, done], { "POST /quickassist/sessions/:id/extend": ok({ ...near, extended: true }) }));
+    renderApp("/quickassist?view=active");
+    const nearRow = (await screen.findByText("NEAR-END")).closest("tr")!;
+    expect(within((await screen.findByText("FRONT-DESK")).closest("tr")!).queryByRole("button", { name: /Extend/ })).not.toBeInTheDocument();
+    expect(within(screen.getByText("EXTENDED").closest("tr")!).getByRole("button", { name: "Extended" })).toBeDisabled();
+    await user.click(within(nearRow).getByRole("button", { name: "Extend" }));
+    await waitFor(() => expect(server.callsTo("POST /quickassist/sessions/:id/extend")).toHaveLength(1));
+  });
+
+  it("badges a stale permanent link", async () => {
+    const link: QuickAssistLink = {
+      id: "l8", organizationId: "o1", siteId: null, kind: "permanent", name: "Help desk", note: "", state: "active", paused: false, test: false,
+      expiresAt: null, createdAt: "2026-01-01T10:00:00Z", usedAt: null, lastUsedAt: "2026-02-01T10:00:00Z", downloadCount: 3, stale: true,
+    };
+    installFakeApi(routes([], { "GET /organizations/:id/quickassist/links": ok({ links: [link] }) }));
+    renderApp("/quickassist?view=links");
+    expect(await screen.findByText("Stale")).toBeInTheDocument();
+  });
+
   it("makes a one-time link with one click and shows it once", async () => {
     const user = userEvent.setup();
     const link: QuickAssistLink = {
       id: "l9", organizationId: "o1", siteId: null, kind: "one_time", name: "Help", note: "", state: "active", paused: false, test: true,
-      expiresAt: "2026-11-27T10:00:00Z", createdAt: "2026-11-26T10:00:00Z", usedAt: null, lastUsedAt: null, downloadCount: 0,
+      expiresAt: "2026-11-27T10:00:00Z", createdAt: "2026-11-26T10:00:00Z", usedAt: null, lastUsedAt: null, downloadCount: 0, stale: false,
     };
     const server = installFakeApi(
       routes([], {

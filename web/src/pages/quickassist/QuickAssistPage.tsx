@@ -22,8 +22,12 @@ const END_REASON: Record<string, string> = {
   evicted: "Made room for a newer request",
   link_revoked: "The link was revoked",
   max_length: "Reached its maximum length",
+  idle: "Ended after being idle",
   lost: "The computer stopped answering",
 };
+
+/** An Extend button appears when a session is this close to its maximum length. */
+export const EXTEND_WINDOW_MS = 15 * 60 * 1000;
 
 const CLEANUP: Record<QuickAssistSession["cleanup"], string> = {
   none: "Not reported yet",
@@ -109,11 +113,13 @@ function Sessions({ org, view }: { org: string; view: Exclude<View, "links"> }) 
     invalidate: inval,
     onSuccess: () => toast.success("Asked. The user is shown a question on their screen and nothing is installed unless they agree."),
   });
+  const extend = useApiMutation((s: QuickAssistSession) => api.post(`/quickassist/sessions/${s.id}/extend`), { invalidate: inval, onSuccess: () => toast.success("Session extended.") });
   const { can, session } = useAuth();
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const rows = q.data?.sessions ?? [];
+  const nearEnd = (s: QuickAssistSession) => new Date(s.expiresAt).getTime() - Date.now() <= EXTEND_WINDOW_MS;
   if (rows.length === 0) {
     return (
       <EmptyState title={view === "requests" ? "No requests waiting" : view === "active" ? "No sessions running" : "Nothing has ended yet"} icon={<LifeBuoy className="size-8" aria-hidden />}>
@@ -182,6 +188,19 @@ function Sessions({ org, view }: { org: string; view: Exclude<View, "links"> }) 
                         <>
                           <Button size="sm" variant="secondary" onClick={() => install.mutate(s)}>
                             Install agent
+                          </Button>{" "}
+                        </>
+                      )}
+                      {can("quickassist.session") && (s.extended || nearEnd(s)) && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={s.extended || extend.isPending}
+                            title={s.extended ? "This session was extended once already." : `Ends ${formatRelative(s.expiresAt)}. Add more time, once.`}
+                            onClick={() => extend.mutate(s)}
+                          >
+                            {s.extended ? "Extended" : "Extend"}
                           </Button>{" "}
                         </>
                       )}
@@ -287,7 +306,14 @@ function Links({ org }: { org: string }) {
                   <tr key={l.id} className="border-t border-border">
                     <td className="px-4 py-2 font-medium">{l.name || "Unnamed link"}</td>
                     <td className="px-4 py-2">{l.kind === "one_time" ? "One-time" : "Permanent"}{l.test ? " (test)" : ""}</td>
-                    <td className="px-4 py-2">{l.paused ? "Paused" : l.state === "active" ? "Active" : l.state === "used" ? "Used" : l.state === "expired" ? "Expired" : "Revoked"}</td>
+                    <td className="px-4 py-2">
+                      {l.paused ? "Paused" : l.state === "active" ? "Active" : l.state === "used" ? "Used" : l.state === "expired" ? "Expired" : "Revoked"}
+                      {l.stale && l.state === "active" && (
+                        <span className="ml-2 rounded-full bg-hover px-2 py-0.5 text-xs text-muted" title="Not used for 90 days. It is revoked if it stays unused for 180.">
+                          Stale
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-2" title={formatDateTime(l.createdAt)}>
                       {formatRelative(l.createdAt)}
                     </td>

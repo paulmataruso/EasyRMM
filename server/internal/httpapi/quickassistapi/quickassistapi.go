@@ -61,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/quickassist/sessions/{id}/decline", a.decline)
 	r("POST /api/v1/quickassist/sessions/{id}/end", a.end)
 	r("POST /api/v1/quickassist/sessions/{id}/takeover", a.takeover)
+	r("POST /api/v1/quickassist/sessions/{id}/extend", a.extend)
 	r("POST /api/v1/quickassist/sessions/{id}/install", a.install)
 
 	mux.Handle("GET /qa/{token}", httpapi.Handle(a.page))
@@ -70,6 +71,14 @@ func (a *API) Register(mux *http.ServeMux) {
 type modeBody struct {
 	Mode               string `json:"mode"`
 	DefaultLifeMinutes int    `json:"defaultLifeMinutes,omitempty"`
+	// The limits (ADR-0080): idle limit, session length, retention, bucket, caps.
+	quickassist.Settings
+}
+
+// putBody is a change to the settings: the link mode (second factor), the limits, or both.
+type putBody struct {
+	Mode string `json:"mode"`
+	quickassist.SettingsPatch
 }
 
 func (a *API) getSettings(w http.ResponseWriter, r *http.Request) error {
@@ -81,7 +90,11 @@ func (a *API) getSettings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, modeBody{Mode: m, DefaultLifeMinutes: int(life / time.Minute)})
+	lim, err := a.svc.LoadSettings(r.Context())
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, modeBody{Mode: m, DefaultLifeMinutes: int(life / time.Minute), Settings: lim})
 	return nil
 }
 
@@ -101,18 +114,28 @@ func (a *API) putDefaultLife(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *API) putSettings(w http.ResponseWriter, r *http.Request) error {
-	var in modeBody
+	var in putBody
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	// Lifting the restriction changes who may be sent an unsigned program.
-	if err := a.stepUp.StepUp(r); err != nil {
+	if in.Mode != "" {
+		// Lifting the restriction changes who may be sent an unsigned program.
+		if err := a.stepUp.StepUp(r); err != nil {
+			return err
+		}
+		if err := a.svc.SetMode(r.Context(), httpapi.Caller(r), in.Mode); err != nil {
+			return err
+		}
+	}
+	lim, err := a.svc.UpdateSettings(r.Context(), httpapi.Caller(r), in.SettingsPatch)
+	if err != nil {
 		return err
 	}
-	if err := a.svc.SetMode(r.Context(), httpapi.Caller(r), in.Mode); err != nil {
+	m, err := a.svc.Mode(r.Context())
+	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, in)
+	httpapi.WriteJSON(w, http.StatusOK, modeBody{Mode: m, Settings: lim})
 	return nil
 }
 
@@ -289,6 +312,20 @@ func (a *API) install(w http.ResponseWriter, r *http.Request) error {
 	return a.simple(func(r *http.Request, id uuid.UUID) error {
 		return a.svc.RequestInstall(r.Context(), httpapi.Caller(r), id)
 	})(w, r)
+}
+
+// extend lengthens an active session once.
+func (a *API) extend(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	x, err := a.svc.ExtendSession(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, x)
+	return nil
 }
 
 func (a *API) takeover(w http.ResponseWriter, r *http.Request) error {

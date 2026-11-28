@@ -12,7 +12,11 @@ function routes() {
     ...baseRoutes(sessionView()),
     ...unreportedRoutes(),
     "GET /organizations": ok({ items: [org("o1", "Northwind Traders")] }),
-    "GET /quickassist/settings": ok({ mode: "own_test", defaultLifeMinutes: 1440 }),
+    "GET /quickassist/settings": ok({
+      mode: "own_test", defaultLifeMinutes: 1440,
+      idleMinutes: 30, maxSessionHours: 8, retentionDays: 30, bucketBurst: 5, bucketRefillMinutes: 3, waitingCap: 20, permanentLinkCap: 5,
+    }),
+    "PUT /quickassist/settings": ok({ mode: "own_test" }),
     "PUT /quickassist/settings/default-life": ok({ minutes: 60 }),
   };
 }
@@ -33,5 +37,23 @@ describe("Settings > General", () => {
     expect(save).toBeEnabled();
     await user.click(save);
     await waitFor(() => expect(server.callsTo("PUT /quickassist/settings/default-life").map((c) => c.body)).toEqual([{ minutes: 60 }]));
+  });
+
+  it("shows the limits and sends only what changed, within the bounds", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(routes());
+    renderApp("/settings?tab=general");
+    const idle = await screen.findByLabelText("End an idle session after (minutes)");
+    await waitFor(() => expect(idle).toHaveValue(30));
+    expect(screen.getByLabelText("Longest session (hours)")).toHaveValue(8);
+    const save = screen.getByRole("button", { name: "Save limits" });
+    await user.clear(idle);
+    await user.type(idle, "4");
+    expect(save).toBeDisabled();
+    await user.clear(idle);
+    await user.type(idle, "45");
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await waitFor(() => expect(server.callsTo("PUT /quickassist/settings").map((c) => c.body)).toEqual([{ idleMinutes: 45 }]));
   });
 });
