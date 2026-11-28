@@ -845,7 +845,7 @@ reports and the spacing of `metrics`. What was decided while building it:
   leaving the stored time unmoved. The ADR only says the time stays; an old
   report must not move the applied version back.
 * **`agent_device_state` has no organization or site columns** (migration
-  90611): row-level security reads through `devices`, as the job key tables'
+  00096): row-level security reads through `devices`, as the job key tables'
   do, and a device's move needs nothing updated. The ADR's "with its
   organization and site" is not built; the move test lists the table as
   *follows*.

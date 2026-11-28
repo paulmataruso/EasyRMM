@@ -1,6 +1,6 @@
 # set2: signed settings delivery (ADR-0058, slice 2)
 
-Branch `ws/set2`, from `integration/2026-11`. Migration `90611_agent_device_state.sql` (the integrator renumbers; 00094 onward is free).
+Branch `ws/set2`, from `integration/2026-11`. Migration `00096_agent_device_state.sql`.
 
 ## Changelog lines
 
@@ -19,7 +19,7 @@ Branch `ws/set2`, from `integration/2026-11`. Migration `90611_agent_device_stat
 
 ## For the integrator
 
-- Migration `90611_agent_device_state.sql` (renumber). The move test (`move_api_integration_test.go`) lists `agent_device_state` as *follows*.
+- Migration `00096_agent_device_state.sql`. The move test (`move_api_integration_test.go`) lists `agent_device_state` as *follows*.
 - `scripts/ci/check-coverage.sh`: new floor `agent/settings 95`.
 - ADR-0058 gains "Amended 2026-11-28: as built in slice 2"; ADR-0009 gains its *Refined by ADR-0058* line; `docs/architecture/database.md` gains the `agent_device_state` row.
 - Decisions that differ from the ADR's text are listed in that amendment: the signature is over the context and the payload's JSON bytes (as jobs, updates and uninstalls), a heartbeat signed earlier than the latest processed is not processed at all, `agent_device_state` carries no organization or site columns (row-level security reads through `devices`), the next heartbeat after an applied or refused document comes in 5 seconds.
