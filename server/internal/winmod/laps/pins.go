@@ -1,7 +1,7 @@
 package laps
 
 var pins = map[string]string{
-	"configure":      "0c4c4f6c876924ba5f4340a64e06eb35b60701a514cfe88192628f1747a1685c",
-	"reset_password": "0faf7859c913c3592986aa450ee506c29257d18b4fe90cda5ed55e0572c65967",
-	"status":         "4192ace851b98d3cf1937353ec8b8b09e27435cca21efb23d7419c9afef804a0",
+	"configure":      "442041bc0f05bf661fe5eb48face16fdf7fc9b2f4b6e2feb7d24116e9360ee8d",
+	"reset_password": "d6a8351f2d7bb4da52eb46f0b9045376a040fc82783deb5a859dd27df89ed7cb",
+	"status":         "49ce03a8862df2a31d3578d12ec7f8a2d1ae9db43c4bb39c123fc72f2f66c2b5",
 }
