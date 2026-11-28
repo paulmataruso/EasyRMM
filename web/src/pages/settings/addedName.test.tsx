@@ -38,6 +38,7 @@ function routes(extra: Record<string, unknown> = {}) {
     ...unreportedRoutes(),
     "GET /settings/certificates": ok(OVERVIEW),
     "GET /settings/certificates/added-name": ok({ eligible: true }),
+    "GET /settings/certificates/dns": ok({ credentials: [] }),
     ...extra,
   };
 }
