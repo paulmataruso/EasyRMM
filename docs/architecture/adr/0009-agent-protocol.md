@@ -1,6 +1,9 @@
 # ADR-0009: Agent protocol — device keys, WebSocket with HTTPS polling fallback
 
 * Status: Accepted (2026-11-15); amended 2026-11-21 ("Evolving the protocol")
+* Refined by [ADR-0058](0058-signed-settings-that-reach-the-agent.md) (slice 2): for
+  settings documents the envelope and the set of keys stay as strict as any signed
+  instruction, and what is inside a key's value is judged per key.
 
 ## Decision
 * At enrolment the agent generates an **Ed25519** key pair; the private key
