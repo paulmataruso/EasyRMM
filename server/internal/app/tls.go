@@ -65,7 +65,6 @@ func ownAddresses(cfg *config.Config) []netip.Addr {
 	return out
 }
 
-
 // ErrTLSChecksFailed is returned by TLSCheck when a check failed.
 var ErrTLSChecksFailed = errors.New("a check failed")
 

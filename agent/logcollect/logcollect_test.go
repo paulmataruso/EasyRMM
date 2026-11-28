@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -313,6 +314,9 @@ func auditLine(serial int) string {
 }
 
 func TestAuditReaderFollowsRotationByInode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("audit log rotation tracking uses inodes, which Windows does not expose")
+	}
 	dir := t.TempDir()
 	cur := filepath.Join(dir, "audit.log")
 	if err := os.WriteFile(cur, []byte(auditLine(1)+auditLine(2)+"type=USER_AUTH msg=audit(17"), 0o600); err != nil {

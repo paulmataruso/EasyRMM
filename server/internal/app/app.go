@@ -129,9 +129,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/bitlocker"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/defender"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy"
+	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy/gpowire"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/laps"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/ntp"
-	"github.com/paulmataruso/easyrmm/server/internal/winmod/grouppolicy/gpowire"
 	"github.com/paulmataruso/easyrmm/server/internal/winmod/roles"
 )
 
@@ -250,7 +250,7 @@ type Deps struct {
 	// between sources (ADR-0055, slice 5b2); the edge routes by it.
 	TLSMove *tlsmove.Service
 	// TLSAdd adds a name pair to an IP install (ADR-0055, 5b3).
-	TLSAdd    *tlsaddname.Service
+	TLSAdd *tlsaddname.Service
 	// TLSDNS manages DNS-01 challenge credentials (ADR-0055, 5b4).
 	TLSDNS    *tlsdns.Service
 	moveCerts *moveCerts

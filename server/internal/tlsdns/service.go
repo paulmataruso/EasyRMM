@@ -28,7 +28,7 @@ import (
 
 // Providers.
 const (
-	ProviderRFC2136   = "rfc2136"
+	ProviderRFC2136    = "rfc2136"
 	ProviderCloudflare = "cloudflare"
 )
 
@@ -42,27 +42,27 @@ var allowedTSIGAlgorithms = map[string]bool{
 
 // Errors.
 var (
-	ErrNotFound       = errors.New("tlsdns: credential not found")
-	ErrDuplicateZone  = errors.New("tlsdns: a credential for this zone already exists")
-	ErrBadProvider    = errors.New("tlsdns: unknown provider")
-	ErrBadZone        = errors.New("tlsdns: not a valid DNS zone")
-	ErrBadAlgorithm   = errors.New("tlsdns: TSIG algorithm not allowed; use hmac-sha256, hmac-sha384 or hmac-sha512")
-	ErrBadServer      = errors.New("tlsdns: the server address is not reachable or not allowed")
-	ErrCloudMetadata  = errors.New("tlsdns: cloud metadata addresses are not allowed")
-	ErrTestFailed     = errors.New("tlsdns: the test record could not be created or removed")
-	ErrMissingField   = errors.New("tlsdns: a required field is empty")
+	ErrNotFound      = errors.New("tlsdns: credential not found")
+	ErrDuplicateZone = errors.New("tlsdns: a credential for this zone already exists")
+	ErrBadProvider   = errors.New("tlsdns: unknown provider")
+	ErrBadZone       = errors.New("tlsdns: not a valid DNS zone")
+	ErrBadAlgorithm  = errors.New("tlsdns: TSIG algorithm not allowed; use hmac-sha256, hmac-sha384 or hmac-sha512")
+	ErrBadServer     = errors.New("tlsdns: the server address is not reachable or not allowed")
+	ErrCloudMetadata = errors.New("tlsdns: cloud metadata addresses are not allowed")
+	ErrTestFailed    = errors.New("tlsdns: the test record could not be created or removed")
+	ErrMissingField  = errors.New("tlsdns: a required field is empty")
 )
 
 // TestReason maps library errors to fixed reasons the page shows.
 type TestReason string
 
 const (
-	ReasonOK           TestReason = "ok"
-	ReasonRefused      TestReason = "refused"
-	ReasonTimedOut     TestReason = "timed_out"
+	ReasonOK            TestReason = "ok"
+	ReasonRefused       TestReason = "refused"
+	ReasonTimedOut      TestReason = "timed_out"
 	ReasonNotAuthorized TestReason = "not_authorized"
 	ReasonZoneNotFound  TestReason = "zone_not_found"
-	ReasonUnknown      TestReason = "unknown"
+	ReasonUnknown       TestReason = "unknown"
 )
 
 // RFC2136Input is what a super administrator provides for an RFC 2136 provider.
@@ -82,23 +82,23 @@ type CloudflareInput struct {
 
 // SaveInput is a provider-agnostic save request.
 type SaveInput struct {
-	Provider        string `json:"provider"`
-	OverrideDomain  string `json:"overrideDomain"`
-	RFC2136         *RFC2136Input    `json:"rfc2136,omitempty"`
-	Cloudflare      *CloudflareInput `json:"cloudflare,omitempty"`
+	Provider       string           `json:"provider"`
+	OverrideDomain string           `json:"overrideDomain"`
+	RFC2136        *RFC2136Input    `json:"rfc2136,omitempty"`
+	Cloudflare     *CloudflareInput `json:"cloudflare,omitempty"`
 }
 
 // Credential is a row from tls_dns_credentials, with secrets stripped.
 type Credential struct {
-	ID              uuid.UUID  `json:"id"`
-	Provider        string     `json:"provider"`
-	Zone            string     `json:"zone"`
-	OverrideDomain  string     `json:"overrideDomain"`
-	ServerAddr      string     `json:"serverAddr,omitempty"`
-	TestedAt        *time.Time `json:"testedAt,omitempty"`
-	TestOK          bool       `json:"testOk"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID             uuid.UUID  `json:"id"`
+	Provider       string     `json:"provider"`
+	Zone           string     `json:"zone"`
+	OverrideDomain string     `json:"overrideDomain"`
+	ServerAddr     string     `json:"serverAddr,omitempty"`
+	TestedAt       *time.Time `json:"testedAt,omitempty"`
+	TestOK         bool       `json:"testOk"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 // sealedCreds is what we store in the credentials column, JSON-then-sealed.

@@ -16,18 +16,18 @@ import (
 
 // Suppression is a device–kind pair the monitoring system skips (ADR-0085).
 type Suppression struct {
-	ID             uuid.UUID  `json:"id"`
-	DeviceID       uuid.UUID  `json:"deviceId"`
-	DeviceName     string     `json:"deviceName"`
-	OrganizationID uuid.UUID  `json:"organizationId"`
-	SiteID         uuid.UUID  `json:"siteId"`
-	Kind           string     `json:"kind"`
-	Subject        string     `json:"subject"`
-	SubjectLabel   string     `json:"subjectLabel,omitempty"`
-	Reason         string     `json:"reason"`
-	CreatedBy      string     `json:"createdBy"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	CanManage      bool       `json:"canManage"`
+	ID             uuid.UUID `json:"id"`
+	DeviceID       uuid.UUID `json:"deviceId"`
+	DeviceName     string    `json:"deviceName"`
+	OrganizationID uuid.UUID `json:"organizationId"`
+	SiteID         uuid.UUID `json:"siteId"`
+	Kind           string    `json:"kind"`
+	Subject        string    `json:"subject"`
+	SubjectLabel   string    `json:"subjectLabel,omitempty"`
+	Reason         string    `json:"reason"`
+	CreatedBy      string    `json:"createdBy"`
+	CreatedAt      time.Time `json:"createdAt"`
+	CanManage      bool      `json:"canManage"`
 }
 
 // SuppressInput is what the caller sends to suppress an alert.
