@@ -196,7 +196,7 @@ func TestLoadContentStoresTheLibraryAndPacks(t *testing.T) {
 		}
 	}
 	for q, want := range map[string]int{
-		`SELECT count(*) FROM compliance_controls`:                                            281,
+		`SELECT count(*) FROM compliance_controls`:                                            289,
 		`SELECT count(*) FROM compliance_controls WHERE apply_supported`:                      -1,
 		`SELECT count(*) FROM compliance_frameworks`:                                          13,
 		`SELECT count(*) FROM compliance_requirements WHERE framework_key = 'nist-800-171r2'`: 110,
@@ -345,7 +345,7 @@ func TestSecurityOfTheTables(t *testing.T) {
 			t.Errorf("%s as system: %d, want 2", q, got)
 		}
 	}
-	if count(acme, `SELECT count(*) FROM compliance_controls`) != 281 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
+	if count(acme, `SELECT count(*) FROM compliance_controls`) != 289 || count(database.Scope{}, `SELECT count(*) FROM compliance_mappings`) < 1000 {
 		t.Error("the library is not readable by every scope")
 	}
 	// The library is read-only to a user's scope; a user's scope writes nothing at all.
@@ -480,7 +480,7 @@ func TestScanOfStoredResults(t *testing.T) {
 			t.Errorf("%s on the computer with no per-setting result: %s", id, st)
 		}
 	}
-	if n := f.n(`SELECT count(*) FROM compliance_results_history WHERE scan_id = $1`, sc.ID); n != 2*109 {
+	if n := f.n(`SELECT count(*) FROM compliance_results_history WHERE scan_id = $1`, sc.ID); n != 2*115 {
 		t.Errorf("%d results, want one per device and control", n)
 	}
 	if f.n(`SELECT count(*) FROM audit_log WHERE action = 'compliance.scan_start' AND organization_id = $1`, f.acme) != 1 {
@@ -489,7 +489,7 @@ func TestScanOfStoredResults(t *testing.T) {
 
 	// What the device and the framework show.
 	dr, err := f.svc.DeviceResults(f.ctx, tech, lnx)
-	if err != nil || len(dr) != 109 {
+	if err != nil || len(dr) != 115 {
 		t.Fatalf("%d results, %v", len(dr), err)
 	}
 	words := map[string]string{}
@@ -606,7 +606,7 @@ func TestFrameworkRollUpFromScans(t *testing.T) {
 			t.Errorf("%+v", p.Coverage)
 		}
 	}
-	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 172 {
+	if cs, err := f.svc.Controls(f.ctx, admin, "windows"); err != nil || len(cs) != 174 {
 		t.Errorf("%d windows controls, %v", len(cs), err)
 	}
 	if ps, err := f.svc.Profiles(f.ctx, admin); err != nil || len(ps) != 6 {
