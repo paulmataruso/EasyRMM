@@ -17,7 +17,7 @@ try {
     $tzId = [string]$p.timezoneId
     $available = @([System.TimeZoneInfo]::GetSystemTimeZones() | ForEach-Object { $_.Id })
     if ($available -notcontains $tzId) {
-        Stop-With 'not_found' ('No such timezone: {0}. Use the Windows timezone ID, e.g. "Eastern Standard Time".' -f $tzId)
+        Stop-With 'not_found' 'The timezone ID was not found. Use the Windows timezone ID, e.g. "Eastern Standard Time".'
     }
     $before = Get-TimeZone
     Set-TimeZone -Id $tzId
