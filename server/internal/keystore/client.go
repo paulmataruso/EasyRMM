@@ -184,3 +184,10 @@ func (c *Client) ResealEscrow(ctx context.Context, requestID, record, oldWrapped
 	}
 	return r.Enc, r.Ciphertext, nil
 }
+
+// Doer is the subset of Client the web setup wizard needs.
+type Doer interface {
+	Do(ctx context.Context, req Request) (*Response, error)
+}
+
+var _ Doer = (*Client)(nil)

@@ -260,3 +260,64 @@ func (s *Service) Platform(ctx context.Context, c access.Caller) (PlatformStatus
 	use, err := s.KEKUsage(ctx)
 	return PlatformStatus{Status: st, KEKUsage: use}, err
 }
+
+// InitResult is the response from initialising the keystore through the web UI.
+type InitResult struct {
+	RecoveryCode string `json:"recoveryCode"`
+	BundlePath   string `json:"bundlePath"`
+	Version      int    `json:"version"`
+}
+
+// WebInit initialises the keystore from the console (ADR-0081 amendment).
+func (s *Service) WebInit(ctx context.Context, c access.Caller, mode string, passphrase []byte) (*InitResult, error) {
+	if !c.CanGlobal(rbac.PermSettingsManage) {
+		return nil, apperr.Forbidden()
+	}
+	d, ok := s.ks.(Doer)
+	if !ok || s.ks == nil {
+		return nil, ErrNotReady
+	}
+	r, err := d.Do(ctx, Request{Op: OpWebInit, Mode: mode, Passphrase: passphrase})
+	if err != nil {
+		return nil, err
+	}
+	s.RefreshStatus(ctx)
+	return &InitResult{RecoveryCode: r.RecoveryCode, BundlePath: r.BundlePath, Version: r.Version}, nil
+}
+
+// WebUnseal unseals the keystore from the console.
+func (s *Service) WebUnseal(ctx context.Context, c access.Caller, passphrase []byte) (*Status, error) {
+	if !c.CanGlobal(rbac.PermSettingsManage) {
+		return nil, apperr.Forbidden()
+	}
+	d, ok := s.ks.(Doer)
+	if !ok || s.ks == nil {
+		return nil, ErrNotReady
+	}
+	r, err := d.Do(ctx, Request{Op: OpWebUnseal, Passphrase: passphrase})
+	if err != nil {
+		return nil, err
+	}
+	st := s.RefreshStatus(ctx)
+	if r.Status != nil {
+		st = *r.Status
+	}
+	return &st, nil
+}
+
+// WebVerifyRecovery verifies the recovery code from the console.
+func (s *Service) WebVerifyRecovery(ctx context.Context, c access.Caller, bundle string, code []byte) (int, error) {
+	if !c.CanGlobal(rbac.PermSettingsManage) {
+		return 0, apperr.Forbidden()
+	}
+	d, ok := s.ks.(Doer)
+	if !ok || s.ks == nil {
+		return 0, ErrNotReady
+	}
+	r, err := d.Do(ctx, Request{Op: OpWebVerifyRecovery, Bundle: bundle, Code: code})
+	if err != nil {
+		return 0, err
+	}
+	s.RefreshStatus(ctx)
+	return r.Version, nil
+}

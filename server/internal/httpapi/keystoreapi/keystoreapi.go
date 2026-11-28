@@ -36,6 +36,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/organizations/{id}/keystore-settings", a.settings)
 	r("PUT /api/v1/organizations/{id}/keystore-settings", a.setSettings)
 	r("POST /api/v1/organizations/{id}/keystore/rotate-key", a.rotateKey)
+	r("POST /api/v1/keystore/init", a.keystoreInit)
+	r("POST /api/v1/keystore/unseal", a.keystoreUnseal)
+	r("POST /api/v1/keystore/verify-recovery", a.keystoreVerifyRecovery)
 }
 
 // rotateKey makes a new escrow key for the organization and has the keystore
@@ -228,5 +231,55 @@ func (a *API) status(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusOK, st)
+	return nil
+}
+
+func (a *API) keystoreInit(w http.ResponseWriter, r *http.Request) error {
+	var b struct {
+		Mode       string `json:"mode"`
+		Passphrase string `json:"passphrase"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &b); err != nil {
+		return err
+	}
+	out, err := a.svc.WebInit(r.Context(), httpapi.Caller(r), b.Mode, []byte(b.Passphrase))
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) keystoreUnseal(w http.ResponseWriter, r *http.Request) error {
+	var b struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &b); err != nil {
+		return err
+	}
+	out, err := a.svc.WebUnseal(r.Context(), httpapi.Caller(r), []byte(b.Passphrase))
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) keystoreVerifyRecovery(w http.ResponseWriter, r *http.Request) error {
+	var b struct {
+		Bundle string `json:"bundle"`
+		Code   string `json:"code"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &b); err != nil {
+		return err
+	}
+	version, err := a.svc.WebVerifyRecovery(r.Context(), httpapi.Caller(r), b.Bundle, []byte(b.Code))
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"version": version})
 	return nil
 }

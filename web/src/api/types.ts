@@ -4141,6 +4141,13 @@ export interface KeystoreStatus {
   kekUsage?: { version: number; keys: number }[];
 }
 
+/** Response from POST /api/v1/keystore/init. */
+export interface KeystoreInitResponse {
+  recoveryCode: string;
+  bundlePath: string;
+  version: number;
+}
+
 /** A two-person request to read a key (ADR-0081, slice 2). It never holds a key. */
 export interface RecoveryKeyRequest {
   id: string;

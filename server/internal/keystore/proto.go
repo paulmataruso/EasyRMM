@@ -32,6 +32,16 @@ const (
 	OpResealEscrow = "reseal_escrow"
 )
 
+// Web operations: relayed by the server from the HTTP API to the service
+// socket so that init, unseal and verify-recovery can be done from the
+// console instead of the CLI (ADR-0081 amendment). The server gates them
+// behind PermSettingsManage and an active session.
+const (
+	OpWebInit           = "web_init"
+	OpWebUnseal         = "web_unseal"
+	OpWebVerifyRecovery = "web_verify_recovery"
+)
+
 // Operations only the admin socket accepts: it exists inside the keystore
 // container, so only a person at the host (docker compose exec) reaches it.
 const (

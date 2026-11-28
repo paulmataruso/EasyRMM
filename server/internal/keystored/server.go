@@ -240,6 +240,25 @@ func (s *Server) handle(req *keystore.Request, admin bool) keystore.Response {
 			return errResp(err)
 		}
 		return keystore.Response{OK: true, Result: result}
+	case keystore.OpWebInit:
+		code, bf, err := s.KS.Init(req.Mode, req.Passphrase)
+		if err != nil {
+			return errResp(err)
+		}
+		defer zero(code)
+		return keystore.Response{OK: true, RecoveryCode: string(code), BundlePath: bf, Version: 1}
+	case keystore.OpWebUnseal:
+		if err := s.KS.Unseal(req.Passphrase); err != nil {
+			return errResp(err)
+		}
+		st := s.KS.Status()
+		return keystore.Response{OK: true, Status: &st}
+	case keystore.OpWebVerifyRecovery:
+		v, err := s.KS.VerifyRecovery(req.Bundle, req.Code)
+		if err != nil {
+			return errResp(err)
+		}
+		return keystore.Response{OK: true, Version: v}
 	}
 	if !admin {
 		return keystore.Response{Code: keystore.CodeDenied, Error: "this operation is at the host only"}
