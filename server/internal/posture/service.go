@@ -131,3 +131,15 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (*D
 	})
 	return out, err
 }
+
+// RecordLogs notes that log blocks of the computer were accepted just now. The
+// log store is a database of its own, so posture keeps this one fact in the main
+// database (migration 90621).
+func (s *Service) RecordLogs(ctx context.Context, device uuid.UUID) error {
+	now := s.now()
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO posture_log_collection (device_id, first_received_at, last_received_at)
+			VALUES ($1, $2, $2) ON CONFLICT (device_id) DO UPDATE SET last_received_at = excluded.last_received_at`, device, now)
+		return err
+	})
+}

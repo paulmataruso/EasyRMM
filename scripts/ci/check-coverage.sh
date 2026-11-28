@@ -98,7 +98,7 @@ floors=(
   "server/internal/compliance/assess/oscal 90"
   "server/internal/compliance/content/templates 75"
   # Security posture (ADR-0082) and the two compliance alerts.
-  "server/internal/posture                 75"
+  "server/internal/posture                 77"
   "server/internal/compliance/alerts       65"
   "server/cmd/packlint                     85"
   "server/internal/inventory               85"

@@ -851,7 +851,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithCollectedLogs(d.LogStore).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore).WithTrust(d.TLSTrust)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithHardware(d.Hardware).WithAgentLogs(d.AgentLogs).WithCollectedLogs(d.LogStore).WithLogPosture(d.Posture).WithEasyPatch(d.EasyPatch).WithRepairs(d.Recovery).WithChannel(d.AgentChannel).WithQuickAssist(d.QuickAssist).WithEscrow(d.Keystore).WithTrust(d.TLSTrust)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
