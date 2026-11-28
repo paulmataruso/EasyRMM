@@ -567,6 +567,20 @@ export interface DevicePosture {
   posture: (PostureSummary & { reasons: PostureReason[]; meeting: number; notApplicable: number }) | null;
 }
 
+/** One change in a device's posture (GET /devices/{id}/posture/history), newest first. */
+export interface PostureHistoryEntry {
+  word: PostureWord;
+  percent: number | null;
+  failing: number;
+  cannotTell: number;
+  checkedAt: string | null;
+  recordedAt: string;
+}
+
+export interface PostureHistoryList {
+  items: PostureHistoryEntry[];
+}
+
 /** Why a device's remote access is not connected (ADR-0069, "MeshAgent watchdog"). */
 export type RemoteReason =
   | "connected"

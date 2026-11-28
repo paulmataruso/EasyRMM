@@ -11,6 +11,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devscope"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -41,12 +42,17 @@ type Service struct {
 	log  *slog.Logger
 	now  func() time.Time
 	feed PatchFeed
+	// audit records policy changes; nil in a service built without it.
+	audit *audit.Logger
 }
 
 // New builds the service; feed may be nil (no patching engine).
 func New(db *database.DB, feed PatchFeed, log *slog.Logger) *Service {
 	return &Service{db: db, feed: feed, log: log, now: time.Now}
 }
+
+// UseAudit sets the log policy changes are written to.
+func (s *Service) UseAudit(l *audit.Logger) { s.audit = l }
 
 // SetClock replaces the clock, for tests.
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
@@ -86,6 +92,9 @@ func (s *Service) Run(ctx context.Context) {
 	for {
 		if _, err := s.RefreshPatching(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("posture: reading the patching engine failed", "error", err)
+		}
+		if _, err := s.Evaluate(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("posture: recording the fleet's postures failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -129,6 +138,12 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (*D
 		}
 		return nil
 	})
+	if err == nil && out.Posture != nil {
+		// A change is noted as it is seen; failing to note it never fails the read.
+		if herr := s.RecordHistory(ctx, id, out.Posture); herr != nil {
+			s.log.Warn("posture: recording a computer's posture failed", "device", id, "error", herr)
+		}
+	}
 	return out, err
 }
 

@@ -424,6 +424,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
 	d.Posture = posture.New(db, d.EasyPatch, log)
+	d.Posture.UseAudit(auditLog)
 	if err := usePatchingEngine(cfg, d, sealer, log); err != nil {
 		return nil, err
 	}

@@ -107,7 +107,8 @@ func Matches(p *Posture, f string) bool {
 }
 
 // weights of the controls that matter most; every other control weighs 1.
-// They are the default policy until policies exist (slice P4).
+// They are the default policy; an organization's posture policies (policy.go)
+// replace them control by control.
 var weights = map[string]int{
 	"patching": 3, "firewall": 3, "ssh": 3, "defender": 3, "bitlocker": 3,
 	DiskEncryption: 3, DefenderHealth: 3,
@@ -273,6 +274,11 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	overrides, err := loadOverrides(ctx, tx, keys(orgs))
+	if err != nil {
 		return nil, err
 	}
 
@@ -490,6 +496,7 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 				Result: rollup.Result{State: dst, CheckedAt: sn.taken}, Detail: ddetail})
 			see(sn.taken)
 		}
+		items = applyOverrides(items, overrides[r.Org])
 		po := &Posture{Score: rollup.ScoreOf(items, now, orgs[r.Org])}
 		if !newest.IsZero() {
 			t := newest
