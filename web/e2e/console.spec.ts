@@ -425,6 +425,10 @@ function hardeningResult(): string {
     { module: "mac", state: "not_applicable", reason: "Neither SELinux nor AppArmor is installed." },
     { module: "integrity", state: "not_in_place" },
     { module: "lockout", state: "not_in_place" },
+    { module: "luks", state: "not_applicable", reason: "The root filesystem is not on a LUKS volume." },
+    { module: "host-firewall", state: "not_in_place" },
+    { module: "selinux-apparmor", state: "not_applicable", reason: "Neither SELinux nor AppArmor is installed." },
+    { module: "auto-updates", state: "not_in_place" },
   ];
   const platform = { id: "debian", versionId: "13", family: "debian", container: "none", support: "full" };
   return `EASYRMM-HARDENING-RESULT-V1 ${JSON.stringify({ version: 1, mode: "check", platform, modules })}\n`;
@@ -438,12 +442,16 @@ test("a hardening check runs through the device's agent; its findings show on th
   await page.getByRole("button", { name: "Run check…" }).click();
   const dialog = page.getByRole("dialog", { name: "Check hardening" });
   // The recommended modules are chosen; the optional ones, chosen one by one here, carry their risk.
-  await expect(dialog.getByText("10 of 15 modules")).toBeVisible();
+  await expect(dialog.getByText("10 of 19 modules")).toBeVisible();
   await expect(dialog.getByText("When applied: USB disks and backup drives stop working.")).toBeVisible();
-  for (const name of ["Shared memory", "USB storage", "SELinux or AppArmor", "File integrity", "Account lockout"]) {
+  for (const name of [
+    "Shared memory", "USB storage", "SELinux or AppArmor.*Enforcing",
+    "File integrity", "Account lockout", "Disk encryption", "Host firewall",
+    "SELinux or AppArmor.*Reports", "Automatic updates",
+  ]) {
     await dialog.getByRole("checkbox", { name: new RegExp(`^${name}`) }).check();
   }
-  await expect(dialog.getByText("15 of 15 modules")).toBeVisible();
+  await expect(dialog.getByText("19 of 19 modules")).toBeVisible();
   await dialog.getByRole("button", { name: "Run check" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Checking hardening", { exact: true })).toBeVisible();
@@ -454,7 +462,7 @@ test("a hardening check runs through the device's agent; its findings show on th
   expect(job?.shell).toBe("sh");
   expect(job?.args).toEqual([
     "check",
-    "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity,lockout",
+    "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity,lockout,luks,host-firewall,selinux-apparmor,auto-updates",
     "time-limit=1800",
   ]);
   expect(job?.script).toContain("EASYRMM-HARDENING-RESULT-V1");
@@ -463,7 +471,7 @@ test("a hardening check runs through the device's agent; its findings show on th
   await agent.succeeded(job!.runId, `EasyRMM hardening check: debian 13 (debian family; container: none; support: full).\n${hardeningResult()}`);
 
   // Once the run ends, the tab reads what the server kept.
-  await expect(page.getByText("5 of 14 in place")).toBeVisible();
+  await expect(page.getByText("5 of 16 in place")).toBeVisible();
   const ssh = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "SSH", level: 3 }) });
   await expect(ssh).toContainText("Partly in place");
   await expect(ssh).toContainText("PermitRootLogin prohibit-password (now yes)");
