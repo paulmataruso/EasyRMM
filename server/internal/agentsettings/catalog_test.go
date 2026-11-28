@@ -137,3 +137,40 @@ func TestScopes(t *testing.T) {
 		t.Error("target resources")
 	}
 }
+
+func TestSchemasOnlyWidenAndAreChosenAtOrBelowTheReportedVersion(t *testing.T) {
+	for _, k := range Catalog() {
+		if len(k.Schemas) == 0 {
+			t.Fatalf("%s has no schema version", k.Name)
+		}
+		for i, s := range k.Schemas {
+			if s.Version != i+1 || s.Check == nil {
+				t.Errorf("%s: schema %d is version %d or has no check; versions run 1, 2, ... without a gap", k.Name, i, s.Version)
+			}
+			// A new version accepts everything the last did.
+			if i > 0 {
+				for v := k.Min; v <= k.Max; v++ {
+					if k.Schemas[i-1].Check(json.RawMessage(itoa(v))) == nil && s.Check(json.RawMessage(itoa(v))) != nil {
+						t.Errorf("%s: schema %d refuses %d, which schema %d accepts: a change that narrows a key is a new key", k.Name, s.Version, v, i)
+					}
+				}
+			}
+		}
+	}
+	k, _ := Lookup(HeartbeatKey)
+	if _, ok := k.SchemaAtOrBelow(0); ok {
+		t.Error("a key reported at version 0 has a schema")
+	}
+	for _, v := range []int{1, 2, 99} {
+		s, ok := k.SchemaAtOrBelow(v)
+		if !ok || s.Version != 1 {
+			t.Errorf("reported %d: schema %+v %v", v, s, ok)
+		}
+	}
+	s, _ := k.SchemaAtOrBelow(1)
+	for raw, ok := range map[string]bool{"30": true, "300": true, "29": false, "301": false, `"60"`: false, "60.5": false, "null": false} {
+		if (s.Check(json.RawMessage(raw)) == nil) != ok {
+			t.Errorf("schema 1 on %s: want accepted=%v", raw, ok)
+		}
+	}
+}

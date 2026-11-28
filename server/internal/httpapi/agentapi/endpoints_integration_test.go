@@ -169,6 +169,14 @@ func TestAgentEndpointRefusals(t *testing.T) {
 		t.Errorf("the heartbeat's accepts were not kept: %v", kept)
 	}
 
+	// The report for signed settings (ADR-0058) is read from the wire: a
+	// heartbeat carrying it is answered, and one with a malformed report (a key
+	// reported at a negative version) is answered too, its report ignored.
+	want("heartbeat with the settings report", send(agentproto.PathHeartbeat, js, []byte(`{"facts":{"hostname":"h","platform":"linux","arch":"amd64","agentVersion":"1"},`+
+		`"capabilities":{"accepts":["settings.v1"],"settings":{"agent.heartbeat_seconds":1}},"settings":{"version":0},"heartbeatSeconds":60}`)), http.StatusOK, `"heartbeatSeconds"`)
+	want("heartbeat with a malformed settings report", send(agentproto.PathHeartbeat, js, []byte(`{"facts":{"hostname":"h","platform":"linux","arch":"amd64","agentVersion":"1"},`+
+		`"capabilities":{"accepts":["settings.v1"],"settings":{"agent.heartbeat_seconds":-1}},"settings":{"version":0}}`)), http.StatusOK, `"heartbeatSeconds"`)
+
 	// Escrow: a report of no volumes needs nothing, and a record that
 	// names nothing is refused, never stored.
 	want("escrow volumes, none", send(agentproto.PathEscrowVolumes, js, []byte(`{}`)), http.StatusOK, `"need"`)

@@ -63,6 +63,54 @@ type Key struct {
 	// Floor is the platform's lowest allowed value for the key, when it has
 	// one.
 	Floor func(Limits) int
+	// Schemas are every version of the key's schema as agents understand it,
+	// from the first. A version only widens: it accepts more than the last,
+	// never less (a change that would narrow a key is a new key). Ordered by
+	// version.
+	Schemas []Schema
+}
+
+// Schema is one version of a key's value schema (ADR-0058, "Unknown and
+// invalid"): the agent reports the version it understands, and the server
+// checks a value against the highest version it knows at or below it.
+type Schema struct {
+	Version int
+	// Check refuses a value this version does not allow.
+	Check func(json.RawMessage) error
+}
+
+// SchemaAtOrBelow is the highest schema version the server knows that is at
+// or below v: false when there is none (a key reported at version 0, say).
+func (k Key) SchemaAtOrBelow(v int) (Schema, bool) {
+	var best Schema
+	found := false
+	for _, s := range k.Schemas {
+		if s.Version <= v && (!found || s.Version > best.Version) {
+			best, found = s, true
+		}
+	}
+	return best, found
+}
+
+// CatalogVersion is the version of this release's catalog. It rises with
+// every release that changes the catalog (a key, a schema version), and a
+// document issued under a newer catalog than an instance's own is left in
+// place by that instance, as instances of two releases share one database for
+// the length of a rolling upgrade.
+const CatalogVersion = 1
+
+// intSchema accepts a whole number from lo to hi.
+func intSchema(lo, hi int) func(json.RawMessage) error {
+	return func(raw json.RawMessage) error {
+		n, err := parseInt(raw)
+		if err != nil {
+			return err
+		}
+		if n < lo || n > hi {
+			return fmt.Errorf("%d is outside %d to %d", n, lo, hi)
+		}
+		return nil
+	}
 }
 
 // HeartbeatKey is the interval agents check in at.
@@ -90,7 +138,8 @@ var catalog = []Key{{
 		}
 		return rbac.PermDeviceConfigure
 	},
-	Floor: func(l Limits) int { return l.MinHeartbeatSeconds },
+	Floor:   func(l Limits) int { return l.MinHeartbeatSeconds },
+	Schemas: []Schema{{Version: 1, Check: intSchema(MinHeartbeatSeconds, MaxHeartbeatSeconds)}},
 }}
 
 // Catalog is every key, in the order the console lists them.
