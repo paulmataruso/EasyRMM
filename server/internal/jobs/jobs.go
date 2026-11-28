@@ -327,8 +327,10 @@ type spec struct {
 	scriptID  *uuid.UUID
 	software  *Software
 	hardening *Hardening
-	name      string
-	shell     string
+	// maintenance is a maintenance job's action (feature 11, slice 3).
+	maintenance *Maintenance
+	name        string
+	shell       string
 	// pwshFallback is the script's setting, for a pwsh job.
 	pwshFallback bool
 	body         string
@@ -414,12 +416,12 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
 				expires_at, created_by, created_by_label, created_at, kind, software, hardening, pwsh_fallback, requires,
-				params, params_sha256, winmod, hidden, executor, builtin, lane, signed_bytes)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+				params, params_sha256, winmod, hidden, executor, builtin, lane, signed_bytes, maintenance)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
 			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening, sp.pwshFallback,
 			requires, params, paramsSum, nullJSON(sp.winmod), !Kinds[sp.kind].Listed,
-			executor, nullText(sp.builtin), nullText(sp.lane), signed); err != nil {
+			executor, nullText(sp.builtin), nullText(sp.lane), signed, sp.maintenance); err != nil {
 			return err
 		}
 		if len(sp.input) > 0 {
@@ -709,9 +711,9 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 		return nil, apperr.Invalid("status", "Use open or finished.")
 	}
 	switch q.Kind {
-	case "", KindScript, KindSoftware, KindHardening, KindWinmod, KindFilterRegistry, KindFilterEventlog, KindRegistryQuery, KindRegistryChange, KindEventlogQuery:
+	case "", KindScript, KindSoftware, KindHardening, KindMaintenance, KindWinmod, KindFilterRegistry, KindFilterEventlog, KindRegistryQuery, KindRegistryChange, KindEventlogQuery:
 	default:
-		return nil, apperr.Invalid("kind", "Use script, software, hardening, registry or eventlog.")
+		return nil, apperr.Invalid("kind", "Use script, software, hardening, maintenance, registry or eventlog.")
 	}
 	if !c.CanAnywhere(rbac.PermJobView) {
 		return []*Job{}, nil

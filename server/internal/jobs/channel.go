@@ -83,6 +83,7 @@ func (s *Service) Waiting(ctx context.Context, device uuid.UUID) (bool, error) {
 				  AND (r.status = 'queued' OR (r.status = 'sent' AND r.sent_at < now() - make_interval(secs => $2)))
 				  AND j.requires <@ coalesce(`+acceptsNow+`, '{}'::text[])
 				  AND `+oneChangeAtATime+`
+				  AND `+oneMaintenanceAtATime+`
 			) OR EXISTS (
 				SELECT 1 FROM job_runs WHERE device_id = $1 AND status = 'running' AND cancel_requested_at IS NOT NULL
 				  AND (cancel_sent_at IS NULL OR cancel_sent_at < now() - make_interval(secs => $3))

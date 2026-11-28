@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
@@ -57,6 +59,99 @@ const (
 type Scripts interface {
 	GetScript(ctx context.Context, c access.Caller, id uuid.UUID) (*jobs.Script, error)
 	CreateJob(ctx context.Context, c access.Caller, in jobs.JobInput) (*jobs.Job, error)
+	CreateSoftwareJob(ctx context.Context, c access.Caller, in jobs.SoftwareInput) (*jobs.Job, error)
+	CreateMaintenanceJob(ctx context.Context, c access.Caller, in jobs.MaintenanceInput) (*jobs.Job, error)
+}
+
+// What a task's step does.
+const (
+	StepScript   = "script"
+	StepSoftware = "software"
+	StepRestart  = "restart"
+	StepShutdown = "shutdown"
+	StepService  = "service"
+)
+
+// Step is what a task does besides running a library script (slice 3).
+type Step struct {
+	// Software is a software step's action.
+	Software *jobs.Software `json:"software,omitempty"`
+	// Action and Service are a service step's: start, stop or restart the
+	// named service (service_start, service_stop, service_restart).
+	Action  string `json:"action,omitempty"`
+	Service string `json:"service,omitempty"`
+	// Platform limits a restart or shutdown to windows or linux devices
+	// ("" is both); a service step needs one, since names differ.
+	Platform string `json:"platform,omitempty"`
+}
+
+// maintenance is the maintenance action a step of the kind stands for.
+func (st Step) maintenance(kind string) jobs.Maintenance {
+	switch kind {
+	case StepRestart:
+		return jobs.Maintenance{Action: jobs.MaintRestart}
+	case StepShutdown:
+		return jobs.Maintenance{Action: jobs.MaintShutdown}
+	}
+	return jobs.Maintenance{Action: st.Action, Service: st.Service}
+}
+
+// check reports what is wrong with a step of the kind.
+func (st *Step) check(f apperr.Fields, kind string) {
+	switch kind {
+	case StepScript:
+		*st = Step{}
+	case StepSoftware:
+		f.Check(st.Software != nil, "step", "Choose the software action.")
+		if st.Software != nil {
+			st.Software.Check(f)
+		}
+		*st = Step{Software: st.Software}
+	case StepRestart, StepShutdown:
+		f.Check(st.Platform == "" || st.Platform == "windows" || st.Platform == "linux", "step", "Choose windows, linux, or both.")
+		*st = Step{Platform: st.Platform}
+	case StepService:
+		f.Check(st.Platform == "windows" || st.Platform == "linux", "step", "A service action needs windows or linux: service names differ.")
+		if !slices.Contains([]string{jobs.MaintServiceStart, jobs.MaintServiceStop, jobs.MaintServiceRestart}, st.Action) {
+			f.Add("step", "Choose start, stop or restart for the service.")
+		} else {
+			st.maintenance(kind).Check(f)
+		}
+		*st = Step{Action: st.Action, Service: st.Service, Platform: st.Platform}
+	default:
+		f.Add("stepKind", "Choose script, software, restart, shutdown or service.")
+	}
+}
+
+// perm is the permission the owner needs at the task's scope: a restart or
+// a service action is what a script run could do, so it needs the same.
+func (t *Task) perm() rbac.Permission {
+	if t.StepKind == StepSoftware {
+		return rbac.PermSoftwareManage
+	}
+	return rbac.PermScriptRun
+}
+
+func (t *Task) permVerb() string {
+	if t.StepKind == StepSoftware {
+		return "manage software"
+	}
+	return "run scripts"
+}
+
+// platforms are the platforms the step runs on. sc is the script of a
+// script step.
+func (t *Task) platforms(sc *jobs.Script) []string {
+	switch t.StepKind {
+	case StepScript:
+		return agentproto.ShellPlatforms(sc.Shell)
+	case StepSoftware:
+		return []string{t.Step.Software.Platform()}
+	}
+	if t.Step.Platform != "" {
+		return []string{t.Step.Platform}
+	}
+	return []string{"linux", "windows"}
 }
 
 // Principals loads a user's permissions as they are now.
@@ -80,9 +175,13 @@ type Task struct {
 	SiteName         string     `json:"siteName"`
 	Name             string     `json:"name"`
 	Schedule         Schedule   `json:"schedule"`
-	ScriptID         uuid.UUID  `json:"scriptId"`
-	ScriptName       string     `json:"scriptName"`
-	ScriptSHA256     string     `json:"scriptSha256"`
+	// StepKind is what the task does; Step says more of it. ScriptID and the
+	// script's fields are for a script step only.
+	StepKind     string     `json:"stepKind"`
+	Step         Step       `json:"step"`
+	ScriptID     *uuid.UUID `json:"scriptId"`
+	ScriptName   string     `json:"scriptName"`
+	ScriptSHA256 string     `json:"scriptSha256"`
 	// ScriptChanged says the library's script is no longer the pinned one:
 	// runs fail until the task is saved again with Repin.
 	ScriptChanged bool     `json:"scriptChanged"`
@@ -139,8 +238,8 @@ func New(db *database.DB, auditLog *audit.Logger, scripts Scripts, principals Pr
 }
 
 const taskSelect = `SELECT a.id, a.organization_id, o.name, a.site_id, coalesce(si.name, ''), a.name, a.schedule,
-	a.script_id, coalesce(sc.name, ''), a.script_sha256,
-	coalesce(encode(sha256(convert_to(sc.body, 'UTF8')), 'hex') <> a.script_sha256, true),
+	a.step_kind, a.step, a.script_id, coalesce(sc.name, ''), coalesce(a.script_sha256, ''),
+	a.step_kind = 'script' AND coalesce(encode(sha256(convert_to(sc.body, 'UTF8')), 'hex') <> a.script_sha256, true),
 	a.script_args, a.target_query, coalesce(si.timezone, o.timezone), a.missed_run_rule, a.wait_hours,
 	a.window_id, coalesce(mw.name, ''), a.stagger_minutes, a.only_if_online,
 	a.owner_id, coalesce(u.email, ''), a.state, a.next_run_at, a.last_run_at, a.created_at, a.updated_at
@@ -153,7 +252,7 @@ const taskSelect = `SELECT a.id, a.organization_id, o.name, a.site_id, coalesce(
 func scanTask(row pgx.Row) (*Task, error) {
 	var t Task
 	if err := row.Scan(&t.ID, &t.OrganizationID, &t.OrganizationName, &t.SiteID, &t.SiteName, &t.Name, &t.Schedule,
-		&t.ScriptID, &t.ScriptName, &t.ScriptSHA256, &t.ScriptChanged, &t.ScriptArgs, &t.Targets, &t.Timezone,
+		&t.StepKind, &t.Step, &t.ScriptID, &t.ScriptName, &t.ScriptSHA256, &t.ScriptChanged, &t.ScriptArgs, &t.Targets, &t.Timezone,
 		&t.MissedRunRule, &t.WaitHours, &t.WindowID, &t.WindowName, &t.StaggerMinutes, &t.OnlyIfOnline, &t.OwnerID, &t.OwnerEmail, &t.State, &t.NextRunAt, &t.LastRunAt,
 		&t.CreatedAt, &t.UpdatedAt); err != nil {
 		return nil, err
@@ -183,18 +282,22 @@ func (t *Task) loc() *time.Location {
 }
 
 func (s *Service) decorate(c access.Caller, t *Task) {
-	t.CanEdit = c.Can(rbac.PermScriptRun, t.resource())
+	t.CanEdit = c.Can(t.perm(), t.resource())
 }
 
 func canSee(c access.Caller, t *Task) bool {
-	return c.Can(rbac.PermScriptRun, t.resource()) || c.Can(rbac.PermJobView, t.resource())
+	return c.Can(t.perm(), t.resource()) || c.Can(rbac.PermJobView, t.resource())
 }
 
 // Input creates a task.
 type Input struct {
-	Name           string      `json:"name"`
-	OrganizationID uuid.UUID   `json:"organizationId"`
-	SiteID         *uuid.UUID  `json:"siteId"`
+	Name           string     `json:"name"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
+	SiteID         *uuid.UUID `json:"siteId"`
+	// StepKind is script (the default), software, restart, shutdown or
+	// service; Step says more of the others.
+	StepKind       string      `json:"stepKind"`
+	Step           Step        `json:"step"`
 	ScriptID       uuid.UUID   `json:"scriptId"`
 	ScriptArgs     []string    `json:"scriptArgs"`
 	DeviceIDs      []uuid.UUID `json:"deviceIds"`
@@ -209,7 +312,10 @@ type Input struct {
 // Patch edits a task; nil fields stay. Saving makes the editor the owner,
 // whose permissions then back every run.
 type Patch struct {
-	Name          *string      `json:"name"`
+	Name *string `json:"name"`
+	// Step replaces the step of a task of the same kind: the kind cannot
+	// change; make a new task for that.
+	Step          *Step        `json:"step"`
 	ScriptID      *uuid.UUID   `json:"scriptId"`
 	ScriptArgs    *[]string    `json:"scriptArgs"`
 	DeviceIDs     *[]uuid.UUID `json:"deviceIds"`
@@ -286,9 +392,15 @@ func (s *Service) auditTx(ctx context.Context, tx pgx.Tx, actor audit.Actor, act
 }
 
 func details(t *Task) map[string]any {
-	return map[string]any{"name": t.Name, "script": t.ScriptName, "scriptId": t.ScriptID.String(), "scriptSha256": t.ScriptSHA256,
-		"schedule": t.Schedule.Kind, "timezone": t.Timezone, "missedRunRule": t.MissedRunRule,
+	d := map[string]any{"name": t.Name, "stepKind": t.StepKind, "schedule": t.Schedule.Kind, "timezone": t.Timezone, "missedRunRule": t.MissedRunRule,
 		"window": t.WindowName, "staggerMinutes": t.StaggerMinutes, "onlyIfOnline": t.OnlyIfOnline}
+	if t.ScriptID != nil {
+		d["script"], d["scriptId"], d["scriptSha256"] = t.ScriptName, t.ScriptID.String(), t.ScriptSHA256
+	}
+	if t.StepKind != StepScript {
+		d["step"] = t.Step
+	}
+	return d
 }
 
 // pin reads the library script for the caller and checks it can run where
@@ -323,7 +435,15 @@ func (s *Service) Create(ctx context.Context, c access.Caller, in Input) (*Task,
 	checkCommon(f, &in.Name, &in.ScriptArgs, &in.MissedRunRule, &in.WaitHours)
 	checkStagger(f, &in.StaggerMinutes)
 	f.Check(in.OrganizationID != uuid.Nil, "organizationId", "Choose an organization.")
-	f.Check(in.ScriptID != uuid.Nil, "scriptId", "Choose a script.")
+	if in.StepKind == "" {
+		in.StepKind = StepScript
+	}
+	in.Step.check(f, in.StepKind)
+	if in.StepKind == StepScript {
+		f.Check(in.ScriptID != uuid.Nil, "scriptId", "Choose a script.")
+	} else {
+		f.Check(in.ScriptID == uuid.Nil && len(in.ScriptArgs) == 0, "scriptId", "Only a script step takes a script or arguments.")
+	}
 	f.Check(len(in.DeviceIDs) <= jobs.MaxDevices, "deviceIds", "Choose fewer devices, or none for all.")
 	now := s.now()
 	sched, err := in.Schedule.Clean(now)
@@ -337,12 +457,18 @@ func (s *Service) Create(ctx context.Context, c access.Caller, in Input) (*Task,
 	if in.SiteID != nil {
 		res = rbac.Site(in.OrganizationID, *in.SiteID)
 	}
-	if err := c.Require(rbac.PermScriptRun, res); err != nil {
+	probe := &Task{StepKind: in.StepKind}
+	if err := c.Require(probe.perm(), res); err != nil {
 		return nil, err
 	}
-	sc, err := s.pin(ctx, c, in.ScriptID, in.OrganizationID, in.SiteID)
-	if err != nil {
-		return nil, err
+	var scriptID *uuid.UUID
+	var scriptSHA *string
+	if in.StepKind == StepScript {
+		sc, err := s.pin(ctx, c, in.ScriptID, in.OrganizationID, in.SiteID)
+		if err != nil {
+			return nil, err
+		}
+		scriptID, scriptSHA = &sc.ID, &sc.SHA256
 	}
 	if in.ScriptArgs == nil {
 		in.ScriptArgs = []string{}
@@ -375,10 +501,11 @@ func (s *Service) Create(ctx context.Context, c access.Caller, in Input) (*Task,
 		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `INSERT INTO automations (organization_id, site_id, name, schedule, script_id, script_sha256,
-			script_args, target_query, timezone, missed_run_rule, wait_hours, owner_id, next_run_at, window_id, stagger_minutes, only_if_online)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
-			in.OrganizationID, in.SiteID, in.Name, sched, sc.ID, sc.SHA256, in.ScriptArgs, Targets{DeviceIDs: in.DeviceIDs}, tz,
-			in.MissedRunRule, in.WaitHours, c.Actor.ID, next, in.WindowID, in.StaggerMinutes, in.OnlyIfOnline).Scan(&id); err != nil {
+			script_args, target_query, timezone, missed_run_rule, wait_hours, owner_id, next_run_at, window_id, stagger_minutes, only_if_online,
+			step_kind, step)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+			in.OrganizationID, in.SiteID, in.Name, sched, scriptID, scriptSHA, in.ScriptArgs, Targets{DeviceIDs: in.DeviceIDs}, tz,
+			in.MissedRunRule, in.WaitHours, c.Actor.ID, next, in.WindowID, in.StaggerMinutes, in.OnlyIfOnline, in.StepKind, in.Step).Scan(&id); err != nil {
 			return err
 		}
 		t, err := scanTask(tx.QueryRow(ctx, taskSelect+` WHERE a.id = $1`, id))
@@ -407,7 +534,7 @@ func (s *Service) lock(ctx context.Context, tx pgx.Tx, c access.Caller, id uuid.
 	if !canSee(c, t) {
 		return nil, apperr.NotFound()
 	}
-	if err := c.Require(rbac.PermScriptRun, t.resource()); err != nil {
+	if err := c.Require(t.perm(), t.resource()); err != nil {
 		return nil, err
 	}
 	return t, nil
@@ -473,8 +600,23 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 		if err := checkWindow(ctx, tx, s.now(), t.OrganizationID, t.SiteID, t.WindowID, t.StaggerMinutes); err != nil {
 			return err
 		}
+		if p.Step != nil {
+			if t.StepKind == StepScript {
+				return apperr.Invalid("step", "A script task has no step to change; edit its script.")
+			}
+			st := *p.Step
+			g := apperr.Fields{}
+			st.check(g, t.StepKind)
+			if err := g.Err(); err != nil {
+				return err
+			}
+			t.Step = st
+		}
 		if p.ScriptID != nil || p.Repin {
-			sid := t.ScriptID
+			if t.StepKind != StepScript {
+				return apperr.Invalid("scriptId", "Only a script task has a script.")
+			}
+			sid := *t.ScriptID
 			if p.ScriptID != nil {
 				sid = *p.ScriptID
 			}
@@ -482,7 +624,7 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 			if err != nil {
 				return err
 			}
-			t.ScriptID, t.ScriptSHA256 = sc.ID, sc.SHA256
+			t.ScriptID, t.ScriptSHA256 = &sc.ID, sc.SHA256
 		}
 		now := s.now()
 		if p.Schedule != nil {
@@ -505,9 +647,9 @@ func (s *Service) Update(ctx context.Context, c access.Caller, id uuid.UUID, p P
 		}
 		if _, err := tx.Exec(ctx, `UPDATE automations SET name = $2, schedule = $3, script_id = $4, script_sha256 = $5,
 			script_args = $6, target_query = $7, missed_run_rule = $8, wait_hours = $9, owner_id = $10, next_run_at = $11,
-			window_id = $12, stagger_minutes = $13, only_if_online = $14
-			WHERE id = $1`, id, t.Name, t.Schedule, t.ScriptID, t.ScriptSHA256, t.ScriptArgs, t.Targets,
-			t.MissedRunRule, t.WaitHours, c.Actor.ID, next, t.WindowID, t.StaggerMinutes, t.OnlyIfOnline); err != nil {
+			window_id = $12, stagger_minutes = $13, only_if_online = $14, step = $15
+			WHERE id = $1`, id, t.Name, t.Schedule, t.ScriptID, nullText(t.ScriptSHA256), t.ScriptArgs, t.Targets,
+			t.MissedRunRule, t.WaitHours, c.Actor.ID, next, t.WindowID, t.StaggerMinutes, t.OnlyIfOnline, t.Step); err != nil {
 			return err
 		}
 		if out, err = s.reload(ctx, tx, c, id); err != nil {
@@ -677,4 +819,12 @@ func (s *Service) History(ctx context.Context, c access.Caller, id uuid.UUID, li
 		return rows.Err()
 	})
 	return out, err
+}
+
+// nullText is NULL for an empty string.
+func nullText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

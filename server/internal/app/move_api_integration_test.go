@@ -361,6 +361,8 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"agent_settings": ends,
 		// what the computer's agent reported it understands and applied of its settings (ADR-0058 slice 2) is the computer's own fact
 		"agent_device_state": follows,
+		// expected-offline state from a restart/shutdown job follows the device
+		"device_expected_offline": follows,
 		// stays
 		"job_runs": stays, "registry_masked_values": stays, "winmod_run_results": stays, "defender_events": stays, "compliance_scans": stays, "compliance_scan_jobs": stays, "compliance_results_history": stays, "quick_assist_sessions": stays, "audit_log": stays, "retired_devices": stays, "mail_sends": stays, "compliance_fix_items": stays, "compliance_fix_agreements": stays, "hardening_setting_results": stays,
 		// owned

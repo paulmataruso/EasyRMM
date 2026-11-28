@@ -10,6 +10,8 @@ import type {
   ScheduledRunState,
   ScheduledTask,
   ScheduledTaskInput,
+  TaskStep,
+  TaskStepKind,
   ScheduledTaskRun,
   ScheduledTaskState,
   Script,
@@ -138,9 +140,13 @@ export function ScheduledTasksPage() {
                   <td>
                     <div className="font-medium text-fg">{t.name}</div>
                     <div className="text-xs text-muted">
-                      <Link to={`/scripts/${t.scriptId}`} className="hover:text-fg">
-                        {t.scriptName || "Script removed"}
-                      </Link>{" "}
+                      {t.stepKind === "script" && t.scriptId ? (
+                        <Link to={`/scripts/${t.scriptId}`} className="hover:text-fg">
+                          {t.scriptName || "Script removed"}
+                        </Link>
+                      ) : (
+                        describeStep(t)
+                      )}{" "}
                       · owner {t.ownerEmail || "unknown"}
                     </div>
                     {t.scriptChanged && t.state !== "canceled" && (
@@ -255,6 +261,28 @@ function HistoryDialog({ task, onClose }: { task: ScheduledTask; onClose: () => 
   );
 }
 
+/** Says what a task's step does, for the list. */
+export function describeStep(t: Pick<ScheduledTask, "stepKind" | "step" | "scriptName">): string {
+  const where = t.step.platform ? ` (${t.step.platform === "windows" ? "Windows" : "Linux"} only)` : "";
+  switch (t.stepKind) {
+    case "restart":
+      return `Restart${where}`;
+    case "shutdown":
+      return `Shut down${where}`;
+    case "service": {
+      const verb = { service_start: "Start", service_stop: "Stop", service_restart: "Restart" }[t.step.action ?? "service_restart"];
+      return `${verb} service ${t.step.service ?? ""}${where}`;
+    }
+    case "software": {
+      const sw = t.step.software;
+      const verb = { install: "Install", upgrade: "Update", uninstall: "Uninstall" }[sw?.action ?? "install"];
+      return `${verb} ${sw?.package ?? ""}${sw?.version ? ` ${sw.version}` : ""}`;
+    }
+    default:
+      return t.scriptName || "Script removed";
+  }
+}
+
 const hhmm = (v: string | undefined) => v ?? "03:00";
 
 function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: () => void }) {
@@ -263,7 +291,15 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
   const [name, setName] = useState(task?.name ?? "");
   const [organizationId, setOrganizationId] = useState(task?.organizationId ?? "");
   const [siteId, setSiteId] = useState(task?.siteId ?? "");
+  const [stepKind, setStepKind] = useState<TaskStepKind>(task?.stepKind ?? "script");
   const [scriptId, setScriptId] = useState(task?.scriptId ?? "");
+  const [platform, setPlatform] = useState(task?.step.platform ?? "");
+  const [svcAction, setSvcAction] = useState(task?.step.action ?? "service_restart");
+  const [svcName, setSvcName] = useState(task?.step.service ?? "");
+  const [swAction, setSwAction] = useState(task?.step.software?.action ?? "install");
+  const [swManager, setSwManager] = useState(task?.step.software?.manager ?? "system");
+  const [swPackage, setSwPackage] = useState(task?.step.software?.package ?? "");
+  const [swVersion, setSwVersion] = useState(task?.step.software?.version ?? "");
   const [args, setArgs] = useState((task?.scriptArgs ?? []).join("\n"));
   const [kind, setKind] = useState<ScheduleKind>(task?.schedule.kind ?? "daily");
   const [date, setDate] = useState(task?.schedule.date ?? "");
@@ -284,18 +320,25 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
   const sites = useSites(organizationId || null);
   const scripts = useList<Script>("/scripts", organizationId ? { organizationId, siteId: siteId || undefined } : undefined);
 
+  const step: TaskStep | undefined =
+    stepKind === "script"
+      ? undefined
+      : stepKind === "software"
+        ? { software: { action: swAction, manager: swManager, package: swPackage, ...(swVersion ? { version: swVersion } : {}) } }
+        : stepKind === "service"
+          ? { action: svcAction, service: svcName, platform: platform as "windows" | "linux" }
+          : { platform };
+
   const save = useApiMutation(
     (schedule: TaskSchedule) => {
       const scriptArgs = args.split("\n").filter((a) => a !== "");
       if (task) {
         return api.patch<ScheduledTask>(`/scheduled-tasks/${task.id}`, {
           name,
-          scriptId: scriptId || undefined,
-          scriptArgs,
+          ...(stepKind === "script" ? { scriptId: scriptId || undefined, scriptArgs, repin } : { step }),
           schedule,
           missedRunRule: rule,
           waitHours,
-          repin,
           windowId: windowId || undefined,
           clearWindow: windowId === "",
           staggerMinutes: stagger,
@@ -306,8 +349,9 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
         name,
         organizationId,
         siteId: siteId || null,
-        scriptId,
-        scriptArgs,
+        stepKind,
+        step,
+        ...(stepKind === "script" ? { scriptId, scriptArgs } : { scriptArgs: [] }),
         deviceIds: [],
         schedule,
         missedRunRule: rule,
@@ -383,28 +427,89 @@ function TaskDialog({ task, onClose }: { task: ScheduledTask | null; onClose: ()
             </Field>
           </div>
         )}
-        <Field label="Script" htmlFor="st-script" required hint="Pinned by its SHA-256 when you save. Devices are picked at each run: every device here the script can run on.">
-          <Select id="st-script" value={scriptId} onChange={(e) => setScriptId(e.target.value)} required disabled={!organizationId && !task}>
-            <option value="">Choose…</option>
-            {task && !scripts.items.some((s) => s.id === task.scriptId) && <option value={task.scriptId}>{task.scriptName}</option>}
-            {scripts.items.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+        <Field label="Action" htmlFor="st-step" hint={task ? "The kind of action cannot change; make a new task for that." : "Restarts, shutdowns and service actions run as scripts of EasyRMM's own; each device gets one action at a time."}>
+          <Select id="st-step" value={stepKind} onChange={(e) => setStepKind(e.target.value as TaskStepKind)} disabled={!!task}>
+            <option value="script">Run a library script</option>
+            <option value="software">Install, update or remove software</option>
+            <option value="restart">Restart computers</option>
+            <option value="shutdown">Shut down computers</option>
+            <option value="service">Start, stop or restart a service</option>
           </Select>
         </Field>
-        {task?.scriptChanged && (
-          <Alert tone="warn" title="The script has changed since it was pinned">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={repin} onChange={(e) => setRepin(e.target.checked)} />
-              I have reviewed the script and want this task to run its current version.
-            </label>
-          </Alert>
+        {stepKind === "script" && (
+          <>
+          <Field label="Script" htmlFor="st-script" required hint="Pinned by its SHA-256 when you save. Devices are picked at each run: every device here the script can run on.">
+            <Select id="st-script" value={scriptId} onChange={(e) => setScriptId(e.target.value)} required disabled={!organizationId && !task}>
+              <option value="">Choose…</option>
+              {task && task.scriptId && !scripts.items.some((s) => s.id === task.scriptId) && <option value={task.scriptId}>{task.scriptName}</option>}
+              {scripts.items.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {task?.scriptChanged && (
+            <Alert tone="warn" title="The script has changed since it was pinned">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={repin} onChange={(e) => setRepin(e.target.checked)} />
+                I have reviewed the script and want this task to run its current version.
+              </label>
+            </Alert>
+          )}
+          <Field label="Arguments" htmlFor="st-args" hint="One per line.">
+            <textarea id="st-args" className="input font-mono text-sm" rows={2} value={args} onChange={(e) => setArgs(e.target.value)} />
+          </Field>
+          </>
         )}
-        <Field label="Arguments" htmlFor="st-args" hint="One per line.">
-          <textarea id="st-args" className="input font-mono text-sm" rows={2} value={args} onChange={(e) => setArgs(e.target.value)} />
-        </Field>
+        {stepKind === "software" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Do" htmlFor="st-sw-action">
+              <Select id="st-sw-action" value={swAction} onChange={(e) => setSwAction(e.target.value as typeof swAction)}>
+                <option value="install">Install</option>
+                <option value="upgrade">Update</option>
+                <option value="uninstall">Uninstall</option>
+              </Select>
+            </Field>
+            <Field label="With" htmlFor="st-sw-manager" hint="Windows: winget or Chocolatey. Linux: the system's package manager.">
+              <Select id="st-sw-manager" value={swManager} onChange={(e) => setSwManager(e.target.value as typeof swManager)}>
+                <option value="system">System package manager (Linux)</option>
+                <option value="winget">winget (Windows)</option>
+                <option value="chocolatey">Chocolatey (Windows)</option>
+              </Select>
+            </Field>
+            <TextField label="Package" value={swPackage} onChange={(e) => setSwPackage(e.target.value)} required maxLength={128} />
+            {swAction === "install" && <TextField label="Version" value={swVersion} onChange={(e) => setSwVersion(e.target.value)} maxLength={64} hint="Empty takes the newest." />}
+          </div>
+        )}
+        {stepKind === "service" && (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Do" htmlFor="st-svc-action">
+              <Select id="st-svc-action" value={svcAction} onChange={(e) => setSvcAction(e.target.value as typeof svcAction)}>
+                <option value="service_start">Start</option>
+                <option value="service_stop">Stop</option>
+                <option value="service_restart">Restart</option>
+              </Select>
+            </Field>
+            <TextField label="Service" value={svcName} onChange={(e) => setSvcName(e.target.value)} required maxLength={128} hint="The service's short name, or the systemd unit." />
+            <Field label="On" htmlFor="st-svc-platform" required>
+              <Select id="st-svc-platform" value={platform} onChange={(e) => setPlatform(e.target.value as typeof platform)} required>
+                <option value="">Choose…</option>
+                <option value="windows">Windows</option>
+                <option value="linux">Linux</option>
+              </Select>
+            </Field>
+          </div>
+        )}
+        {(stepKind === "restart" || stepKind === "shutdown") && (
+          <Field label="On" htmlFor="st-platform" hint="A computer that restarts or shuts down is expected to be offline: no offline alert opens for it for a while. Hold the task to a maintenance window and stagger it so a site does not go down at once.">
+            <Select id="st-platform" value={platform} onChange={(e) => setPlatform(e.target.value as typeof platform)}>
+              <option value="">Windows and Linux</option>
+              <option value="windows">Windows only</option>
+              <option value="linux">Linux only</option>
+            </Select>
+          </Field>
+        )}
 
         <fieldset className="flex flex-col gap-3 rounded-lg border border-line p-3">
           <legend className="px-1 text-xs font-medium text-muted">When</legend>
