@@ -120,7 +120,7 @@ func TestAgentEndpointRefusals(t *testing.T) {
 
 	// Every JSON endpoint refuses what is not one JSON object.
 	jsonRoutes := []string{
-		agentproto.PathHeartbeat, agentproto.PathRemoved, agentproto.PathJobsPoll, agentproto.PathAgentLogs,
+		agentproto.PathHeartbeat, agentproto.PathRemoved, agentproto.PathUninstalled, agentproto.PathJobsPoll, agentproto.PathAgentLogs,
 		agentproto.PathEscrowVolumes, agentproto.PathEscrow,
 		qaticket.PathEnd, qaticket.PathMesh, qaticket.PathInstall,
 		"/api/agent/v1/jobs/" + uuid.NewString() + "/result",
@@ -216,9 +216,39 @@ func TestAgentEndpointRefusals(t *testing.T) {
 		}
 	}
 
+	// An agent that says it is uninstalled without a request (ADR-0053,
+	// ADR-0056): a package kind that is none is refused; a good report, and a
+	// removal report nobody asked for, mark the device and delete nothing.
+	marked := func(installer string) bool {
+		var n int
+		if err := inst.DB.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FROM devices WHERE id = $1 AND agent_uninstalled_at IS NOT NULL
+				AND coalesce(agent_uninstalled_installer, '') = $2`, dev, installer).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n == 1
+	}
+	want("uninstalled, no package kind", send(agentproto.PathUninstalled, js, []byte(`{"installer":"zip"}`)), http.StatusBadRequest, "report_invalid")
+	if a := send(agentproto.PathUninstalled, js, []byte(`{"installer":"msi"}`)); a.code != http.StatusNoContent || !marked("msi") {
+		t.Fatalf("uninstalled: %d %q, marked %v", a.code, a.body, marked("msi"))
+	}
+	if a := send(agentproto.PathRemoved, js, []byte(`{"id":"nobody asked","removed":true}`)); a.code != http.StatusNoContent || !marked("msi") {
+		t.Fatalf("removed without a request: %d %q", a.code, a.body)
+	}
+
 	// The agent's own removal report: one that is too long to be an id is
-	// refused, a good one deletes the device, whose agent is then unknown.
+	// refused, a good one for a removal someone asked for deletes the
+	// device, whose agent is then unknown.
 	want("removed, id too long", send(agentproto.PathRemoved, js, []byte(`{"id":"`+strings.Repeat("a", 65)+`","removed":true}`)), http.StatusBadRequest, "report_invalid")
+	// Someone asked for it (this server has no job key to sign the
+	// instruction with, so the request is recorded as the service does).
+	if err := inst.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO device_removals (device_id, id) VALUES ($1, gen_random_uuid())`, dev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if a := send(agentproto.PathRemoved, js, []byte(`{"id":"x","removed":true}`)); a.code != http.StatusNoContent {
 		t.Fatalf("removed: %d %q", a.code, a.body)
 	}

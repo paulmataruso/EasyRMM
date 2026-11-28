@@ -284,6 +284,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST "+agentproto.PathEnroll, httpapi.Handle(a.enroll))
 	mux.Handle("POST "+agentproto.PathHeartbeat, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.heartbeat)))
 	mux.Handle("POST "+agentproto.PathRemoved, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.removed)))
+	mux.Handle("POST "+agentproto.PathUninstalled, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.uninstalled)))
 	mux.Handle("GET "+agentproto.PathMeshAgent, httpapi.Handle(a.signed(a.meshAgent)))
 	mux.Handle("GET "+agentproto.PathMeshSettings, httpapi.Handle(a.signed(a.meshSettings)))
 	if a.jobs != nil {
@@ -698,6 +699,25 @@ func (a *API) removed(w http.ResponseWriter, r *http.Request, d *agents.Device, 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), removedWait)
 	defer cancel()
 	if err := a.svc.Removed(ctx, d, httpapi.ClientIP(r), in); err != nil {
+		return mapError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// uninstalled records an agent's report that it is being uninstalled without
+// the server's instruction (ADR-0053, ADR-0056).
+func (a *API) uninstalled(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in agentproto.UninstalledReport
+	if len(body) > 0 {
+		if err := decode(r, body, &in); err != nil {
+			return err
+		}
+	}
+	// Recorded to the end even if the agent hangs up: it is deleting itself.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), removedWait)
+	defer cancel()
+	if err := a.svc.Uninstalled(ctx, d, httpapi.ClientIP(r), in); err != nil {
 		return mapError(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

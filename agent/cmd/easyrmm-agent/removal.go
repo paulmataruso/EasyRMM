@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/removal"
+	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/trust"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -114,6 +116,32 @@ func (e *env) removeOnRequest(ctx context.Context, file string) error {
 		_, _ = fmt.Fprintf(e.stdout, "%s is in use; Windows deletes it at the next restart.\n", e.paths.Binary())
 	}
 	return err
+}
+
+// reportUninstalled tells the server that this agent is being uninstalled
+// without its instruction, with how it was installed (ADR-0053, ADR-0056):
+// best effort, within client.UninstalledWait, never a reason to fail the
+// removal. It says whether the server heard; a server without the endpoint
+// answers 404, which counts as not heard.
+func (e *env) reportUninstalled(ctx context.Context, cfg *state.Config, key ed25519.PrivateKey) bool {
+	if cfg.Server == "" || cfg.DeviceID == "" || key == nil {
+		return false
+	}
+	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, TrustSystem: cfg.TrustSystem, Version: Version})
+	if err != nil {
+		e.log.Warn("telling the server about the removal failed", "error", err)
+		return false
+	}
+	c.SetIdentity(cfg.DeviceID, key)
+	rep := agentproto.UninstalledReport{}
+	if rec, err := e.store.LoadPackage(); err == nil && agentproto.ValidInstaller(rec.Kind) {
+		rep.Installer = rec.Kind
+	}
+	if err := c.Uninstalled(ctx, rep); err != nil {
+		e.log.Warn("the server did not hear of the removal", "error", err)
+		return false
+	}
+	return true
 }
 
 // reportRemoval tells the server how the removal went, trying a few times:

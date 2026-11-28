@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -26,6 +27,10 @@ type removalServer struct {
 	mu      sync.Mutex
 	reports []agentproto.RemovedReport
 	status  int
+	// uninstalled are the reports to PathUninstalled; noEndpoint makes it
+	// answer 404, as a server of level 1 does.
+	uninstalled []agentproto.UninstalledReport
+	noEndpoint  bool
 }
 
 func newRemovalServer(t *testing.T) *removalServer {
@@ -35,6 +40,17 @@ func newRemovalServer(t *testing.T) *removalServer {
 		switch r.URL.Path {
 		case agentproto.PathEnroll:
 			_, _ = io.WriteString(w, `{"deviceId":"dev-42","heartbeatSeconds":60}`)
+		case agentproto.PathUninstalled:
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.noEndpoint {
+				http.NotFound(w, r)
+				return
+			}
+			var rep agentproto.UninstalledReport
+			_ = json.NewDecoder(r.Body).Decode(&rep)
+			s.uninstalled = append(s.uninstalled, rep)
+			w.WriteHeader(http.StatusNoContent)
 		case agentproto.PathRemoved:
 			var rep agentproto.RemovedReport
 			_ = json.NewDecoder(r.Body).Decode(&rep)
@@ -164,6 +180,51 @@ func TestRemoveOnRequest(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "removed on the server's instruction") {
 		t.Errorf("output %q", h.out)
+	}
+}
+
+// An agent uninstalled by hand, or by its package's removal script, tells the
+// server how it was installed before its key goes (ADR-0053, ADR-0056).
+func TestUninstallTellsTheServer(t *testing.T) {
+	linuxOnly(t)
+	srv := newRemovalServer(t)
+	h := newHarness(t)
+	enrolledForRemoval(t, h, srv)
+	if err := h.e.store.SavePackage(&state.Package{Kind: "rpm", Made: true, At: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run("uninstall", "--package", "rpm"); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	srv.mu.Lock()
+	got := slices.Clone(srv.uninstalled)
+	srv.mu.Unlock()
+	if len(got) != 1 || got[0].Installer != "rpm" {
+		t.Fatalf("reports %+v", got)
+	}
+	if !strings.Contains(h.out.String(), "The server was told") {
+		t.Errorf("output %q", h.out)
+	}
+	if _, err := os.Stat(h.e.paths.State()); !os.IsNotExist(err) {
+		t.Error("state kept")
+	}
+}
+
+// A server without the endpoint (404) does not stop the removal.
+func TestUninstallGoesOnWhenTheServerDoesNotHear(t *testing.T) {
+	linuxOnly(t)
+	srv := newRemovalServer(t)
+	srv.noEndpoint = true
+	h := newHarness(t)
+	enrolledForRemoval(t, h, srv)
+	if err := h.run("uninstall"); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if strings.Contains(h.out.String(), "The server was told") || !strings.Contains(h.out.String(), "stays listed") {
+		t.Errorf("output %q", h.out)
+	}
+	if _, err := os.Stat(h.e.paths.State()); !os.IsNotExist(err) {
+		t.Error("state kept")
 	}
 }
 

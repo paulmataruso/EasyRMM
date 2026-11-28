@@ -344,6 +344,12 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 			ev.Action, ev.Outcome = "device.removal_failed", audit.Failure
 			return s.audit.Write(ctx, tx, ev)
 		}
+		if r.removal == nil {
+			// Nobody asked for this removal: a device key alone must not be
+			// able to silence a device, so it is marked, not deleted
+			// (ADR-0053 amending ADR-0050).
+			return s.markUninstalled(ctx, tx, r, d, actor, "", rep.Error)
+		}
 		if err := r.remember(ctx, tx, nil, rep.Error != "", s.now()); err != nil {
 			return err
 		}
@@ -356,9 +362,6 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 		deleted = true
 		ev.Action, ev.Outcome = "device.remove", audit.Success
 		ev.Details["confirmed"] = true
-		if r.removal == nil {
-			ev.Details["removalCanceled"] = true
-		}
 		return s.audit.Write(ctx, tx, ev)
 	})
 	if err != nil {
@@ -368,6 +371,83 @@ func (s *Service) Removed(ctx context.Context, d *Device, ip netip.Addr, rep age
 		s.deleted(d.ID)
 	}
 	return nil
+}
+
+// NoticeAgentUninstalled is the kind of the notice "agent removed without a
+// request" (ADR-0053); its subject is the device's ID.
+const NoticeAgentUninstalled = "agent_uninstalled"
+
+// Uninstalled records an agent's report that it is being uninstalled without
+// the server's instruction (ADR-0053, ADR-0056): by hand, or by removing its
+// package. The device is marked Uninstalled, not deleted, and a notice is
+// opened, because a device key alone must not be able to silence a device.
+func (s *Service) Uninstalled(ctx context.Context, d *Device, ip netip.Addr, rep agentproto.UninstalledReport) error {
+	if !agentproto.ValidInstaller(rep.Installer) {
+		return ErrBadReport
+	}
+	if d.Retired {
+		// Removed from the console already; nothing to mark.
+		return nil
+	}
+	actor := audit.Actor{Type: audit.ActorAgent, ID: d.ID, Label: d.Hostname, SourceIP: ip}
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		r, err := lockDevice(ctx, tx, d.ID)
+		if errors.Is(err, apperr.ErrNotFound) {
+			return ErrUnknownDevice
+		}
+		if err != nil {
+			return err
+		}
+		return s.markUninstalled(ctx, tx, r, d, actor, rep.Installer, "")
+	})
+}
+
+// markUninstalled marks a device Uninstalled: audited, its policy alerts
+// resolved, and the notice opened (critical, and held by no maintenance
+// window). It stays until someone removes the device or its agent checks in
+// again. The device row is locked by the caller.
+func (s *Service) markUninstalled(ctx context.Context, tx pgx.Tx, r *doomed, d *Device, actor audit.Actor, installer, errText string) error {
+	// The installer the heartbeats named stands in when the report names none.
+	var how string
+	if err := tx.QueryRow(ctx, `UPDATE devices SET agent_uninstalled_at = coalesce(agent_uninstalled_at, now()),
+			agent_uninstalled_installer = coalesce(NULLIF($2, ''), agent_uninstalled_installer, installer)
+		WHERE id = $1 RETURNING coalesce(agent_uninstalled_installer, '')`, d.ID, installer).Scan(&how); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE alerts SET status = 'resolved', resolved_at = now(), resolution = 'uninstalled'
+		WHERE device_id = $1 AND status <> 'resolved'`, d.ID); err != nil {
+		return err
+	}
+	title := "Agent removed without a request: " + r.name
+	detail := "The EasyRMM agent on " + r.name + " was uninstalled " + installerPhrase(how) + ", and nobody asked for it in the console. " +
+		"Remove the device in the console if this was meant; it stays listed until you do or its agent checks in again."
+	if errText != "" {
+		detail += " The agent said: " + errText
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO notices (organization_id, kind, subject, site_id, device_id, title, detail) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (coalesce(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), kind, subject) WHERE resolved_at IS NULL
+		DO UPDATE SET detail = EXCLUDED.detail`,
+		r.org, NoticeAgentUninstalled, d.ID.String(), r.site, d.ID, clean(title, 200), clean(detail, 1000)); err != nil {
+		return err
+	}
+	return s.audit.Write(ctx, tx, audit.Event{
+		Actor: actor, Action: "device.agent_uninstalled", Outcome: audit.Success,
+		OrganizationID: r.org, SiteID: r.site, DeviceID: d.ID, TargetType: "device", TargetID: d.ID.String(),
+		Details: map[string]any{"device": r.name, "installer": how},
+	})
+}
+
+// installerPhrase says how an agent was removed, for the notice.
+func installerPhrase(installer string) string {
+	switch installer {
+	case agentproto.InstallerDEB:
+		return "by removing its DEB package"
+	case agentproto.InstallerRPM:
+		return "by removing its RPM package"
+	case agentproto.InstallerMSI:
+		return "by removing its MSI package"
+	}
+	return "by hand"
 }
 
 // retiredRemoved records the report of an agent whose device was removed

@@ -912,7 +912,7 @@ func (e *env) uninstallAll(ctx context.Context) error {
 	if err := e.store.RemoveRecovery(); err != nil {
 		return fmt.Errorf("removing the recovery copy: %w", err)
 	}
-	cfg, _, err := e.store.Load()
+	cfg, key, err := e.store.Load()
 	if err != nil && !errors.Is(err, state.ErrNotEnrolled) {
 		e.log.Warn("the enrollment could not be read; removing anyway", "error", err)
 	}
@@ -923,6 +923,8 @@ func (e *env) uninstallAll(ctx context.Context) error {
 	if err := e.sd.Remove(ctx, e.paths.AgentService().Name); err != nil {
 		return err
 	}
+	// The server hears of it before the key goes (ADR-0053, ADR-0056).
+	heard := enrolled && e.reportUninstalled(ctx, cfg, key)
 	if err := e.mesh(cfg).Remove(ctx); err != nil {
 		return err
 	}
@@ -930,9 +932,12 @@ func (e *env) uninstallAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if enrolled {
+	switch {
+	case heard:
+		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The server was told; the device shows as Uninstalled in the EasyRMM console.")
+	case enrolled:
 		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The device stays listed in the EasyRMM console as offline.")
-	} else {
+	default:
 		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed.")
 	}
 	if later {

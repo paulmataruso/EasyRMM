@@ -313,6 +313,13 @@ export function DeviceStatusBadge({ device }: { device: Pick<Device, "online" | 
       </Badge>
     );
   }
+  if (device.agent?.uninstalledAt) {
+    return (
+      <Badge tone="danger" icon={<Dot tone="danger" />} title="The agent was removed from this computer without a request from the console.">
+        Uninstalled
+      </Badge>
+    );
+  }
   if (!device.agent && !device.remoteAgent) {
     return (
       <Badge tone="neutral" title="No agent has connected for this device.">

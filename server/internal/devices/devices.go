@@ -38,6 +38,18 @@ type Agent struct {
 	// Accepts is what the agent's build last said its polls accept, such as
 	// job.pwsh (ADR-0064); nil when the build it runs has not said.
 	Accepts []string `json:"accepts"`
+	// Installer is the package that installed the agent (ADR-0056): deb,
+	// rpm or msi; empty for the command, or for an agent that has not said.
+	Installer string `json:"installer"`
+	// RanServerBuildAt is when the device first ran the build the server
+	// serves; nil while it has not, a "new" device that the When asked
+	// rollout updates at once (ADR-0056).
+	RanServerBuildAt *time.Time `json:"ranServerBuildAt"`
+	// UninstalledAt is when the agent said it was uninstalled without a
+	// request, nil otherwise (ADR-0053); UninstalledInstaller is how it
+	// had been installed.
+	UninstalledAt        *time.Time `json:"uninstalledAt"`
+	UninstalledInstaller string     `json:"uninstalledInstaller,omitempty"`
 	// PowerShell7 says whether its last inventory listed a usable
 	// PowerShell 7; nil when the inventory listed no PowerShell installs
 	// (an agent too old to look, or not Windows).
@@ -314,7 +326,8 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}'),
 	d.meshagent_state, d.meshagent_state_at, d.remote_changed_at, d.mesh_wrong_group,
 	(EXISTS (SELECT 1 FROM easypatch_devices ep WHERE ep.device_id = d.id AND ep.state = 'linked')
-		AND EXISTS (SELECT 1 FROM easypatch_organizations eo WHERE eo.organization_id = d.organization_id))`
+		AND EXISTS (SELECT 1 FROM easypatch_organizations eo WHERE eo.organization_id = d.organization_id)),
+	coalesce(d.installer, ''), d.ran_server_build_at, d.agent_uninstalled_at, coalesce(d.agent_uninstalled_installer, '')`
 
 // from joins what the columns read. hs counts the device's hardening
 // modules by state, as {"in_place": 9, "partly": 1}; ds its disks by the
@@ -364,7 +377,8 @@ func scan(row pgx.Row) (*Device, error) {
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
 		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates,
-		&ri.state, &ri.stateAt, &ri.changedAt, &ri.wrongGroup, &d.patched)
+		&ri.state, &ri.stateAt, &ri.changedAt, &ri.wrongGroup, &d.patched,
+		&a.Installer, &a.RanServerBuildAt, &a.UninstalledAt, &a.UninstalledInstaller)
 	if err != nil {
 		return nil, err
 	}

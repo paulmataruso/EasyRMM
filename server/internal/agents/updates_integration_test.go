@@ -245,6 +245,9 @@ func TestAgentUpdateModes(t *testing.T) {
 	f := newUpdates(t, "new build", "")
 	d1, _ := f.enroll(f.hq, "pc-1")
 	d2, _ := f.enroll(f.hq, "pc-2")
+	// Devices that have run the server's build before: When asked holds them
+	// (a new device is updated at once, ADR-0056).
+	f.exec(`UPDATE devices SET ran_server_build_at = now()`)
 
 	if _, err := f.svc.SetUpdatePolicy(f.ctx, f.sys, UpdatePolicy{Mode: UpdateManual, MaxConcurrent: 5}); err != nil {
 		t.Fatal(err)
@@ -308,6 +311,7 @@ func TestAgentUpdateSettingsAndAccess(t *testing.T) {
 	d2, _ := f.enroll(f.hq, "pc-2")
 	d3, _ := f.enroll(f.hq, "pc-3")
 	old, _ := f.enroll(f.hq, "pc-old")
+	f.exec(`UPDATE devices SET ran_server_build_at = now()`) // not new devices (ADR-0056)
 	f.heartbeat(old, "", nil)
 	f.heartbeat(d3, f.build.SHA256, nil)
 	if _, err := f.svc.SetUpdatePolicy(f.ctx, f.sys, UpdatePolicy{Mode: UpdateManual, MaxConcurrent: 1}); err != nil {

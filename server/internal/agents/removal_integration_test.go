@@ -192,8 +192,10 @@ func TestDeviceRemoval(t *testing.T) {
 	}
 }
 
-// An agent whose removal was canceled after it started uninstalling still
-// has its device deleted when it reports.
+// An agent whose removal was canceled after it started uninstalling: no
+// removal is pending when it reports, so the device is marked Uninstalled
+// and a notice opens, not deleted (ADR-0053 amending ADR-0050; ADR-0053's
+// table of issued instructions, which would delete it, is not built yet).
 func TestRemovalReportAfterCancel(t *testing.T) {
 	f := newUpdates(t, "new build", "v2")
 	d, _ := f.enroll(f.hq, "pc-1")
@@ -207,10 +209,10 @@ func TestRemovalReportAfterCancel(t *testing.T) {
 	if err := f.svc.Removed(f.ctx, d, agentIP, agentproto.RemovedReport{ID: p.ID, Removed: true}); err != nil {
 		t.Fatal(err)
 	}
-	if n := f.count(`SELECT count(*) FROM devices WHERE id = $1`, d.ID); n != 0 {
-		t.Error("device kept")
+	if n := f.count(`SELECT count(*) FROM devices WHERE id = $1 AND agent_uninstalled_at IS NOT NULL`, d.ID); n != 1 {
+		t.Error("device deleted, or not marked Uninstalled")
 	}
-	if n := f.count(`SELECT count(*) FROM audit_log WHERE action = 'device.remove' AND device_id = $1 AND details->>'removalCanceled' = 'true'`, d.ID); n != 1 {
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE action = 'device.agent_uninstalled' AND device_id = $1`, d.ID); n != 1 {
 		t.Errorf("audited %d", n)
 	}
 	// No node and no agent to wait for: nothing remembered.

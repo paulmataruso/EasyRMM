@@ -19,6 +19,19 @@ import (
 // it could not.
 const PathRemoved = "/api/agent/v1/removed"
 
+// PathUninstalled is where an agent that is being uninstalled without the
+// server's instruction (by hand, or by removing its package) says so, signed
+// with its device key, best effort (ADR-0053, ADR-0056). A server below
+// protocol level 2 answers 404, which the agent takes as "not supported".
+const PathUninstalled = "/api/agent/v1/uninstalled"
+
+// UninstalledReport is what the agent sends to PathUninstalled.
+type UninstalledReport struct {
+	// Installer is how the agent was installed, and so how it is being
+	// removed: deb, rpm, msi, or empty for the command (ADR-0056).
+	Installer string `json:"installer,omitempty"`
+}
+
 // UninstallPayloadVersion is the version of UninstallPayload.
 const UninstallPayloadVersion = 1
 

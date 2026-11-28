@@ -439,6 +439,11 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		}
 		req.Repair = r.repair.report(time.Now())
 		r.defendRequest(ctx, &req)
+		// How the agent was installed (ADR-0056): the package record's
+		// kind, none for an agent the command installed.
+		if rec, err := r.Store.LoadPackage(); err == nil && agentproto.ValidInstaller(rec.Kind) {
+			req.Installer = rec.Kind
+		}
 	}
 	if r.Settings != nil && r.Client.Level() >= 2 {
 		// The report for signed settings (ADR-0058): none before the first

@@ -709,6 +709,14 @@ export interface DeviceAgent {
    * falling back to Windows PowerShell 5.1 (ADR-0064). Absent otherwise.
    */
   powerShell7Blocked?: string;
+  /** The package that installed the agent (ADR-0056); empty for the install command, or an agent that has not said. */
+  installer?: "deb" | "rpm" | "msi" | "";
+  /** When the device first ran the build the server serves; null while it has not (a new device), absent from an older server. */
+  ranServerBuildAt?: string | null;
+  /** When the agent said it was uninstalled without a request from the console (ADR-0053); null otherwise. */
+  uninstalledAt?: string | null;
+  /** How the agent that was uninstalled had been installed. */
+  uninstalledInstaller?: string;
 }
 
 /**

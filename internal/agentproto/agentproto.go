@@ -203,6 +203,28 @@ type HeartbeatRequest struct {
 	Capabilities     *SettingsCapabilities `json:"capabilities,omitempty"`
 	Settings         *SettingsReport       `json:"settings,omitempty"`
 	HeartbeatSeconds int                   `json:"heartbeatSeconds,omitempty"`
+	// Installer is the package that installed the agent (ADR-0056): one of
+	// the Installer* constants, empty for an agent installed by the
+	// command. A field of its own, not in Facts, because the enrollment
+	// request carries Facts and gains no fields (ADR-0009); sent only to
+	// servers of level 2 or higher.
+	Installer string `json:"installer,omitempty"`
+}
+
+// The package kinds an agent reports as its installer (ADR-0056).
+const (
+	InstallerDEB = "deb"
+	InstallerRPM = "rpm"
+	InstallerMSI = "msi"
+)
+
+// ValidInstaller says whether s is a package kind, or empty (the command).
+func ValidInstaller(s string) bool {
+	switch s {
+	case "", InstallerDEB, InstallerRPM, InstallerMSI:
+		return true
+	}
+	return false
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so

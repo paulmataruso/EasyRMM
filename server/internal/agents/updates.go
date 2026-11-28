@@ -295,15 +295,25 @@ func (s *Service) planUpdate(ctx context.Context, tx pgx.Tx, d *Device, f facts,
 		if err != nil {
 			return nil, err
 		}
+		// A device that has not yet run the server's build is updated at
+		// once under When asked; Off still holds it (ADR-0056). The
+		// column is set by the heartbeat, so a device on the served build
+		// never gets here.
+		fresh := false
+		if p.Mode == UpdateManual {
+			if err := tx.QueryRow(ctx, `SELECT ran_server_build_at IS NULL FROM devices WHERE id = $1`, d.ID).Scan(&fresh); err != nil {
+				return nil, err
+			}
+		}
 		if u == nil {
-			if p.Mode != UpdateAutomatic {
+			if p.Mode != UpdateAutomatic && !fresh {
 				return nil, nil
 			}
 			u = &update{isNew: true}
 			u.retarget(b)
 		}
 		due := u.retry == nil || !now.Before(*u.retry)
-		wanted := p.Mode == UpdateAutomatic || (p.Mode == UpdateManual && u.requested)
+		wanted := p.Mode == UpdateAutomatic || (p.Mode == UpdateManual && (u.requested || fresh))
 		if due && wanted {
 			ok, err := takeSlot(ctx, tx, p.MaxConcurrent, now)
 			if err != nil {

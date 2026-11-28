@@ -564,3 +564,26 @@ func (c *Client) callLimit(ctx context.Context, method, target string, body []by
 	}
 	return nil
 }
+
+// UninstalledWait is how long the agent gives the server to hear that it is
+// being uninstalled: best effort, never a reason to fail a removal.
+const UninstalledWait = 10 * time.Second
+
+// Uninstalled tells the server that this agent is being uninstalled without
+// the server's instruction (ADR-0053, ADR-0056). A server that does not have
+// the endpoint answers 404 (ADR-0009); the caller takes any error as "the
+// server did not hear" and goes on.
+func (c *Client) Uninstalled(ctx context.Context, r agentproto.UninstalledReport) error {
+	ctx, cancel := context.WithTimeout(ctx, UninstalledWait)
+	defer cancel()
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, agentproto.PathUninstalled, body, true)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	return resp.Body.Close()
+}

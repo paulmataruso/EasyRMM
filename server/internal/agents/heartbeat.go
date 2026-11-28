@@ -53,17 +53,23 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		keyAck   uint64
 		keyTaken bool
 		before   string
-		interval = int(HeartbeatInterval.Seconds())
-		rescan   bool
-		logOn    bool
-		logAck   *agentproto.DefenderLogAck
-		logBatch = req.DefenderLog
+		// wasUninstalled: the device was marked Uninstalled before this
+		// heartbeat (ADR-0053).
+		wasUninstalled bool
+		// installer is the package kind the agent reported (ADR-0056); a
+		// value that is not one is ignored.
+		installer = validInstaller(req.Installer)
+		interval  = int(HeartbeatInterval.Seconds())
+		rescan    bool
+		logOn     bool
+		logAck    *agentproto.DefenderLogAck
+		logBatch  = req.DefenderLog
 	)
 	if logBatch != nil && logBatch.Check() != nil {
 		logBatch = nil
 	}
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, '') FROM devices WHERE id = $1`, d.ID).Scan(&before)
+		_ = tx.QueryRow(ctx, `SELECT coalesce(agent_version, ''), agent_uninstalled_at IS NOT NULL FROM devices WHERE id = $1`, d.ID).Scan(&before, &wasUninstalled)
 		// The interval operators set for this device (ADR-0058). A failed
 		// read never fails the heartbeat: the agent keeps today's minute.
 		if n, err := agentsettings.EffectiveHeartbeat(ctx, tx, d.OrganizationID, d.SiteID, d.ID); err != nil {
@@ -84,15 +90,26 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 						WHERE s.device_id = devices.id AND s.capabilities IS NOT NULL AND s.capabilities_build = $13) THEN agent_heartbeat_seconds
 					ELSE $10::int END,
 				meshagent_state = coalesce($8::jsonb, meshagent_state),
-				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END
+				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END,
+				installer = coalesce(NULLIF($14, ''), installer),
+				ran_server_build_at = CASE WHEN $15::bool THEN coalesce(ran_server_build_at, now()) ELSE ran_server_build_at END,
+				agent_uninstalled_at = NULL, agent_uninstalled_installer = NULL
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
 			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role, interval,
-			reportedInterval(req), req.Capabilities != nil, buildOf(f))
+			reportedInterval(req), req.Capabilities != nil, buildOf(f), installer, s.runsServedBuild(d, f))
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrUnknownDevice
+		}
+		if wasUninstalled {
+			// An agent restored from a backup checked in: the notice is moot
+			// (ADR-0053).
+			if _, err := tx.Exec(ctx, `UPDATE notices SET resolved_at = now()
+				WHERE kind = $1 AND subject = $2 AND resolved_at IS NULL`, NoticeAgentUninstalled, d.ID.String()); err != nil {
+				return err
+			}
 		}
 		if allowed {
 			if err := s.storeDefender(ctx, tx, d, f.hostname, ip, report); err != nil {
@@ -186,6 +203,31 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		Defender:         &agentproto.DefenderPolicy{Enabled: allowed, Events: logOn, EventsAck: logAck},
 		RescanRoles:      rescan,
 	}, nil
+}
+
+// validInstaller returns the package kind an agent reported as its installer,
+// or "" for none or for a value that is not one (ADR-0056).
+func validInstaller(s string) string {
+	if s == "" || !agentproto.ValidInstaller(s) {
+		return ""
+	}
+	return s
+}
+
+// runsServedBuild says whether the device runs the build the server serves
+// for it now, which records that it has run the server's build once
+// (ADR-0056). A build the server withholds (signed builds only, none signed)
+// has no hash and counts for nothing.
+func (s *Service) runsServedBuild(d *Device, f facts) bool {
+	if f.sha256 == "" {
+		return false
+	}
+	b := s.BuildsFor(d.OrganizationID)
+	if b == nil {
+		return false
+	}
+	served, ok := b.For(f.platform, f.arch)
+	return ok && served.SHA256 != "" && served.SHA256 == f.sha256
 }
 
 // buildOf names the build that sent a heartbeat for the settings report: the
