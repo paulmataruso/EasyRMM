@@ -40,7 +40,7 @@ const TEST_LABEL: Record<TestReason, string> = {
   unknown: "Failed",
 };
 
-const base = "/settings/certificates/dns";
+const base = "/settings/dns-providers";
 
 export function DNSProviders() {
   const q = useApi<{ credentials: DNSCredential[] }>(base, undefined, { refetchInterval: 30_000 });

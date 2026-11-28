@@ -26,7 +26,7 @@ func New(svc *tlsdns.Service, sessions *httpapi.Sessions) *API {
 	return &API{svc: svc, sessions: sessions}
 }
 
-const base = "/api/v1/settings/certificates/dns"
+const base = "/api/v1/settings/dns-providers"
 
 // Register mounts the routes.
 func (a *API) Register(mux *http.ServeMux) {

@@ -33,7 +33,7 @@ function routes(extra: Record<string, unknown> = {}) {
     "GET /settings/certificates": ok(OVERVIEW),
     "GET /settings/certificates/added-name": ok({ eligible: false }),
     "GET /settings/certificates/sources": ok({ names: [] }),
-    "GET /settings/certificates/dns": ok({ credentials: [] }),
+    "GET /settings/dns-providers": ok({ credentials: [] }),
     "GET /settings/certificates/:name/move": fail(404, "not_found", "Not found."),
     ...extra,
   };

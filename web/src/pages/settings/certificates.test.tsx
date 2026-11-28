@@ -84,7 +84,7 @@ function routes(o: TlsOverview, extra: Record<string, unknown> = {}) {
     "GET /users": ok({ items: [], total: 0 }),
     "GET /settings/certificates": ok(o),
     "GET /settings/certificates/added-name": ok({ eligible: false }),
-    "GET /settings/certificates/dns": ok({ credentials: [] }),
+    "GET /settings/dns-providers": ok({ credentials: [] }),
     ...extra,
   };
 }
