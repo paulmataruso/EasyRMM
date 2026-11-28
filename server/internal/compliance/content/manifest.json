@@ -49,7 +49,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "c96b6d313d99ecc523e8072f0ca0ca2de823fa57d51e629ab321ded430681aaa"
+   "sha256": "2e68e63eb9bfedc1cb2937940c211c1251678256bdd916f5e8262d27050936af"
   },
   {
    "path": "packs/gdpr-indicative.json",
