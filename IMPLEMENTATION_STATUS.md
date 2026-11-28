@@ -145,6 +145,7 @@ as LocalSystem through the agent's signed job channel.
 | Group Policy management (ADR-0083): GPO status, list, get with settings report, rename with reason and step-up and automatic backup, create, link with two-person rule for sensitive targets, WMI filters, backups in results; the Group Policy tab | Complete | Unit tests of every GPO module; PostgreSQL integration tests; console tests; a browser end-to-end test with a simulated agent exercises the full lifecycle (read, rename with backup, link with approval, settings report). On a real Windows Server 2025 domain controller, GPO operations verified. | Editing GPO settings (read-only today); a large GPO environment (100+ GPOs). |
 | Endpoint security posture (ADR-0082, P1): one weighted score from compliance, hardening and patching results using rollup.ScoreOf; the Security column and filter on Devices, the Security Posture report | Tested | PostgreSQL integration tests of the score computation and rollup; HTTP API tests; console tests; a browser end-to-end test of the posture column and report. | On a real fleet with all three data sources populated. |
 | Endpoint security posture P2+P3 (ADR-0082): disk encryption state (BitLocker on Windows, LUKS on Linux) and Defender health (real-time protection, antivirus enabled, signature age, scan recency) as weighted posture controls; migration 00100 (`device_volume_reports`) | Complete | Unit tests of `encryptionState` (10 cases) and `defenderState` (11 cases); PostgreSQL integration tests of Linux LUKS, Windows BitLocker and Defender health controls with real database queries. | On real Windows and Linux machines with actual BitLocker/LUKS volumes and Defender running. |
+| Endpoint security posture P4 (ADR-0082): org-level weight overrides (policies), posture history (dedup by word+percent), noncompliant notice on meets→does-not-meet; migrations 00103–00104 | Complete | Unit tests for policy validation; PostgreSQL integration tests for CRUD, permissions, history dedup, evaluate loop, notice open/resolve; console vitest for PostureHistory component. | On a real fleet with policies applied and posture changes over time. |
 
 ## Patching
 
@@ -218,5 +219,5 @@ Not started, so that nobody assumes them:
 * Windows hardening W2 (apply and undo) and W3 (the console).
 * Log collection: agent collects and forwards Windows/Linux security,
   Defender and system logs (ADR-0060; in progress, slices 0–2).
-* Posture P4–P5: policies, history, noncompliant event, threat detections
-  (ADR-0082; P2+P3, disk encryption and Defender health, are built above).
+* Posture P5: threat detections
+  (ADR-0082; P1–P4 are built above).
