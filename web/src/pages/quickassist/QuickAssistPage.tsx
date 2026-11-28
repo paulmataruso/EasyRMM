@@ -6,7 +6,7 @@ import type { NewQuickAssistLink, QuickAssistLink, QuickAssistSession } from "..
 import { useAuth } from "../../auth/AuthContext";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Button, Card, EmptyState, ErrorState, Field, InlineError, PageHeader, SelectField, Spinner, TableWrap, TextField } from "../../components/ui";
+import { Button, Card, EmptyState, ErrorState, Field, InlineError, PageHeader, SelectField, Spinner, Tabs, TableWrap, TextField } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 
@@ -77,10 +77,20 @@ export function QuickAssistPage() {
         <EmptyState title="No organization yet" icon={<LifeBuoy className="size-8" aria-hidden />}>
           Quick Assist links belong to an organization. Add one first.
         </EmptyState>
-      ) : view === "links" ? (
-        <Links org={org} />
       ) : (
-        <Sessions org={org} view={view} />
+        <>
+          <Tabs
+            active={view}
+            onChange={(v) => url.set({ view: v === "requests" ? null : v })}
+            tabs={[
+              { id: "requests", label: "Requests" },
+              { id: "active", label: "Active" },
+              { id: "links", label: "Links" },
+              { id: "ended", label: "Ended" },
+            ]}
+          />
+          {view === "links" ? <Links org={org} /> : <Sessions org={org} view={view} />}
+        </>
       )}
     </>
   );

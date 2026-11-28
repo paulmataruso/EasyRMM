@@ -5,8 +5,8 @@
 // reports what it checked. It installs no service, no scheduled task and no
 // start-up entry, and keeps its files in one folder of its own.
 //
-// This is the Linux cut (terminal consent). The Windows runner, the
-// MeshAgent child and the EasyPatch ad-hoc agent are not built yet.
+// The Windows runner and MeshAgent child are built. The EasyPatch
+// ad-hoc agent is not built yet (QA6).
 package quickassist
 
 import (

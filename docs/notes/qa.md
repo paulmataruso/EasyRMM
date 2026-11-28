@@ -22,7 +22,7 @@ Branch `ws/qa`, migrations 00063 to 00065.
 | --- | --- |
 | Quick Assist links, ticket, limits (QA1) | Built; tested against real PostgreSQL |
 | Quick Assist sessions and acceptance (QA2) | Built; tested with the real runner on Linux |
-| Quick Assist console (QA4) | Built; vitest and a browser e2e spec |
+| Quick Assist console (QA4) | Built; tab navigation, vitest and a browser e2e spec |
 | Quick Assist Linux runner (QA7, no MeshAgent) | Built |
 | Quick Assist install permanently (QA5) | Built; tested with the real runner flow on Linux |
 | Quick Assist Windows runner and ad-hoc MeshAgent (QA3) | Built, compiles for Windows; never run on Windows or MeshCentral |
@@ -44,6 +44,6 @@ Branch `ws/qa`, migrations 00063 to 00065.
 * Migrations 00063 to 00065 need renumbering; down migrations work.
 * `app.go`, `agentapi.go` and `devices.go` have small additive edits.
 * Sites got `kind`; `ListSites`, the device list and the device tree filter
-  Quick Assist ones out. Other readers of `devices` (reports, alerts,
-  monitoring, patching) do not yet skip `devices.quick_assist`; that
-  filter is still to do (ADR-0080 Consequences).
+  Quick Assist ones out. All other readers of `devices` (reports, alerts,
+  monitoring, patching, compliance, slow devices) now skip
+  `devices.quick_assist` (done).
