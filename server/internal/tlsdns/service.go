@@ -109,7 +109,7 @@ type sealedRFC2136 struct {
 }
 
 type sealedCloudflare struct {
-	APIToken string `json:"apiToken"`
+	APIToken string `json:"apiToken"` //nolint:gosec // sealed in the database; not logged
 }
 
 // Deps are what the service uses.
@@ -417,7 +417,7 @@ func (s *Service) validateCloudflare(in *CloudflareInput, overrideDomain string)
 	if in.APIToken == "" {
 		return "", nil, "", ErrMissingField
 	}
-	creds, _ := json.Marshal(sealedCloudflare{APIToken: in.APIToken})
+	creds, _ := json.Marshal(sealedCloudflare{APIToken: in.APIToken}) //nolint:gosec // sealed credential stored in DB
 	return zone, creds, "", nil
 }
 
@@ -454,7 +454,7 @@ func (s *Service) resolveAndPin(ctx context.Context, server string) (string, err
 	return netip.AddrPortFrom(addr, 53).String(), nil
 }
 
-// isCloudMetadata returns true for addresses that must never be dialled:
+// isCloudMetadata returns true for addresses that must never be dialed:
 // 169.254.169.254 (AWS/GCP/Azure), fd00:ec2::254 (AWS IMDSv2 IPv6).
 func isCloudMetadata(addr netip.Addr) bool {
 	a := addr.Unmap()
