@@ -65,6 +65,13 @@ func (f *fx) exec(sql string, args ...any) {
 	}
 }
 
+func (f *fx) scanTime(sql string, out *time.Time, args ...any) {
+	f.t.Helper()
+	if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error { return tx.QueryRow(f.ctx, sql, args...).Scan(out) }); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 func (f *fx) count(sql string, args ...any) int {
 	f.t.Helper()
 	var n int

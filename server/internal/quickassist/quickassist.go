@@ -64,8 +64,8 @@ const (
 	ModeOpen           = "open"
 )
 
-// Limits (ADR-0080). The bucket and the caps are settings in the ADR; the
-// defaults are what is built so far.
+// Limits (ADR-0080). These are the defaults; the platform settings in
+// settings.go override them (LoadSettings).
 const (
 	DefaultOneTimeLife = 24 * time.Hour
 	MaxOneTimeLife     = 7 * 24 * time.Hour
@@ -91,6 +91,9 @@ const (
 	ActionEnd           = "quickassist.session.end"
 	ActionLost          = "quickassist.session.lost"
 	ActionCleanup       = "quickassist.session.cleanup"
+	ActionExtend        = "quickassist.session.extend"
+	// ActionLinkAutoRevoke is a permanent link the server revoked for want of use.
+	ActionLinkAutoRevoke = "quickassist.link.revoked"
 )
 
 // Errors the public side answers with one message, so no answer tells a
@@ -291,14 +294,16 @@ type Link struct {
 	UsedAt         *time.Time `json:"usedAt"`
 	LastUsedAt     *time.Time `json:"lastUsedAt"`
 	DownloadCount  int        `json:"downloadCount"`
+	// Stale is a permanent link nobody has used for a long while; it is revoked if that goes on.
+	Stale bool `json:"stale"`
 }
 
-const linkCols = `id, organization_id, site_id, kind, name, note, state, paused, test, expires_at, created_by, created_at, used_at, last_used_at, download_count`
+const linkCols = `id, organization_id, site_id, kind, name, note, state, paused, test, expires_at, created_by, created_at, used_at, last_used_at, download_count, stale`
 
 func scanLink(row pgx.Row, now time.Time) (*Link, error) {
 	var l Link
 	if err := row.Scan(&l.ID, &l.OrganizationID, &l.SiteID, &l.Kind, &l.Name, &l.Note, &l.State, &l.Paused, &l.Test,
-		&l.ExpiresAt, &l.CreatedBy, &l.CreatedAt, &l.UsedAt, &l.LastUsedAt, &l.DownloadCount); err != nil {
+		&l.ExpiresAt, &l.CreatedBy, &l.CreatedAt, &l.UsedAt, &l.LastUsedAt, &l.DownloadCount, &l.Stale); err != nil {
 		return nil, err
 	}
 	if l.State == LinkActive && l.ExpiresAt != nil && !now.Before(*l.ExpiresAt) {
@@ -389,12 +394,16 @@ func (s *Service) CreateLink(ctx context.Context, c access.Caller, in CreateInpu
 			}
 		}
 		if in.Kind == KindPermanent {
+			lim, err := loadSettingsTx(ctx, tx)
+			if err != nil {
+				return err
+			}
 			var live int
 			if err := tx.QueryRow(ctx, `SELECT count(*) FROM quick_assist_links WHERE organization_id = $1 AND kind = 'permanent' AND state = 'active'`, in.OrganizationID).Scan(&live); err != nil {
 				return err
 			}
-			if live >= MaxPermanentLinks {
-				return apperr.Conflict("too_many_links", fmt.Sprintf("An organization may have %d live permanent links.", MaxPermanentLinks))
+			if live >= lim.PermanentLinkCap {
+				return apperr.Conflict("too_many_links", fmt.Sprintf("An organization may have %d live permanent links.", lim.PermanentLinkCap))
 			}
 		}
 		var by *uuid.UUID
@@ -613,6 +622,10 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 	if !s.downloads.Allow(auth.LimitKey(ip)) {
 		return nil, nil, ErrRateLimited
 	}
+	lim, err := s.LoadSettings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	throttled := false
 	var alertOrg uuid.UUID
 	var alertLink string
@@ -627,7 +640,7 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 				return err
 			}
 		} else {
-			tokens := min(bucketBurst, r.tokens+now.Sub(r.bucket).Seconds()/bucketRefill.Seconds())
+			tokens := min(float64(lim.BucketBurst), r.tokens+now.Sub(r.bucket).Seconds()/(time.Duration(lim.BucketRefillMinutes)*time.Minute).Seconds())
 			if tokens < 1 {
 				if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET bucket_tokens = $2, bucket_at = $3 WHERE id = $1`, r.ID, tokens, now); err != nil {
 					return err
@@ -649,7 +662,7 @@ func (s *Service) Download(ctx context.Context, ip netip.Addr, token string) (tr
 				}
 				return nil
 			}
-			if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET bucket_tokens = $2, bucket_at = $3, last_used_at = $3, download_count = download_count + 1 WHERE id = $1`, r.ID, tokens-1, now); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET bucket_tokens = $2, bucket_at = $3, last_used_at = $3, download_count = download_count + 1, stale = false WHERE id = $1`, r.ID, tokens-1, now); err != nil {
 				return err
 			}
 		}
@@ -679,4 +692,58 @@ const ticketLife = qaticket.Lifetime
 
 func qaticketSign(key ed25519.PrivateKey, link uuid.UUID, server string, expiry time.Time) ([]byte, error) {
 	return qaticket.Sign(key, qaticket.Ticket{Link: link.String(), Server: server, Expiry: expiry.Unix()})
+}
+
+// Permanent links nobody uses (ADR-0080): stale after 90 days, revoked after 180.
+const (
+	StaleAfter      = 90 * 24 * time.Hour
+	AutoRevokeAfter = 180 * 24 * time.Hour
+)
+
+// SweepLinks marks permanent links with no use in 90 days as stale and
+// revokes those with none in 180 days, in the organizations the dev scope
+// lets automatic work reach. A link never used counts from the day it was
+// made. Using a link clears its stale mark.
+func (s *Service) SweepLinks(ctx context.Context) error {
+	now := s.now()
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		orgs := s.allowedOrgs(ctx, tx)
+		if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET stale = true
+			WHERE kind = 'permanent' AND state = 'active' AND NOT stale AND coalesce(last_used_at, created_at) < $1 AND organization_id = ANY($2)`,
+			now.Add(-StaleAfter), orgs); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT `+linkCols+` FROM quick_assist_links
+			WHERE kind = 'permanent' AND state = 'active' AND coalesce(last_used_at, created_at) < $1 AND organization_id = ANY($2) FOR UPDATE`,
+			now.Add(-AutoRevokeAfter), orgs)
+		if err != nil {
+			return err
+		}
+		var hit []*Link
+		for rows.Next() {
+			l, err := scanLink(rows, now)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			hit = append(hit, l)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, l := range hit {
+			if _, err := tx.Exec(ctx, `UPDATE quick_assist_links SET state = 'revoked', revoked_at = $2, stale = true WHERE id = $1`, l.ID, now); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET state = 'declined', end_reason = 'link_revoked', ended_at = $2
+				WHERE link_id = $1 AND state = 'requested'`, l.ID, now); err != nil {
+				return err
+			}
+			if err := s.audit.Write(ctx, tx, s.linkEvent(audit.SystemActor("quickassist"), l, ActionLinkAutoRevoke, audit.Success, map[string]any{"reason": "stale"})); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

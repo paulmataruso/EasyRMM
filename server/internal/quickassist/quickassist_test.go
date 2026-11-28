@@ -3,6 +3,7 @@ package quickassist
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -72,5 +73,27 @@ func TestHolderRule(t *testing.T) {
 	}
 	if !holder(access.System("test"), x) {
 		t.Fatal("the system may take over")
+	}
+}
+
+func TestDefaultSettingsAreInsideTheirBounds(t *testing.T) {
+	d := DefaultSettings()
+	want := Settings{IdleMinutes: 30, MaxSessionHours: 8, RetentionDays: 30, BucketBurst: 5, BucketRefillMinutes: 3, WaitingCap: 20, PermanentLinkCap: 5}
+	if d != want {
+		t.Fatalf("defaults %+v", d)
+	}
+	if d.Idle() != 30*time.Minute || d.MaxSessionLength() != 8*time.Hour {
+		t.Fatal("durations")
+	}
+	for _, sp := range settingSpecs {
+		if v := *sp.field(&d); v < sp.min || v > sp.max {
+			t.Errorf("%s default %d outside %d-%d", sp.key, v, sp.min, sp.max)
+		}
+		if sp.message == "" || sp.patch(&SettingsPatch{}) != nil {
+			t.Errorf("%s spec", sp.key)
+		}
+	}
+	if len(settingSpecs) != 7 {
+		t.Fatalf("specs: %d", len(settingSpecs))
 	}
 }

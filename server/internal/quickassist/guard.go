@@ -21,32 +21,43 @@ var ErrNotHeld = apperr.Conflict("quick_assist_not_held",
 // active and the caller holds it, or may take sessions over. Other devices
 // pass untouched. It never replaces the usual permissions.
 func GuardTx(ctx context.Context, tx pgx.Tx, c access.Caller, ids ...uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT s.organization_id, s.state, s.accepted_by FROM devices d
+	rows, err := tx.Query(ctx, `SELECT d.id, s.organization_id, s.state, s.accepted_by FROM devices d
 		LEFT JOIN quick_assist_sessions s ON s.device_id = d.id
 		WHERE d.id = ANY($1) AND d.quick_assist`, ids)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+	var held []uuid.UUID
 	for rows.Next() {
+		var dev uuid.UUID
 		var org *uuid.UUID
 		var state *string
 		var by *uuid.UUID
-		if err := rows.Scan(&org, &state, &by); err != nil {
+		if err := rows.Scan(&dev, &org, &state, &by); err != nil {
 			return err
 		}
 		if state == nil || *state != SessionActive || org == nil {
 			return ErrNotHeld
 		}
+		held = append(held, dev)
 		x := &Session{Organization: *org, AcceptedBy: by}
 		if !holder(c, x) {
 			return ErrNotHeld
 		}
 	}
-	return rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// The holder using the device is activity, which keeps the idle limit away.
+	if len(held) == 0 {
+		return nil
+	}
+	return TouchTx(ctx, tx, held...)
 }
 
-// Guard is GuardTx in a read transaction of its own.
+// Guard is GuardTx in a transaction of its own.
 func Guard(ctx context.Context, db *database.DB, c access.Caller, id uuid.UUID) error {
-	return db.ReadTx(ctx, database.System, func(tx pgx.Tx) error { return GuardTx(ctx, tx, c, id) })
+	return db.InTx(ctx, database.System, func(tx pgx.Tx) error { return GuardTx(ctx, tx, c, id) })
 }

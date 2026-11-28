@@ -3977,6 +3977,8 @@ export interface QuickAssistLink {
   usedAt: string | null;
   lastUsedAt: string | null;
   downloadCount: number;
+  /** A permanent link nobody has used for 90 days; it is revoked at 180. */
+  stale: boolean;
 }
 
 export interface NewQuickAssistLink {
@@ -4008,6 +4010,22 @@ export interface QuickAssistSession {
   cleanup: "none" | "verified" | "residue" | "unconfirmed";
   sourceIp: string;
   disconnected: boolean;
+  /** When the session reaches its maximum length. */
+  expiresAt: string;
+  /** The session was extended once; it cannot be again. */
+  extended: boolean;
+  lastActivityAt: string;
+}
+
+/** The limits of Quick Assist (ADR-0080), set in Settings > General. */
+export interface QuickAssistLimits {
+  idleMinutes: number;
+  maxSessionHours: number;
+  retentionDays: number;
+  bucketBurst: number;
+  bucketRefillMinutes: number;
+  waitingCap: number;
+  permanentLinkCap: number;
 }
 
 /** The state of one volume's recovery-key escrow (ADR-0081). No key, ciphertext or fingerprint is ever shown. */

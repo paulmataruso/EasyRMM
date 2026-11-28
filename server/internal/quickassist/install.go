@@ -58,7 +58,7 @@ func (s *Service) RequestInstall(ctx context.Context, c access.Caller, id uuid.U
 		if c.Principal != nil {
 			by = &c.Principal.UserID
 		}
-		tag, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET install_state = 'requested', install_by = $2
+		tag, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET install_state = 'requested', install_by = $2, last_activity_at = now()
 			WHERE id = $1 AND install_state IN ('none', 'declined', 'consented')`, id, by)
 		if err != nil {
 			return err

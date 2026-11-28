@@ -39,7 +39,8 @@ const (
 	SessionConverted = "converted"
 )
 
-// Timings and limits (ADR-0080).
+// Timings and limits (ADR-0080). MaxSessionLife, WaitingCap and Retention are
+// the defaults of settings that LoadSettings reads.
 const (
 	RequestWait     = 10 * time.Minute
 	MaxSessionLife  = 8 * time.Hour
@@ -186,10 +187,14 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req EnrollRequest) 
 		if err != nil {
 			return err
 		}
+		lim, err := loadSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
 		// The queue is bounded: the oldest unanswered request makes room.
 		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET state = 'declined', end_reason = 'evicted', ended_at = now()
 			WHERE id IN (SELECT id FROM quick_assist_sessions WHERE organization_id = $1 AND state = 'requested'
-				ORDER BY requested_at DESC OFFSET $2)`, l.OrganizationID, WaitingCap-1); err != nil {
+				ORDER BY requested_at DESC OFFSET $2)`, l.OrganizationID, lim.WaitingCap-1); err != nil {
 			return err
 		}
 		sid, did := uuid.New(), uuid.New()
@@ -206,7 +211,7 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req EnrollRequest) 
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO quick_assist_sessions (id, link_id, organization_id, device_id, session_code_hash, elevated, consent_at, requested_at, source_ip, expires_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
-			sid, l.ID, l.OrganizationID, did, codeHash(sid, req.Code), f.Elevated, now, ip.String(), now.Add(MaxSessionLife)); err != nil {
+			sid, l.ID, l.OrganizationID, did, codeHash(sid, req.Code), f.Elevated, now, ip.String(), now.Add(lim.MaxSessionLength())); err != nil {
 			return err
 		}
 		// The runner is given the newest key, and that is the key it is
@@ -270,12 +275,16 @@ type InstallOffer struct {
 // is told without waiting for the sweep.
 func (s *Service) Status(ctx context.Context, device uuid.UUID) (*RunnerState, error) {
 	var out RunnerState
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+	lim, err := s.LoadSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var id uuid.UUID
-		var requested, expires time.Time
+		var requested, expires, active time.Time
 		var org uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT id, state, end_reason, requested_at, expires_at, install_state, organization_id FROM quick_assist_sessions WHERE device_id = $1 FOR UPDATE`, device).
-			Scan(&id, &out.State, &out.EndReason, &requested, &expires, &out.Install, &org)
+		err := tx.QueryRow(ctx, `SELECT id, state, end_reason, requested_at, expires_at, install_state, organization_id, last_activity_at FROM quick_assist_sessions WHERE device_id = $1 FOR UPDATE`, device).
+			Scan(&id, &out.State, &out.EndReason, &requested, &expires, &out.Install, &org, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
@@ -288,6 +297,8 @@ func (s *Service) Status(ctx context.Context, device uuid.UUID) (*RunnerState, e
 			out.State, out.EndReason = SessionDeclined, "not_accepted"
 		case out.State == SessionActive && !now.Before(expires):
 			out.State, out.EndReason = SessionEnded, "max_length"
+		case out.State == SessionActive && now.Sub(active) >= lim.Idle():
+			out.State, out.EndReason = SessionEnded, "idle"
 		default:
 			if out.Install == "requested" && out.State == SessionActive {
 				out.Offer = &InstallOffer{}
@@ -332,17 +343,21 @@ type Session struct {
 	SourceIP     string     `json:"sourceIp"`
 	// Disconnected says the runner has not been heard from for a while.
 	Disconnected bool `json:"disconnected"`
+	// ExpiresAt is when the session ends at its length limit; Extended says it was extended once.
+	ExpiresAt      time.Time `json:"expiresAt"`
+	Extended       bool      `json:"extended"`
+	LastActivityAt time.Time `json:"lastActivityAt"`
 }
 
 const sessionCols = `s.id, s.link_id, l.name, s.organization_id, s.device_id, coalesce(d.name, ''), coalesce(d.platform, ''), s.state, s.elevated, l.test,
-	s.requested_at, s.accepted_by, s.accepted_at, s.ended_at, s.end_reason, s.last_seen_at, s.cleanup, s.source_ip`
+	s.requested_at, s.accepted_by, s.accepted_at, s.ended_at, s.end_reason, s.last_seen_at, s.cleanup, s.source_ip, s.expires_at, s.extended, s.last_activity_at`
 
 const sessionFrom = ` FROM quick_assist_sessions s JOIN quick_assist_links l ON l.id = s.link_id LEFT JOIN devices d ON d.id = s.device_id`
 
 func (s *Service) scanSession(row pgx.Row) (*Session, error) {
 	var x Session
 	if err := row.Scan(&x.ID, &x.LinkID, &x.LinkName, &x.Organization, &x.DeviceID, &x.DeviceName, &x.Platform, &x.State, &x.Elevated, &x.Test,
-		&x.RequestedAt, &x.AcceptedBy, &x.AcceptedAt, &x.EndedAt, &x.EndReason, &x.LastSeenAt, &x.Cleanup, &x.SourceIP); err != nil {
+		&x.RequestedAt, &x.AcceptedBy, &x.AcceptedAt, &x.EndedAt, &x.EndReason, &x.LastSeenAt, &x.Cleanup, &x.SourceIP, &x.ExpiresAt, &x.Extended, &x.LastActivityAt); err != nil {
 		return nil, err
 	}
 	x.Disconnected = (x.State == SessionActive || x.State == SessionRequested) && s.now().Sub(x.LastSeenAt) > 3*time.Duration(HeartbeatSeconds)*time.Second
@@ -404,7 +419,7 @@ func (s *Service) loadSession(ctx context.Context, tx pgx.Tx, c access.Caller, i
 	row := tx.QueryRow(ctx, `SELECT `+sessionCols+`, s.session_code_hash`+sessionFrom+` WHERE s.id = $1 FOR UPDATE OF s`, id)
 	var x Session
 	if err := row.Scan(&x.ID, &x.LinkID, &x.LinkName, &x.Organization, &x.DeviceID, &x.DeviceName, &x.Platform, &x.State, &x.Elevated, &x.Test,
-		&x.RequestedAt, &x.AcceptedBy, &x.AcceptedAt, &x.EndedAt, &x.EndReason, &x.LastSeenAt, &x.Cleanup, &x.SourceIP, &hash); err != nil {
+		&x.RequestedAt, &x.AcceptedBy, &x.AcceptedAt, &x.EndedAt, &x.EndReason, &x.LastSeenAt, &x.Cleanup, &x.SourceIP, &x.ExpiresAt, &x.Extended, &x.LastActivityAt, &hash); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, apperr.NotFound()
 		}
@@ -485,7 +500,7 @@ func (s *Service) Accept(ctx context.Context, c access.Caller, id uuid.UUID, cod
 		if c.Principal != nil {
 			by = &c.Principal.UserID
 		}
-		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET state = 'active', accepted_by = $2, accepted_at = now() WHERE id = $1`, x.ID, by); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET state = 'active', accepted_by = $2, accepted_at = now(), last_activity_at = now() WHERE id = $1`, x.ID, by); err != nil {
 			return err
 		}
 		x.State, x.AcceptedBy = SessionActive, by
@@ -570,7 +585,7 @@ func (s *Service) Takeover(ctx context.Context, c access.Caller, id uuid.UUID) e
 		if x.State != SessionActive || c.Principal == nil {
 			return apperr.Conflict("not_active", "Only an active session can be taken over.")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET accepted_by = $2 WHERE id = $1`, x.ID, c.Principal.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET accepted_by = $2, last_activity_at = now() WHERE id = $1`, x.ID, c.Principal.UserID); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, s.sessionEvent(c.Actor, x, ActionTakeover, audit.Success, map[string]any{"from": x.AcceptedBy}))
@@ -722,6 +737,10 @@ func (s *Service) removeSessionNode(ctx context.Context, tx pgx.Tx, device uuid.
 // what is past retention. Each organization is checked with devscope first.
 func (s *Service) Sweep(ctx context.Context) error {
 	now := s.now()
+	lim, err := s.LoadSettings(ctx)
+	if err != nil {
+		return err
+	}
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		type row struct {
 			id, org uuid.UUID
@@ -771,6 +790,10 @@ func (s *Service) Sweep(ctx context.Context) error {
 			[]any{now}, SessionEnded, "max_length", ActionEnd); err != nil {
 			return err
 		}
+		if err := do(`SELECT id, organization_id, device_id FROM quick_assist_sessions WHERE state = 'active' AND last_activity_at < $1 FOR UPDATE`,
+			[]any{now.Add(-lim.Idle())}, SessionEnded, "idle", ActionEnd); err != nil {
+			return err
+		}
 		if err := do(`SELECT id, organization_id, device_id FROM quick_assist_sessions WHERE state IN ('requested','active') AND last_seen_at < $1 FOR UPDATE`,
 			[]any{now.Add(-LostAfter)}, SessionLost, "lost", ActionLost); err != nil {
 			return err
@@ -787,12 +810,12 @@ func (s *Service) Sweep(ctx context.Context) error {
 			return err
 		}
 		// Retention.
-		old := now.Add(-Retention)
+		old := now.Add(-time.Duration(lim.RetentionDays) * 24 * time.Hour)
 		if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE quick_assist AND id IN (SELECT device_id FROM quick_assist_sessions WHERE ended_at < $1 AND state <> 'converted' AND organization_id = ANY($2))`,
 			old, s.allowedOrgs(ctx, tx)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM quick_assist_sessions WHERE ended_at < $1 AND organization_id = ANY($2)`, old, s.allowedOrgs(ctx, tx))
+		_, err = tx.Exec(ctx, `DELETE FROM quick_assist_sessions WHERE ended_at < $1 AND organization_id = ANY($2)`, old, s.allowedOrgs(ctx, tx))
 		return err
 	})
 }
@@ -815,16 +838,22 @@ func (s *Service) allowedOrgs(ctx context.Context, tx pgx.Tx) []uuid.UUID {
 	return out
 }
 
-// Run sweeps once a minute until the context ends.
+// Run sweeps once a minute, and the permanent links once an hour, until the context ends.
 func (s *Service) Run(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
+	var linksAt time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			_ = s.Sweep(ctx)
+			// Stale links are checked once an hour.
+			if now := s.now(); now.Sub(linksAt) >= time.Hour {
+				linksAt = now
+				_ = s.SweepLinks(ctx)
+			}
 		}
 	}
 }
@@ -844,4 +873,55 @@ func NewCode() string {
 func pad6(n uint32) string {
 	s := itoa(int(n))
 	return strings.Repeat("0", 6-len(s)) + s
+}
+
+// TouchSession records activity on the device's active session, which keeps
+// it from the idle limit. A device with no active session is left alone.
+func (s *Service) TouchSession(ctx context.Context, device uuid.UUID) error {
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error { return TouchTx(ctx, tx, device) })
+}
+
+// TouchTx is TouchSession in the caller's transaction.
+func TouchTx(ctx context.Context, tx pgx.Tx, devices ...uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET last_activity_at = now() WHERE device_id = ANY($1) AND state = 'active'`, devices)
+	return err
+}
+
+// ExtendSession lengthens an active session by the configured session length,
+// once. Only the holder, or someone who may take sessions over, can.
+func (s *Service) ExtendSession(ctx context.Context, c access.Caller, id uuid.UUID) (*Session, error) {
+	var out *Session
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		x, _, err := s.loadSession(ctx, tx, c, id)
+		if err != nil {
+			return err
+		}
+		if err := c.Require(rbac.PermQASession, rbac.Org(x.Organization)); err != nil {
+			return err
+		}
+		if !devscope.Allowed(x.Organization) {
+			return apperr.Forbidden()
+		}
+		if x.State != SessionActive || !s.now().Before(x.ExpiresAt) {
+			return apperr.Conflict("not_active", "Only a running session can be extended.")
+		}
+		if !holder(c, x) {
+			return apperr.Forbidden()
+		}
+		if x.Extended {
+			return apperr.Conflict("already_extended", "A session can be extended once.")
+		}
+		lim, err := loadSettingsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		x.ExpiresAt = x.ExpiresAt.Add(lim.MaxSessionLength())
+		x.Extended = true
+		if _, err := tx.Exec(ctx, `UPDATE quick_assist_sessions SET expires_at = $2, extended = true, last_activity_at = now() WHERE id = $1`, x.ID, x.ExpiresAt); err != nil {
+			return err
+		}
+		out = x
+		return s.audit.Write(ctx, tx, s.sessionEvent(c.Actor, x, ActionExtend, audit.Success, map[string]any{"expiresAt": x.ExpiresAt}))
+	})
+	return out, err
 }
