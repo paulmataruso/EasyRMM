@@ -46,6 +46,7 @@ da28930d8d690f3a221c195ffedfa732376318b2:server/internal/tlscert/storage_integra
 40b6ff1c5324bd00154016ade635fe44085ce93c:server/internal/logstore/logstore_integration_test.go:curl-auth-user:319
 # Pinned script hashes of the LAPS actions (ADR-0086), not secrets.
 a19cc7d8765ddef866bb828a1ece78e57ad3168a:server/internal/winmod/laps/pins.go:generic-api-key:4
+b04c1c1d34acee5dfeffc9200abd7797b8bc1c8a:server/internal/winmod/laps/pins.go:generic-api-key:5
 # Fake/truncated PEM keys in test fixtures and error messages, not real keys.
 3726e810fa030aacce1897a43bec2058b371e237:server/internal/easypatch/install_integration_test.go:private-key:514
 fe20c127b655b532c70ba0c96c3df5205827f323:server/internal/easypatch/install_integration_test.go:private-key:507
