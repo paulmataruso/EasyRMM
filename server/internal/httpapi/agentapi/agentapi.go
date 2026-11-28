@@ -64,6 +64,7 @@ type API struct {
 	hw      *hardware.Service
 	logs    *agentlogs.Service
 	collect *logstore.Store
+	logPost LogPosture
 	ep      EasyPatchInstalls
 	repairs Repairs
 	channel *agentchannel.Hub
@@ -235,6 +236,18 @@ func (a *API) WithHardware(hw *hardware.Service) *API {
 // how to log (ADR-0069).
 func (a *API) WithAgentLogs(logs *agentlogs.Service) *API {
 	a.logs = logs
+	return a
+}
+
+// LogPosture is told when a device's collected log blocks were accepted, for the
+// security posture's log collection control (ADR-0082, slice P5).
+type LogPosture interface {
+	RecordLogs(ctx context.Context, device uuid.UUID) error
+}
+
+// WithLogPosture sets what is told of accepted log blocks.
+func (a *API) WithLogPosture(p LogPosture) *API {
+	a.logPost = p
 	return a
 }
 
@@ -745,6 +758,11 @@ func (a *API) collectedLogs(w http.ResponseWriter, r *http.Request, d *agents.De
 	case err != nil:
 		a.log.Warn("storing collected logs failed", "device_id", d.ID, "error", err)
 		return errLogStoreDown
+	}
+	if a.logPost != nil && len(in.Blocks) > ack.Refused {
+		if err := a.logPost.RecordLogs(r.Context(), d.ID); err != nil {
+			a.log.Warn("noting collected logs for posture failed", "device_id", d.ID, "error", err)
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, ack)
 	return nil

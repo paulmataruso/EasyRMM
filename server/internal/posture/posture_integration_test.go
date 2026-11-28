@@ -85,8 +85,12 @@ func (f *fixture) device(name, platform string) uuid.UUID {
 	f.t.Helper()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
-	return f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform, agent_public_key, agent_version, enrolled_at, agent_last_seen_at)
+	id := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform, agent_public_key, agent_version, enrolled_at, agent_last_seen_at)
 		VALUES ($1, $2, $3, lower($3), $4, $5, '1.4.0', now() - interval '30 days', now()) RETURNING id`, f.org, f.site, name, platform, key)
+	// Logs arriving now, so the log collection control (slice P5) is in place and
+	// the tests of the other controls read their own percentages.
+	f.exec(`INSERT INTO posture_log_collection (device_id, first_received_at, last_received_at) VALUES ($1, now() - interval '5 days', now())`, id)
+	return id
 }
 
 func (f *fixture) module(dev uuid.UUID, module, state string, age time.Duration, detail string) {
@@ -123,7 +127,7 @@ func TestPostureWords(t *testing.T) {
 	f.module(bad, "ssh", "not_in_place", 0, `{"reason":"root login is allowed"}`)
 	f.module(bad, "kernel", "in_place", 0, `{}`)
 	p := f.load(bad, "linux")
-	if p.Word != "does not meet" || *p.Percent != 25 || p.Reasons[0].ControlID != "ssh" || !strings.Contains(p.Reasons[0].Detail, "root login") {
+	if p.Word != "does not meet" || *p.Percent != 50 || p.Reasons[0].ControlID != "ssh" || !strings.Contains(p.Reasons[0].Detail, "root login") {
 		t.Fatalf("weighted: %+v", p)
 	}
 
@@ -131,7 +135,7 @@ func TestPostureWords(t *testing.T) {
 	old := f.device("old", "windows")
 	f.module(old, "firewall", "in_place", 40*24*time.Hour, `{}`)
 	f.module(old, "uac", "in_place", 0, `{}`)
-	if p := f.load(old, "windows"); p.Word != "cannot tell" || p.Reasons[0].State != "stale" || *p.Percent != 40 {
+	if p := f.load(old, "windows"); p.Word != "cannot tell" || p.Reasons[0].State != "stale" || *p.Percent != 57 {
 		t.Fatalf("stale: %+v", p)
 	}
 	// The organization's own window decides what is stale.
@@ -143,7 +147,7 @@ func TestPostureWords(t *testing.T) {
 	// A computer no hardening job reported on cannot be told, and has no
 	// invented score from nothing: it is unknown, which is not passing.
 	none := f.device("none", "linux")
-	if p := f.load(none, "linux"); p.Word != "cannot tell" || *p.Percent != 0 || p.Reasons[0].ControlID != "hardening" {
+	if p := f.load(none, "linux"); p.Word != "cannot tell" || *p.Percent != 40 || p.Reasons[0].ControlID != "hardening" {
 		t.Fatalf("unchecked: %+v", p)
 	}
 
@@ -176,7 +180,7 @@ func TestPatchingIsOneOfTheControls(t *testing.T) {
 	f.module(d, "ssh", "in_place", 0, `{}`)
 	f.exec(`INSERT INTO easypatch_devices (device_id, endpoint_id, state, linked_at, checked_at) VALUES ($1, gen_random_uuid(), 'linked', now(), now())`, d)
 	// Linked and not read yet: unknown, never passing.
-	if p := f.load(d, "linux"); p.Word != "cannot tell" || *p.Percent != 50 {
+	if p := f.load(d, "linux"); p.Word != "cannot tell" || *p.Percent != 62 {
 		t.Fatalf("not read yet: %+v", p)
 	}
 	f.feed.list = []posture.PatchStatus{{DeviceID: d, OrganizationID: f.org, Status: "MissingUpdates", At: time.Now()}}
@@ -273,7 +277,7 @@ func TestSecurityReport(t *testing.T) {
 		t.Fatalf("good: %v", rows["good"])
 	}
 	b := rows["bad"]
-	if b[4] != "Does not meet its security policy" || b[5] != 0 || b[6] != 1 || b[8] != 1 || !strings.Contains(b[9].(string), "Firewall: does not meet - Missing: inbound rule open") {
+	if b[4] != "Does not meet its security policy" || b[5] != 40 || b[6] != 1 || b[8] != 1 || !strings.Contains(b[9].(string), "Firewall: does not meet - Missing: inbound rule open") {
 		t.Fatalf("bad: %v", b)
 	}
 	if r := run(reports.Query{Posture: "does_not_meet"}); r.Total != 1 {
@@ -374,5 +378,53 @@ func TestDevicePostureNeedsDeviceView(t *testing.T) {
 	mesh := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform) VALUES ($1, $2, 'm', 'm', 'macos') RETURNING id`, f.org, f.site)
 	if got, err := f.svc.Device(f.ctx, access.System("test"), mesh); err != nil || got.Covered || got.Posture != nil {
 		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestLogCollectionControl(t *testing.T) {
+	f := newFixture(t)
+	dev := f.device("logs", "linux")
+	f.module(dev, "ssh", "in_place", 0, `{}`)
+	item := func() (string, string) {
+		p := f.load(dev, "linux")
+		for _, r := range p.Reasons {
+			if r.ControlID == posture.LogCollection {
+				return r.State, r.Detail
+			}
+		}
+		return "meets", ""
+	}
+	// Logs arriving now: in place, and the computer meets its policy.
+	if p := f.load(dev, "linux"); p.Word != "meets" || *p.Percent != 100 {
+		t.Fatalf("logs flowing: %+v", p)
+	}
+	// Silent for 3 days: configured but not sending, a partial result.
+	f.exec(`UPDATE posture_log_collection SET last_received_at = now() - interval '3 days' WHERE device_id = $1`, dev)
+	if st, d := item(); st != "partly" || !strings.Contains(d, "no logs have arrived") {
+		t.Fatalf("silent 3 days: %s %q", st, d)
+	}
+	// Silent for 10 days: not in place.
+	f.exec(`UPDATE posture_log_collection SET last_received_at = now() - interval '10 days' WHERE device_id = $1`, dev)
+	if st, _ := item(); st != "not_in_place" {
+		t.Fatalf("silent 10 days: %s", st)
+	}
+	// Never received: not in place, and the computer does not meet its policy.
+	f.exec(`DELETE FROM posture_log_collection WHERE device_id = $1`, dev)
+	p := f.load(dev, "linux")
+	if st, d := item(); st != "not_in_place" || !strings.Contains(d, "ever been received") || p.Word != "does not meet" {
+		t.Fatalf("never: %s %q %+v", st, d, p)
+	}
+	// Recording accepted blocks puts it back, and keeps the first time.
+	if err := f.svc.RecordLogs(f.ctx, dev); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.RecordLogs(f.ctx, dev); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count(`SELECT count(*) FROM posture_log_collection WHERE device_id = $1 AND last_received_at >= first_received_at`, dev); n != 1 {
+		t.Fatalf("one row: %d", n)
+	}
+	if p := f.load(dev, "linux"); p.Word != "meets" {
+		t.Fatalf("recorded: %+v", p)
 	}
 }

@@ -110,7 +110,33 @@ func Matches(p *Posture, f string) bool {
 // They are the default policy until policies exist (slice P4).
 var weights = map[string]int{
 	"patching": 3, "firewall": 3, "ssh": 3, "defender": 3, "bitlocker": 3,
-	"accounts": 2, "uac": 2, "smb": 2, "lsa-protection": 2, "asr": 2, "audit": 2, "rdp": 2, "integrity": 2, "mac": 2,
+	"log-collection": 2, "accounts": 2, "uac": 2, "smb": 2, "lsa-protection": 2, "asr": 2, "audit": 2, "rdp": 2, "integrity": 2, "mac": 2,
+}
+
+// LogCollection is the control of a computer's log collection (slice P5).
+const LogCollection = "log-collection"
+
+// Log collection is read from when the computer last had log blocks accepted.
+// Inside LogsFresh it is in place; past it, up to LogsSilent, collection is set
+// up but not arriving (partly); past that, or never, it is not in place.
+const (
+	LogsFresh  = 24 * time.Hour
+	LogsSilent = 7 * 24 * time.Hour
+)
+
+// logCollectionState says what the last accepted log blocks mean at now.
+func logCollectionState(last *time.Time, now time.Time) (state, detail string) {
+	if last == nil {
+		return compliance.StateNotInPlace, "No collected logs have ever been received from this computer."
+	}
+	age := now.Sub(*last)
+	switch {
+	case age <= LogsFresh:
+		return compliance.StateInPlace, ""
+	case age <= LogsSilent:
+		return compliance.StatePartly, "Log collection was set up but no logs have arrived for over a day."
+	}
+	return compliance.StateNotInPlace, "No logs have arrived for over a week."
 }
 
 // notChecked is the one control of a computer no hardening job has reported on.
@@ -156,6 +182,8 @@ func Label(id string) string {
 		return "SELinux or AppArmor"
 	case "auto-updates":
 		return "Automatic updates"
+	case LogCollection:
+		return "Log collection"
 	}
 	s := strings.ReplaceAll(id, "-", " ")
 	if s == "" {
@@ -284,6 +312,25 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 		return nil, err
 	}
 
+	logs := map[uuid.UUID]time.Time{}
+	rows, err = tx.Query(ctx, `SELECT device_id, last_received_at FROM posture_log_collection WHERE device_id = ANY ($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var d uuid.UUID
+		var t time.Time
+		if err := rows.Scan(&d, &t); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		logs[d] = t
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	for _, id := range ids {
 		r := byID[id]
 		var items []rollup.Item
@@ -330,6 +377,18 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 			}
 			items = append(items, it)
 		}
+		var lastLog *time.Time
+		if t, ok := logs[id]; ok {
+			lastLog = &t
+		}
+		lst, ldetail := logCollectionState(lastLog, now)
+		lit := rollup.Item{ID: LogCollection, Label: Label(LogCollection), Weight: weights[LogCollection],
+			Result: rollup.Result{State: lst}, Detail: ldetail}
+		if lastLog != nil {
+			lit.Result.CheckedAt = *lastLog
+			see(*lastLog)
+		}
+		items = append(items, lit)
 		po := &Posture{Score: rollup.ScoreOf(items, now, orgs[r.Org])}
 		if !newest.IsZero() {
 			t := newest
