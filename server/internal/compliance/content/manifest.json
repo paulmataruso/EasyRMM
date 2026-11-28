@@ -79,7 +79,7 @@
    "review_state": "none",
    "author": "EasyRMM",
    "derived_from_content": false,
-   "sha256": "eb2164675bbf38e5b1eb732a04b3348eebf716c039f92848dfdf305307818472"
+   "sha256": "c828c4595c920a1d8bd9e0a1c1877526248eb7c3c22269abc07e1ac53a31eb22"
   },
   {
    "path": "packs/nist-800-53r5.json",
