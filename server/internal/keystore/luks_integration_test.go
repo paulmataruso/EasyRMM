@@ -249,6 +249,41 @@ func TestLUKSOutsideTheDevScopeGetsNothing(t *testing.T) {
 	}
 }
 
+// Posture (ADR-0082) tells a report with no encrypted volume from no report: a
+// report of a kind, empty or not, keeps its time, and one outside the dev scope keeps none.
+func TestVolumeReportsKeepTheirTimeEvenWhenEmpty(t *testing.T) {
+	l := luksFx(t)
+	if n := l.str(`SELECT count(*)::text FROM device_volume_reports`); n != "0" {
+		t.Fatalf("before any report: %s", n)
+	}
+	if _, err := l.svc.ReportVolumes(l.ctx, l.dev, agentproto.EscrowVolumesReport{Kind: agentproto.EscrowLUKS}); err != nil {
+		t.Fatal(err)
+	}
+	if n := l.str(`SELECT string_agg(kind, ',') FROM device_volume_reports`); n != "luks" {
+		t.Fatalf("after an empty LUKS report: %q", n)
+	}
+	if _, err := l.svc.ReportVolumes(l.ctx, l.dev, agentproto.EscrowVolumesReport{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := l.str(`SELECT count(*)::text FROM device_volume_reports`); n != "2" {
+		t.Fatalf("after a BitLocker report too: %s", n)
+	}
+	if _, err := l.svc.ReportVolumes(l.ctx, l.dev, agentproto.EscrowVolumesReport{Kind: agentproto.EscrowLUKS}); err != nil {
+		t.Fatal(err)
+	}
+	if n := l.str(`SELECT count(*)::text FROM device_volume_reports`); n != "2" {
+		t.Fatalf("a second report adds a row: %s", n)
+	}
+	l.exec(`DELETE FROM device_volume_reports`)
+	defer devscope.Set(l.globex)()
+	if _, err := l.svc.ReportVolumes(l.ctx, l.dev, agentproto.EscrowVolumesReport{Kind: agentproto.EscrowLUKS}); err != nil {
+		t.Fatal(err)
+	}
+	if n := l.str(`SELECT count(*)::text FROM device_volume_reports`); n != "0" {
+		t.Fatalf("a report outside the dev scope was kept: %s", n)
+	}
+}
+
 // A LUKS passphrase is read through slice 2's path: permission, step-up, reason,
 // audit, notice and the keystore's own log. A passphrase typed into the reason is refused.
 func TestLUKSReadReturnsThePassphraseThroughTheAuditedPath(t *testing.T) {

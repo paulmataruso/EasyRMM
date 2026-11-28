@@ -83,6 +83,11 @@ func (s *Service) ReportVolumes(ctx context.Context, d Device, rep agentproto.Es
 		if _, err := tx.Exec(ctx, `DELETE FROM device_encrypted_volumes WHERE device_id = $1 AND kind = $2 AND volume_id <> ALL($3::text[])`, d.ID, kind, keep); err != nil {
 			return err
 		}
+		// A report with no volume leaves no row; posture reads this to tell it from no report (ADR-0082).
+		if _, err := tx.Exec(ctx, `INSERT INTO device_volume_reports (device_id, kind, reported_at) VALUES ($1, $2, now())
+			ON CONFLICT (device_id, kind) DO UPDATE SET reported_at = now()`, d.ID, kind); err != nil {
+			return err
+		}
 		for _, v := range rep.Volumes {
 			if kind == agentproto.EscrowLUKS {
 				if err := s.needLUKS(ctx, tx, d, v, luksOn, &out); err != nil {

@@ -110,6 +110,7 @@ func Matches(p *Posture, f string) bool {
 // They are the default policy until policies exist (slice P4).
 var weights = map[string]int{
 	"patching": 3, "firewall": 3, "ssh": 3, "defender": 3, "bitlocker": 3,
+	DiskEncryption: 3, DefenderHealth: 3,
 	"log-collection": 2, "accounts": 2, "uac": 2, "smb": 2, "lsa-protection": 2, "asr": 2, "audit": 2, "rdp": 2, "integrity": 2, "mac": 2,
 }
 
@@ -137,6 +138,14 @@ func logCollectionState(last *time.Time, now time.Time) (state, detail string) {
 		return compliance.StatePartly, "Log collection was set up but no logs have arrived for over a day."
 	}
 	return compliance.StateNotInPlace, "No logs have arrived for over a week."
+}
+
+// volumeKind is the kind of encrypted volume a platform reports.
+func volumeKind(platform string) string {
+	if platform == "windows" {
+		return "bitlocker"
+	}
+	return "luks"
 }
 
 // notChecked is the one control of a computer no hardening job has reported on.
@@ -184,6 +193,10 @@ func Label(id string) string {
 		return "Automatic updates"
 	case LogCollection:
 		return "Log collection"
+	case DiskEncryption:
+		return "Disk encryption state"
+	case DefenderHealth:
+		return "Defender health"
 	}
 	s := strings.ReplaceAll(id, "-", " ")
 	if s == "" {
@@ -331,6 +344,76 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 		return nil, err
 	}
 
+	// Slices P2 and P3: what the agent reported about volumes, and Defender's
+	// status snapshot. Both are reads of rows that exist already, of the
+	// computers the dev-scope guard allowed above.
+	volReported := map[uuid.UUID]map[string]time.Time{}
+	rows, err = tx.Query(ctx, `SELECT device_id, kind, reported_at FROM device_volume_reports WHERE device_id = ANY ($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var d uuid.UUID
+		var kind string
+		var t time.Time
+		if err := rows.Scan(&d, &kind, &t); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if volReported[d] == nil {
+			volReported[d] = map[string]time.Time{}
+		}
+		volReported[d][kind] = t
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	vols := map[uuid.UUID][]Volume{}
+	rows, err = tx.Query(ctx, `SELECT device_id, kind, mount, status FROM device_encrypted_volumes WHERE device_id = ANY ($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var d uuid.UUID
+		var kind string
+		var v Volume
+		if err := rows.Scan(&d, &kind, &v.Mount, &v.Status); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if kind == volumeKind(byID[d].Platform) {
+			vols[d] = append(vols[d], v)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	type snap struct {
+		data  []byte
+		taken time.Time
+	}
+	snaps := map[uuid.UUID]snap{}
+	rows, err = tx.Query(ctx, `SELECT device_id, data, taken_at FROM windows_module_snapshots
+		WHERE action = 'defender.status' AND params_hash = '' AND device_id = ANY ($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var d uuid.UUID
+		var sn snap
+		if err := rows.Scan(&d, &sn.data, &sn.taken); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		snaps[d] = sn
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	for _, id := range ids {
 		r := byID[id]
 		var items []rollup.Item
@@ -389,6 +472,24 @@ func Load(ctx context.Context, tx pgx.Tx, refs []Ref, now time.Time) (map[uuid.U
 			see(*lastLog)
 		}
 		items = append(items, lit)
+		eit := rollup.Item{ID: DiskEncryption, Label: Label(DiskEncryption), Weight: weights[DiskEncryption]}
+		var reported *time.Time
+		if t, ok := volReported[id][volumeKind(r.Platform)]; ok {
+			reported = &t
+			eit.Result.CheckedAt = t
+			see(t)
+		}
+		est, edetail := encryptionState(r.Platform, reported, vols[id])
+		eit.Result.State, eit.Detail = est, edetail
+		items = append(items, eit)
+		// Defender exists on Windows; with no snapshot (the module is off, so none
+		// is read) the control is not there, as patching is not for an unlinked computer.
+		if sn, ok := snaps[id]; ok && r.Platform == "windows" {
+			dst, ddetail := defenderState(sn.data)
+			items = append(items, rollup.Item{ID: DefenderHealth, Label: Label(DefenderHealth), Weight: weights[DefenderHealth],
+				Result: rollup.Result{State: dst, CheckedAt: sn.taken}, Detail: ddetail})
+			see(sn.taken)
+		}
 		po := &Posture{Score: rollup.ScoreOf(items, now, orgs[r.Org])}
 		if !newest.IsZero() {
 			t := newest

@@ -1,6 +1,6 @@
 # ADR-0082: Endpoint security posture shares the compliance engine's words and score
 
-* Status: Accepted (2026-11-26, decided in review). Slice P1 is built; the later slices are not.
+* Status: Accepted (2026-11-26, decided in review). Slice P1 is built; P2 and P3 are partly built (see Slices).
 * Builds on: [ADR-0078](0078-compliance-engine.md) (the compliance engine: states, wording,
   freshness and the roll-up), [ADR-0051](0051-hardening-linux-computers.md) and
   [ADR-0054](0054-hardening-windows-computers-and-servers.md) (hardening results),
@@ -119,9 +119,17 @@ collection: it is a copy of what the engine already reports.
 ## Slices
 
 * **P1 (built)**: sections 1 to 7 above.
-* **P2 to P5** are as the feature plan has them. P2 and P3 add controls (they only add sources to
-  section 1), P4 adds policies, history and the noncompliant event, P5 adds threat detections. None
-  changes the words, the freshness rule or the score.
+* **P2 and P3 (partly built)** add two state controls from data the server already holds, each
+  weighing 3: `disk-encryption` (Linux: a LUKS volume mounted at `/`; Windows: BitLocker on `C:`;
+  read from `device_encrypted_volumes`, and from `device_volume_reports` to tell "reported none"
+  from "never reported", which is `unknown`) and `defender-health` (Windows: real-time protection,
+  antivirus, signature age under 7 days, last scan under 14 days; read from the `defender.status`
+  snapshot; passive mode is `not_applicable`; with no snapshot the control is absent). Not built,
+  because the agent collects nothing to read them from: UID-0 and sudo/wheel accounts, accounts with
+  insecure settings, TPM and Secure Boot, local administrators, inactive accounts. Each needs agent
+  collection first, a change this slice does not make.
+* **P4 and P5** are as the feature plan has them: P4 adds policies, history and the noncompliant
+  event, P5 adds threat detections. None changes the words, the freshness rule or the score.
 
 ## Tests
 

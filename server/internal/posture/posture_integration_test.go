@@ -90,7 +90,28 @@ func (f *fixture) device(name, platform string) uuid.UUID {
 	// Logs arriving now, so the log collection control (slice P5) is in place and
 	// the tests of the other controls read their own percentages.
 	f.exec(`INSERT INTO posture_log_collection (device_id, first_received_at, last_received_at) VALUES ($1, now() - interval '5 days', now())`, id)
+	// An encrypted system volume, so the disk encryption control (slices P2 and
+	// P3) is in place and the tests of the other controls read their own
+	// percentages. The tests of the control itself replace this.
+	f.volumes(id, platform, "encrypted")
 	return id
+}
+
+// volumes replaces what the computer reported about its volumes: one encrypted
+// system volume when status is set, a report with no volume when it is empty.
+func (f *fixture) volumes(dev uuid.UUID, platform, status string) {
+	f.t.Helper()
+	kind, mount := "luks", "/"
+	if platform == "windows" {
+		kind, mount = "bitlocker", "C:"
+	}
+	f.exec(`DELETE FROM device_encrypted_volumes WHERE device_id = $1`, dev)
+	f.exec(`INSERT INTO device_volume_reports (device_id, kind, reported_at) VALUES ($1, $2, now())
+		ON CONFLICT (device_id, kind) DO UPDATE SET reported_at = now()`, dev, kind)
+	if status != "" {
+		f.exec(`INSERT INTO device_encrypted_volumes (device_id, volume_id, organization_id, site_id, kind, mount, status)
+			VALUES ($1, 'vol-1', $2, $3, $4, $5, $6)`, dev, f.org, f.site, kind, mount, status)
+	}
 }
 
 func (f *fixture) module(dev uuid.UUID, module, state string, age time.Duration, detail string) {
@@ -127,7 +148,7 @@ func TestPostureWords(t *testing.T) {
 	f.module(bad, "ssh", "not_in_place", 0, `{"reason":"root login is allowed"}`)
 	f.module(bad, "kernel", "in_place", 0, `{}`)
 	p := f.load(bad, "linux")
-	if p.Word != "does not meet" || *p.Percent != 50 || p.Reasons[0].ControlID != "ssh" || !strings.Contains(p.Reasons[0].Detail, "root login") {
+	if p.Word != "does not meet" || *p.Percent != 66 || p.Reasons[0].ControlID != "ssh" || !strings.Contains(p.Reasons[0].Detail, "root login") {
 		t.Fatalf("weighted: %+v", p)
 	}
 
@@ -135,7 +156,7 @@ func TestPostureWords(t *testing.T) {
 	old := f.device("old", "windows")
 	f.module(old, "firewall", "in_place", 40*24*time.Hour, `{}`)
 	f.module(old, "uac", "in_place", 0, `{}`)
-	if p := f.load(old, "windows"); p.Word != "cannot tell" || p.Reasons[0].State != "stale" || *p.Percent != 57 {
+	if p := f.load(old, "windows"); p.Word != "cannot tell" || p.Reasons[0].State != "stale" || *p.Percent != 70 {
 		t.Fatalf("stale: %+v", p)
 	}
 	// The organization's own window decides what is stale.
@@ -147,7 +168,7 @@ func TestPostureWords(t *testing.T) {
 	// A computer no hardening job reported on cannot be told, and has no
 	// invented score from nothing: it is unknown, which is not passing.
 	none := f.device("none", "linux")
-	if p := f.load(none, "linux"); p.Word != "cannot tell" || *p.Percent != 40 || p.Reasons[0].ControlID != "hardening" {
+	if p := f.load(none, "linux"); p.Word != "cannot tell" || *p.Percent != 62 || p.Reasons[0].ControlID != "hardening" {
 		t.Fatalf("unchecked: %+v", p)
 	}
 
@@ -180,7 +201,7 @@ func TestPatchingIsOneOfTheControls(t *testing.T) {
 	f.module(d, "ssh", "in_place", 0, `{}`)
 	f.exec(`INSERT INTO easypatch_devices (device_id, endpoint_id, state, linked_at, checked_at) VALUES ($1, gen_random_uuid(), 'linked', now(), now())`, d)
 	// Linked and not read yet: unknown, never passing.
-	if p := f.load(d, "linux"); p.Word != "cannot tell" || *p.Percent != 62 {
+	if p := f.load(d, "linux"); p.Word != "cannot tell" || *p.Percent != 72 {
 		t.Fatalf("not read yet: %+v", p)
 	}
 	f.feed.list = []posture.PatchStatus{{DeviceID: d, OrganizationID: f.org, Status: "MissingUpdates", At: time.Now()}}
@@ -277,7 +298,7 @@ func TestSecurityReport(t *testing.T) {
 		t.Fatalf("good: %v", rows["good"])
 	}
 	b := rows["bad"]
-	if b[4] != "Does not meet its security policy" || b[5] != 40 || b[6] != 1 || b[8] != 1 || !strings.Contains(b[9].(string), "Firewall: does not meet - Missing: inbound rule open") {
+	if b[4] != "Does not meet its security policy" || b[5] != 62 || b[6] != 1 || b[8] != 1 || !strings.Contains(b[9].(string), "Firewall: does not meet - Missing: inbound rule open") {
 		t.Fatalf("bad: %v", b)
 	}
 	if r := run(reports.Query{Posture: "does_not_meet"}); r.Total != 1 {

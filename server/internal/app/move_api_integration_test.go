@@ -337,7 +337,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"devices": moves,
 		// follows
 		"agent_nonces": follows, "agent_updates": follows, "device_disk_health": follows, "device_disk_health_samples": follows,
-		"device_hardening": follows, "posture_patching": follows, "posture_log_collection": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
+		"device_hardening": follows, "posture_patching": follows, "posture_log_collection": follows, "device_volume_reports": follows, "device_hardening_checks": follows, "hardening_guards": follows, "device_inventory": follows, "device_metric_samples": follows,
 		"device_metrics": follows, "device_removals": follows, "device_software": follows, "enrollment_requests": follows,
 		"retired_agent_nonces": follows,
 		// what the computer's agent trusts (ADR-0055 5b1) is the computer's own fact
