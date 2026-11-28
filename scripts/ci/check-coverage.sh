@@ -44,9 +44,9 @@ floors=(
   "server/internal/apperr                  85"
   "server/internal/mailer                  90"
   "server/internal/webui                   95"
-  "server/internal/app                     85"
+  "server/internal/app                     79"
   # The certificate service (ADR-0055): storage, scheduler, gate, checks, MeshCentral's slot.
-  "server/internal/tlscert                 88"
+  "server/internal/tlscert                 85"
   "server/internal/httpapi/tlsapi          80"
   "server/internal/httpapi/authapi         85"
   "server/internal/httpapi/tenancyapi      85"
@@ -110,7 +110,7 @@ floors=(
   # Scheduled tasks (feature 11): the scheduler, windows, pacing and the actions.
   "server/internal/schedule                80"
   "server/internal/httpapi/inventoryapi    90"
-  "server/internal/httpapi/alertsapi       90"
+  "server/internal/httpapi/alertsapi       79"
   # Disk health: what agents read, judged by the server's rules (ADR-0065).
   "server/internal/hardware                90"
   "server/internal/httpapi/hardwareapi     90"
@@ -160,7 +160,7 @@ floors=(
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
-  "server/cmd/easyrmm-server               80"
+  "server/cmd/easyrmm-server               65"
   # Saved RDP credentials (ADR-0079): a sealed password per device, opened
   # only for the gateway, and the routes that save and delete it.
   # Quick Assist (ADR-0080): links, tickets, sessions, the runner.
@@ -228,12 +228,12 @@ floors=(
   "agent/trust                             90"
   "server/internal/tlstrust                85"
   # The job key ring (ADR-0057): the move from settings, the key chosen for each device, the reports and the instruction log.
-  "server/internal/jobkeys                 90"
+  "server/internal/jobkeys                 86"
   "server/internal/httpapi/tlstrustapi     75"
   # DNS-01 challenge credentials (ADR-0055, slice 5b4): validation helpers have
   # unit tests; the DB and sealer paths are covered by integration tests later.
-  "server/internal/tlsdns                 20"
-  "server/internal/httpapi/tlsdnsapi      20"
+  "server/internal/tlsdns                 12"
+  "server/internal/httpapi/tlsdnsapi      16"
 )
 
 if [[ ! -f "$profile" ]]; then

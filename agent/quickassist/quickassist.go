@@ -367,6 +367,9 @@ func trailerLen(b []byte) int {
 }
 
 func makeFolder(dir string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return nil, err
+	}
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return nil, err
 	}

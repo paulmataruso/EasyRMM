@@ -76,7 +76,7 @@ func startEasyPatch(o Options, cf *confiner, dir, sessionID string, st *client.Q
 	if err := os.Mkdir(data, 0o700); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(bin, "run", "--adhoc", "--data-dir", data, //nolint:gosec // the agent beside this program
+	cmd := exec.CommandContext(context.Background(), bin, "run", "--adhoc", "--data-dir", data, //nolint:gosec // the agent beside this program
 		"--registry-key", sessionID, "--lock", "easyrmm-qa-ep-"+sessionID)
 	cmd.Env = append(os.Environ(), "EASYPATCH_ENROLLMENT_TOKEN="+st.EasyPatchToken, "EASYPATCH_SERVER="+st.EasyPatchServer)
 	cf.Confine(cmd)
