@@ -983,6 +983,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "audit", label: "Audit log", icon: <ScrollText className="size-4" aria-hidden />, show: can("audit.view") },
     { id: "remote", label: "Remote access", icon: <MonitorSmartphone className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "agent-updates", label: "Agent updates", icon: <ArrowUpCircle className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "agent-settings", label: "Agent settings", icon: <SlidersHorizontal className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "agent-files", label: "Agent files", icon: <Fingerprint className="size-4" aria-hidden />, show: can("org.view") },
     { id: "notifications", label: "Notifications", icon: <Mail className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },

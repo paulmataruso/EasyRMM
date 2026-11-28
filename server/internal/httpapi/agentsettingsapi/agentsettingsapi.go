@@ -25,6 +25,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	}
 	r("GET /api/v1/agent-settings/keys", a.keys)
 	r("GET /api/v1/settings/agent-settings/limits", a.limits)
+	r("GET /api/v1/settings/agent-settings/problems", a.problems)
 	r("PUT /api/v1/settings/agent-settings/limits", a.setLimits)
 	for _, s := range []struct {
 		scope agentsettings.Scope
@@ -43,6 +44,15 @@ func (a *API) Register(mux *http.ServeMux) {
 
 func (a *API) keys(w http.ResponseWriter, _ *http.Request) error {
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": agentsettings.Keys()})
+	return nil
+}
+
+func (a *API) problems(w http.ResponseWriter, r *http.Request) error {
+	out, err := a.svc.Problems(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil
 }
 

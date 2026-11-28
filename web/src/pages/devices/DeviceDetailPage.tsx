@@ -40,6 +40,7 @@ import { ModuleOff } from "./modules/ModuleTab";
 import { DEVICE_MODULE_TABS, moduleTabState } from "./modules/moduleTabs";
 import { NtpTab } from "./modules/NtpTab";
 import { LapsTab } from "./modules/LapsTab";
+import { DeviceSettingsTab } from "../agentsettings/DeviceSettingsTab";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
 export function remoteAccessState(
@@ -114,6 +115,8 @@ export function DeviceDetailPage() {
     { id: "eventlog", label: "Event logs", hidden: !hasAgent || d.platform !== "windows" || !atDevice("eventlog.view") },
     { id: "ntp", label: "Time", hidden: !hasAgent || d.platform !== "windows" || !atDevice("device.view") },
     { id: "laps", label: "LAPS", hidden: !hasAgent || d.platform !== "windows" || !atDevice("device.view") },
+    // Agent settings (ADR-0058, slice 3): for devices with the EasyRMM agent, whoever may view the device.
+    { id: "settings", label: "Settings", hidden: !hasAgent || !atDevice("device.view") },
     // Compliance (ADR-0078): hidden where the module is off or the viewer may not see its results.
     { id: "compliance", label: "Compliance", hidden: !hasAgent || (d.platform !== "linux" && d.platform !== "windows") || !complianceOn },
     ...DEVICE_MODULE_TABS.map((m) => ({ id: m.id, label: m.label, hidden: moduleTabState(m, roles.data, atDevice) !== "shown" })),
@@ -269,6 +272,12 @@ export function DeviceDetailPage() {
       {tab === "ntp" && (
         <div role="tabpanel" aria-labelledby="tab-ntp">
           <NtpTab device={d} />
+        </div>
+      )}
+
+      {tab === "settings" && (
+        <div role="tabpanel" aria-labelledby="tab-settings">
+          <DeviceSettingsTab device={d} />
         </div>
       )}
 

@@ -17,6 +17,7 @@ import { PlatformControls } from "../notifications/PlatformControls";
 import { RulesPanel } from "../notifications/RulesPanel";
 import { WindowsPanel } from "../notifications/WindowsPanel";
 import { PatchingTab } from "./PatchingTab";
+import { AgentSettingsPlatform } from "./AgentSettingsPlatform";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
 import { UsersTab } from "./UsersTab";
@@ -26,6 +27,7 @@ const SUBTITLES: Record<string, string> = {
   audit: "Everything people, agents and the platform did, in a tamper-evident log.",
   remote: "The MeshCentral service behind remote desktop, terminal and files.",
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
+  "agent-settings": "How often agents check in and the other values that reach them, set for the whole platform, and the devices that do not take or have not applied them.",
   "agent-files": "Every file this server hands out or the agents install, with MD5 and SHA-256, kept current.",
   notifications: "The mail server EasyRMM sends invitations, password resets and the patching engine's email through, how much mail it sends, and the platform's notification channels, shared with organizations from here.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
@@ -73,6 +75,7 @@ export function SettingsPage() {
       {part.id === "audit" && <AuditTab />}
       {part.id === "remote" && <RemoteAccessTab />}
       {part.id === "agent-updates" && <AgentUpdatesTab />}
+      {part.id === "agent-settings" && <AgentSettingsPlatform />}
       {part.id === "agent-files" && <AgentFilesTab />}
       {part.id === "notifications" && (
         <>

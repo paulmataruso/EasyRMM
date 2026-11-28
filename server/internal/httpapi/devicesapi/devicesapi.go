@@ -75,7 +75,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
 	items, err := a.svc.List(r.Context(), httpapi.Caller(r), devices.Query{
 		OrganizationID: org, SiteID: site, GroupID: group, Ungrouped: q.Get("ungrouped") == "true", Search: q.Get("q"), Status: q.Get("status"), Hardening: q.Get("hardening"),
-		DiskHealth: q.Get("diskHealth"), Compliance: q.Get("compliance"), Posture: q.Get("posture"),
+		DiskHealth: q.Get("diskHealth"), Compliance: q.Get("compliance"), Posture: q.Get("posture"), Settings: q.Get("settings"),
 	})
 	if err != nil {
 		return err

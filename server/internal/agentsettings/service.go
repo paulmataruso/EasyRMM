@@ -233,6 +233,9 @@ type Listing struct {
 	// Device is set for a device: what the server knows of its agent's
 	// interval.
 	Device *DeviceState `json:"device,omitempty"`
+	// Document is set for a device: where the delivery of its settings stands
+	// (slice 3).
+	Document *DocumentView `json:"document,omitempty"`
 }
 
 // DeviceState is what the server keeps of a device's interval and
@@ -270,6 +273,12 @@ func (s *Service) List(ctx context.Context, c access.Caller, t Target) (Listing,
 				return err
 			}
 			out.Device = &d
+			st, err := ReadState(ctx, tx, t.DeviceID)
+			if err != nil {
+				return err
+			}
+			doc := Describe(st, d.OnlineUntil != nil && d.OnlineUntil.After(time.Now()))
+			out.Document = &doc
 		}
 		return nil
 	})

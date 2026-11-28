@@ -39,8 +39,9 @@ export function DevicesPage() {
   const diskHealth = url.get("diskHealth");
   const compliance = url.get("compliance");
   const posture = url.get("posture");
+  const settings = url.get("settings");
   const sort = parseSort(url.get("sort"));
-  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth || compliance || posture);
+  const filtered = Boolean(search || organizationId || siteId || groupId || status || hardening || diskHealth || compliance || posture || settings);
 
   const params = {
     q: search || undefined,
@@ -52,6 +53,7 @@ export function DevicesPage() {
     diskHealth: diskHealth || undefined,
     compliance: compliance || undefined,
     posture: posture || undefined,
+    settings: settings || undefined,
   };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
   // The server lists by name; sorting by disk health keeps that order among devices with the same label.
@@ -109,6 +111,7 @@ export function DevicesPage() {
         <GroupSelect siteId={siteId} value={groupId} onChange={(v) => url.set({ groupId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
+        <SettingsSelect value={settings} onChange={(v) => url.set({ settings: v })} />
         <PostureSelect value={posture} onChange={(v) => url.set({ posture: v })} />
         <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />
         {can("compliance.view") && <ComplianceSelect value={compliance} onChange={(v) => url.set({ compliance: v })} />}
@@ -302,6 +305,19 @@ function PostureSelect({ value, onChange }: { value: string; onChange: (v: strin
             {f.label}
           </option>
         ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** Devices whose agent has not applied the settings sent to it (ADR-0058, slice 3). */
+function SettingsSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <Field label="Agent settings" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any settings</option>
+        <option value="not_applied">Settings not applied</option>
       </Select>
     </Field>
   );

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulmataruso/easyrmm/server/internal/agentsettings"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 
 	"github.com/google/uuid"
@@ -281,7 +282,13 @@ type Query struct {
 	// Posture is "" or one of posture.Filter*: the devices whose security
 	// posture meets its policy, does not, or cannot be told (ADR-0082).
 	Posture string
+	// Settings is "" or SettingsNotApplied: the devices whose agent has not
+	// applied the settings issued for it (ADR-0058).
+	Settings string
 }
+
+// SettingsNotApplied is Query.Settings's one value.
+const SettingsNotApplied = "not_applied"
 
 // maxPostureScan bounds how many devices a posture filter looks through before
 // it keeps MaxList of them.
@@ -474,6 +481,9 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	if !posture.ValidFilter(q.Posture) {
 		return nil, apperr.Invalid("posture", "Use meets, does_not_meet or cannot_tell.")
 	}
+	if q.Settings != "" && q.Settings != SettingsNotApplied {
+		return nil, apperr.Invalid("settings", "Use not_applied.")
+	}
 	limit := MaxList
 	if q.Posture != "" {
 		limit = maxPostureScan
@@ -499,6 +509,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				WHEN 'unchecked' THEN d.platform IN ('linux', 'windows') AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
 				ELSE true END
 			  AND ($11 = '' OR EXISTS (SELECT 1 FROM compliance_results cr WHERE cr.device_id = d.id AND cr.state = ANY ($12::text[])))
+			  AND ($13 = '' OR EXISTS (SELECT 1 FROM agent_device_state ads WHERE ads.device_id = d.id AND ads.not_applied_heartbeats >= $14))
 			  AND CASE $8
 				WHEN '' THEN true
 				WHEN 'not_reported' THEN ds.label IS NULL
@@ -507,7 +518,7 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 				ELSE ds.label IS NOT DISTINCT FROM $8 END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
 			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, limit, q.Hardening, attentionStates,
-			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped, q.Compliance, complianceFailingStates)
+			q.DiskHealth, nullUUID(q.GroupID), q.Ungrouped, q.Compliance, complianceFailingStates, q.Settings, agentsettings.NotAppliedAfter)
 		if err != nil {
 			return err
 		}
