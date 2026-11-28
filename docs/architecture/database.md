@@ -566,6 +566,30 @@ The migration also adds columns to `devices`: the last report of the keys the de
 
 The down migrations drop the tables and the columns. A server from before the ring cannot run against the migrated database whatever the down migration does, until the tombstone is replaced by the key: restoring the key means restoring the backup that holds it.
 
+## Endpoint security posture (migration 00071, ADR-0082 slice P1)
+
+Posture is a view over hardening and patching results, not a new collection. The one table copies the patching engine's compliance word so the Devices list, the Security report and the alert evaluator can read it with a query. The score is weighted: 3 for patching, firewall, SSH, Defender and BitLocker; 2 for a few others; 1 for the rest. A device "meets its security policy" only when every applicable control passes.
+
+| Table | Notes |
+|---|---|
+| `posture_patching` | One row per device linked to the patching engine (migration 00071): `status` (the engine's compliance word as it said it) and `checked_at`. A stale copy never counts as passing. Row-level security reads through `devices`; written at platform scope only. Goes with the device (cascade). The migration also adds `alerts_compliance_key`, a unique index on `alerts` for the `compliance_fix_failed` and `compliance_scan_stale` alert kinds |
+
+## DNS-01 challenge credentials (migration 00094, ADR-0055 slice 5b4)
+
+Credentials for DNS-01 ACME challenges: RFC 2136 (BIND, Knot, PowerDNS with TSIG) and Cloudflare. A platform table outside row-level security, reached only through the DNS credential service, which requires `settings.manage` and step-up authentication for writes.
+
+| Table | Notes |
+|---|---|
+| `tls_dns_credentials` | One row per zone whose DNS-01 challenge EasyRMM solves: `provider` (`rfc2136` or `cloudflare`), `zone` (unique), `override_domain` (for delegation), `sealed_credentials` (sealed with the row's UUID as associated data), `server_addr` (resolved and pinned for RFC 2136), `tested_at` and `test_error`. Written at platform scope only with step-up authentication; the HMAC-MD5 and HMAC-SHA1 algorithms are refused. Cloud metadata addresses (169.254.169.254, fd00:ec2::254) are refused as server addresses |
+
+## Posture log collection (migration 00095, ADR-0082 slice P5)
+
+Tracks when each device last forwarded security logs. A device within the freshness window (24 hours) is "in place"; 1–7 days is "partly in place"; older is "not in place".
+
+| Table | Notes |
+|---|---|
+| `posture_log_collection` | One row per device: `first_received_at` and `last_received_at`. Row-level security reads through `devices`; written at platform scope only. Goes with the device (cascade) |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).
