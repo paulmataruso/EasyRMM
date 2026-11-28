@@ -17,13 +17,13 @@ try {
     $tzId = [string]$p.timezoneId
     $available = @([System.TimeZoneInfo]::GetSystemTimeZones() | ForEach-Object { $_.Id })
     if ($available -notcontains $tzId) {
-        Stop-With 'not_found' ('No such timezone: ' + $tzId + '. Use the Windows timezone ID, e.g. "Eastern Standard Time".')
+        Stop-With 'not_found' ('No such timezone: {0}. Use the Windows timezone ID, e.g. "Eastern Standard Time".' -f $tzId)
     }
     $before = Get-TimeZone
     Set-TimeZone -Id $tzId
     $after = Get-TimeZone
     $data = [ordered]@{
-        summary = ('Timezone changed from ' + $before.Id + ' to ' + $after.Id)
+        summary = ('Timezone changed from {0} to {1}' -f $before.Id, $after.Id)
         before  = [ordered]@{ id = [string]$before.Id; displayName = [string]$before.DisplayName }
         after   = [ordered]@{ id = [string]$after.Id; displayName = [string]$after.DisplayName }
     }

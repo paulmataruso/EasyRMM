@@ -21,11 +21,10 @@ try {
     }
 
     $backupDir = [int]$p.backupDirectory
-    $changes = @()
+    $applied = [ordered]@{}
 
     Set-ItemProperty -Path $regPath -Name 'BackupDirectory' -Value $backupDir -Type DWord
-    $dirLabel = if ($backupDir -eq 2) { 'Active Directory' } else { 'Azure AD' }
-    $changes += ('BackupDirectory = ' + $backupDir + ' (' + $dirLabel + ')')
+    $applied['BackupDirectory'] = $backupDir
 
     $dwords = @{
         passwordAgeDays                    = 'PasswordAgeDays'
@@ -40,7 +39,7 @@ try {
         if ($null -ne $p.PSObject.Properties[$param.Key]) {
             $val = [int]$p.($param.Key)
             Set-ItemProperty -Path $regPath -Name $param.Value -Value $val -Type DWord
-            $changes += ($param.Value + ' = ' + $val)
+            $applied[$param.Value] = $val
         }
     }
 
@@ -52,12 +51,14 @@ try {
         if ($null -ne $p.PSObject.Properties[$param.Key]) {
             $val = [string]$p.($param.Key)
             Set-ItemProperty -Path $regPath -Name $param.Value -Value $val -Type String
-            $changes += ($param.Value + ' = ' + $val)
+            $applied[$param.Value] = $val
         }
     }
 
     $data = [ordered]@{
-        summary = ('LAPS policy configured: ' + ($changes -join '; '))
+        summary  = 'LAPS policy configured'
+        applied  = $applied
+        count    = $applied.Count
     }
     Write-Result $true $data $null $null
 } catch {

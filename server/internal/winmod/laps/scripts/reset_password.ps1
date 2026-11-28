@@ -36,7 +36,8 @@ try {
         # Fall back: set the AD expiration time to now, which makes the CSE rotate on its next cycle
         try {
             $searcher = New-Object System.DirectoryServices.DirectorySearcher
-            $searcher.Filter = "(&(objectCategory=computer)(sAMAccountName=$($env:COMPUTERNAME)$))"
+            $fn_cn = [System.Net.Dns]::GetHostName()
+            $searcher.Filter = "(&(objectCategory=computer)(sAMAccountName=$($fn_cn)$))"
             $result = $searcher.FindOne()
             if ($null -eq $result) { Stop-With 'not_found' 'Could not find this computer in the directory.' }
             $entry = $result.GetDirectoryEntry()

@@ -27,10 +27,10 @@ try {
         }
     } catch {}
 
-    & w32tm.exe /config /manualpeerlist:$server /syncfromflags:manual /update 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { Stop-With 'command_failed' 'w32tm /config failed.' }
-
+    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters' -Name 'NtpServer' -Value $server
     Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters' -Name 'Type' -Value $type
+    & w32tm.exe /config /syncfromflags:manual /update 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-With 'command_failed' 'w32tm /config failed.' }
 
     $svc = Get-Service -Name w32time -ErrorAction SilentlyContinue
     if ($null -ne $svc -and $svc.Status -ne 'Running') {
@@ -48,7 +48,9 @@ try {
     } catch {}
 
     $data = [ordered]@{
-        summary = ('NTP server set to ' + $server + ' (type: ' + $type + ')')
+        summary = 'NTP server configured'
+        server  = $server
+        type    = $type
         before  = $before
         after   = $after
     }

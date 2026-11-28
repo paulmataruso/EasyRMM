@@ -93,7 +93,8 @@ try {
             # Legacy LAPS stores it in ms-Mcs-AdmPwdExpirationTime
             try {
                 $searcher = New-Object System.DirectoryServices.DirectorySearcher
-                $searcher.Filter = "(&(objectCategory=computer)(sAMAccountName=$($env:COMPUTERNAME)$))"
+                $fn_cn = [System.Net.Dns]::GetHostName()
+                $searcher.Filter = "(&(objectCategory=computer)(sAMAccountName=$($fn_cn)$))"
                 [void]$searcher.PropertiesToLoad.Add('msLAPS-PasswordExpirationTime')
                 [void]$searcher.PropertiesToLoad.Add('ms-Mcs-AdmPwdExpirationTime')
                 $result = $searcher.FindOne()

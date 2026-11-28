@@ -261,14 +261,14 @@ func (s *Service) Platform(ctx context.Context, c access.Caller) (PlatformStatus
 	return PlatformStatus{Status: st, KEKUsage: use}, err
 }
 
-// InitResult is the response from initialising the keystore through the web UI.
+// InitResult is the response from initializing the keystore through the web UI.
 type InitResult struct {
 	RecoveryCode string `json:"recoveryCode"`
 	BundlePath   string `json:"bundlePath"`
 	Version      int    `json:"version"`
 }
 
-// WebInit initialises the keystore from the console (ADR-0081 amendment).
+// WebInit initializes the keystore from the console (ADR-0081 amendment).
 func (s *Service) WebInit(ctx context.Context, c access.Caller, mode string, passphrase []byte) (*InitResult, error) {
 	if !c.CanGlobal(rbac.PermSettingsManage) {
 		return nil, apperr.Forbidden()

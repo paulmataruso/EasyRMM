@@ -39,7 +39,7 @@ const (
 const (
 	OpWebInit           = "web_init"
 	OpWebUnseal         = "web_unseal"
-	OpWebVerifyRecovery = "web_verify_recovery"
+	OpWebVerifyRecovery = "web_verify_recovery" //nolint:gosec // Not a credential.
 )
 
 // Operations only the admin socket accepts: it exists inside the keystore

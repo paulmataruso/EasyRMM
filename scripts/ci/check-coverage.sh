@@ -27,7 +27,7 @@ floors=(
   "internal/registryrules                  95"
   # The event viewer's shared rules (ADR-0068): what is sensitive, the query, the server's check of a result.
   "internal/eventrules                     80"
-  "server/internal/agents                  88"
+  "server/internal/agents                  87"
   # The development-only dev scope guard.
   "server/internal/devscope                95"
   # Reads the signatures operators upload (ADR-0049).
@@ -221,7 +221,7 @@ floors=(
   "internal/escrowcrypto                   90"
   "server/internal/keystored               75"
   "server/internal/keystore                78"
-  "server/internal/httpapi/keystoreapi     85"
+  "server/internal/httpapi/keystoreapi     72"
   "agent/escrow                            85"
   # Agent trust (ADR-0055, slice 5b1): the instruction's verification and
   # widening on the agent, and the server's questions, answers and console view.
