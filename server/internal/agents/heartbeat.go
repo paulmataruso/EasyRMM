@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -38,6 +39,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		uninstall *agentproto.SignedUninstall
 		handover  *agentproto.SignedKeyStatement
 		cutover   *agentproto.SignedKeyStatement
+		settings  *agentproto.SignedSettings
 	)
 	// What the agent may do about Defender, and what it reported of it
 	// (ADR-0070); a bad report is refused before anything is stored.
@@ -76,11 +78,16 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
 				hostname = $2, os_description = $3, platform = $4, agent_version = $5, agent_arch = $6,
 				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now(), agent_role = coalesce(NULLIF($9, ''), agent_role),
-				agent_heartbeat_seconds = $10,
+				agent_heartbeat_seconds = CASE
+					WHEN $11::int > 0 THEN $11::int
+					WHEN NOT $12::bool AND EXISTS (SELECT 1 FROM agent_device_state s
+						WHERE s.device_id = devices.id AND s.capabilities IS NOT NULL AND s.capabilities_build = $13) THEN agent_heartbeat_seconds
+					ELSE $10::int END,
 				meshagent_state = coalesce($8::jsonb, meshagent_state),
 				meshagent_state_at = CASE WHEN $8::jsonb IS NULL THEN meshagent_state_at ELSE now() END
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
-			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role, interval)
+			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256, meshState, f.role, interval,
+			reportedInterval(req), req.Capabilities != nil, buildOf(f))
 		if err != nil {
 			return err
 		}
@@ -128,6 +135,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		if uninstall, err = s.uninstallFor(ctx, tx, d); err != nil || uninstall != nil {
 			return err
 		}
+		settings = s.followSettings(ctx, tx, d, f, req)
 		// The update is an extra: when settling it fails, the heartbeat
 		// still counts.
 		sp, err := tx.Begin(ctx)
@@ -171,12 +179,64 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		Features:         s.keyFeatures(),
 		InstructionAck:   ackFor(keyTaken, keyAck),
 		Update:           update,
+		Settings:         settings,
 		Uninstall:        uninstall,
 		KeyHandover:      handover,
 		KeyCutover:       cutover,
 		Defender:         &agentproto.DefenderPolicy{Enabled: allowed, Events: logOn, EventsAck: logAck},
 		RescanRoles:      rescan,
 	}, nil
+}
+
+// buildOf names the build that sent a heartbeat for the settings report: the
+// SHA-256 of its executable, or its version for an agent that sends none
+// (ADR-0058).
+func buildOf(f facts) string {
+	if f.sha256 != "" {
+		return f.sha256
+	}
+	return "version:" + f.version
+}
+
+// reportedInterval is the interval the agent says it uses, 0 when the
+// heartbeat has no report or the value is outside what the database keeps.
+func reportedInterval(req agentproto.HeartbeatRequest) int {
+	if req.Capabilities == nil || req.HeartbeatSeconds < agentproto.MinHeartbeatSeconds || req.HeartbeatSeconds > agentproto.MaxHeartbeatSeconds {
+		return 0
+	}
+	return req.HeartbeatSeconds
+}
+
+// followSettings records the agent's report for signed settings and returns
+// the document the answer carries (ADR-0058). It is an extra like the update:
+// a failure to settle it is logged and never fails the heartbeat, and the
+// device is given the document with its next one.
+func (s *Service) followSettings(ctx context.Context, tx pgx.Tx, d *Device, f facts, req agentproto.HeartbeatRequest) *agentproto.SignedSettings {
+	if s.keys == nil {
+		return nil
+	}
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return nil
+	}
+	sign := func(ctx context.Context, tx pgx.Tx, device uuid.UUID, id string) (ed25519.PrivateKey, error) {
+		k, _, err := s.keys.Issue(ctx, tx, device, agentproto.InstructionSettings, id)
+		return k, err
+	}
+	doc, err := agentsettings.Follow(ctx, sp, s.log, sign, agentsettings.Beat{
+		Device: agentsettings.DeviceRef{ID: d.ID, Org: d.OrganizationID, Site: d.SiteID}, Build: buildOf(f),
+		Capabilities: req.Capabilities, Report: req.Settings, HeartbeatSeconds: req.HeartbeatSeconds,
+		SignedAt: signedAt(ctx, s.now()), Now: s.now(),
+	})
+	if err != nil {
+		s.log.Error("agents: settling the agent's settings failed", "error", err, "device_id", d.ID)
+		_ = sp.Rollback(ctx)
+		return nil
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return nil
+	}
+	return doc
 }
 
 // movingFrom reports whether d was moved to its site from the site whose

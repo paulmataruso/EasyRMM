@@ -179,6 +179,8 @@ floors=(
   "agent/channel                           90"
   "agent/client                            90"
   "agent/runner                            90"
+  # Signed settings (ADR-0058): the agent's catalogue, verify, save and apply.
+  "agent/settings                          95"
   "agent/host                              85"
   # Defender exclusions (ADR-0070); the Windows half runs in the windows-defender job.
   "agent/defender                          83"

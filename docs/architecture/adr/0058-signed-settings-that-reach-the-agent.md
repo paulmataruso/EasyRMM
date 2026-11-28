@@ -1,8 +1,9 @@
 # ADR-0058: Signed settings that reach the agent
 
 * Status: Proposed (2026-11-21). Slice 1 built (2026-11-26; see *Amended
-  2026-11-26 (decided in review): as built in slice 1*); slices 2 and 3 not
-  implemented.
+  2026-11-26 (decided in review): as built in slice 1*); slice 2 built
+  (2026-11-28; see *Amended 2026-11-28 (decided in review): as built in
+  slice 2*); slice 3 not implemented.
 * Revised 2026-11-21 after an independent review: what a longer interval
   does to monitoring and to online, a server rolled back, protocol levels
   in place of a fallback, what ADR-0057 must provide, technicians and the
@@ -811,3 +812,71 @@ while building it:
   vitest and one browser spec (`web/e2e/interval-settings.spec.ts`). **Not
   verified:** the bundle's check with rc.4's real agent following a site's
   interval, and a Windows agent; neither was run.
+
+### Amended 2026-11-28 (decided in review): as built in slice 2
+
+Slice 2 is delivery: the signed document, the agent's report, the state the
+server keeps, the agent's verify, save, apply and acknowledge, the interval it
+reports and the spacing of `metrics`. What was decided while building it:
+
+* **The signature is over the context and the payload's JSON bytes**, as jobs,
+  updates and uninstalls are signed (`SignSettings` and `VerifySettings` in
+  `internal/agentproto/settings.go`), not over the base64 text.
+  `EASYRMM-SETTINGS-SIG-V1\n` is the context. The package has one `Sign` and
+  `Verify` pair per instruction, so settings have theirs.
+* **The report is three request fields** (`capabilities`, `settings`,
+  `heartbeatSeconds`) and the document one answer field (`settings`). The report
+  of a document refused as a whole is under the problem key `document`
+  (`refused: <reason>`, at most 200 bytes); the rest of the problems are per key
+  (`invalid`, `clamped`).
+* **The agent's catalogue** (`agent/settings`) holds the one key, at schema
+  version 1 (a whole number from 30 to 300). The built-in default of the
+  heartbeat key is the answer's `heartbeatSeconds`, bounded as before. The
+  server's catalogue gains `Schemas` per key and `CatalogVersion` (1).
+* **`settings.json`** holds the signed document as received and the values
+  applied from it (a key that was invalid keeps the value it had, also across a
+  restart). It is not verified again when it is loaded: it was, when it
+  arrived. A document saved for another device ID, or damaged, is not applied.
+* **After a document is applied or refused, and after the first answer of level
+  2 of a process, the next heartbeat comes in 5 seconds** (`ReportWithin`;
+  the ADR's 10).
+* **A heartbeat signed before the latest processed is not processed at all**:
+  its report is not taken, it gets no document and counts for nothing, as well as
+  leaving the stored time unmoved. The ADR only says the time stays; an old
+  report must not move the applied version back.
+* **`agent_device_state` has no organization or site columns** (migration
+  90611): row-level security reads through `devices`, as the job key tables'
+  do, and a device's move needs nothing updated. The ADR's "with its
+  organization and site" is not built; the move test lists the table as
+  *follows*.
+* **The interval kept.** The heartbeat's own `UPDATE` sets
+  `agent_heartbeat_seconds` to the agent's report when it is from 30 to 300, to
+  the answered interval for an agent that reports none (or whose build changed
+  since its report), and leaves it alone for a heartbeat that lacks the report
+  while the stored report holds; the trigger works `agent_online_until` out from
+  it as in slice 1.
+* **Not applied** is derived (`not_applied_heartbeats >= 3`,
+  `State.NotApplied`); there is no column for the flag. Nothing shows it until
+  slice 3.
+* **A document is resent with every heartbeat** that reports a version lower
+  than the one issued (a refused document, one that could not be saved), signed
+  again under the same version and issue time, so its content is the same; each
+  signing is a row of `issued_instructions` (kind `settings`) and the agent logs
+  each document it accepts under the same kind.
+* **Only within the development scope**: organizations outside
+  `devscope.Allowed` are issued nothing and have no state row.
+* **The channel's settings push does not carry the document**: it still carries
+  the interval and MeshAgent's settings and nudges a heartbeat, whose answer
+  carries the document.
+* **Metrics spacing on the agent applies to every heartbeat**, whatever the
+  server's level: 0.8 of the interval the agent uses (a minute before its first
+  answer) after the last heartbeat whose metrics were accepted.
+* **Verified:** unit tests (`internal/agentproto`, `agent/settings`,
+  `agent/runner`, `agent/state`, the catalogue), integration tests on
+  PostgreSQL (`server/internal/agents`: capabilities, keys and schema versions,
+  rising versions and a restore, two heartbeats at once, *Not applied*, an older
+  catalogue, build changes, the signed-time order, the kept interval, lazy issue
+  for an organization, and the real agent code against the real server code).
+  **Not verified:** a Windows agent, the bundle's checks with real agents of the
+  current and the previous release, and against the previous release's server,
+  and an HTTP-level test of the new request and answer fields; none was run.

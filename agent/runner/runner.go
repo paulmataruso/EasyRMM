@@ -161,6 +161,21 @@ type InstructionLog interface {
 	Acknowledged(ack uint64)
 }
 
+// SettingsAgent is the agent's signed settings (agent/settings.Agent,
+// ADR-0058).
+type SettingsAgent interface {
+	// Capabilities and Report are the agent's report for its heartbeat.
+	Capabilities() *agentproto.SettingsCapabilities
+	Report() *agentproto.SettingsReport
+	// Answered takes a heartbeat answer's document, nil when it carried none,
+	// and the server's protocol level; true means what the agent reports
+	// changed.
+	Answered(level int, s *agentproto.SignedSettings) bool
+	// Interval is the heartbeat interval in seconds given the answer's, and
+	// whether a document set it.
+	Interval(answered int) (seconds int, held bool)
+}
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -261,6 +276,13 @@ type Runner struct {
 	// Trust verifies certificate chains and widens the agent's trust when a
 	// signed instruction asks (ADR-0055); nil does neither.
 	Trust TrustAgent
+	// Settings holds the signed settings the server sends (ADR-0058); nil
+	// takes none, and the agent follows the answer's interval as before.
+	Settings SettingsAgent
+	// ReportWithin is how soon the next heartbeat comes after a document was
+	// applied or refused, and after the first of a process, so that the
+	// server hears the report (5 s, within the ADR's 10).
+	ReportWithin time.Duration
 
 	// instrFeature: the server's last answer listed the instruction log.
 	instrFeature bool
@@ -281,6 +303,11 @@ type Runner struct {
 	// settled: Settled has returned true.
 	settled bool
 	defend  defenderState
+	// interval is the interval the agent uses, before jitter, from its last
+	// answer (0 before any); metricsAt is when the last heartbeat whose
+	// metrics the server accepted was sent (ADR-0058).
+	interval  time.Duration
+	metricsAt time.Time
 }
 
 // RefreshInventory has the inventory collected again at the next heartbeat,
@@ -300,6 +327,9 @@ func (r *Runner) defaults() {
 	}
 	if r.InstallWait == 0 {
 		r.InstallWait = 10 * time.Minute
+	}
+	if r.ReportWithin == 0 {
+		r.ReportWithin = 5 * time.Second
 	}
 	if r.AfterSetup == 0 {
 		r.AfterSetup = 15 * time.Second
@@ -387,7 +417,8 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		f.Roles = r.Roles.Roles(ctx)
 	}
 	req := agentproto.HeartbeatRequest{Facts: f}
-	if r.Metrics != nil {
+	sentAt := time.Now()
+	if r.Metrics != nil && r.metricsDue(sentAt) {
 		m := r.Metrics(ctx)
 		req.Metrics = &m
 	}
@@ -408,6 +439,13 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		}
 		req.Repair = r.repair.report(time.Now())
 		r.defendRequest(ctx, &req)
+	}
+	if r.Settings != nil && r.Client.Level() >= 2 {
+		// The report for signed settings (ADR-0058): none before the first
+		// answer of a process, and a heartbeat without it changes nothing on
+		// the server.
+		req.Capabilities, req.Settings = r.Settings.Capabilities(), r.Settings.Report()
+		req.HeartbeatSeconds = int(r.interval / time.Second)
 	}
 	if r.Channel != nil && r.Client.Level() >= 2 {
 		req.Channel = []string{agentproto.ChannelCapability}
@@ -479,9 +517,16 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	if r.OnJobKey != nil && resp.JobKey != "" {
 		r.OnJobKey(resp.JobKey, resp.JobKeyGeneration)
 	}
+	if req.Metrics != nil {
+		r.metricsAt = sentAt
+	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
-	next := jitter(heartbeatInterval(resp.HeartbeatSeconds))
+	r.interval = heartbeatInterval(resp.HeartbeatSeconds)
+	if r.Every > 0 {
+		r.interval = r.Every
+	}
+	next := jitter(r.interval)
 	if r.Every > 0 {
 		next = r.Every
 	}
@@ -492,6 +537,26 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 			return 0, ErrRemoved
 		}
 		return next, nil
+	}
+	soon := time.Duration(0)
+	if r.Settings != nil {
+		// The document is handled after the answer's key hand-over, so one
+		// signed with a new key verifies. The next heartbeat comes soon after
+		// a document was applied or refused, and after the first of a
+		// process, which carried no report.
+		applied := r.Settings.Answered(r.Client.Level(), resp.Settings)
+		// A document's interval, or the answer's when it is shorter, never
+		// below the catalogue's minimum (ADR-0058).
+		if secs, held := r.Settings.Interval(resp.HeartbeatSeconds); held && r.Every == 0 {
+			r.interval = time.Duration(secs) * time.Second
+		}
+		if applied || (req.Capabilities == nil && r.Client.Level() >= 2) {
+			soon = r.ReportWithin
+		}
+	}
+	next = jitter(r.interval)
+	if r.Every > 0 {
+		next = r.Every
 	}
 	if r.OnLogs != nil {
 		r.OnLogs(resp.Logs)
@@ -547,7 +612,26 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 		return 0, ErrRestart
 	}
 	r.save()
+	if soon > 0 {
+		next = min(next, soon)
+	}
 	return next, nil
+}
+
+// metricsDue says whether a heartbeat sent at now carries metrics: only 0.8 of
+// the interval after the last heartbeat whose metrics the server accepted, so
+// that the extra heartbeats (a document applied, a wake) never make two
+// measurements seconds apart (ADR-0058). A heartbeat that failed counts as
+// carrying none, so the next one carries them.
+func (r *Runner) metricsDue(now time.Time) bool {
+	if r.metricsAt.IsZero() {
+		return true
+	}
+	every := r.interval
+	if every <= 0 {
+		every = time.Minute
+	}
+	return now.Sub(r.metricsAt) >= every*8/10
 }
 
 // syncInventory collects the inventory when it is due and uploads it when

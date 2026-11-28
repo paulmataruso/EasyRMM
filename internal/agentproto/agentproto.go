@@ -194,6 +194,15 @@ type HeartbeatRequest struct {
 	Authorities    []string              `json:"authorities,omitempty"`
 	KeyRefused     *KeyRefusal           `json:"keyRefused,omitempty"`
 	InstructionLog *InstructionLogReport `json:"instructionLog,omitempty"`
+	// Capabilities, Settings and HeartbeatSeconds are the agent's report for
+	// signed settings (ADR-0058): what its catalog understands, the
+	// version of the document it holds with its problems, and the interval it
+	// uses. All three are covered by the device's signature and sent only to
+	// servers of level 2 or higher; a heartbeat without them (the first of a
+	// process) changes nothing on the server.
+	Capabilities     *SettingsCapabilities `json:"capabilities,omitempty"`
+	Settings         *SettingsReport       `json:"settings,omitempty"`
+	HeartbeatSeconds int                   `json:"heartbeatSeconds,omitempty"`
 }
 
 // The agent keeps the server's heartbeat interval within these bounds, so
@@ -272,6 +281,10 @@ type HeartbeatResponse struct {
 	// anything else in the answer.
 	KeyHandover *SignedKeyStatement `json:"keyHandover,omitempty"`
 	KeyCutover  *SignedKeyStatement `json:"keyCutover,omitempty"`
+	// Settings is the device's signed settings document (ADR-0058), only to
+	// an agent whose report lists CapSettings, and only when the version it
+	// holds is older.
+	Settings *SignedSettings `json:"settings,omitempty"`
 	// InstructionAck is the sequence of the last entry of the agent's
 	// instruction log this server took, read only when Features lists
 	// FeatureInstructionLog.

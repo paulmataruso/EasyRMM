@@ -48,6 +48,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/removal"
 	"github.com/paulmataruso/easyrmm/agent/roles"
 	"github.com/paulmataruso/easyrmm/agent/runner"
+	"github.com/paulmataruso/easyrmm/agent/settings"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/trust"
 	"github.com/paulmataruso/easyrmm/agent/update"
@@ -591,6 +592,11 @@ func (e *env) run(ctx context.Context) error {
 		Record:       il.Record,
 		Authorities:  caFingerprints(cfg.CAFile),
 	}
+	// Signed settings (ADR-0058): what was applied is applied again before the
+	// first heartbeat, only if it was saved for this device.
+	sa := &settings.Agent{DeviceID: cfg.DeviceID, Keys: ks.Keys, Store: e.store, Log: e.log, Record: il.Record}
+	sa.Load()
+	r.Settings = sa
 	if runtime.GOOS == "windows" {
 		r.Roles = &roles.Scanner{Read: roles.Read}
 		// BitLocker recovery keys are escrowed only with the escrow key the

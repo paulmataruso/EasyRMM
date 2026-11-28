@@ -88,6 +88,8 @@ const (
 	instrFile   = "instructions.json"
 	caFile      = "ca.pem"
 	packageFile = "package.json"
+	// settingsFile holds the settings document the agent applied (ADR-0058).
+	settingsFile = "settings.json"
 )
 
 // layout is what the agent reads and writes in its folder, for the check
@@ -106,6 +108,7 @@ var layout = [][]string{
 	{trustFile},
 	{keysFile},
 	{instrFile},
+	{settingsFile},
 	{packageFile},
 	{".tmp-*"},                         // writeFile's
 	{"removal.json"},                   // removal.File
@@ -586,6 +589,40 @@ func (s Store) SaveInstructionLog(l InstructionLog) error {
 		return err
 	}
 	return s.write(instrFile, append(b, '\n'))
+}
+
+// Settings is what the agent keeps of its signed settings (ADR-0058): the
+// document as received, device ID included, and the values applied from it
+// (a key whose value was invalid keeps the one it had). It is verified once,
+// when it arrives; a rotation of the job key never makes it unreadable. It
+// holds no secret.
+type Settings struct {
+	Document agentproto.SignedSettings  `json:"document"`
+	Applied  map[string]json.RawMessage `json:"applied,omitempty"`
+}
+
+// LoadSettings reads the settings saved, nil when there are none or the file
+// is damaged: the agent then starts from its built-in defaults.
+func (s Store) LoadSettings() *Settings {
+	path, err := s.path(settingsFile)
+	if err != nil {
+		return nil
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
+	var st Settings
+	if err != nil || json.Unmarshal(b, &st) != nil || st.Document.Payload == "" {
+		return nil
+	}
+	return &st
+}
+
+// SaveSettings records the settings applied, as agent.json is written.
+func (s Store) SaveSettings(st Settings) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return s.write(settingsFile, append(b, '\n'))
 }
 
 // ClearKeyState deletes the key statement log and the instruction log: a new
