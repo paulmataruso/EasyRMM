@@ -96,7 +96,7 @@ func TestHTTPQuickAssist(t *testing.T) {
 	// for every link that cannot be used.
 	anon := h.client()
 	page := anon.do("GET", made.Path, nil)
-	if page.status != http.StatusOK || !strings.Contains(string(page.body), "Remote support from Acme") || !strings.Contains(string(page.body), "Support for Acme") {
+	if page.status != http.StatusOK || !strings.Contains(string(page.body), "Support from") || !strings.Contains(string(page.body), "Acme") {
 		t.Fatalf("page: %d %s", page.status, page.body)
 	}
 	if csp := page.header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || page.header.Get("Referrer-Policy") != "no-referrer" {

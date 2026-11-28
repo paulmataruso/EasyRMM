@@ -41,3 +41,19 @@ ad1819f3a091f06fd10243ed2f1f97da85b554c6:web/src/pages/devices/diskHealth.test.t
 da28930d8d690f3a221c195ffedfa732376318b2:server/internal/tlscert/storage_integration_test.go:private-key:48
 # Microsoft's published sample Group Policy Preferences cpassword, in the report parser's test sample (the report hides it and warns)
 15860bdb0027c00271aaec5b913f103f45bef97d:server/internal/winmod/grouppolicy/testdata/sample/gpo_report.xml:generic-api-key:102
+# Test fixture: curl command with REDACTED placeholder, not a real credential
+5959fc16ae5783280f4962fcdce2b0313cbb9ac7:server/internal/logstore/logstore_integration_test.go:curl-auth-user:319
+40b6ff1c5324bd00154016ade635fe44085ce93c:server/internal/logstore/logstore_integration_test.go:curl-auth-user:319
+# Pinned script hashes of the LAPS actions (ADR-0086), not secrets.
+a19cc7d8765ddef866bb828a1ece78e57ad3168a:server/internal/winmod/laps/pins.go:generic-api-key:4
+# Fake/truncated PEM keys in test fixtures and error messages, not real keys.
+3726e810fa030aacce1897a43bec2058b371e237:server/internal/easypatch/install_integration_test.go:private-key:514
+fe20c127b655b532c70ba0c96c3df5205827f323:server/internal/easypatch/install_integration_test.go:private-key:507
+60fe65848299b83c383f0b7eae67526adda57791:agent/EasyPatch.Agent.Tests/PersistenceTests.cs:private-key:267
+af47ea86caf246c8b9433ed9146cf7c16d14586f:server/internal/auditfwd/service_integration_test.go:private-key:428
+# Log redaction test: truncated PEM that the redaction must remove.
+776aecdc8bc5d7b38fb4033c936a99c86cabf951:internal/logredact/logredact_test.go:private-key:30
+78e7d2b253cf29cc16bf57779762ca4046282aa3:internal/logredact/logredact_test.go:private-key:30
+78e7d2b253cf29cc16bf57779762ca4046282aa3:easypatch/agent/EasyPatch.Agent.Tests/CompanionRepairTests.cs:private-key:286
+# Error message mentioning PEM header strings, not actual keys.
+49a645f2994f7ed7467abc6fd70cef0fcf1ce265:server/internal/m365/m365.go:private-key:219

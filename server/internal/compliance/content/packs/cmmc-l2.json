@@ -2243,7 +2243,6 @@
   {
    "req_id": "SC.L2-3.13.16",
    "control_ids": [
-    "linux.luks.root-encrypted",
     "win.bitlocker.min-pin",
     "win.bitlocker.preboot-pin",
     "win.bitlocker.recovery-password"

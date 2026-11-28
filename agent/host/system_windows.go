@@ -1017,7 +1017,7 @@ func (WindowsServices) Install(_ context.Context, s Service) error {
 		restart := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: delay}
 		actions = []mgr.RecoveryAction{restart, restart, restart}
 	}
-	if err := service.SetRecoveryActions(actions, uint32((24*time.Hour).Seconds())); err != nil {
+	if err := service.SetRecoveryActions(actions, uint32((24 * time.Hour).Seconds())); err != nil {
 		return fmt.Errorf("setting the %s service's recovery: %w", s.Name, err)
 	}
 	if s.RecoveryCommand != "" {

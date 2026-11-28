@@ -78,6 +78,11 @@ func TestBackupCoversEveryVolume(t *testing.T) {
 		// database it protects. checkMounts refuses them anywhere a backup
 		// copies (TestKeystoreMountsLieApartFromBackups).
 		case src == keystoreDirVar, src == keystoreDirVar+"/run":
+		// The log store (ADR-0060) lives on EASYRMM_LOGS_ROOT, which
+		// defaults to ${EASYRMM_DATA_ROOT}-logs. It is a separate
+		// database whose data can be re-collected; the updater's backup
+		// covers only the main data root.
+		case strings.HasPrefix(src, "${EASYRMM_LOGS_ROOT:-${EASYRMM_DATA_ROOT:-/srv/easyrmm}-logs}/"):
 		default:
 			t.Errorf("%s mounts %s, which a backup does not hold", composeFile, src)
 		}

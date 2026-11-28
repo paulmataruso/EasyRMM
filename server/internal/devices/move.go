@@ -237,6 +237,15 @@ func (s *Service) moveOne(ctx context.Context, tx pgx.Tx, c access.Caller, m *mo
 			}
 		}
 	}
+	// The asset record (ADR-0066) follows the device: the hardware goes
+	// with it. Update the org and site so row-level security stays correct.
+	if _, err := tx.Exec(ctx, `UPDATE assets SET organization_id = $2, site_id = $3 WHERE device_id = $1`, m.id, tgtOrg, in.SiteID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE asset_field_values SET organization_id = $2
+		WHERE asset_id IN (SELECT id FROM assets WHERE device_id = $1)`, m.id, tgtOrg); err != nil {
+		return err
+	}
 	details := map[string]any{
 		"device": m.name, "fromOrganization": m.orgName, "fromSite": m.siteName, "fromGroup": m.groupName,
 		"toSite": tgtSite, "toGroup": tgtGroup, "toOrganizationId": tgtOrg.String(), "toSiteId": in.SiteID.String(),

@@ -328,6 +328,8 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		ends disposition = "ends with a move to another organization"
 		// owned by an organization or site, not by a device: untouched.
 		owned disposition = "owned by an organization or a site, untouched"
+		// follows the device and its org/site are updated by moveOne.
+		updates disposition = "follows the device with its org and site updated"
 		// the patching engine's links: its reconcile follows the device.
 		engine disposition = "follows through the engine's reconcile"
 	)
@@ -346,7 +348,7 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		// Group Policy (ADR-0083): backups and requests are records of the organization whose domain they are; its setting is its own
 		"gpo_backups": stays, "gpo_change_requests": stays, "gpo_org_settings": owned,
 		// recovery (R1-R3): the machine's own state and repair history
-		"agent_conditions": follows, "agent_repairs": ends,
+		"agent_conditions": follows, "agent_repairs": ends, "alert_suppressions": follows,
 		// the keystore (ADR-0081): the volume rows follow within an organization and end with a move out of it
 		"device_encrypted_volumes": ends,
 		// ends
@@ -365,9 +367,9 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 		"compliance_evidence": owned, "compliance_evidence_links": owned, "compliance_org_keys": owned, "compliance_poam_items": owned, "compliance_poam_milestones": owned,
 		"compliance_documents": owned, "compliance_document_sections": owned, "compliance_score_snapshots": owned, "compliance_scope_assets": stays,
 		"alert_policies": owned, "windows_module_settings": owned, "windows_module_snapshots": follows, "windows_module_conditions": follows, "ad_domains": owned, "compliance_packs": owned, "keystore_alerts": owned, "notification_channels": owned, "notification_channel_shares": owned, "notification_quotas": owned, "notification_rules": owned, "notification_rule_orgs": owned, "notification_rule_sites": owned, "notification_rule_groups": owned, "site_maintenance_windows": owned, "keystore_org_settings": owned, "compliance_org_packs": owned, "compliance_org_settings": owned, "quick_assist_links": owned, "quick_assist_orgs": owned, "contacts": owned, "device_groups": owned, "enrollment_tokens": owned, "mesh_sites": owned, "keystore_org_keys": owned, "compliance_fix_settings": owned,
-		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned, "tls_names": owned, "automations": owned, "automation_runs": stays, "automation_run_batches": stays,
-		// asset record (ADR-0066 slice 2): assets follow the device; values follow the asset; the age policy is owned by the organization
-		"assets": follows, "asset_field_values": follows, "asset_age_policies": owned,
+		"role_assignments": owned, "scripts": owned, "site_places": owned, "sites": owned, "easypatch_organizations": owned, "easypatch_sites": owned, "automations": owned, "automation_runs": stays, "automation_run_batches": stays,
+		// asset record (ADR-0066 slice 2): the hardware follows the device (org/site updated by moveOne); values follow the asset; the age policy is owned
+		"assets": updates, "asset_field_values": updates, "asset_age_policies": owned,
 		// engine
 		"easypatch_devices": engine, "easypatch_install_restarts": engine, "easypatch_installs": engine, "easypatch_opt_outs": engine,
 		"easypatch_removals": engine,
@@ -423,6 +425,12 @@ func TestMoveDispositionOfEveryTable(t *testing.T) {
 				}
 				if !slices.Contains(cols, "device_id") {
 					t.Errorf("%s is not keyed by device_id", tbl)
+				}
+			})
+		case updates:
+			t.Run(tbl, func(t *testing.T) {
+				if !hasOrgOrSite {
+					t.Errorf("%s has no organization or site to update", tbl)
 				}
 			})
 		case stays:
